@@ -1,0 +1,16 @@
+[package]
+name = "nodo-feed"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+nodo-manifest = { path = "../nodo-manifest" }
+serde.workspace = true
+thiserror.workspace = true
+# Without the default features, which decode obsolete zstd formats that xbps never writes.
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+toml.workspace = true
