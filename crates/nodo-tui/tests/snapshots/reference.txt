@@ -1,0 +1,32 @@
+moneropay › Settings › Daemon RPC                                                      Expects a URL
+┌ Search public settings ──────────────────────────────────────────────────────────────────────────┐
+│ $ rpc                                                                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Compatible settings ─────────────────────────────────────────────────────────────────────────────┐
+│ ▸monero-daemon.public_rpc_url                                             http://127.0.0.1:18081 │
+│  monero-daemon.restricted_rpc_url                                         http://127.0.0.1:18089 │
+│  wallet-rpc.url                                                           http://127.0.0.1:34512 │
+│                                                                                                  │
+│  Not shown: 4 settings of the wrong type. 2 secrets, which need a grant.                         │
+│                                                                                                  │
+│  monero-daemon is a role.                                                                        │
+│  It stays correct if you switch between cuprated and monerod.                                    │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Using this reference will ───────────────────────────────────────────────────────────────────────┐
+│ ● Make moneropay depend on monero-daemon, so it starts afterward.                                │
+│ ● Let moneropay's sandbox reach 127.0.0.1:18081.                                                 │
+│ ● Update and restart moneropay whenever the value changes.                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ move  ↵ use reference  t type a value instead  Esc cancel

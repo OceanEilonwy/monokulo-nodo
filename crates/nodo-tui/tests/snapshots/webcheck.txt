@@ -1,0 +1,32 @@
+Web › shop › Reachability check                                                 ▲ One step needs you
+┌ Checks ──────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ Domain and API key work                                                            example.com │
+│ ✓ Public IP found                                                                   203.0.113.42 │
+│ ✓ Router has a real public IP                                                  No CGNAT detected │
+│ ✓ Temporary DNS record works                                            Removed after this check │
+│ ✕ Port 80 is not reachable from outside                                                Timed out │
+│ ✕ Port 443 is not reachable from outside                                               Timed out │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Set up port forwarding on your router ───────────────────────────────────────────────────────────┐
+│ Router admin page                                                             http://192.168.1.1 │
+│ Forward TCP 80                                                                to 192.168.1.50:80 │
+│ Forward TCP 443                                                              to 192.168.1.50:443 │
+│                                                                                                  │
+│ Also reserve 192.168.1.50 for this device, so the forwarding keeps working.                      │
+│ Monokulo will not change your router automatically. UPnP is off by default.                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ shop is not public yet. Its local and onion addresses keep working during this check.
+
+
+
+
+
+
+
+
+
+
+
+
+
+r check again  ? router guides  o turn on Tor onion  Esc back

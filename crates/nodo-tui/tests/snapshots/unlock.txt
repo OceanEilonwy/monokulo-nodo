@@ -1,0 +1,32 @@
+Unlock this device                                                           Restarted 4 minutes ago
+┌ Device passphrase ───────────────────────────────────────────────────────────────────────────────┐
+│ Passphrase                                                                         ••••••••••••  │
+│ ✕ That passphrase did not unlock this device. Try again.                                         │
+│ Attempts are delayed after each failure.                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Enter once to unlock all of these ───────────────────────────────────────────────────────────────┐
+│ ◆ monokulo-pay                                                                 Encrypted storage │
+│ ◆ wallet-relay                                                                 Encrypted storage │
+│ ○ bell                                                                 Starts after wallet-relay │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ What happens next ───────────────────────────────────────────────────────────────────────────────┐
+│ ▸ Each package's storage opens inside its own sandbox only.                                      │
+│ ▸ Services start in dependency order, and progress appears here.                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+A lost passphrase cannot be recovered. Restore from a backup to get the data back.
+↵ unlock  Esc leave locked

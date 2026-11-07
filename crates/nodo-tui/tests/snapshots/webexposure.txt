@@ -1,0 +1,32 @@
+Web › shop › Exposure                                                             ● 1 unsaved change
+┌ Where is shop available? Turn on any combination. ───────────────────────────────────────────────┐
+│  [x] ● Local network                                                  https://shop.local  Online │
+│        Devices on your Wi-Fi or LAN                                                              │
+│                                                                                                  │
+│  [x] ◉ Tor onion                                                    http://abc…xyz.onion  Online │
+│        Anyone with the address, using Tor Browser                                                │
+│                                                                                                  │
+│ ▸[x] ▲ Public internet                                      https://shop.example.com  Turning on │
+│        Anyone, at your own domain                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Turning on public internet ──────────────────────────────────────────────────────────────────────┐
+│ ▲ Your home IP becomes visible in public DNS.                                                    │
+│ ▲ shop can be reached and attacked by anyone on the internet.                                    │
+│ ▲ Your router must forward ports 80 and 443 to this device.                                      │
+│                                                                                                  │
+│ ✕ Keeping onion on too can link it to your home IP.                                              │
+│   Identical content on both addresses lets visitors connect them. Use a separate                 │
+│   site for onion if that address must stay anonymous.                                            │
+│                                                                                                  │
+│ Local and onion stay online while public is checked and confirmed.                               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ move  Space toggle  ↵ save and check  e edit address  Esc back

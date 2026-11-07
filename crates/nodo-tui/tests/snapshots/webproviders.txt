@@ -1,0 +1,32 @@
+Web › Domains › Connect a domain                                               Bring your own domain
+┌ Where is your DNS hosted? ─────────────────────────────────┐┌ Porkbun ───────────────────────────┐
+│    Provider        Dynamic DNS   HTTPS without open ports  ││ Create an API key in your Porkbun  │
+│  ▸ Porkbun         ✓             ✓                         ││ account, then enable API access    │
+│    Cloudflare      ✓             ✓                         ││ for this domain.                   │
+│    GoDaddy         ▲ account     ▲ account                 ││                                    │
+│    Namecheap       ▲ account     ▲ account                 ││ Domain                             │
+│    IONOS           ✓             ✓                         ││ example.com                        │
+│    Gandi           ✓             ✓                         ││ API key                            │
+│    Name.com        ✓             ✓                         ││ ••••••••••••••••                   │
+│    Alibaba Cloud   ✓             ✓                         ││ Secret key                         │
+│    Hostinger       ▲ limited     Ports needed              ││ ••••••••••••••••                   │
+│    Hover           ✕ no API      ✕ no API                  ││                                    │
+│    Squarespace     ✕ no API      ✕ no API                  ││ ✓ Test passed: read and wrote a    │
+│                                                            ││ temporary record                   │
+│                                                            ││ Stored as a secret. Packages       │
+│                                                            ││ cannot read it.                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+│                                                            ││                                    │
+└────────────────────────────────────────────────────────────┘└────────────────────────────────────┘
+↑↓ provider  Tab fields  t test  ↵ save  ? where to find keys  Esc back

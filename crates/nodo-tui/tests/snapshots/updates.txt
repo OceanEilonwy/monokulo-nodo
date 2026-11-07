@@ -1,0 +1,32 @@
+Home  Packages  Web  Feeds   Updates (3)   Logs                        Auto-update on for 3 packages
+┌ Available ───────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸[x] moneropay     2.7.0 → 2.7.1       official                                            Ready │
+│  [x] system base   2026.11 → 2026.12   tested snapshot                            Restart needed │
+│  [ ] wallet-relay  0.4.2 → 0.5.0       community                       ▲ Asks for new permission │
+│                                                                                                  │
+│  Held back                                                                                       │
+│  [ ] cuprated      0.1.0 → 0.2.0       official                         You skipped this version │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ wallet-relay asks for more ──────────────────────────────────────────────────────────────────────┐
+│ ▲ New permission: connect out to any internet address.                                           │
+│ Selecting this update will ask you to review and approve that change first.                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ How updates apply ───────────────────────────────────────────────────────────────────────────────┐
+│ Each package restarts, then runs its health check. If that fails, its previous version returns.  │
+│ The node restarts last. Encrypted packages stay unlocked unless the system restarts.             │
+│ Last checked 2 hours ago                                                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Space select  ↵ update selected  c changelog  r check now  h hold version  a auto-update

@@ -1,0 +1,32 @@
+Home  Packages  Web   Feeds   Updates (3)  Logs                                        monokulo-nodo
+┌ Your feeds ──────────────────────────────────────────────────────────────────────────────────────┐
+│    Name          Packages   Key       Checked                                                    │
+│  ✓ official            12   built in  2 hours ago                                                │
+│ ▸✓ monokulo             6   pinned    2 hours ago                                                │
+│  ✓ community           23   pinned    2 hours ago                                                │
+│  ✕ old-tools            4   changed   blocked, press Enter                                       │
+│  ▲ experiments          3   pinned    unreachable since yesterday                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ monokulo ────────────────────────────────────────────────────────────────────────────────────────┐
+│ Address                                                 https://github.com/example/monokulo-feed │
+│ Key                                               SHA256:7f3a 91c2 0e4d b856 4c11 de90 aa72 3b6f │
+│ Added                                                                            12 October 2026 │
+│ Installed from it                                                             monokulo-pay, bell │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Removing a feed keeps installed packages, without updates.
+a add  r refresh  e disable  x remove  ↵ packages  Tab next tab

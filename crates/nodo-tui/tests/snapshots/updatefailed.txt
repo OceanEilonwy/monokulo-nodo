@@ -1,0 +1,32 @@
+Updates › Results                                                           1 updated, 1 rolled back
+┌ Results ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ system base   2026.12                                              Applied, restart when ready │
+│ ▸✕ moneropay     still on 2.7.0                                                2.7.1 rolled back │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ moneropay 2.7.1 failed its health check ─────────────────────────────────────────────────────────┐
+│ Version 2.7.0 and its data were restored. moneropay is running.                                  │
+│                                                                                                  │
+│ database migration 14: table "invoices" already exists                                           │
+│ This looks like a package problem. Your settings were not the cause.                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ What you can do ─────────────────────────────────────────────────────────────────────────────────┐
+│ ▸Keep 2.7.0 and hold this version                                                                │
+│  Try the update again                                                                            │
+│  Copy a report for the publisher  no keys or secrets included                                    │
+│  Read the full log                                                                               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ choose  ↵ confirm  Esc back to updates
