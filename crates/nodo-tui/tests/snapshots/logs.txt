@@ -1,0 +1,32 @@
+Home  Packages  Web  Feeds  Updates (3)   Logs                                      ● Following live
+┌ Service ────────────┐┌ bell ─────────────────────────────────────────────────────────────────────┐
+│  cuprated           ││ 14:02:11 INFO  starting version 1.2.0                                     │
+│ ▸bell ✕             ││ 14:02:11 INFO  reading /etc/bell/config.toml                              │
+│  moneropay          ││ 14:02:12 INFO  connecting to wallet-relay                                 │
+│  tor                ││ 14:02:17 ERROR connection refused: wallet-relay is locked                 │
+│  wallet-relay       ││ 14:02:17 INFO  exiting with status 1                                      │
+│  System             ││ ── restarted by supervisor, attempt 3 ──                                  │
+│  Updates            ││ 14:02:47 INFO  starting version 1.2.0                                     │
+│                     ││ 14:02:48 INFO  connecting to wallet-relay                                 │
+│                     ││ 14:02:53 ERROR connection refused: wallet-relay is locked                 │
+│                     ││ 14:02:53 INFO  exiting with status 1                                      │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     ││                                                                           │
+│                     │└───────────────────────────────────────────────────────────────────────────┘
+│                     │┌ Suggestion ───────────────────────────────────────────────────────────────┐
+│                     ││ bell depends on wallet-relay, which is locked.                            │
+│                     ││ Press u to unlock the device. bell will start automatically.              │
+└─────────────────────┘└───────────────────────────────────────────────────────────────────────────┘
+↑↓ service  / find  e errors only  f follow  y copy with secrets removed

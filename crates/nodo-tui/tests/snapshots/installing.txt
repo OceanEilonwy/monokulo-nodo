@@ -1,0 +1,32 @@
+Installing moneropay 2.7.0                                                               Step 5 of 8
+┌ Progress ────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ Download package                                                                         14 MB │
+│ ✓ Verify feed signature                                                             official key │
+│ ✓ Check package contents                                          no root scripts, paths allowed │
+│ ✓ Install files                                                         /opt/nodo/apps/moneropay │
+│ ▸ Create sandbox and firewall rules                                                      working │
+│ ○ Set up encrypted storage                                                                       │
+│ ○ Configure settings                                                                             │
+│ ○ Start and run health check                                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Details ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ created user _moneropay                                                                          │
+│ sandbox allows /var/lib/apps/moneropay                                                           │
+│ firewall allows _moneropay to 127.0.0.1:18081                                                    │
+│ checking rules before loading them                                                               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+A failed step removes what this install added.                                Esc cancel  v full log

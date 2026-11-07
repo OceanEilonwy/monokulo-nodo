@@ -1,0 +1,32 @@
+Feeds › Add a feed                                                                       Step 2 of 2
+┌ Address ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ https://github.com/example/monero-tools-feed                                                     │
+│ ✓ Found feed "monero-tools", 9 packages, signed                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Check this key ──────────────────────────────────────────────────────────────────────────────────┐
+│ SHA256:c41e 8d07 2fa9 66b3 19e0 75cd 0b42 e8a1                                                   │
+│ Compare it with the key the publisher shows on a site you already trust.                         │
+│ This device will only accept this feed's packages if they are signed by this key.                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ What trusting it allows ─────────────────────────────────────────────────────────────────────────┐
+│ ● Its packages appear in search and can offer updates.                                           │
+│ ● You still review each package's permissions before it installs.                                │
+│                                                                                                  │
+│ ✓ It cannot replace system packages or another feed's packages.                                  │
+│ ✓ It cannot install anything without you.                                                        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Packages run on your node, near your wallet data. Only add publishers you trust.
+▸Cancel    Trust this key                            ←→ choose  ↵ confirm  p list packages  Esc back
