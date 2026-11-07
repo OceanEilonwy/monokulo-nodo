@@ -7,6 +7,7 @@
 //! removed, because a stale address left beside the new one would send some visitors elsewhere. Other
 //! record types and other names are never touched.
 
+pub mod alibaba;
 pub mod catalog;
 pub mod cloudflare;
 pub mod gandi;

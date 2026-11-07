@@ -1,0 +1,12 @@
+{
+  "TotalCount": 2,
+  "PageSize": 100,
+  "PageNumber": 1,
+  "RequestId": "536E9CAD-DB30-4647-AC87-AA5CC38C5382",
+  "DomainRecords": {
+    "Record": [
+      { "RecordId": "1001", "DomainName": "example.com", "RR": "www", "Type": "A", "Value": "198.51.100.1", "TTL": 600, "Line": "default", "Status": "ENABLE", "Locked": false },
+      { "RecordId": "1002", "DomainName": "example.com", "RR": "www", "Type": "A", "Value": "198.51.100.2", "TTL": 600, "Line": "telecom", "Status": "ENABLE", "Locked": false }
+    ]
+  }
+}
