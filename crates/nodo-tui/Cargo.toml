@@ -1,0 +1,19 @@
+[package]
+name = "nodo-tui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "nodo-tui"
+path = "src/main.rs"
+
+[dependencies]
+nodo-api = { path = "../nodo-api" }
+# ratatui 0.30 needs a newer compiler than the workspace's rust-version.
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+signal-hook = { version = "0.3", default-features = false }
+unicode-width = "0.2"
+zeroize = "1"
