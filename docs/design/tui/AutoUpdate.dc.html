@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Auto-update</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Updates <span class="d">›</span> <b>Auto-update</b></div><div class="d">Next run tonight at 03:00</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Schedule</div>
+<div class="r"><span class="d">Check for updates</span><span>‹ Daily ›</span></div>
+<div class="r"><span class="d">Install between</span><span>03:00 and 05:00 device time</span></div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Update automatically</div>
+<div class="r s"><span> [x] moneropay       official </span><span>Last updated 4 days ago </span></div>
+<div class="r"><span> [x] cuprated        official</span><span class="d">Node restarts, dependents wait </span></div>
+<div class="r"><span> [x] monokulo-pay    <span class="i">monokulo</span></span><span class="d">Last updated 12 days ago </span></div>
+<div class="r"><span> [ ] wallet-relay    <span class="a">community</span></span><span class="a">▲ Runs new code without your review </span></div>
+<div class="r"><span> [ ] system base     official</span><span class="d">Off means notify only </span></div>
+</div>
+<div style="flex:1;min-height:0;display:flex;gap:16px;margin-top:8px">
+<div class="p" style="flex:1"><div class="pt a">Always waits for you</div>
+<div><span class="a">▲</span> New permissions requested</div>
+<div><span class="a">▲</span> Feed signing key changed</div>
+<div><span class="a">▲</span> Update fails install checks</div>
+<div><span class="a">▲</span> A version you put on hold</div>
+<div><span class="a">▲</span> System restart needed</div>
+<div><span class="a">▲</span> Device locked or disk low</div>
+</div>
+<div class="p" style="flex:1"><div class="pt">If an update fails</div>
+<div><span class="ok">✓</span> Previous version and data return</div>
+<div><span class="ok">✓</span> That version is held</div>
+<div><span class="ok">✓</span> Home shows what happened</div>
+<div style="height:12px"></div>
+<div class="d" style="white-space:normal">Nothing tries that version again until you choose to.</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">Space</span> toggle  <span class="a">w</span> change window  <span class="a">h</span> history  <span class="a">↵</span> save  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>
