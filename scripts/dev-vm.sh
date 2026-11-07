@@ -6,7 +6,8 @@ set -eu
 . "$(dirname "$0")/lib.sh"
 board=${DEV_BOARD:-x86-kvm}
 . "$root/boards/$board/board.env"
-name=monokulo-dev-$board
+# Worktrees get separate VMs, so parallel work never shares or stops another VM.
+name=monokulo-dev-$board-$(printf %s "$root" | sha256sum | cut -c1-8)
 cmd=${1:?usage: dev-vm.sh up|push|check|ssh|down}
 [ $# -gt 0 ] && shift
 in_vm() { docker exec -i -e "ARCH=$BOARD_ARCH" "$name" sh -c '. /src/tests/_vm-lib.sh; "$@"' sh "$@"; }
