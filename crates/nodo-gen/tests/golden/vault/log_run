@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _vault:_vault svlogd -tt /var/log/apps/vault

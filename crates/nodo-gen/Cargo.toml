@@ -1,0 +1,13 @@
+[package]
+name = "nodo-gen"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+nodo-manifest = { path = "../nodo-manifest" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

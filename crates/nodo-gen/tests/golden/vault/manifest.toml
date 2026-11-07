@@ -1,0 +1,11 @@
+api_version = 1
+id = "vault"
+version = "3.0.0"
+exec = ["bin/vault-with-a-very-long-name", "--serve"]
+
+[storage]
+encrypted = true
+
+[[web]]
+name = "ui"
+upstream = "127.0.0.1:8200"

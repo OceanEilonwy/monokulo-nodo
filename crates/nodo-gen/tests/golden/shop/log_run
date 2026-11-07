@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _shop:_shop svlogd -tt /var/log/apps/shop
