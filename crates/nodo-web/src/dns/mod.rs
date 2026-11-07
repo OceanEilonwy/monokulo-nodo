@@ -8,6 +8,8 @@
 //! record types and other names are never touched.
 
 pub mod catalog;
+pub mod cloudflare;
+pub mod porkbun;
 
 use crate::http::{HttpError, HttpRequest, HttpResponse};
 use crate::names;
