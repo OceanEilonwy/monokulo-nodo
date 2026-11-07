@@ -1,0 +1,25 @@
+[package]
+name = "nodo-helper"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+nodo-api = { path = "../nodo-api" }
+nodo-gen = { path = "../nodo-gen" }
+nodo-manifest = { path = "../nodo-manifest" }
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+getrandom = "0.4"
+hkdf = "0.12"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+rustix = { version = "1", features = ["fs", "mm", "net", "process"] }
+sha2 = "0.10"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
