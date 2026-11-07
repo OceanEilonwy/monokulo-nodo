@@ -1,0 +1,53 @@
+//! Package settings: how packages declare them, and how values flow between packages.
+//!
+//! A package describes its settings in a Lua file. [`load_settings`] runs that file in a sandbox
+//! and produces a plain [`Schema`], which is data and can cross into privileged code safely. Values
+//! may reference settings of other packages as `$(package.setting)`, and [`Installed::resolve`]
+//! turns those into typed values along with the dependencies and network access they imply.
+//!
+//! # The settings file
+//!
+//! ```lua
+//! return {
+//!   api_version = 1,
+//!   settings = {
+//!     { name = "rpc_port", type = "int", label = "RPC port", default = 18081,
+//!       min = 1024, max = 65535, public = "rpc-port", endpoint = "tcp" },
+//!     { name = "payout", type = "monero-address", label = "Payout address", required = true },
+//!     { name = "daemon", type = "url", label = "Daemon", default = "$(monero-daemon.rpc-url)" },
+//!     { name = "api_key", type = "secret", label = "API key",
+//!       validate = function(v) return #v >= 16, "must be at least 16 characters" end },
+//!   },
+//! }
+//! ```
+//!
+//! Lua's own pattern functions are not available because their backtracking cannot be interrupted
+//! by the instruction limit. Validators use `nodo.matches(text, regex)`, which runs in linear time.
+//!
+//! # Reference syntax
+//!
+//! `$(name.setting)` names a package id or a role. `$$(` is a literal `$(`, and each further `$`
+//! before the `(` is kept, so `$$$(` is a literal `$$(`. [`escape_literal`] applies this form.
+//! Resolved values are never rescanned, so a value containing `$(` cannot trigger an expansion.
+
+mod escape;
+mod monero;
+mod resolve;
+mod sandbox;
+mod schema;
+mod template;
+mod url;
+
+pub use escape::{env_file, env_name, env_pairs, toml_file, toml_value, EnvError};
+pub use monero::{check_monero_address, MoneroNetwork};
+pub use resolve::{
+    Access, Dependency, Grant, Installed, InstalledPackage, NetworkGrant, PortProtocol, Rendered, ResolveError,
+    Resolved,
+};
+pub use sandbox::{load_settings, Limit, Limits, LoadedSettings, SettingsError};
+pub use schema::{
+    is_valid_setting_name, DefaultValue, Endpoint, Schema, SecretString, SettingDef, SettingType, SettingValue,
+    Value, MAX_TEXT_LEN, SETTINGS_API_VERSION,
+};
+pub use template::{escape_literal, parse_template, Part, Reference, TemplateError};
+pub use url::{check_url, ParsedUrl};
