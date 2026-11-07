@@ -40,7 +40,12 @@ impl<S: System> Helper<S> {
             return Ok(None);
         };
         let text = String::from_utf8(bytes).map_err(|_| "manifest is not UTF-8".to_owned())?;
-        let manifest = Manifest::parse(&text).map_err(|e| e.to_string())?;
+        // Only the signed base system may use system paths and reserved ids.
+        let parsed = match profile {
+            Profile::System => Manifest::parse_system(&text),
+            Profile::App => Manifest::parse(&text),
+        };
+        let manifest = parsed.map_err(|e| e.to_string())?;
         // The file name decides which service this describes. A manifest claiming another
         // package's id must not gain control of that package.
         if manifest.id != id {

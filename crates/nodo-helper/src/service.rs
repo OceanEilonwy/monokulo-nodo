@@ -239,10 +239,22 @@ mod tests {
     }
 
     #[test]
+    fn app_cannot_load_as_a_reserved_system_package() {
+        let sys = FakeSystem::default();
+        sys.put(
+            "/m/app/cuprated.toml",
+            b"api_version = 1\nid = \"cuprated\"\nversion = \"1\"\nexec = [\"bin/fake\"]\n",
+        );
+        let h = helper(sys);
+        assert!(h.stop_service("cuprated").is_err());
+        assert!(h.sys.calls().iter().all(|call| !call.starts_with("sv ")));
+    }
+
+    #[test]
     fn hostile_stop_timeout_is_clamped() {
         let sys = FakeSystem::default();
         sys.put(
-            "/m/app/slow.toml",
+            "/m/sys/slow.toml",
             b"api_version = 1\nid = \"slow\"\nversion = \"1\"\nexec = [\"a\"]\nstop_timeout_secs = 4294967295\n",
         );
         let h = helper(sys);

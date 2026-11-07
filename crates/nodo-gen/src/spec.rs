@@ -65,7 +65,7 @@ impl Layout {
                 config_dir: format!("/etc/apps/{id}"),
                 data_dir: format!("/var/lib/apps/{id}"),
                 log_dir: format!("/var/log/apps/{id}"),
-                app_dir: Some(format!("/opt/apps/{id}")),
+                app_dir: Some(format!("/opt/nodo/apps/{id}")),
             },
         })
     }

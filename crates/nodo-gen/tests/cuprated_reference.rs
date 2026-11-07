@@ -17,7 +17,7 @@ fn reference(file: &str) -> String {
 }
 
 fn cuprated() -> Artifacts {
-    let manifest = Manifest::parse(include_str!("golden/cuprated/manifest.toml")).unwrap();
+    let manifest = Manifest::parse_system(include_str!("golden/cuprated/manifest.toml")).unwrap();
     let grants = ResolvedGrants {
         unrestricted_loopback: true,
         ..Default::default()

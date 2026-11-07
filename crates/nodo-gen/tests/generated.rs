@@ -14,7 +14,7 @@ use nodo_manifest::{Manifest, Protocol};
 
 fn manifest(id: &str, exec: &[&str]) -> Manifest {
     let toml_exec: Vec<String> = exec.iter().map(|arg| toml_string(arg)).collect();
-    Manifest::parse(&format!(
+    Manifest::parse_system(&format!(
         "api_version = 1\nid = {}\nversion = \"1\"\nexec = [{}]\n",
         toml_string(id),
         toml_exec.join(", ")
@@ -78,7 +78,7 @@ fn golden_artifacts(name: &str) -> Artifacts {
         .join(name);
     let text = fs::read_to_string(dir.join("manifest.toml")).unwrap();
     let (profile, grants) = golden_grants(name);
-    generate(&Manifest::parse(&text).unwrap(), profile, &grants).unwrap()
+    generate(&Manifest::parse_system(&text).unwrap(), profile, &grants).unwrap()
 }
 
 /// Set `UPDATE_GOLDEN=1` to rewrite the expected files, then review the diff.
@@ -195,7 +195,7 @@ fn hostile_programs_are_rejected() {
 
 #[test]
 fn empty_exec_is_rejected() {
-    let m = Manifest::parse("api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = []\n").unwrap();
+    let m = Manifest::parse_system("api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = []\n").unwrap();
     assert!(matches!(
         generate(&m, Profile::App, &ResolvedGrants::default()),
         Err(GenError::Exec(_))
@@ -255,7 +255,7 @@ fn hostile_arguments_reach_the_program_verbatim_and_never_execute() {
         );
         assert_eq!(out.code, Some(0), "arg {arg:?}: {out:?}");
         assert!(!canary, "arg {arg:?} executed");
-        let expected = format!("[/opt/apps/shop/bin/app]\n[--first]\n[{arg}]\n[--last]\n");
+        let expected = format!("[/opt/nodo/apps/shop/bin/app]\n[--first]\n[{arg}]\n[--last]\n");
         assert!(out.log.ends_with(&expected), "arg {arg:?}:\n{}", out.log);
     }
 }
@@ -313,7 +313,7 @@ fn app_ids_cannot_collide_with_system_directories() {
 }
 
 fn with_web(upstream: &str) -> Manifest {
-    Manifest::parse(&format!(
+    Manifest::parse_system(&format!(
         "api_version = 1\nid = \"shop\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[[web]]\nname = \"w\"\nupstream = {}\n",
         toml_string(upstream)
     ))
@@ -362,7 +362,7 @@ fn hostile_web_upstreams_are_rejected() {
 
 #[test]
 fn hostile_web_names_are_rejected() {
-    let m = Manifest::parse(
+    let m = Manifest::parse_system(
         "api_version = 1\nid = \"shop\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[[web]]\nname = \"a;b\"\nupstream = \"127.0.0.1:80\"\n",
     )
     .unwrap();
@@ -456,7 +456,7 @@ fn private_ranges_are_blocked_after_local_grants_and_in_both_families() {
 /// Without this a listener with no outbound access could not answer its own clients.
 #[test]
 fn listeners_without_outbound_can_still_reply() {
-    let m = Manifest::parse(
+    let m = Manifest::parse_system(
         "api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[[network.inbound]]\nport = 80\nprotocol = \"tcp\"\nscope = \"lan\"\n",
     )
     .unwrap();
@@ -506,7 +506,7 @@ fn lan_grants_must_stay_inside_private_ranges() {
 
 #[test]
 fn port_zero_is_rejected() {
-    let m = Manifest::parse(
+    let m = Manifest::parse_system(
         "api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[[network.inbound]]\nport = 0\nprotocol = \"tcp\"\nscope = \"lan\"\n",
     )
     .unwrap();
@@ -578,7 +578,7 @@ fn required_data_mount_cannot_be_overridden_by_conf() {
 }
 
 fn encrypted(id: &str) -> Manifest {
-    Manifest::parse(&format!(
+    Manifest::parse_system(&format!(
         "api_version = 1\nid = \"{id}\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[storage]\nencrypted = true\n"
     ))
     .unwrap()

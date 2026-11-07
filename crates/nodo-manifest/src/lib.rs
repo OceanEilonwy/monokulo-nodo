@@ -140,6 +140,16 @@ pub enum HealthCheck {
 }
 
 impl Manifest {
+    /// Parses a manifest shipped in the signed base system, such as cuprated's, which legitimately
+    /// uses system paths and reserved ids. Never use this for anything from a feed.
+    pub fn parse_system(text: &str) -> Result<Self, ManifestError> {
+        let manifest: Manifest = toml::from_str(text)?;
+        if manifest.api_version != API_VERSION {
+            return Err(ManifestError::UnsupportedApi { found: manifest.api_version });
+        }
+        Ok(manifest)
+    }
+
     /// Parses and validates a manifest. A manifest returned from here has passed every check.
     pub fn parse(text: &str) -> Result<Self, ManifestError> {
         let manifest: Manifest = toml::from_str(text)?;

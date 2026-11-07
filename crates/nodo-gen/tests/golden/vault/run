@@ -17,7 +17,7 @@ exec chpst -u _vault:_vault bwrap \
 	--symlink usr/bin /bin \
 	--symlink usr/lib /lib \
 	--symlink usr/lib /lib64 \
-	--ro-bind /opt/apps/vault /opt/apps/vault \
+	--ro-bind /opt/nodo/apps/vault /opt/nodo/apps/vault \
 	--bind "$data" /var/lib/apps/vault \
 	--proc /proc \
 	--dev /dev \
@@ -25,4 +25,4 @@ exec chpst -u _vault:_vault bwrap \
 	--setenv HOME /var/lib/apps/vault \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/opt/apps/vault/bin/vault-with-a-very-long-name --serve
+	/opt/nodo/apps/vault/bin/vault-with-a-very-long-name --serve
