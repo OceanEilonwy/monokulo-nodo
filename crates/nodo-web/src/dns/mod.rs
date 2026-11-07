@@ -9,6 +9,8 @@
 
 pub mod catalog;
 pub mod cloudflare;
+pub mod gandi;
+pub mod godaddy;
 pub mod porkbun;
 
 use crate::http::{HttpError, HttpRequest, HttpResponse};

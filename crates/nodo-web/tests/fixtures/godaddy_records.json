@@ -1,0 +1,10 @@
+{
+  "items": [
+    { "name": "@", "type": "A", "data": "192.0.2.1", "ttl": 3600, "recordId": "rec_apex" },
+    { "name": "app2", "type": "A", "data": "192.0.2.2", "ttl": 3600, "recordId": "rec_a1b2" },
+    { "name": "app2", "type": "MX", "data": "mail.example.com.", "ttl": 3600, "priority": 10, "recordId": "rec_mx" }
+  ],
+  "links": [
+    { "rel": "self", "href": "/v3/domains/zones/example.com/dns-records" }
+  ]
+}

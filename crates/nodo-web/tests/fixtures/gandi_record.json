@@ -1,0 +1,7 @@
+{
+  "rrset_href": "https://api.gandi.net/v5/livedns/domains/example.com/records/www/A",
+  "rrset_name": "www",
+  "rrset_type": "A",
+  "rrset_ttl": 10800,
+  "rrset_values": ["198.51.100.1", "198.51.100.2"]
+}
