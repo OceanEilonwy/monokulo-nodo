@@ -1,0 +1,154 @@
+//! The subset of Caddy's JSON config this crate emits. Field names follow
+//! <https://caddyserver.com/docs/json/>. Every module used here ships with standard Caddy.
+
+use serde::Serialize;
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CaddyConfig {
+    pub admin: Admin,
+    pub apps: Apps,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Admin {
+    pub listen: String,
+    pub config: AdminConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AdminConfig {
+    pub persist: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Apps {
+    pub http: HttpApp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls: Option<TlsApp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pki: Option<PkiApp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HttpApp {
+    pub servers: BTreeMap<String, Server>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Server {
+    pub listen: Vec<String>,
+    pub routes: Vec<Route>,
+    pub errors: ErrorRoutes,
+    pub automatic_https: AutomaticHttps,
+    pub protocols: Vec<String>,
+    pub strict_sni_host: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ErrorRoutes {
+    pub routes: Vec<Route>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct AutomaticHttps {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub disable: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub disable_redirects: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Route {
+    #[serde(rename = "match", skip_serializing_if = "Vec::is_empty")]
+    pub matchers: Vec<Matcher>,
+    pub handle: Vec<Handle>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
+}
+
+/// All fields in one matcher must match.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Matcher {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub host: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_ip: Option<RemoteIp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RemoteIp {
+    pub ranges: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Handle {
+    Known(Handler),
+    /// See [`super::PublicHandlerHook`].
+    Hook(serde_json::Value),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "handler", rename_all = "snake_case")]
+pub enum Handler {
+    Subroute {
+        routes: Vec<Route>,
+    },
+    ReverseProxy {
+        upstreams: Vec<Upstream>,
+    },
+    StaticResponse {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status_code: Option<String>,
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        headers: BTreeMap<String, Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        abort: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Upstream {
+    pub dial: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TlsApp {
+    pub automation: TlsAutomation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TlsAutomation {
+    pub policies: Vec<AutomationPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AutomationPolicy {
+    pub subjects: Vec<String>,
+    pub issuers: Vec<Issuer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "module", rename_all = "snake_case")]
+pub enum Issuer {
+    Acme {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        email: Option<String>,
+    },
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PkiApp {
+    pub certificate_authorities: BTreeMap<String, CertificateAuthority>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CertificateAuthority {
+    pub install_trust: bool,
+}

@@ -1,0 +1,8 @@
+{
+  "status": "SUCCESS",
+  "cloudflare": "disabled",
+  "records": [
+    { "id": "106926652", "name": "www.example.com", "type": "A", "content": "198.51.100.1", "ttl": "600", "prio": null, "notes": null },
+    { "id": "106926653", "name": "www.example.com", "type": "A", "content": "198.51.100.2", "ttl": "600", "prio": null, "notes": "old" }
+  ]
+}
