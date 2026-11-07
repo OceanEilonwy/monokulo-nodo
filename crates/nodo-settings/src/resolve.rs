@@ -807,7 +807,8 @@ mod tests {
     }
 
     fn package(id: &str, provides: &[&str], settings: Vec<SettingDef>) -> InstalledPackage {
-        let manifest = Manifest::parse(&format!(
+        // Fixtures use system ids such as cuprated, which feed manifests may not claim.
+        let manifest = Manifest::parse_system(&format!(
             "api_version = 1\nid = \"{id}\"\nversion = \"1.0\"\nexec = [\"bin/run\"]\n"
         ))
         .unwrap();

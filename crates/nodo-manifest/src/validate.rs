@@ -27,6 +27,8 @@ pub const MIN_PACKAGE_PORT: u16 = 1024;
 /// Ids that would collide with system users, the appliance itself, or well known roles. A package
 /// named after a role could otherwise capture references meant for the role's provider.
 pub const RESERVED_IDS: &[&str] = &[
+    "cuprated",
+    "monerod",
     "adm",
     "apps",
     "bin",
