@@ -1,0 +1,11 @@
+{
+  "records": [
+    { "id": 101, "domainName": "example.org", "host": "blog", "fqdn": "blog.example.org.", "type": "A", "answer": "198.51.100.1", "ttl": 300 },
+    { "id": 102, "domainName": "example.org", "host": "blog", "fqdn": "blog.example.org.", "type": "TXT", "answer": "keep me", "ttl": 300 },
+    { "id": 103, "domainName": "example.org", "host": "", "fqdn": "example.org.", "type": "A", "answer": "198.51.100.2", "ttl": 300 },
+    { "id": 104, "domainName": "example.org", "host": "@", "fqdn": "example.org.", "type": "A", "answer": "198.51.100.3", "ttl": 300 }
+  ],
+  "from": 1,
+  "to": 4,
+  "totalCount": 4
+}
