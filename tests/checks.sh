@@ -24,6 +24,9 @@ check "refuses to start without its data drive" 'sv -w 120 stop cuprated >/dev/n
 check "stdin prompt is disabled" 'grep -q "disabling STDIN commands" /var/log/cuprated/current'
 # The shutdown handler starts with the node, so wait for RPC before testing it.
 check "clean stop under TERM" 'for n in $(seq 1 60); do grep -q ":46F1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done; sv -w 120 stop cuprated | grep -q "^ok: down" && tail -n 40 /var/log/cuprated/current | grep -q "Shutdown complete"'
+# The script goes in a file so nothing it runs can consume its own text from stdin.
+ssh_vm 'cat > /tmp/fw.sh' < /src/tests/firewall-traffic.sh
+ssh_vm 'sh /tmp/fw.sh </dev/null' || fail=1
 check "service restarts" 'sv -w 60 start cuprated | grep -q "^ok: run"'
 if [ "${SKIP_REBOOT:-}" != 1 ]; then
 ssh_vm 'for n in $(seq 1 60); do grep -q ":46F1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'

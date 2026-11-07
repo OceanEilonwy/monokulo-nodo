@@ -58,19 +58,11 @@ fn service_user_matches_reference() {
     assert_eq!(cuprated().user, "_cuprated");
 }
 
-/// The reference's IPv4-only block leaves IPv6 private ranges open through `meta l4proto tcp
-/// accept`, which contradicts the private range rule. The generator closes that gap with one
-/// extra line, and this test pins that as the only difference.
 #[test]
-fn nft_matches_reference_except_for_the_ipv6_block() {
-    let generated = cuprated().nft;
-    let extra = "\t\tmeta skuid \"_cuprated\" ip6 daddr { fc00::/7, fe80::/10 } drop";
-    let lines: Vec<&str> = generated.lines().collect();
-    assert_eq!(lines.iter().filter(|l| **l == extra).count(), 1);
-    let without: Vec<&str> = lines.into_iter().filter(|l| *l != extra).collect();
+fn nft_matches_reference() {
     assert_eq!(
-        without,
-        reference("cuprated.nft").lines().collect::<Vec<_>>()
+        without_comments(&cuprated().nft),
+        without_comments(&reference("cuprated.nft"))
     );
 }
 

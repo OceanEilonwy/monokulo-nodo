@@ -43,7 +43,9 @@ pub fn nft_fragment(spec: &ServiceSpec) -> String {
 
     let who = format!("meta skuid \"{}\"", spec.user);
     let mut output = Vec::new();
-    if needs_reply_rule(spec) {
+    // Replies pass through the service's own output rules, so a listener without this rule could
+    // answer nobody past the final drop, and no LAN client past the private range block.
+    if spec.has_listener {
         output.push(format!("{who} ct state established,related accept"));
     }
     if spec.unrestricted_loopback {
@@ -96,18 +98,4 @@ pub fn nft_fragment(spec: &ServiceSpec) -> String {
     }
     out.push_str("\t}\n}\n");
     out
-}
-
-/// A service's replies pass through its own output rules, so a listener without this rule could
-/// answer nobody once the final drop applies, and no LAN client past the private range block.
-///
-/// The reference cuprated rules have no such rule, because `tcp accept` covers replies to public
-/// peers. That one shape stays as it is. Anything else that listens gets the rule.
-fn needs_reply_rule(spec: &ServiceSpec) -> bool {
-    let only_public_tcp = spec
-        .inbound
-        .iter()
-        .all(|(_, protocol, scope)| *protocol == Protocol::Tcp && *scope == Scope::Internet);
-    let covered = spec.unrestricted_loopback && spec.internet && only_public_tcp;
-    spec.has_listener && !covered
 }
