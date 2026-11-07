@@ -10,6 +10,7 @@
 pub mod alibaba;
 pub mod catalog;
 pub mod cloudflare;
+pub mod config;
 pub mod gandi;
 pub mod godaddy;
 pub mod hostinger;
