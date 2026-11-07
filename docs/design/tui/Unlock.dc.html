@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Unlock after reboot</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div><b>Unlock this device</b></div><div class="d">Restarted 4 minutes ago</div></div>
+<div class="p" style="margin-top:8px;border-color:#F2A33A"><div class="pt a">Device passphrase</div>
+<div class="r"><span class="d">Passphrase</span><span style="flex:1;margin-left:16px">••••••••••••<span class="s"> </span></span></div>
+<div class="err" style="margin-top:8px">✕ That passphrase did not unlock this device. Try again.</div>
+<div class="d">Attempts are delayed after each failure.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Enter once to unlock all of these</div>
+<div class="r"><span><span class="a">◆</span> monokulo-pay</span><span class="d">Encrypted storage</span></div>
+<div class="r"><span><span class="a">◆</span> wallet-relay</span><span class="d">Encrypted storage</span></div>
+<div class="r"><span><span class="d">○</span> bell</span><span class="d">Starts after wallet-relay</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What happens next</div>
+<div><span class="i">▸</span> Each package's storage opens inside its own sandbox only.</div>
+<div><span class="i">▸</span> Services start in dependency order, and progress appears here.</div>
+<div style="height:12px"></div>
+<div class="d">A lost passphrase cannot be recovered. Restore from a backup to get the data back.</div>
+</div>
+<div class="r d"><span><span class="a">↵</span> unlock  <span class="a">Esc</span> leave locked</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

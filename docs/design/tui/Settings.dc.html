@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Package settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+.f{border:1px solid #545C63;padding:0 8px;flex:1;margin-left:16px}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>moneropay <span class="d">›</span> <b>Settings</b></div><div class="a">● 2 unsaved changes</div></div>
+<div style="flex:1;min-height:0;display:flex;gap:16px;padding-top:8px">
+<div class="p" style="flex:3;display:flex;flex-direction:column;gap:10px"><div class="pt">Connection</div>
+<div style="display:flex;align-items:center"><span style="width:150px" class="d">Daemon RPC</span><span class="f" style="border-color:#F2A33A;margin-left:0"><span class="i">$(monero-daemon.public_rpc_url)</span></span></div>
+<div class="d" style="margin-left:150px">Resolves to http://127.0.0.1:18081</div>
+<div style="display:flex;align-items:center"><span style="width:150px" class="d">API port</span><span class="f" style="margin-left:0">5000</span></div>
+<div style="display:flex;align-items:center"><span style="width:150px" class="d">Log level</span><span class="f" style="margin-left:0">‹ info ›</span></div>
+<div style="display:flex;align-items:center"><span style="width:150px;font-weight:700">Payment address</span><span class="f" style="border-color:#FF8A7A;margin-left:0">48edfHu7V9Z84Y…</span></div>
+<div class="err" style="margin-left:150px">✕ Address is too short. A Monero address has 95 characters.</div>
+<div style="display:flex;align-items:center"><span style="width:150px" class="d">Webhook secret</span><span class="f" style="margin-left:0">••••••••••••  <span class="d">secret, private to this package</span></span></div>
+<div style="display:flex;align-items:center"><span style="width:150px" class="d">Allow LAN access</span><span style="margin-left:0">[x] on</span></div>
+</div>
+<div class="p" style="flex:2"><div class="pt">Payment address</div>
+<div>Where received funds are sent.</div>
+<div class="d">Required. Provided by the package.</div>
+<div style="height:20px"></div>
+<div><b>Saving will</b></div>
+<div class="d">Restart moneropay</div>
+<div class="d">Run its health check</div>
+<div class="d">Restore these values if it fails</div>
+<div style="height:20px"></div>
+<div><b>Others can read</b></div>
+<div class="d">moneropay.api_url</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> field  <span class="a">↵</span> edit  <span class="a">$</span> use a reference  <span class="a">ctrl-s</span> save  <span class="a">z</span> undo  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Confirm going public</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> shop <span class="d">›</span> <b>Go public</b></div><div class="ok">✓ All checks passed</div></div>
+<div class="p" style="margin-top:8px;border-color:#F2A33A"><div class="pt a">This puts shop on the public internet</div>
+<div class="r"><span class="d">Address</span><span>https://shop.example.com</span></div>
+<div class="r"><span class="d">DNS record</span><span>shop.example.com  A  203.0.113.42</span></div>
+<div class="r"><span class="d">Device firewall</span><span>Opens 80 and 443</span></div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Access</div>
+<div class="r"><span>[ ] Require a password in front of this site</span><span class="d">shop has its own login</span></div>
+<div class="r"><span>[x] Rate-limit repeated requests</span><span class="d">Recommended</span></div>
+<div class="r"><span>[x] Hide admin paths from the public</span><span class="d">/admin stays local network only</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Before you confirm</div>
+<div><span class="a">▲</span> Your home IP will be published, and DNS history can keep it after you stop.</div>
+<div><span class="a">▲</span> Anyone can link this domain to your IP, including your Monero node's IP.</div>
+<div><span class="a">▲</span> Certificate logs record shop.example.com permanently.</div>
+<div style="height:12px"></div>
+<div class="d">You can take this offline at any time from the Web tab.</div>
+<div style="height:12px"></div>
+<div class="r"><span class="d">Type the address to confirm</span></div>
+<div style="border:1px solid #F2A33A;padding:0 8px">shop.example.com<span class="s"> </span></div>
+</div>
+<div class="r"><span><span class="s"> Cancel </span>   Go public</span><span class="d"><span class="a">Tab</span> fields  <span class="a">Space</span> toggle  <span class="a">↵</span> confirm  <span class="a">Esc</span> cancel</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

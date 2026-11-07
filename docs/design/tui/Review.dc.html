@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review permissions</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Install <b>wallet-relay</b> 0.4.2</div><div><span class="a">community feed</span></div></div>
+<div class="p" style="margin-top:8px;border-color:#F2A33A"><div class="pt a">Third-party package</div>
+<div>This package comes from a feed you added. Its files passed the install checks, but nobody has reviewed its code for you.</div>
+</div>
+<div class="p" style="flex:1"><div class="pt">It is asking to</div>
+<div class="r"><span><span class="i">●</span> Use its own user and data folder</span><span class="d">Standard</span></div>
+<div class="r"><span><span class="i">●</span> Read monero-daemon.public_rpc_url</span><span class="d">Public setting</span></div>
+<div class="r"><span><span class="i">●</span> Reach daemon RPC on this device</span><span class="d">Local only</span></div>
+<div class="r"><span><span class="a">▲</span> Accept connections on port 18120</span><span class="a">Reachable from your network</span></div>
+<div class="r"><span><span class="a">▲</span> Connect out to any internet address</span><span class="a">Broad access</span></div>
+<div class="r"><span><span class="a">◆</span> Keep data in encrypted storage</span><span class="d">Locks at reboot</span></div>
+<div style="height:20px"></div>
+<div class="r"><span><span class="ok">✓</span> Cannot read other packages' data or secrets</span></div>
+<div class="r"><span><span class="ok">✓</span> Cannot run setup scripts as root or replace system packages</span></div>
+<div style="height:20px"></div>
+<div class="d">If an update asks for more than this, you will be asked again.</div>
+</div>
+<div class="r"><span><span class="s"> Cancel </span>   Install and configure</span><span class="d"><span class="a">←→</span> choose  <span class="a">↵</span> confirm  <span class="a">d</span> file list  <span class="a">Esc</span> cancel</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

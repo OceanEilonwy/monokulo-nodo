@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Monokulo Nodo home</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div><span class="s"> Home </span>  Packages  Web  Feeds  Updates <span class="a">(2)</span>  Logs</div><div class="d">monokulo-nodo</div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div style="display:flex;gap:16px">
+<div class="p" style="flex:3"><div class="pt">Node</div>
+<div class="r"><span class="d">Role</span><span>monero-daemon</span></div>
+<div class="r"><span class="d">Provider</span><span>cuprated 0.1.0-preview</span></div>
+<div class="r"><span class="d">State</span><span class="i">▲ syncing 61%</span></div>
+<div class="r"><span class="d">Height</span><span>2,121,400 of 3,478,000</span></div>
+<div class="r"><span class="d">Peers</span><span>32 out, 9 in</span></div>
+</div>
+<div class="p" style="flex:2"><div class="pt">Device</div>
+<div class="r"><span class="d">SSD</span><span>412 GB of 1.9 TB</span></div>
+<div class="r"><span class="d">System</span><span>0.4 GB of 7.6 GB</span></div>
+<div class="r"><span class="d">Memory</span><span>6.1 GB of 31 GB</span></div>
+<div class="r"><span class="d">Temp</span><span>52 °C</span></div>
+<div class="r"><span class="d">Uptime</span><span>3 days</span></div>
+</div>
+</div>
+<div class="p" style="flex:1"><div class="pt">Services</div>
+<div class="r s"><span> ● cuprated         running   monero-daemon</span><span>Enter to open </span></div>
+<div class="r"><span> <span class="ok">●</span> tor              running   system</span></div>
+<div class="r"><span> <span class="ok">●</span> moneropay        running   official</span></div>
+<div class="r"><span> <span class="a">◆</span> wallet-relay     <span class="a">locked</span>    community  <span class="d">storage needs unlocking</span></span></div>
+<div class="r"><span> <span class="err">✕</span> bell             <span class="err">failed</span>    community  <span class="d">restarted 3 times, press l for logs</span></span></div>
+<div class="r"><span> <span class="d">○ monerod          stopped   official   alternative node</span></span></div>
+</div>
+<div class="p"><div class="pt a">Needs attention</div>
+<div><span class="a">◆</span> This device is locked. Press <span class="a">u</span> to unlock all waiting services.</div>
+<div><span class="err">✕</span> bell keeps failing. Press <span class="a">l</span> to read its log.</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">↵</span> open  <span class="a">s</span> start/stop  <span class="a">/</span> search  <span class="a">Tab</span> next tab  <span class="a">?</span> help</span><span><span class="a">q</span> quit</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feed key changed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Feeds <span class="d">›</span> <b>old-tools</b></div><div class="err">✕ Updates blocked</div></div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">This feed's signing key changed</div>
+<div>Publishers sometimes rotate keys. It can also mean the feed was taken over. Nothing new from this feed will install until you decide.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Keys</div>
+<div class="r"><span class="d">Trusted</span><span>SHA256:08bd 42f1 a7c3 91de 66e0 d214 f8a9 03c7</span></div>
+<div class="r"><span class="err">Now signing</span><span class="err">SHA256:e93a 17c0 5bd2 80f4 1a6c 39e7 42db a106</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Affected</div>
+<div class="r"><span>hash-tools 1.3.0</span><span class="d">Keeps running. No updates.</span></div>
+<div class="r"><span>peer-map 0.9.1</span><span class="d">Keeps running. No updates.</span></div>
+<div style="height:20px"></div>
+<div>Check the publisher's announcement through a channel other than this feed.</div>
+</div>
+<div class="p"><div class="pt">Your choice</div>
+<div class="s"> Keep the old key and stay blocked (safe default)</div>
+<div> Trust the new key  <span class="d">you must type the feed name to confirm</span></div>
+<div> Remove this feed</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> choose  <span class="a">↵</span> confirm  <span class="a">Esc</span> decide later</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

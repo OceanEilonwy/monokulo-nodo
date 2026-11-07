@@ -1,0 +1,24 @@
+# Template file for 'cuprated'
+pkgname=cuprated
+version=0.1.0preview
+revision=1
+_tag=cuprated-0.1.0-preview
+_commit=318c2dea4eb404ac4ecf2bea87c1a4696b0198cc
+build_style=cargo
+configure_args="--no-default-features"
+make_install_args="--path binaries/cuprated"
+hostmakedepends="cmake make pkg-config"
+short_desc="Cuprate Monero node binary"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="AGPL-3.0-only"
+homepage="https://github.com/Cuprate/cuprate"
+distfiles="https://github.com/Cuprate/cuprate/archive/refs/tags/${_tag}.tar.gz"
+checksum=7644523c7d9b2797c3a6f0c60721ee5aa65cf2e47e5dd5fd14c856be28806c1d
+
+# The release tarball has no git history, and the build needs the commit hash.
+export GITHUB_SHA="${_commit}"
+
+post_install() {
+	vlicense LICENSE
+	vlicense LICENSE-AGPL
+}

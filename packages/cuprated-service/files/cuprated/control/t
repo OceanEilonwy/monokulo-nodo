@@ -1,0 +1,4 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL cuprated through
+# --die-with-parent. Signal cuprated directly so it can shut down cleanly.
+exec pkill -TERM -u _cuprated -x cuprated

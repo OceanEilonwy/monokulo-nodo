@@ -1,0 +1,2 @@
+# Chain data lives on the SSD. The service will not start without it.
+DATA_MOUNT=/media/monero

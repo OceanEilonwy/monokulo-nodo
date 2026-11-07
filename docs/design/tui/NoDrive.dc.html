@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data drive missing</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div><span class="s"> Home </span>  Packages  Web  Feeds  Updates  Logs</div><div class="err">✕ Node stopped</div></div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">The data drive is not available</div>
+<div>The SSD labelled NODO_BLOCKCHAIN is not mounted at /media/monero. cuprated will not start, so chain data cannot fill the system disk.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Checks</div>
+<div class="r"><span><span class="ok">✓</span> NVMe drive detected</span><span class="d">nvme0n1, 1.9 TB</span></div>
+<div class="r"><span><span class="ok">✓</span> Partition found</span><span class="d">NODO_BLOCKCHAIN, xfs</span></div>
+<div class="r"><span><span class="err">✕</span> Mount failed</span><span class="err">structure needs cleaning</span></div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Also waiting</div>
+<div class="d">moneropay, wallet-relay, bell. They start after the node returns.</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What you can do</div>
+<div class="s"> Retry mount</div>
+<div> Run a read-only drive check  <span class="d">changes nothing</span></div>
+<div> Repair the filesystem  <span class="d">can lose data, explains first and asks to confirm</span></div>
+<div> Show diagnostics</div>
+<div class="d" style="margin-top:8px">The TUI never formats a drive without you typing its label.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> choose  <span class="a">↵</span> confirm  <span class="a">l</span> system log  <span class="a">!</span> shell</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

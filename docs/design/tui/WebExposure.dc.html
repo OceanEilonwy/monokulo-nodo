@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Choose exposure</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> <b>shop</b> <span class="d">›</span> Exposure</div><div class="a">● 1 unsaved change</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Where is shop available? Turn on any combination.</div>
+<div class="r"><span>[x] <span class="ok">●</span> Local network</span><span>https://shop.local  <span class="ok">Online</span></span></div>
+<div class="d" style="margin-left:36px">Devices on your Wi-Fi or LAN</div>
+<div style="height:8px"></div>
+<div class="r"><span>[x] <span class="i">◉</span> Tor onion</span><span>http://abc…xyz.onion  <span class="ok">Online</span></span></div>
+<div class="d" style="margin-left:36px">Anyone with the address, using Tor Browser</div>
+<div style="height:8px"></div>
+<div class="r s"><span> [x] ▲ Public internet </span><span>https://shop.example.com  Turning on </span></div>
+<div class="d" style="margin-left:36px">Anyone, at your own domain</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt a">Turning on public internet</div>
+<div><span class="a">▲</span> Your home IP becomes visible in public DNS.</div>
+<div><span class="a">▲</span> shop can be reached and attacked by anyone on the internet.</div>
+<div><span class="a">▲</span> Your router must forward ports 80 and 443 to this device.</div>
+<div style="height:12px"></div>
+<div class="err">✕ Keeping onion on too can link it to your home IP.</div>
+<div class="d">  Identical content on both addresses lets visitors connect them. Use a separate</div>
+<div class="d">  site for onion if that address must stay anonymous.</div>
+<div style="height:12px"></div>
+<div class="d">Local and onion stay online while public is checked and confirmed.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">Space</span> toggle  <span class="a">↵</span> save and check  <span class="a">e</span> edit address  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

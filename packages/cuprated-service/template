@@ -1,0 +1,23 @@
+# Template file for 'cuprated-service'
+pkgname=cuprated-service
+version=0.1.0
+revision=2
+archs="aarch64 x86_64"
+depends="cuprated bubblewrap nftables procps-ng"
+short_desc="Sandboxed runit service and default config for cuprated"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/Cuprate/cuprate"
+conf_files="/etc/cuprated/Cuprated.toml"
+system_accounts="_cuprated"
+_cuprated_homedir="/var/lib/cuprated"
+make_dirs="/var/lib/cuprated 0750 _cuprated _cuprated
+ /var/log/cuprated 0750 _cuprated _cuprated"
+
+do_install() {
+	vinstall ${FILESDIR}/Cuprated.toml 644 etc/cuprated
+	vinstall ${FILESDIR}/cuprated.nft 644 etc/nftables.d
+	vsv cuprated
+	vmkdir etc/sv/cuprated/control
+	vinstall ${FILESDIR}/cuprated/control/t 755 etc/sv/cuprated/control
+}

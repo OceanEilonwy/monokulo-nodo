@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Update rolled back</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Updates <span class="d">›</span> <b>Results</b></div><div class="a">1 updated, 1 rolled back</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Results</div>
+<div class="r"><span><span class="ok">✓</span> system base   2026.12</span><span class="d">Applied, restart when ready</span></div>
+<div class="r s"><span> ✕ moneropay     still on 2.7.0 </span><span>2.7.1 rolled back </span></div>
+</div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">moneropay 2.7.1 failed its health check</div>
+<div>Version 2.7.0 and its data were restored. moneropay is <span class="ok">running</span>.</div>
+<div style="height:12px"></div>
+<div class="err">database migration 14: table "invoices" already exists</div>
+<div class="d" style="margin-top:8px">This looks like a package problem. Your settings were not the cause.</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What you can do</div>
+<div class="s"> Keep 2.7.0 and hold this version</div>
+<div> Try the update again</div>
+<div> Copy a report for the publisher  <span class="d">no keys or secrets included</span></div>
+<div> Read the full log</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> choose  <span class="a">↵</span> confirm  <span class="a">Esc</span> back to updates</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

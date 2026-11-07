@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feeds</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Home  Packages  Web  <span class="s"> Feeds </span>  Updates <span class="a">(2)</span>  Logs</div><div class="d">monokulo-nodo</div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div class="p" style="flex:1"><div class="pt">Your feeds</div>
+<div class="r d"><span>   Name          Packages   Key       Checked</span></div>
+<div class="r"><span> <span class="ok">✓</span> official            12   built in  2 hours ago</span></div>
+<div class="r s"><span> ✓ monokulo             6   pinned    2 hours ago </span></div>
+<div class="r"><span> <span class="ok">✓</span> community           23   pinned    2 hours ago</span></div>
+<div class="r"><span> <span class="err">✕</span> old-tools            4   <span class="err">changed</span>   <span class="err">blocked, press Enter</span></span></div>
+<div class="r"><span> <span class="a">▲</span> experiments         3   pinned    <span class="a">unreachable since yesterday</span></span></div>
+</div>
+<div class="p"><div class="pt">monokulo</div>
+<div class="r"><span class="d">Address</span><span>https://github.com/example/monokulo-feed</span></div>
+<div class="r"><span class="d">Key</span><span>SHA256:7f3a 91c2 0e4d b856 4c11 de90 aa72 3b6f</span></div>
+<div class="r"><span class="d">Added</span><span>12 October 2026</span></div>
+<div class="r"><span class="d">Installed from it</span><span>monokulo-pay, bell</span></div>
+</div>
+</div>
+<div class="r d"><span><span class="a">a</span> add  <span class="a">r</span> refresh  <span class="a">e</span> disable  <span class="a">x</span> remove  <span class="a">↵</span> packages</span><span>Removing a feed keeps installed packages, without updates.</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

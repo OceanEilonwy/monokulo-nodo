@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Install progress</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Installing <b>moneropay</b> 2.7.0</div><div class="d">Step 5 of 8</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Progress</div>
+<div class="r"><span><span class="ok">✓</span> Download package</span><span class="d">14 MB</span></div>
+<div class="r"><span><span class="ok">✓</span> Verify feed signature</span><span class="d">official key</span></div>
+<div class="r"><span><span class="ok">✓</span> Check package contents</span><span class="d">no root scripts, paths allowed</span></div>
+<div class="r"><span><span class="ok">✓</span> Install files</span><span class="d">/opt/nodo/apps/moneropay</span></div>
+<div class="r"><span><span class="i">▸</span> <b>Create sandbox and firewall rules</b></span><span class="i">working</span></div>
+<div class="r d"><span>○ Set up encrypted storage</span></div>
+<div class="r d"><span>○ Configure settings</span></div>
+<div class="r d"><span>○ Start and run health check</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px;overflow:hidden"><div class="pt">Details</div>
+<div class="d">created user _moneropay</div>
+<div class="d">sandbox allows /var/lib/apps/moneropay</div>
+<div class="d">firewall allows _moneropay to 127.0.0.1:18081</div>
+<div>checking rules before loading them</div>
+</div>
+<div class="r d"><span>A failed step removes what this install added.</span><span><span class="a">Esc</span> cancel  <span class="a">v</span> full log</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

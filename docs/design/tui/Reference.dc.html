@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reference picker</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>moneropay <span class="d">›</span> Settings <span class="d">›</span> <b>Daemon RPC</b></div><div class="d">Expects a URL</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Search public settings</div><div><span class="a">$</span> rpc<span class="s"> </span></div></div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Compatible settings</div>
+<div class="r s"><span> monero-daemon.public_rpc_url   </span><span>http://127.0.0.1:18081 </span></div>
+<div class="r"><span> monero-daemon.restricted_rpc_url </span><span class="d">http://127.0.0.1:18089 </span></div>
+<div class="r"><span> wallet-rpc.url                </span><span class="d">http://127.0.0.1:34512 </span></div>
+<div style="height:20px"></div>
+<div class="d"> Not shown: 4 settings of the wrong type. 2 secrets, which need a grant.</div>
+<div style="height:20px"></div>
+<div class="r"><span class="i"> monero-daemon is a role.</span></div>
+<div class="d"> It stays correct if you switch between cuprated and monerod.</div>
+</div>
+<div class="p"><div class="pt">Using this reference will</div>
+<div><span class="i">●</span> Make moneropay depend on monero-daemon, so it starts afterward.</div>
+<div><span class="i">●</span> Let moneropay's sandbox reach 127.0.0.1:18081.</div>
+<div><span class="i">●</span> Update and restart moneropay whenever the value changes.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">↵</span> use reference  <span class="a">t</span> type a value instead  <span class="a">Esc</span> cancel</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

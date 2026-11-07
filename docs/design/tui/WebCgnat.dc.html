@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Public blocked by ISP</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> shop <span class="d">›</span> <b>Reachability check</b></div><div class="err">✕ Public cannot work on this connection</div></div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">Your ISP shares your public IP (CGNAT)</div>
+<div>Router forwarding will not help, because traffic stops at your ISP before it reaches your router. Dynamic DNS would point visitors at an address you do not control.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Evidence</div>
+<div class="r"><span class="d">Your router's WAN address</span><span>100.72.14.9 <span class="d">in 100.64.0.0/10</span></span></div>
+<div class="r"><span class="d">Address the internet sees</span><span>203.0.113.42</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What you can do</div>
+<div class="r s"><span> ◉ Turn on Tor onion </span><span>Works now, no domain needed </span></div>
+<div class="r"><span>   Ask your ISP for a public IP</span><span class="d">Some offer it free or as an add-on</span></div>
+<div class="r"><span>   Use IPv6 if your ISP provides it</span><span class="d">Only IPv6 visitors can reach you</span></div>
+<div class="r"><span>   Connect your own relay tunnel</span><span class="d">Needs a server you control</span></div>
+<div style="height:14px"></div>
+<div class="d">Your domain stays connected. Run this check again if your connection changes.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> choose  <span class="a">↵</span> continue  <span class="a">r</span> check again  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

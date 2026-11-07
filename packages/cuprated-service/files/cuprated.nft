@@ -1,0 +1,13 @@
+# Loaded after /etc/nftables.conf, which sets the default-deny input policy.
+table inet monokulo {
+	chain input {
+		tcp dport 18080 accept
+	}
+
+	chain output {
+		meta skuid "_cuprated" oifname "lo" accept
+		meta skuid "_cuprated" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
+		meta skuid "_cuprated" meta l4proto tcp accept
+		meta skuid "_cuprated" drop
+	}
+}

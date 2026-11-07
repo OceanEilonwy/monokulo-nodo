@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _cuprated:_cuprated svlogd -tt /var/log/cuprated

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Package rejected</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Install <b>fast-sync-helper</b> 1.0.0</div><div class="a">community feed</div></div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">Not installed</div>
+<div>This package breaks the install rules, so nothing was changed on this device.</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Why it was rejected</div>
+<div><span class="err">✕</span> Runs a setup script as root</div>
+<div class="d">   ./INSTALL</div>
+<div style="height:12px"></div>
+<div><span class="err">✕</span> Writes outside its own folder</div>
+<div class="d">   /etc/cron.d/fast-sync-helper</div>
+<div style="height:12px"></div>
+<div><span class="err">✕</span> Tries to replace a system package</div>
+<div class="d">   glibc 2.42</div>
+<div style="height:12px"></div>
+<div><span class="ok">✓</span> Signature matches the feed's key</div>
+<div class="d">   A valid signature shows who published it, not that it is safe.</div>
+</div>
+<div class="p"><div class="pt">What you can do</div>
+<div class="d">There is no override for these rules. Report it to the feed's publisher, or remove the feed if you no longer trust it.</div>
+</div>
+<div class="r d"><span><span class="a">y</span> copy report  <span class="a">f</span> open feed  <span class="a">Esc</span> back to search</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

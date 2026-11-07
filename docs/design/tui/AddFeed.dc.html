@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Add a feed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Feeds <span class="d">›</span> <b>Add a feed</b></div><div class="d">Step 2 of 2</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Address</div>
+<div>https://github.com/example/monero-tools-feed</div>
+<div class="ok" style="margin-top:8px">✓ Found feed "monero-tools", 9 packages, signed</div>
+</div>
+<div class="p" style="margin-top:8px;border-color:#F2A33A"><div class="pt a">Check this key</div>
+<div style="font-size:18px;line-height:28px;font-weight:700">SHA256:c41e 8d07 2fa9 66b3 19e0 75cd 0b42 e8a1</div>
+<div class="d" style="margin-top:8px">Compare it with the key the publisher shows on a site you already trust.</div>
+<div class="d">This device will only accept this feed's packages if they are signed by this key.</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What trusting it allows</div>
+<div><span class="i">●</span> Its packages appear in search and can offer updates.</div>
+<div><span class="i">●</span> You still review each package's permissions before it installs.</div>
+<div style="height:20px"></div>
+<div><span class="ok">✓</span> It cannot replace system packages or another feed's packages.</div>
+<div><span class="ok">✓</span> It cannot install anything without you.</div>
+<div style="height:20px"></div>
+<div class="d">Packages run on your node, near your wallet data. Only add publishers you trust.</div>
+</div>
+<div class="r"><span><span class="s"> Cancel </span>   Trust this key</span><span class="d"><span class="a">←→</span> choose  <span class="a">↵</span> confirm  <span class="a">p</span> list packages  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

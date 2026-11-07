@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Missing capability</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Install <b>zmq-indexer</b> 0.8.0</div><div class="a">▲ Needs a change first</div></div>
+<div class="p" style="margin-top:8px;border-color:#F2A33A"><div class="pt a">Your node cannot serve this package</div>
+<div>zmq-indexer needs ZMQ. Your current node, cuprated, does not provide it.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">What each node provides</div>
+<div class="r d"><span>                     cuprated   monerod</span></div>
+<div class="r"><span>daemon-rpc              <span class="ok">✓</span>          <span class="ok">✓</span></span></div>
+<div class="r"><span>zmq                     <span class="err">✕</span>          <span class="ok">✓</span></span></div>
+<div class="r"><span>i2p                     <span class="err">✕</span>          <span class="ok">✓</span></span></div>
+<div class="r"><span>Synced on this device   <span class="ok">✓</span>          <span class="err">✕</span></span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Your options</div>
+<div class="s"> Cancel and keep cuprated</div>
+<div> Check for a compatible version  <span class="d">none found in your feeds</span></div>
+<div> Install monerod and switch  <span class="d">about 300 GB more and a full sync</span></div>
+<div style="height:20px"></div>
+<div class="d">Switching stops services that need a node until it finishes syncing.</div>
+<div class="d">Both chains are kept, so you can switch back without syncing again.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> choose  <span class="a">↵</span> confirm  <span class="a">Esc</span> cancel</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

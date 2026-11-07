@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reachability check</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> shop <span class="d">›</span> <b>Reachability check</b></div><div class="a">▲ One step needs you</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">Checks</div>
+<div class="r"><span><span class="ok">✓</span> Domain and API key work</span><span class="d">example.com</span></div>
+<div class="r"><span><span class="ok">✓</span> Public IP found</span><span class="d">203.0.113.42</span></div>
+<div class="r"><span><span class="ok">✓</span> Router has a real public IP</span><span class="d">No CGNAT detected</span></div>
+<div class="r"><span><span class="ok">✓</span> Temporary DNS record works</span><span class="d">Removed after this check</span></div>
+<div class="r"><span><span class="err">✕</span> <b>Port 80 is not reachable from outside</b></span><span class="err">Timed out</span></div>
+<div class="r"><span><span class="err">✕</span> <b>Port 443 is not reachable from outside</b></span><span class="err">Timed out</span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Set up port forwarding on your router</div>
+<div class="r"><span class="d">Router admin page</span><span>http://192.168.1.1</span></div>
+<div class="r"><span class="d">Forward TCP 80</span><span>to 192.168.1.50:80</span></div>
+<div class="r"><span class="d">Forward TCP 443</span><span>to 192.168.1.50:443</span></div>
+<div style="height:12px"></div>
+<div class="d">Also reserve 192.168.1.50 for this device, so the forwarding keeps working.</div>
+<div class="d">Monokulo will not change your router automatically. UPnP is off by default.</div>
+<div style="height:12px"></div>
+<div>shop is not public yet. Its local and onion addresses keep working during this check.</div>
+</div>
+<div class="r d"><span><span class="a">r</span> check again  <span class="a">?</span> router guides  <span class="a">o</span> turn on Tor onion  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

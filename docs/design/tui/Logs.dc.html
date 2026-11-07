@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Service logs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Home  Packages  Web  Feeds  Updates <span class="a">(2)</span>  <span class="s"> Logs </span></div><div class="ok">● Following live</div></div>
+<div style="flex:1;min-height:0;display:flex;gap:16px;padding-top:8px">
+<div class="p" style="width:180px"><div class="pt">Service</div>
+<div>cuprated</div>
+<div class="s"> bell ✕ </div>
+<div>moneropay</div>
+<div>tor</div>
+<div>wallet-relay</div>
+<div class="d">System</div>
+<div class="d">Updates</div>
+</div>
+<div class="p" style="flex:1;min-width:0;overflow:hidden"><div class="pt">bell</div>
+<div class="d">14:02:11 INFO  starting version 1.2.0</div>
+<div class="d">14:02:11 INFO  reading /etc/bell/config.toml</div>
+<div class="d">14:02:12 INFO  connecting to wallet-relay</div>
+<div class="err">14:02:17 ERROR connection refused: wallet-relay is locked</div>
+<div class="d">14:02:17 INFO  exiting with status 1</div>
+<div class="a" style="margin:8px 0">── restarted by supervisor, attempt 3 ──</div>
+<div class="d">14:02:47 INFO  starting version 1.2.0</div>
+<div class="d">14:02:48 INFO  connecting to wallet-relay</div>
+<div class="err">14:02:53 ERROR connection refused: wallet-relay is locked</div>
+<div class="d">14:02:53 INFO  exiting with status 1</div>
+<div class="p" style="margin-top:24px;border-color:#F2A33A"><div class="pt a">Suggestion</div>
+<div>bell depends on wallet-relay, which is locked.</div>
+<div>Press <span class="a">u</span> to unlock the device. bell will start automatically.</div>
+</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> service  <span class="a">/</span> find  <span class="a">e</span> errors only  <span class="a">f</span> follow  <span class="a">y</span> copy with secrets removed</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

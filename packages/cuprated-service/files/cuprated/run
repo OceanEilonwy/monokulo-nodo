@@ -1,0 +1,34 @@
+#!/bin/sh
+exec 2>&1
+# With a console as stdin, cuprated runs its command prompt and floods the log.
+exec </dev/null
+
+# A board can keep chain data on a separate drive. Never fall back to the system disk.
+data=/var/lib/cuprated
+[ -r ./conf ] && . ./conf
+if [ -n "${DATA_MOUNT:-}" ]; then
+	if ! mountpoint -q "$DATA_MOUNT"; then
+		echo "refusing to start: $DATA_MOUNT is not mounted"
+		sleep 30
+		exit 1
+	fi
+	data=$DATA_MOUNT/cuprated
+	install -d -o _cuprated -g _cuprated -m 750 "$data"
+fi
+
+exec chpst -u _cuprated:_cuprated bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind /etc/cuprated /etc/cuprated \
+	--ro-bind-try /etc/resolv.conf /etc/resolv.conf \
+	--ro-bind-try /etc/ssl /etc/ssl \
+	--bind "$data" /var/lib/cuprated \
+	--proc /proc \
+	--dev /dev \
+	--tmpfs /tmp \
+	--setenv HOME /var/lib/cuprated \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/usr/bin/cuprated --config-file /etc/cuprated/Cuprated.toml --skip-config-warning

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings rolled back</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>moneropay <span class="d">›</span> <b>Settings</b></div><div class="ok">● Running on previous settings</div></div>
+<div class="p" style="margin-top:8px;border-color:#FF8A7A"><div class="pt err">Your changes were not kept</div>
+<div>moneropay failed its health check with the new settings, so its previous settings were restored.</div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">What happened</div>
+<div class="r"><span><span class="ok">✓</span> Settings validated and saved</span></div>
+<div class="r"><span><span class="ok">✓</span> Service restarted</span></div>
+<div class="r"><span><span class="err">✕</span> Health check failed after 30 seconds</span></div>
+<div class="r"><span><span class="ok">✓</span> Previous settings restored, service healthy</span></div>
+</div>
+<div class="p" style="margin-top:8px"><div class="pt">Likely cause</div>
+<div class="err">listen tcp :18081: bind: address already in use</div>
+<div class="d" style="margin-top:8px">API port 18081 is used by monero-daemon. Pick a different port.</div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">Your draft, not applied</div>
+<div class="r"><span class="d">API port</span><span>5000 <span class="d">→</span> <span class="err">18081</span></span></div>
+<div class="r"><span class="d">Log level</span><span>info <span class="d">→</span> debug</span></div>
+</div>
+<div class="r d"><span><span class="a">↵</span> edit draft  <span class="a">l</span> full log  <span class="a">x</span> discard draft  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Web overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Home  Packages  <span class="s"> Web </span>  Feeds  Updates <span class="a">(2)</span>  Logs</div><div class="d">monokulo-nodo</div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div class="p" style="flex:1"><div class="pt">Sites</div>
+<div class="r d"><span> Package        Local  Onion  Public  Public address</span><span>Status </span></div>
+<div class="r s"><span> shop           ●      ◉      ▲       shop.example.com</span><span>All online </span></div>
+<div class="r"><span> monokulo-pay   <span class="ok">●</span>      <span class="i">◉</span>      <span class="d">·</span>       <span class="d">Not public</span></span><span class="ok">All online </span></div>
+<div class="r"><span> moneropay      <span class="ok">●</span>      <span class="d">·</span>      <span class="d">·</span>       <span class="d">Not public</span></span><span class="ok">Online </span></div>
+<div class="r"><span> wallet-relay   <span class="d">·</span>      <span class="d">·</span>      <span class="d">·</span>       <span class="d">Off</span></span><span class="a">◆ Device locked </span></div>
+<div style="height:16px"></div>
+<div class="d"> ● Local network   ◉ Tor onion   ▲ Public, reveals your home IP   · off</div>
+<div class="d"> A site can use any combination. Each address is switched on and off separately.</div>
+</div>
+<div style="display:flex;gap:16px">
+<div class="p" style="flex:1"><div class="pt">Domain</div>
+<div class="r"><span class="d">Domain</span><span>example.com</span></div>
+<div class="r"><span class="d">Provider</span><span>Porkbun</span></div>
+<div class="r"><span class="d">Certificates</span><span class="ok">✓ Renew in 61 days</span></div>
+</div>
+<div class="p" style="flex:1"><div class="pt">Dynamic DNS</div>
+<div class="r"><span class="d">Public IP</span><span>203.0.113.42</span></div>
+<div class="r"><span class="d">DNS matches</span><span class="ok">✓ Yes</span></div>
+<div class="r"><span class="d">Last changed</span><span>3 days ago</span></div>
+</div>
+</div>
+<div class="p"><div class="pt">Ports</div>
+<div class="r"><span>80 and 443 are open on this device because shop is public.</span><span class="ok">✓ Reachable</span></div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↵</span> change exposure  <span class="a">d</span> domains  <span class="a">t</span> test reachability  <span class="a">l</span> proxy log  <span class="a">o</span> take all sites offline</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>
