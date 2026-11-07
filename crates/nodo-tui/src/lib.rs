@@ -6,3 +6,4 @@ pub mod model;
 pub mod secret;
 pub mod theme;
 pub mod update;
+pub mod view;
