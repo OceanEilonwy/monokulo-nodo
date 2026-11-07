@@ -12,4 +12,5 @@ pub mod dns;
 pub mod http;
 pub mod ip;
 pub mod names;
+pub mod reachability;
 pub mod secret;
