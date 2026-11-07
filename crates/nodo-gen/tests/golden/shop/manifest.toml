@@ -1,0 +1,23 @@
+api_version = 1
+id = "shop"
+version = "1.2.0"
+exec = ["bin/shop.server", "--listen", "/run/apps/shop/web.sock", "--name", "Henry's shop"]
+needs = ["daemon-rpc"]
+settings = "settings.lua"
+
+[network]
+outbound = "internet"
+
+[[network.inbound]]
+port = 9050
+protocol = "tcp"
+scope = "lan"
+
+[[network.inbound]]
+port = 9051
+protocol = "udp"
+scope = "local"
+
+[[web]]
+name = "web"
+upstream = "unix:/run/apps/shop/web.sock"

@@ -1,0 +1,4 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL the service through
+# --die-with-parent. Signal the service directly so it can shut down cleanly.
+exec pkill -TERM -u _shop -x 'shop\.server'

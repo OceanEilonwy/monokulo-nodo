@@ -1,0 +1,8 @@
+# Loaded after /etc/nftables.conf, which sets the default-deny input policy.
+table inet monokulo {
+	chain output {
+		meta skuid "_vault" ct state established,related accept
+		meta skuid "_vault" oifname "lo" tcp dport 8200 accept
+		meta skuid "_vault" drop
+	}
+}

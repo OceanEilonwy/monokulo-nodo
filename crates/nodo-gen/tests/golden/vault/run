@@ -1,0 +1,28 @@
+#!/bin/sh
+exec 2>&1
+# With a console as stdin, a service can run a command prompt and flood the log.
+exec </dev/null
+
+# Encrypted storage opens with the device passphrase. Wait here until it does, and
+# never fall back to an unencrypted directory.
+data=/run/nodo/volumes/vault
+if ! mountpoint -q "$data"; then
+	echo "waiting: encrypted storage for vault is locked"
+	sleep 5
+	exit 1
+fi
+
+exec chpst -u _vault:_vault bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind /opt/apps/vault /opt/apps/vault \
+	--bind "$data" /var/lib/apps/vault \
+	--proc /proc \
+	--dev /dev \
+	--tmpfs /tmp \
+	--setenv HOME /var/lib/apps/vault \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/opt/apps/vault/bin/vault-with-a-very-long-name --serve

@@ -1,0 +1,18 @@
+api_version = 1
+id = "cuprated"
+version = "0.0.0"
+exec = [
+    "/usr/bin/cuprated",
+    "--config-file",
+    "/etc/cuprated/Cuprated.toml",
+    "--skip-config-warning",
+]
+provides = ["monero-daemon"]
+
+[network]
+outbound = "internet"
+
+[[network.inbound]]
+port = 18080
+protocol = "tcp"
+scope = "internet"
