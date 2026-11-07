@@ -9,6 +9,10 @@ description = "Caddy, Tor and firewall config generation, plus dynamic DNS, for 
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "nodo-ddns"
+path = "src/bin/nodo-ddns.rs"
+
 [dependencies]
 nodo-api = { path = "../nodo-api" }
 nodo-manifest = { path = "../nodo-manifest" }
