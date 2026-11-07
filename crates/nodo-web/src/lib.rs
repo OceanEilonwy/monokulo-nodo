@@ -7,7 +7,9 @@
 #![forbid(unsafe_code)]
 
 pub mod caddy;
+pub mod detect;
 pub mod dns;
 pub mod http;
+pub mod ip;
 pub mod names;
 pub mod secret;
