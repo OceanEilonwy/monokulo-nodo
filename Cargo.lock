@@ -825,6 +825,7 @@ dependencies = [
  "nodo-manifest",
  "nodo-settings",
  "serde",
+ "sha2",
  "tempfile",
  "thiserror",
  "toml",
