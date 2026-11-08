@@ -338,7 +338,12 @@ struct Resolved<'a> {
 pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, WebConfigError> {
     validate_settings(settings)?;
 
-    let mut resolved = sites.iter().map(|site| resolve(site, settings)).collect::<Result<Vec<_>, _>>()?;
+    // A site with every exposure off produces nothing, so it cannot clash with anything either.
+    let mut resolved = sites
+        .iter()
+        .filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public)
+        .map(|site| resolve(site, settings))
+        .collect::<Result<Vec<_>, _>>()?;
     resolved.sort_by(|a, b| (&a.site.package, &a.site.service.name).cmp(&(&b.site.package, &b.site.service.name)));
     check_unique(&resolved)?;
 

@@ -805,3 +805,13 @@ fn a_chosen_public_host_needs_no_domain_and_is_validated() {
     shop.public_host = Some("shop.local".to_owned());
     assert!(generate(&[shop], &settings()).is_err());
 }
+
+#[test]
+fn sites_that_are_off_never_block_the_others() {
+    let on = site("a", "a", 8001, Exposure { local: true, ..Exposure::default() });
+    let mut copy = site("b", "b", 8001, Exposure::default());
+    copy.service.upstream = "127.0.0.1:8001".to_owned();
+    assert!(generate(&[on.clone(), copy.clone()], &settings()).is_ok());
+    copy.exposure.local = true;
+    assert!(matches!(generate(&[on, copy], &settings()), Err(WebConfigError::SharedUpstream { .. })));
+}

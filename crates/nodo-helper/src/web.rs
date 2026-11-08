@@ -711,8 +711,10 @@ impl WebIo for RealWebIo {
             return Ok(false);
         };
         stream.set_read_timeout(Some(Duration::from_secs(60))).map_err(|e| e.to_string())?;
+        // Caddy's admin API accepts only an empty Host over a unix socket, as RFC 9112 asks for a
+        // request without an internet host.
         let head = format!(
-            "POST /load HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "POST /load HTTP/1.1\r\nHost: \r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             json.len()
         );
         stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(json)).map_err(|e| e.to_string())?;
