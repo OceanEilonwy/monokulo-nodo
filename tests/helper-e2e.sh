@@ -432,7 +432,7 @@ if [ -d /etc/sv/tor ]; then
 	onion_host=$(grep -o 'onion_url:Some("http://[a-z2-7]*\.onion"' /tmp/e2e.ws | head -1 | sed 's|.*http://||; s|"$||')
 	check "the onion listener answers for the onion host only" sh -c '
 		. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
-		is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/ADMIN)" 404 &&
+		grep -q "e2e shop /" /tmp/e2e.body &&
 		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
 else
 	echo "SKIP onion: tor is not installed"

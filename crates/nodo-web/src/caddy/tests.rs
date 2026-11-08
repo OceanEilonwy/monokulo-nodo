@@ -403,17 +403,16 @@ fn without_a_local_address_local_sites_wait_and_nothing_falls_back() {
 }
 
 #[test]
-fn the_local_address_must_be_private_and_in_the_lan() {
-    for bad in [[8, 8, 8, 8], [100, 64, 0, 9]] {
-        let settings = DomainSettings {
-            local_address: LocalAddress::Ready { address: std::net::Ipv4Addr::from(bad) },
-            ..settings()
-        };
-        let result = generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings);
-        assert!(matches!(result, Err(WebConfigError::UnsuitableLocalAddress(_))), "{bad:?}");
+fn an_unsuitable_local_address_makes_local_sites_wait_instead_of_failing() {
+    for bad in [[8, 8, 8, 8], [100, 64, 0, 9], [169, 254, 122, 240]] {
+        let address = std::net::Ipv4Addr::from(bad);
+        let settings = DomainSettings { local_address: LocalAddress::Ready { address }, ..settings() };
+        let plan = generate(&[site("a", "a", 8001, Exposure { local: true, public: true, ..Exposure::default() })], &settings)
+            .unwrap();
+        assert_eq!(local_problem(&plan), Some(&LocalUnavailable::UnsuitableAddress(address)), "{bad:?}");
+        assert!(!plan.caddy.apps.http.servers.contains_key("local"));
+        assert!(plan.caddy.apps.http.servers.contains_key("public"), "public keeps working");
     }
-    let narrow = DomainSettings { lan_ranges: vec!["10.0.0.0/8".to_owned()], ..settings() };
-    assert!(generate(&[], &narrow).is_err());
 }
 
 #[test]

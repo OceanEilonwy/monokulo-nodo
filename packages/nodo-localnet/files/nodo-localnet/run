@@ -68,7 +68,13 @@ trap 'exit 0' TERM
 started=$(date +%s)
 last=
 while :; do
-	address=$(dhcpcd -U -4 "$iface" 2>/dev/null | sed -n 's/^ip_address=//p')
+	lease=$(dhcpcd -U -4 "$iface" 2>/dev/null)
+	address=
+	# Without a DHCP server, dhcpcd falls back to a 169.254 link-local address. That is not a lease
+	# the router knows, and LAN devices could not reach it, so it never counts.
+	if printf '%s\n' "$lease" | grep -qx 'protocol=dhcp'; then
+		address=$(printf '%s\n' "$lease" | sed -n 's/^ip_address=//p')
+	fi
 	# The lease is only for an address. Outbound traffic must never leave from it.
 	ip -4 route show default dev "$iface" | grep -q . && ip -4 route del default dev "$iface"
 	if [ -n "$address" ]; then

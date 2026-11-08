@@ -89,8 +89,6 @@ pub enum WebConfigError {
     InvalidSetting { field: &'static str, value: String },
     #[error("site {site}: upstream port {port} is reserved for the web proxy")]
     ReservedPort { site: String, port: u16 },
-    #[error("the local address {0} is not a private address in the LAN ranges")]
-    UnsuitableLocalAddress(Ipv4Addr),
     #[error("no free loopback port for onion sites")]
     OutOfOnionPorts,
 }
@@ -362,7 +360,18 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut next_onion_port = u32::from(settings.onion_port_base);
 
     let public_listen = format!(":{CADDY_HTTPS_PORT}");
-    let local_ip = match &settings.local_address {
+    // An address that is not private and inside the LAN ranges is treated as no address, so local
+    // sites wait instead of every exposure failing.
+    let local_address = match settings.local_address {
+        LocalAddress::Ready { address }
+            if !address.is_private()
+                || !settings.lan_ranges.iter().any(|range| range_contains(range, IpAddr::V4(address))) =>
+        {
+            LocalAddress::Unavailable { reason: LocalUnavailable::UnsuitableAddress(address) }
+        }
+        ref other => other.clone(),
+    };
+    let local_ip = match &local_address {
         LocalAddress::Ready { address } => Some(*address),
         LocalAddress::Unavailable { .. } => None,
     };
@@ -507,11 +516,11 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
         onion_pending,
         rate_limit_unenforced,
         local: LocalStatus {
-            remedy: match &settings.local_address {
+            remedy: match &local_address {
                 LocalAddress::Unavailable { reason } if !local_waiting.is_empty() => Some(reason.remedy()),
                 _ => None,
             },
-            address: settings.local_address.clone(),
+            address: local_address,
             waiting: local_waiting,
             mdns_names,
         },
@@ -582,12 +591,7 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
             return Err(invalid("lan_ranges", range));
         }
     }
-    if let LocalAddress::Ready { address } = settings.local_address {
-        let in_lan = settings.lan_ranges.iter().any(|range| range_contains(range, IpAddr::V4(address)));
-        if !address.is_private() || !in_lan {
-            return Err(WebConfigError::UnsuitableLocalAddress(address));
-        }
-    }
+
     if !is_safe_path(&settings.tor_dir) {
         return Err(invalid("tor_dir", &settings.tor_dir));
     }
