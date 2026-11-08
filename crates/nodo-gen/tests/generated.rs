@@ -7,8 +7,8 @@ use std::process::Command;
 
 use harness::{run_stubbed, Scenario};
 use nodo_gen::{
-    generate, run_script, volume_mount, Artifacts, GenError, LanGrant, Profile, ResolvedGrants,
-    ServiceSpec,
+    generate, generate_resolved, run_script, volume_mount, Artifacts, GenError, LanGrant, Profile,
+    Resolution, ResolvedGrants, ServiceSpec,
 };
 use nodo_manifest::{Manifest, Protocol};
 
@@ -195,7 +195,8 @@ fn hostile_programs_are_rejected() {
 
 #[test]
 fn empty_exec_is_rejected() {
-    let m = Manifest::parse_system("api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = []\n").unwrap();
+    let m = Manifest::parse_system("api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = []\n")
+        .unwrap();
     assert!(matches!(
         generate(&m, Profile::App, &ResolvedGrants::default()),
         Err(GenError::Exec(_))
@@ -245,7 +246,13 @@ fn hostile_arguments_reach_the_program_verbatim_and_never_execute() {
     ];
     for arg in hostile {
         let m = manifest("shop", &["bin/app", "--first", arg, "--last"]);
-        let artifacts = generate(&m, Profile::App, &ResolvedGrants::default()).unwrap();
+        // Resolved arguments are final text, so one holding `$(` is passed on as it is.
+        let resolution = Resolution {
+            exec: Some(m.exec.clone()),
+            ..Default::default()
+        };
+        let artifacts =
+            generate_resolved(&m, Profile::App, &ResolvedGrants::default(), &resolution).unwrap();
         let (out, canary) = run_stubbed(
             &artifacts.run,
             &Scenario {
@@ -634,7 +641,7 @@ fn encrypted_package_binds_only_its_own_volume_once_unlocked() {
     assert_eq!(out.code, Some(0));
     assert!(
         out.log
-            .contains("[--bind]\n[/run/nodo/volumes/vault]\n[/var/lib/apps/vault]\n"),
+            .contains("[--bind]\n[/run/nodo/volumes/vault/data]\n[/var/lib/apps/vault]\n"),
         "{}",
         out.log
     );
@@ -699,15 +706,206 @@ fn encrypted_package_has_no_plaintext_data_directory() {
 }
 
 #[test]
-fn encrypted_storage_refuses_a_data_mount() {
+fn data_mount_never_moves_encrypted_data_out_of_the_volume() {
     let grants = ResolvedGrants {
         data_mount: Some("/mnt/data".into()),
         ..Default::default()
     };
+    let with_mount = generate(&encrypted("vault"), Profile::App, &grants).unwrap();
+    let without = generate(
+        &encrypted("vault"),
+        Profile::App,
+        &ResolvedGrants::default(),
+    )
+    .unwrap();
+    // The mount only decides where the volume file lives, which is the helper's business.
+    assert_eq!(with_mount.run, without.run);
+    assert!(!with_mount.run.contains("/mnt/data"));
+}
+
+fn encrypted_with_settings(id: &str) -> Manifest {
+    Manifest::parse_system(&format!(
+        "api_version = 1\nid = \"{id}\"\nversion = \"1\"\nexec = [\"bin/a\"]\nsettings = \"s.lua\"\n\n[storage]\nencrypted = true\n"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn encrypted_settings_and_logs_stay_inside_the_volume() {
+    let artifacts = generate(
+        &encrypted_with_settings("vault"),
+        Profile::App,
+        &ResolvedGrants::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        artifacts.layout.config_dir,
+        "/run/nodo/volumes/vault/config"
+    );
+    assert_eq!(artifacts.layout.log_dir, "/run/nodo/volumes/vault/log");
+    assert_eq!(artifacts.layout.env_file, "/run/nodo/secrets/vault/env");
+    assert!(artifacts
+        .run
+        .contains("--ro-bind /run/nodo/volumes/vault/config /etc/apps/vault \\\n"));
+    assert!(!artifacts.run.contains(" /etc/apps/vault /etc/apps/vault"));
+    for dir in &artifacts.directories {
+        assert!(dir.path.starts_with("/run/nodo/volumes/vault/"), "{dir:?}");
+    }
+    let config = artifacts
+        .directories
+        .iter()
+        .find(|d| d.path.ends_with("/config"))
+        .unwrap();
+    assert_eq!(
+        config.owner, None,
+        "the service must not own its config directory"
+    );
+}
+
+#[test]
+fn encrypted_logger_waits_for_the_volume() {
+    let log_run = generate(
+        &encrypted("vault"),
+        Profile::App,
+        &ResolvedGrants::default(),
+    )
+    .unwrap()
+    .log_run;
+    let (out, _) = run_stubbed(
+        &log_run,
+        &Scenario {
+            conf: None,
+            mounted: false,
+        },
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(out.log.contains("--- sleep"), "{}", out.log);
+    assert!(!out.log.contains("svlogd"), "logged in clear: {}", out.log);
+    let (out, _) = run_stubbed(
+        &log_run,
+        &Scenario {
+            conf: None,
+            mounted: true,
+        },
+    );
+    assert!(
+        out.log
+            .contains("[svlogd]\n[-tt]\n[/run/nodo/volumes/vault/log]\n"),
+        "{}",
+        out.log
+    );
+}
+
+#[test]
+fn sealed_settings_live_in_memory_and_the_service_waits_for_them() {
+    let m = Manifest::parse_system(
+        "api_version = 1\nid = \"shop\"\nversion = \"1\"\nexec = [\"bin/a\"]\nsettings = \"s.lua\"\n",
+    )
+    .unwrap();
+    let sealed = Resolution {
+        exec: None,
+        sealed_settings: true,
+    };
+    let artifacts =
+        generate_resolved(&m, Profile::App, &ResolvedGrants::default(), &sealed).unwrap();
+    assert_eq!(artifacts.layout.config_dir, "/run/nodo/secrets/shop/config");
+    assert_eq!(artifacts.layout.env_file, "/run/nodo/secrets/shop/env");
+    assert!(artifacts
+        .run
+        .contains("--ro-bind /run/nodo/secrets/shop/config /etc/apps/shop \\\n"));
+    assert!(artifacts
+        .directories
+        .iter()
+        .all(|d| !d.path.contains("/etc/apps")));
+    // The env file is missing, as it is after every reboot until an unlock.
+    let (out, _) = run_stubbed(
+        &artifacts.run,
+        &Scenario {
+            conf: None,
+            mounted: false,
+        },
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stdout
+            .contains("waiting: settings for shop are sealed until the device is unlocked"),
+        "{out:?}"
+    );
+    assert!(
+        !out.log.contains("chpst"),
+        "started while sealed: {}",
+        out.log
+    );
+}
+
+#[test]
+fn settings_arrive_as_environment_never_as_arguments() {
+    let m = Manifest::parse_system(
+        "api_version = 1\nid = \"shop\"\nversion = \"1\"\nexec = [\"bin/a\"]\nsettings = \"s.lua\"\n",
+    )
+    .unwrap();
+    let run = generate(&m, Profile::App, &ResolvedGrants::default())
+        .unwrap()
+        .run;
+    let env_at = run.find(". /var/lib/nodo/env/shop.env\n").unwrap();
+    assert!(
+        env_at < run.find("exec chpst").unwrap(),
+        "read as root, before dropping privileges"
+    );
+    assert!(run.contains("set -a\n. /var/lib/nodo/env/shop.env\nset +a\n"));
+    // Packages without settings have nothing to read.
+    assert!(
+        !generate(&app("plain"), Profile::App, &ResolvedGrants::default())
+            .unwrap()
+            .run
+            .contains(".env")
+    );
+}
+
+#[test]
+fn the_resolved_command_line_runs_and_an_unresolved_one_is_refused() {
+    let m = manifest("shop", &["bin/app", "--port", "$(monero-daemon.rpc-port)"]);
     assert!(matches!(
-        generate(&encrypted("vault"), Profile::App, &grants),
-        Err(GenError::Grant(_))
+        generate(&m, Profile::App, &ResolvedGrants::default()),
+        Err(GenError::Exec(_))
     ));
+    let resolved = Resolution {
+        exec: Some(vec!["bin/app".into(), "--port".into(), "18081".into()]),
+        ..Default::default()
+    };
+    let run = generate_resolved(&m, Profile::App, &ResolvedGrants::default(), &resolved)
+        .unwrap()
+        .run;
+    assert!(
+        run.ends_with("\t/opt/nodo/apps/shop/bin/app --port 18081\n"),
+        "{run}"
+    );
+    let other_program = Resolution {
+        exec: Some(vec!["bin/evil".into()]),
+        ..Default::default()
+    };
+    assert!(
+        generate_resolved(&m, Profile::App, &ResolvedGrants::default(), &other_program).is_err()
+    );
+    let control = Resolution {
+        exec: Some(vec!["bin/app".into(), "a\nb".into()]),
+        ..Default::default()
+    };
+    assert!(generate_resolved(&m, Profile::App, &ResolvedGrants::default(), &control).is_err());
+}
+
+#[test]
+fn granted_udp_ports_open_only_on_loopback() {
+    let grants = ResolvedGrants {
+        loopback_udp_ports: vec![5353],
+        ..Default::default()
+    };
+    let nft = generate(&app("shop"), Profile::App, &grants).unwrap().nft;
+    assert!(
+        nft.contains("meta skuid \"_shop\" oifname \"lo\" udp dport 5353 accept"),
+        "{nft}"
+    );
+    assert!(!nft.contains("tcp dport 5353"));
 }
 
 #[test]
@@ -800,5 +998,8 @@ fn internet_access_does_not_open_loopback() {
         .iter()
         .position(|l| *l == "meta skuid \"_shop\" meta l4proto tcp accept")
         .expect("internet accept rule");
-    assert!(drop < accept, "loopback must be dropped before the internet accept");
+    assert!(
+        drop < accept,
+        "loopback must be dropped before the internet accept"
+    );
 }

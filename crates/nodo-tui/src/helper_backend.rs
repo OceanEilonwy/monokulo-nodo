@@ -10,7 +10,7 @@ use std::path::Path;
 
 use nodo_api::client::HelperClient;
 use nodo_api::{
-    ApiError, Backend, DeviceOverview, EncryptionState, Origin, Request, Response, ServiceState,
+    ApiError, Backend, DeviceOverview, EncryptionState, NodeStatus, Origin, Request, Response, ServiceState,
     SettingCurrent, SettingField, SettingKind, SettingLiteral, SiteId,
 };
 
@@ -181,12 +181,23 @@ impl ScreenData for HelperBackend {
         let node = services
             .iter()
             .find(|s| s.roles.iter().any(|r| r == "monero-daemon"))
-            .map(|s| NodeInfo {
-                role: "monero-daemon".to_owned(),
-                provider: s.id.clone(),
-                state: state_label(s.state).to_owned(),
-                height: "not available yet".to_owned(),
-                peers: "not available yet".to_owned(),
+            .map(|s| {
+                let (height, peers) = if s.state == ServiceState::Running {
+                    match self.ask(Request::NodeStatus) {
+                        Ok(Response::NodeStatus(status)) => node_rows(&status),
+                        Ok(other) => unknown_node(format!("unexpected reply: {other:?}")),
+                        Err(e) => unknown_node(e.to_string()),
+                    }
+                } else {
+                    unknown_node(format!("{} is not running", s.id))
+                };
+                NodeInfo {
+                    role: "monero-daemon".to_owned(),
+                    provider: s.id.clone(),
+                    state: state_label(s.state).to_owned(),
+                    height,
+                    peers,
+                }
             })
             .unwrap_or_default();
         let service_origins = services
@@ -639,6 +650,36 @@ fn failed_overview(reason: String) -> Overview {
     Overview { device: vec![("Helper".to_owned(), format!("could not read the device: {reason}"))], ..Overview::default() }
 }
 
+/// Digits grouped by thousands, as Home shows heights.
+fn grouped(number: u64) -> String {
+    let digits = number.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// Height and peers for Home. The target is shown only while the node knows it is behind.
+fn node_rows(status: &NodeStatus) -> (String, String) {
+    let height = if status.target_height > status.height {
+        let percent = status.height.saturating_mul(100) / status.target_height;
+        format!("{} of {} ({percent}%)", grouped(status.height), grouped(status.target_height))
+    } else if status.synchronized {
+        format!("{} (synced)", grouped(status.height))
+    } else {
+        grouped(status.height)
+    };
+    (height, format!("{} out, {} in", status.outgoing_peers, status.incoming_peers))
+}
+
+fn unknown_node(reason: String) -> (String, String) {
+    (format!("unknown: {reason}"), "unknown".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,6 +695,25 @@ mod tests {
             default: default.map(str::to_owned),
             public_name: None,
         }
+    }
+
+    #[test]
+    fn node_status_reads_as_height_and_peers() {
+        let mut status = NodeStatus {
+            provider: "cuprated".into(),
+            height: 2_121_400,
+            target_height: 3_478_000,
+            outgoing_peers: 32,
+            incoming_peers: 9,
+            synchronized: false,
+        };
+        assert_eq!(node_rows(&status), ("2,121,400 of 3,478,000 (60%)".into(), "32 out, 9 in".into()));
+        status.target_height = 0;
+        status.height = 1;
+        status.synchronized = true;
+        assert_eq!(node_rows(&status).0, "1 (synced)");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_000), "1,000");
     }
 
     #[test]

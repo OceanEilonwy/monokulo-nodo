@@ -135,7 +135,7 @@ fn installed_manifest(text: &[u8], inspected: &Manifest) -> Result<(), String> {
 
 impl<S: System> Helper<S> {
     pub(crate) fn app_dir(&self, id: &str) -> Result<PathBuf, ApiError> {
-        Layout::new(id, Profile::App)
+        Layout::new(id, Profile::App, false)
             .map_err(failed)?
             .app_dir
             .map(PathBuf::from)
@@ -216,11 +216,11 @@ impl<S: System> Helper<S> {
             added: added.iter().map(ToString::to_string).collect(),
             first_install,
             encrypted_storage: encrypted,
-            needs_passphrase: encrypted && !self.sys.exists(&self.volume_file(package)),
+            needs_passphrase: encrypted && !self.sys.exists(&self.volume_location(package)?.file),
         }))
     }
 
-    pub(crate) fn install_package(
+    pub(crate) fn install_from_feed(
         &self,
         feed: &str,
         package: &str,
@@ -269,7 +269,7 @@ impl<S: System> Helper<S> {
         }
         if manifest.storage.encrypted
             && passphrase.is_none()
-            && !self.sys.exists(&self.volume_file(package))
+            && !self.sys.exists(&self.volume_location(package)?.file)
         {
             return Err(ApiError::NeedsConfirmation(format!(
                 "{package} keeps encrypted storage, so installing it needs the device passphrase"
@@ -336,7 +336,7 @@ impl<S: System> Helper<S> {
             .report
             .details
             .push(format!("created user _{package}"));
-        if let Err(e) = self.install_by_id(package, passphrase) {
+        if let Err(e) = self.install_package(package, passphrase, Some(feed)) {
             let index = match e {
                 ApiError::BadPassphrase => 5,
                 _ => 4,

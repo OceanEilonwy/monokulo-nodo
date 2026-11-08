@@ -2,33 +2,39 @@
 //! worker; references and rendering by `nodo-settings` in this process, which runs no Lua.
 //!
 //! Each package's values live in a root-only store, kept apart from the generated file so a
-//! secret never has to be read back out of a config format. The package's own file is either
-//! its template filled in, such as cuprated's `Cuprated.toml`, or a flat table of values.
+//! secret never has to be read back out of a config format. Secrets in the store are sealed
+//! under the device key (see [`crate::secrets`]). The package's own file is either its template
+//! filled in, such as cuprated's `Cuprated.toml`, or a flat table of values. Resolved values
+//! also go to a root-only environment file, which the run script hands to the service.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use nodo_api::{
     ApiError, SettingChange, SettingCurrent, SettingField, SettingInput, SettingKind,
     SettingLiteral, SettingsForm,
 };
-use nodo_gen::service_user;
+use nodo_gen::{service_user, Profile, ResolvedGrants};
 use nodo_manifest::is_valid_package_path;
 use nodo_settings::{
-    is_valid_setting_name, parse_template, toml_file, DefaultValue, Installed, InstalledPackage,
-    Part, Resolved, Schema, SettingDef, SettingType, SettingValue, Value,
+    env_file, is_valid_setting_name, parse_template, toml_file, Access, DefaultValue, Grant,
+    Installed, InstalledPackage, NetworkGrant, Part, PortProtocol, Resolved, Schema, SettingDef,
+    SettingType, SettingValue, Value,
 };
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::catalog::Package;
-use crate::settings::{PlannedFile, SettingsContext, SettingsPolicy};
+use crate::secrets::{self, SecretsKey};
+use crate::settings::{Plan, PlannedFile, ServiceInputs, SettingsContext, SettingsPolicy, Target};
+use crate::system::WriteOptions;
 use crate::worker::{WorkerCheck, WorkerPackage, WorkerRequest, WorkerResponse, MAX_WORKER_IO};
 
 /// Settings code is small. A larger file is refused before it reaches the worker.
 const MAX_SOURCE: usize = 256 * 1024;
 const MAX_TEMPLATE: usize = 256 * 1024;
 const FLAT_FILE: &str = "settings.toml";
+const NONCE_LEN: usize = 24;
 
 /// A stored value. Literals are never scanned for references, which is what keeps a typed
 /// `$(` from turning into one.
@@ -37,6 +43,8 @@ const FLAT_FILE: &str = "settings.toml";
 enum Stored {
     Literal(String),
     Template(String),
+    /// A secret sealed under the device key.
+    Sealed(String),
 }
 
 impl std::fmt::Debug for Stored {
@@ -44,6 +52,7 @@ impl std::fmt::Debug for Stored {
         match self {
             Stored::Literal(_) => f.write_str("Literal(..)"),
             Stored::Template(text) => write!(f, "Template({text:?})"),
+            Stored::Sealed(_) => f.write_str("Sealed(..)"),
         }
     }
 }
@@ -60,6 +69,19 @@ pub struct NodoSettings;
 
 fn failed(message: impl Into<String>) -> ApiError {
     ApiError::Failed(message.into())
+}
+
+/// Why a secret cannot be read or written right now.
+fn no_key(ctx: &SettingsContext, id: &str) -> ApiError {
+    if ctx.set_up {
+        ApiError::Locked(format!(
+            "the secrets of {id} are sealed until the device is unlocked"
+        ))
+    } else {
+        ApiError::Locked(
+            "secrets are sealed under the device passphrase, so set it up first".to_owned(),
+        )
+    }
 }
 
 fn store_path(ctx: &SettingsContext, id: &str) -> PathBuf {
@@ -104,6 +126,17 @@ fn load_store(ctx: &SettingsContext, id: &str) -> Result<Store, ApiError> {
     }
 }
 
+fn store_file(ctx: &SettingsContext, id: &str, store: &Store) -> Result<PlannedFile, ApiError> {
+    let text = Zeroizing::new(toml::to_string(store).map_err(|e| failed(e.to_string()))?);
+    Ok(PlannedFile {
+        path: store_path(ctx, id),
+        bytes: Zeroizing::new(text.as_bytes().to_vec()),
+        mode: 0o600,
+        group: None,
+        parent_mode: 0o700,
+    })
+}
+
 fn ask_worker(ctx: &SettingsContext, request: &WorkerRequest) -> Result<WorkerResponse, ApiError> {
     let input = Zeroizing::new(serde_json::to_vec(request).map_err(|e| failed(e.to_string()))?);
     if input.len() > MAX_WORKER_IO {
@@ -141,6 +174,10 @@ fn kind(ty: &SettingType) -> SettingKind {
     }
 }
 
+fn is_secret(def: &SettingDef) -> bool {
+    matches!(def.ty, SettingType::Secret)
+}
+
 fn literal_for(ty: &SettingType, value: &Value) -> Option<SettingLiteral> {
     match (ty, value) {
         (_, Value::Secret(_)) => None,
@@ -158,10 +195,95 @@ fn single_reference(text: &str) -> Option<(String, String)> {
     }
 }
 
-fn to_setting_value(def: &SettingDef, stored: &Stored) -> Result<SettingValue, String> {
+/// The value a stored entry stands for. `None` when it is sealed and the device is locked.
+fn stored_value(
+    key: Option<&SecretsKey>,
+    id: &str,
+    def: &SettingDef,
+    stored: &Stored,
+) -> Result<Option<SettingValue>, String> {
     match stored {
-        Stored::Literal(text) => def.ty.parse_literal(text).map(SettingValue::Literal),
-        Stored::Template(text) => Ok(SettingValue::Template(text.clone())),
+        Stored::Literal(text) => def
+            .ty
+            .parse_literal(text)
+            .map(|v| Some(SettingValue::Literal(v))),
+        Stored::Template(text) => Ok(Some(SettingValue::Template(text.clone()))),
+        Stored::Sealed(sealed) => {
+            let Some(key) = key else { return Ok(None) };
+            let plain = secrets::open(key, id, &def.name, sealed)?;
+            def.ty
+                .parse_literal(&plain)
+                .map(|v| Some(SettingValue::Literal(v)))
+        }
+    }
+}
+
+fn seal(
+    ctx: &SettingsContext,
+    key: &SecretsKey,
+    id: &str,
+    name: &str,
+    value: &str,
+) -> Result<Stored, ApiError> {
+    let mut nonce = [0u8; NONCE_LEN];
+    ctx.sys.random(&mut nonce)?;
+    secrets::seal(key, id, name, value, &nonce)
+        .map(Stored::Sealed)
+        .map_err(failed)
+}
+
+/// Seals every secret of one store still held in clear. Returns how many.
+fn seal_clear_secrets(
+    ctx: &SettingsContext,
+    key: &SecretsKey,
+    id: &str,
+    schema: &Schema,
+    store: &mut Store,
+) -> Result<usize, ApiError> {
+    let mut sealed = 0;
+    for (name, stored) in store.values.iter_mut() {
+        let Some(def) = schema.setting(name) else {
+            continue;
+        };
+        if let (true, Stored::Literal(text)) = (is_secret(def), &*stored) {
+            let text = Zeroizing::new(text.clone());
+            *stored = seal(ctx, key, id, name, &text)?;
+            sealed += 1;
+        }
+    }
+    Ok(sealed)
+}
+
+/// Firewall and sandbox access that references imply. Only ever loopback ports a provider
+/// declares and sockets in its own directory, which the resolver has already checked.
+fn grants_for<'a>(network: impl Iterator<Item = &'a NetworkGrant>) -> ResolvedGrants {
+    let mut tcp = BTreeSet::new();
+    let mut udp = BTreeSet::new();
+    let mut sockets = BTreeSet::new();
+    for grant in network {
+        match &grant.access {
+            Access::Port {
+                protocol: PortProtocol::Tcp,
+                port,
+            } => {
+                tcp.insert(*port);
+            }
+            Access::Port {
+                protocol: PortProtocol::Udp,
+                port,
+            } => {
+                udp.insert(*port);
+            }
+            Access::UnixSocket { .. } => {
+                sockets.insert(grant.provider.clone());
+            }
+        }
+    }
+    ResolvedGrants {
+        loopback_tcp_ports: tcp.into_iter().collect(),
+        loopback_udp_ports: udp.into_iter().collect(),
+        socket_deps: sockets.into_iter().collect(),
+        ..ResolvedGrants::default()
     }
 }
 
@@ -169,6 +291,8 @@ fn to_setting_value(def: &SettingDef, stored: &Stored) -> Result<SettingValue, S
 struct World {
     installed: Installed,
     schemas: BTreeMap<String, Result<Schema, String>>,
+    /// Packages with sealed values that could not be opened, because the device is locked.
+    locked: BTreeSet<String>,
 }
 
 impl World {
@@ -185,7 +309,21 @@ impl World {
             }
         }
         let response = ask_worker(ctx, &request)?;
-        let mut installed = Installed::default();
+        let mut installed = Installed {
+            role_bindings: ctx.bindings.roles.clone(),
+            grants: ctx
+                .bindings
+                .grants
+                .iter()
+                .map(|g| Grant {
+                    consumer: g.consumer.clone(),
+                    provider: g.provider.clone(),
+                    setting: g.setting.clone(),
+                })
+                .collect(),
+            ..Installed::default()
+        };
+        let mut locked = BTreeSet::new();
         for package in ctx.packages {
             let schema = match response.schemas.get(package.id()) {
                 Some(Ok(schema)) => schema.clone(),
@@ -194,16 +332,21 @@ impl World {
                 None => Schema::empty(),
             };
             let store = load_store(ctx, package.id())?;
-            let values = store
-                .values
-                .iter()
-                .filter_map(|(name, stored)| {
-                    let def = schema.setting(name)?;
-                    to_setting_value(def, stored)
-                        .ok()
-                        .map(|v| (name.clone(), v))
-                })
-                .collect();
+            let mut values = BTreeMap::new();
+            for (name, stored) in &store.values {
+                let Some(def) = schema.setting(name) else {
+                    continue;
+                };
+                match stored_value(ctx.secrets, package.id(), def, stored) {
+                    Ok(Some(value)) => {
+                        values.insert(name.clone(), value);
+                    }
+                    Ok(None) => {
+                        locked.insert(package.id().to_owned());
+                    }
+                    Err(_) => {}
+                }
+            }
             installed.packages.insert(
                 package.id().to_owned(),
                 InstalledPackage {
@@ -216,6 +359,7 @@ impl World {
         Ok(World {
             installed,
             schemas: response.schemas,
+            locked,
         })
     }
 
@@ -224,6 +368,26 @@ impl World {
             Some(Ok(schema)) => Ok(schema),
             Some(Err(problem)) => Err(failed(format!("{id}'s settings file failed: {problem}"))),
             None => Err(failed(format!("{id} has no settings file"))),
+        }
+    }
+
+    /// Resolution, with a locked device reported as such rather than as missing values.
+    fn resolve(&self, ctx: &SettingsContext, id: &str) -> Result<Resolved, ApiError> {
+        match self.installed.resolve(id) {
+            Ok(resolved) => {
+                if let Some(grant) = resolved
+                    .grants_used
+                    .iter()
+                    .find(|g| self.locked.contains(&g.provider))
+                {
+                    return Err(no_key(ctx, &grant.provider));
+                }
+                Ok(resolved)
+            }
+            Err(errors) => match self.locked.iter().next() {
+                Some(locked) => Err(no_key(ctx, locked)),
+                None => Err(failed(join_errors(&errors))),
+            },
         }
     }
 }
@@ -237,7 +401,7 @@ fn join_errors<E: std::fmt::Display>(errors: &[E]) -> String {
 }
 
 fn default_text(def: &SettingDef) -> Option<String> {
-    if matches!(def.ty, SettingType::Secret) {
+    if is_secret(def) {
         return None;
     }
     def.default.as_ref().map(|default| match default {
@@ -252,7 +416,7 @@ fn current(
     stored: Option<&Stored>,
     resolved: Option<&Resolved>,
 ) -> SettingCurrent {
-    let secret = matches!(def.ty, SettingType::Secret);
+    let secret = is_secret(def);
     let resolved_text = || {
         resolved
             .and_then(|r| r.values.get(&def.name))
@@ -262,6 +426,7 @@ fn current(
     match stored {
         None if secret => SettingCurrent::SecretUnset,
         None => SettingCurrent::Default,
+        Some(Stored::Sealed(_)) => SettingCurrent::SecretSet,
         Some(Stored::Literal(_)) if secret => SettingCurrent::SecretSet,
         Some(Stored::Literal(text)) => match def.ty.parse_literal(text) {
             Ok(value) => literal_for(&def.ty, &value)
@@ -280,9 +445,9 @@ fn current(
 }
 
 /// Turns one typed change into what is stored. Every literal is parsed by its type here, so
-/// nothing malformed is ever stored.
+/// nothing malformed is ever stored. A secret comes back in clear and is sealed by the caller.
 fn stored_for(def: &SettingDef, input: &SettingInput) -> Result<Option<Stored>, String> {
-    let secret = matches!(def.ty, SettingType::Secret);
+    let secret = is_secret(def);
     match input {
         SettingInput::Reset => Ok(None),
         SettingInput::Secret(value) => {
@@ -318,6 +483,46 @@ fn stored_for(def: &SettingDef, input: &SettingInput) -> Result<Option<Stored>, 
     }
 }
 
+/// The rendered configuration file of a package, with what its references imply.
+fn render(
+    ctx: &SettingsContext,
+    world: &World,
+    package: &Package,
+    resolved: &Resolved,
+) -> Result<(String, String, BTreeSet<NetworkGrant>, BTreeSet<String>), ApiError> {
+    let id = package.id();
+    match &package.manifest.config {
+        Some(config) => {
+            let template = read_text(
+                ctx,
+                &package_file(ctx, package, &config.template)?,
+                MAX_TEMPLATE,
+            )?;
+            let rendered = world
+                .installed
+                .render_toml(id, &template)
+                .map_err(|errors| failed(join_errors(&errors)))?;
+            let providers = rendered
+                .dependencies
+                .into_iter()
+                .map(|d| d.package)
+                .collect();
+            Ok((
+                config.name.clone(),
+                rendered.text,
+                rendered.network,
+                providers,
+            ))
+        }
+        None => Ok((
+            FLAT_FILE.to_owned(),
+            toml_file(&resolved.values).map_err(|e| failed(e.to_string()))?,
+            BTreeSet::new(),
+            BTreeSet::new(),
+        )),
+    }
+}
+
 impl SettingsPolicy for NodoSettings {
     fn form(&self, ctx: &SettingsContext, package: &Package) -> Result<SettingsForm, ApiError> {
         let world = World::load(ctx)?;
@@ -349,12 +554,13 @@ impl SettingsPolicy for NodoSettings {
         ctx: &SettingsContext,
         package: &Package,
         changes: &[SettingChange],
-    ) -> Result<Vec<PlannedFile>, ApiError> {
+    ) -> Result<Plan, ApiError> {
         let id = package.id();
         let mut world = World::load(ctx)?;
         let schema = world.schema(id)?.clone();
         let mut store = load_store(ctx, id)?;
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        let mut new_secret = false;
         for change in changes {
             if !seen.insert(change.name.as_str()) {
                 return Err(failed(format!("setting given twice: {}", change.name)));
@@ -365,6 +571,7 @@ impl SettingsPolicy for NodoSettings {
                     change.name.escape_debug()
                 ))
             })?;
+            new_secret |= matches!(change.value, SettingInput::Secret(_));
             match stored_for(def, &change.value).map_err(failed)? {
                 Some(stored) => store.values.insert(change.name.clone(), stored),
                 None => store.values.remove(&change.name),
@@ -377,13 +584,24 @@ impl SettingsPolicy for NodoSettings {
             .retain(|name, _| schema.setting(name).is_some());
         // A secret the package asks the device to generate is made once, the first time its
         // settings are written, and then kept like any other value. Resetting it makes a new one.
-        for def in &schema.settings {
-            let Some(generate) = def.generate else {
-                continue;
-            };
-            if store.values.contains_key(&def.name) {
-                continue;
+        let to_generate: Vec<&SettingDef> = schema
+            .settings
+            .iter()
+            .filter(|def| def.generate.is_some() && !store.values.contains_key(&def.name))
+            .collect();
+        let has_sealed = store
+            .values
+            .values()
+            .any(|s| matches!(s, Stored::Sealed(_)));
+        let key = match ctx.secrets {
+            Some(key) => Some(key),
+            None if new_secret || has_sealed || !to_generate.is_empty() => {
+                return Err(no_key(ctx, id))
             }
+            None => None,
+        };
+        for def in to_generate {
+            let generate = def.generate.expect("filtered above");
             let mut random = Zeroizing::new(vec![0u8; generate.byte_len()]);
             ctx.sys.random(&mut random)?;
             let secret = generate.encode(&random).map_err(failed)?;
@@ -392,20 +610,24 @@ impl SettingsPolicy for NodoSettings {
                 Stored::Literal(secret.expose().to_owned()),
             );
         }
+        // New secrets, and any left in clear from before sealing existed, are stored sealed.
+        if let Some(key) = key {
+            seal_clear_secrets(ctx, key, id, &schema, &mut store)?;
+        }
 
         let mut values = BTreeMap::new();
         for (name, stored) in &store.values {
             let def = schema.setting(name).expect("retained above");
-            let value = to_setting_value(def, stored).map_err(|m| failed(format!("{name} {m}")))?;
+            let value = stored_value(key, id, def, stored)
+                .map_err(|m| failed(format!("{name} {m}")))?
+                .ok_or_else(|| no_key(ctx, id))?;
             values.insert(name.clone(), value);
         }
+        world.locked.remove(id);
         if let Some(entry) = world.installed.packages.get_mut(id) {
             entry.values = values;
         }
-        let resolved = world
-            .installed
-            .resolve(id)
-            .map_err(|errors| failed(join_errors(&errors)))?;
+        let resolved = world.resolve(ctx, id)?;
 
         // Validators see final values, so a reference is checked by what it resolves to.
         let checks: Vec<WorkerCheck> = resolved
@@ -434,35 +656,24 @@ impl SettingsPolicy for NodoSettings {
             }
         }
 
-        let layout = package.layout()?;
-        let (name, rendered) = match &package.manifest.config {
-            Some(config) => {
-                let template = read_text(
-                    ctx,
-                    &package_file(ctx, package, &config.template)?,
-                    MAX_TEMPLATE,
-                )?;
-                let rendered = world
-                    .installed
-                    .render_toml(id, &template)
-                    .map_err(|errors| failed(join_errors(&errors)))?;
-                (config.name.clone(), rendered.text)
-            }
-            None => (
-                FLAT_FILE.to_owned(),
-                toml_file(&resolved.values).map_err(|e| failed(e.to_string()))?,
-            ),
-        };
-        let store_text = toml::to_string(&store).map_err(|e| failed(e.to_string()))?;
+        // A base system service ships its own run script, which reads its config from a fixed
+        // path, so only apps move theirs to memory. Their stored secrets are sealed either way.
+        let sealed = package.profile == Profile::App && schema.settings.iter().any(is_secret);
+        let mut layout = package.layout()?;
+        if sealed {
+            layout = layout
+                .with_sealed_settings(id)
+                .map_err(|e| failed(e.to_string()))?;
+        }
+        let (name, rendered, template_network, _) = render(ctx, &world, package, &resolved)?;
+        let env = Zeroizing::new(env_file(&resolved.values).map_err(|e| failed(e.to_string()))?);
         let user = service_user(id).map_err(|e| failed(e.to_string()))?;
-        Ok(vec![
-            PlannedFile {
-                path: store_path(ctx, id),
-                bytes: Zeroizing::new(store_text.into_bytes()),
-                mode: 0o600,
-                group: None,
-                parent_mode: 0o700,
-            },
+        let env_options = WriteOptions {
+            mode: 0o600,
+            group: None,
+        };
+        let files = vec![
+            store_file(ctx, id, &store)?,
             PlannedFile {
                 path: Path::new(&layout.config_dir).join(name),
                 bytes: Zeroizing::new(rendered.into_bytes()),
@@ -472,7 +683,139 @@ impl SettingsPolicy for NodoSettings {
                 group: Some(user),
                 parent_mode: 0o755,
             },
-        ])
+            // Last, because a service with in-memory settings starts once this file exists.
+            PlannedFile {
+                path: PathBuf::from(&layout.env_file),
+                bytes: Zeroizing::new(env.as_bytes().to_vec()),
+                mode: env_options.mode,
+                group: None,
+                parent_mode: if layout.settings_in_memory {
+                    0o711
+                } else {
+                    0o700
+                },
+            },
+        ];
+        Ok(Plan {
+            files,
+            service: ServiceInputs {
+                exec: Some(resolved.exec.clone()),
+                grants: grants_for(resolved.network.iter().chain(&template_network)),
+                sealed,
+            },
+        })
+    }
+
+    fn service(&self, ctx: &SettingsContext, package: &Package) -> Result<ServiceInputs, ApiError> {
+        let world = World::load(ctx)?;
+        let resolved = world.resolve(ctx, package.id())?;
+        Ok(ServiceInputs {
+            exec: Some(resolved.exec.clone()),
+            grants: grants_for(resolved.network.iter()),
+            sealed: false,
+        })
+    }
+
+    fn dependents(&self, ctx: &SettingsContext, target: &Target) -> Result<Vec<String>, ApiError> {
+        let world = World::load(ctx)?;
+        let mut found = Vec::new();
+        for package in ctx.packages {
+            let id = package.id();
+            if package.manifest.settings.is_none() || Target::Package(id.to_owned()) == *target {
+                continue;
+            }
+            // A package that does not resolve now cannot be told apart, so it is re-rendered,
+            // and if it still fails the change is refused rather than leaving it stale.
+            let Ok(resolved) = world.installed.resolve(id) else {
+                found.push(id.to_owned());
+                continue;
+            };
+            let mut providers: BTreeSet<String> = resolved
+                .dependencies
+                .iter()
+                .map(|d| d.package.clone())
+                .collect();
+            let mut roles: BTreeSet<String> = resolved
+                .dependencies
+                .iter()
+                .filter_map(|d| d.role.clone())
+                .collect();
+            if package.manifest.config.is_some() {
+                if let Ok((_, _, _, from_template)) = render(ctx, &world, package, &resolved) {
+                    providers.extend(from_template);
+                }
+                // Roles in a template are not reported by name, so a role binding change
+                // re-renders every templated package that depends on any provider of it.
+                if let Target::Role(role) = target {
+                    let provides = |p: &String| {
+                        world
+                            .installed
+                            .packages
+                            .get(p)
+                            .is_some_and(|pkg| pkg.manifest.provides.contains(role))
+                    };
+                    if providers.iter().any(provides) {
+                        roles.insert(role.clone());
+                    }
+                }
+            }
+            let depends = match target {
+                Target::Package(provider) => providers.contains(provider),
+                Target::Role(role) => roles.contains(role),
+            };
+            if depends {
+                found.push(id.to_owned());
+            }
+        }
+        Ok(found)
+    }
+
+    fn seal_stored(&self, ctx: &SettingsContext) -> Result<usize, ApiError> {
+        let Some(key) = ctx.secrets else {
+            return Ok(0);
+        };
+        let world = World::load(ctx)?;
+        let mut total = 0;
+        for package in ctx.packages {
+            let Ok(schema) = world.schema(package.id()) else {
+                continue;
+            };
+            let mut store = load_store(ctx, package.id())?;
+            let sealed = seal_clear_secrets(ctx, key, package.id(), schema, &mut store)?;
+            if sealed > 0 {
+                let file = store_file(ctx, package.id(), &store)?;
+                ctx.sys.atomic_write(
+                    &file.path,
+                    &file.bytes,
+                    WriteOptions {
+                        mode: file.mode,
+                        group: None,
+                    },
+                )?;
+                total += sealed;
+            }
+        }
+        Ok(total)
+    }
+
+    fn public_value(
+        &self,
+        ctx: &SettingsContext,
+        package: &Package,
+        public_name: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let world = World::load(ctx)?;
+        let Ok(schema) = world.schema(package.id()) else {
+            return Ok(None);
+        };
+        let Some(def) = schema.exported(public_name).filter(|d| !is_secret(d)) else {
+            return Ok(None);
+        };
+        let resolved = world.resolve(ctx, package.id())?;
+        Ok(resolved
+            .values
+            .get(&def.name)
+            .map(|value| value_text(value).to_string()))
     }
 }
 
@@ -542,6 +885,8 @@ settings = "settings.lua"
         sys.put("/p/sys/cuprated/Cuprated.toml.in", TEMPLATE.as_bytes());
         sys.add_manifest(SHOP);
         sys.put("/opt/nodo/apps/shop/settings.lua", SHOP_LUA.as_bytes());
+        // Installed by the helper, so its settings follow cuprated and its service is generated.
+        sys.put("/s/installed/shop", b"");
         Helper::new(
             sys,
             AllowedUids::new([1000]),
@@ -549,6 +894,30 @@ settings = "settings.lua"
             Box::new(NoCaddyYet),
         )
         .with_paths(TEST_PATHS())
+        .with_kdf(crate::keys::KdfParams {
+            memory_kib: 64,
+            iterations: 1,
+            lanes: 1,
+        })
+    }
+
+    const PASS: &str = "correct horse battery";
+
+    /// Set up and unlocked, as a device is right after first-boot setup.
+    fn unlocked() -> Helper<FakeSystem> {
+        let h = setup();
+        h.init_device(&Secret::new(PASS)).unwrap();
+        h
+    }
+
+    /// The same machine after a reboot: a new helper with nothing in memory.
+    fn rebooted(h: Helper<FakeSystem>) -> Helper<FakeSystem> {
+        let fresh = setup();
+        h.sys.reboot();
+        Helper {
+            sys: h.sys,
+            ..fresh
+        }
     }
 
     fn change(name: &str, value: SettingInput) -> SettingChange {
@@ -744,7 +1113,7 @@ settings = "settings.lua"
 
     #[test]
     fn secrets_are_stored_root_only_and_reported_only_as_set() {
-        let h = setup();
+        let h = unlocked();
         let field = |h: &Helper<FakeSystem>| {
             form(h, "cuprated")
                 .fields
@@ -816,14 +1185,15 @@ settings = "settings.lua"
             .filter(|c| *c == "settings-worker")
             .count();
         assert_eq!(
-            workers, 3,
-            "one load for the form, one load and one validation for the change"
+            workers, 5,
+            "one load for the form, one load and one validation for the change, one load to \
+             find dependents and one to re-plan shop, which follows cuprated's RPC port"
         );
     }
 
     #[test]
     fn a_generated_secret_is_made_once_and_kept() {
-        let h = setup();
+        let h = unlocked();
         h.sys.put(
             "/opt/nodo/apps/shop/settings.lua",
             br#"return { api_version = 1, settings = {
@@ -834,7 +1204,12 @@ settings = "settings.lua"
         apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
         let read = |h: &Helper<FakeSystem>| -> toml::Table {
             toml::from_str(
-                std::str::from_utf8(&h.sys.get("/etc/apps/shop/settings.toml").unwrap()).unwrap(),
+                std::str::from_utf8(
+                    &h.sys
+                        .get("/run/nodo/secrets/shop/config/settings.toml")
+                        .unwrap(),
+                )
+                .unwrap(),
             )
             .unwrap()
         };
@@ -880,5 +1255,490 @@ settings = "settings.lua"
         );
         assert!(apply(&h, "cuprated", vec![change("outbound_peers", int(8))]).is_err());
         assert!(!h.sys.calls().iter().any(|c| c.starts_with("write")));
+    }
+
+    fn secret(value: &str) -> SettingInput {
+        SettingInput::Secret(Secret::new(value))
+    }
+
+    const VAULTED_SHOP_LUA: &str = r#"return { api_version = 1, settings = {
+        { name = "daemon_port", type = "int", label = "Daemon port", default = "$(monero-daemon.rpc-port)" },
+        { name = "label", type = "string", label = "Label" },
+        { name = "token", type = "secret", label = "Token" },
+    } }"#;
+
+    fn shop_with_token() -> Helper<FakeSystem> {
+        let h = unlocked();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            VAULTED_SHOP_LUA.as_bytes(),
+        );
+        h
+    }
+
+    fn stored(h: &Helper<FakeSystem>, id: &str) -> String {
+        String::from_utf8(h.sys.get(&format!("/s/settings/{id}.toml")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_secret_is_stored_sealed_and_rendered_only_to_memory() {
+        let h = shop_with_token();
+        apply(&h, "shop", vec![change("token", secret("s3cret-token"))]).unwrap();
+        let store = stored(&h, "shop");
+        assert!(!store.contains("s3cret"), "{store}");
+        assert!(store.contains("sealed = \"v1."), "{store}");
+        let config = h
+            .sys
+            .get("/run/nodo/secrets/shop/config/settings.toml")
+            .unwrap();
+        assert!(String::from_utf8(config)
+            .unwrap()
+            .contains("token = \"s3cret-token\""));
+        let env = String::from_utf8(h.sys.get("/run/nodo/secrets/shop/env").unwrap()).unwrap();
+        assert!(env.contains("NODO_TOKEN='s3cret-token'\n"), "{env}");
+        assert!(env.contains("NODO_DAEMON_PORT='18081'\n"), "{env}");
+        let calls = h.sys.calls();
+        assert!(calls.contains(&"write /run/nodo/secrets/shop/env mode=600 group=-".to_owned()));
+        assert!(calls.contains(&"mkdir /run/nodo/secrets 711 -".to_owned()));
+        // Nothing of the package's settings reaches the system disk in clear.
+        assert_eq!(h.sys.get("/etc/apps/shop/settings.toml"), None);
+        assert_eq!(h.sys.get("/var/lib/nodo/env/shop.env"), None);
+    }
+
+    #[test]
+    fn a_sealed_secret_is_unreadable_while_locked() {
+        let h = shop_with_token();
+        apply(&h, "shop", vec![change("token", secret("s3cret-token"))]).unwrap();
+        let h = rebooted(h);
+        assert_eq!(
+            h.sys.get("/run/nodo/secrets/shop/env"),
+            None,
+            "memory is empty after a reboot"
+        );
+        // The form still works and says only that the secret is set.
+        let field = form(&h, "shop")
+            .fields
+            .into_iter()
+            .find(|f| f.name == "token")
+            .unwrap();
+        assert_eq!(field.current, SettingCurrent::SecretSet);
+        h.sys.clear_calls();
+        for changes in [
+            vec![change("label", text("x"))],
+            vec![change("token", secret("another"))],
+        ] {
+            assert!(
+                matches!(apply(&h, "shop", changes), Err(ApiError::Locked(_))),
+                "nothing that needs the secret works while locked"
+            );
+        }
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("write")));
+        // Unlocking renders it again, which is what the waiting service starts on.
+        h.handle(
+            1000,
+            Request::Unlock {
+                passphrase: Secret::new(PASS),
+            },
+        )
+        .unwrap();
+        let env = String::from_utf8(h.sys.get("/run/nodo/secrets/shop/env").unwrap()).unwrap();
+        assert!(env.contains("NODO_TOKEN='s3cret-token'"));
+    }
+
+    #[test]
+    fn another_device_key_cannot_open_a_sealed_store() {
+        let h = shop_with_token();
+        apply(&h, "shop", vec![change("token", secret("s3cret-token"))]).unwrap();
+        let store = h.sys.get("/s/settings/shop.toml").unwrap();
+        // The fake's randomness is a counter, so draw once to get a different device key.
+        let other = setup();
+        crate::system::System::random(&other.sys, &mut [0u8; 1]).unwrap();
+        other.init_device(&Secret::new(PASS)).unwrap();
+        other.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            VAULTED_SHOP_LUA.as_bytes(),
+        );
+        other.sys.put("/s/settings/shop.toml", &store);
+        assert!(apply(&other, "shop", vec![change("label", text("x"))]).is_err());
+    }
+
+    #[test]
+    fn secrets_need_the_device_passphrase_set_up_first() {
+        let h = setup();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            VAULTED_SHOP_LUA.as_bytes(),
+        );
+        let Err(ApiError::Locked(message)) =
+            apply(&h, "shop", vec![change("token", secret("s3cret"))])
+        else {
+            panic!()
+        };
+        assert!(message.contains("set it up first"), "{message}");
+        // Settings without a secret value still work, and render to memory.
+        apply(&h, "shop", vec![change("label", text("x"))]).unwrap();
+        assert!(h.sys.get("/run/nodo/secrets/shop/env").is_some());
+    }
+
+    #[test]
+    fn secrets_stored_in_clear_are_sealed_at_the_first_unlock() {
+        let h = setup();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            VAULTED_SHOP_LUA.as_bytes(),
+        );
+        // As an older helper stored it, before sealing existed.
+        h.sys.put(
+            "/s/settings/shop.toml",
+            b"[values.token]\nliteral = \"old-clear-token\"\n\n[values.label]\nliteral = \"kept\"\n",
+        );
+        h.init_device(&Secret::new(PASS)).unwrap();
+        let store = stored(&h, "shop");
+        assert!(!store.contains("old-clear-token"), "{store}");
+        assert!(
+            store.contains("literal = \"kept\""),
+            "only secrets are sealed: {store}"
+        );
+        let h = rebooted(h);
+        h.handle(
+            1000,
+            Request::Unlock {
+                passphrase: Secret::new(PASS),
+            },
+        )
+        .unwrap();
+        let env = String::from_utf8(h.sys.get("/run/nodo/secrets/shop/env").unwrap()).unwrap();
+        assert!(env.contains("NODO_TOKEN='old-clear-token'"), "{env}");
+    }
+
+    const ENDPOINT_LUA: &str = r#"return { api_version = 1, settings = {
+        { name = "outbound_peers", type = "int", label = "Outbound peers", default = 32, min = 1, max = 128 },
+        { name = "rpc_port", type = "int", label = "RPC port", default = 18081, public = "rpc-port", endpoint = "tcp" },
+    } }"#;
+
+    /// cuprated declares its RPC port as an endpoint, and shop is an installed app.
+    fn with_endpoint() -> Helper<FakeSystem> {
+        let h = setup();
+        h.sys.put(
+            "/m/sys/cuprated.toml",
+            format!("{CUPRATED}\n[[network.inbound]]\nport = 18081\nprotocol = \"tcp\"\nscope = \"local\"\n\n[[network.inbound]]\nport = 18089\nprotocol = \"tcp\"\nscope = \"lan\"\n").as_bytes(),
+        );
+        h.sys
+            .put("/p/sys/cuprated/settings.lua", ENDPOINT_LUA.as_bytes());
+        h.sys.put(
+            "/p/sys/cuprated/Cuprated.toml.in",
+            b"[p2p.clear_net]\noutbound_connections = \"$(cuprated.outbound_peers)\"\n",
+        );
+        h.sys.put("/s/installed/shop", b"");
+        h
+    }
+
+    fn fragment(h: &Helper<FakeSystem>) -> String {
+        String::from_utf8(h.sys.get("/nft/shop.nft").unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_reference_opens_its_port_and_removing_it_closes_it_again() {
+        let h = with_endpoint();
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        let rule = "meta skuid \"_shop\" oifname \"lo\" tcp dport 18081 accept";
+        assert!(fragment(&h).contains(rule), "{}", fragment(&h));
+        assert!(h
+            .sys
+            .calls()
+            .contains(&"nft check /nft/shop.nft.pending".to_owned()));
+        assert!(h
+            .sys
+            .calls()
+            .contains(&"nft load /nft/main.conf".to_owned()));
+        // The sandbox runs the resolved command line and reads the settings as environment.
+        let run = String::from_utf8(h.sys.get("/sv/shop/run").unwrap()).unwrap();
+        assert!(run.contains(". /var/lib/nodo/env/shop.env"), "{run}");
+
+        // A literal port implies nothing, so the access goes with the reference.
+        h.sys.clear_calls();
+        apply(&h, "shop", vec![change("daemon_port", int(18081))]).unwrap();
+        assert!(!fragment(&h).contains("18081"), "{}", fragment(&h));
+        assert!(h
+            .sys
+            .calls()
+            .contains(&"nft load /nft/main.conf".to_owned()));
+
+        // And comes back with it.
+        let reference = SettingInput::Reference {
+            target: "monero-daemon".into(),
+            setting: "rpc-port".into(),
+        };
+        apply(&h, "shop", vec![change("daemon_port", reference)]).unwrap();
+        assert!(fragment(&h).contains(rule));
+    }
+
+    #[test]
+    fn a_rejected_fragment_leaves_the_settings_and_firewall_alone() {
+        let h = with_endpoint();
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        let before = (
+            h.sys.get("/nft/shop.nft"),
+            h.sys.get("/s/settings/shop.toml"),
+        );
+        h.sys.fail("nft check");
+        assert!(apply(&h, "shop", vec![change("daemon_port", int(18081))]).is_err());
+        assert_eq!(
+            before,
+            (
+                h.sys.get("/nft/shop.nft"),
+                h.sys.get("/s/settings/shop.toml")
+            )
+        );
+    }
+
+    #[test]
+    fn a_public_setting_change_re_renders_and_restarts_its_dependents() {
+        let h = with_endpoint();
+        h.sys.put(
+            "/p/sys/cuprated/settings.lua",
+            ENDPOINT_LUA
+                .replace("max = 18081", "")
+                .replace(
+                    "default = 18081, public",
+                    "default = 18081, min = 1024, max = 65535, public",
+                )
+                .as_bytes(),
+        );
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        h.sys.clear_calls();
+        // Not declared inbound, so the reference cannot follow it and the change is refused
+        // before anything is written.
+        assert!(apply(&h, "cuprated", vec![change("rpc_port", int(18082))]).is_err());
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("write")));
+        // A declared port works: shop follows it, in its settings and its firewall.
+        apply(&h, "cuprated", vec![change("rpc_port", int(18089))]).unwrap();
+        let shop: toml::Table = toml::from_str(
+            std::str::from_utf8(&h.sys.get("/etc/apps/shop/settings.toml").unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(shop["daemon_port"].as_integer(), Some(18089));
+        assert!(fragment(&h).contains("tcp dport 18089 accept"));
+        assert!(!fragment(&h).contains("18081"));
+        let restarts: Vec<String> = h
+            .sys
+            .calls()
+            .into_iter()
+            .filter(|c| c.starts_with("sv force-restart"))
+            .collect();
+        assert_eq!(
+            restarts,
+            [
+                "sv force-restart cuprated -w120",
+                "sv force-restart shop -w120"
+            ]
+        );
+        // A change no other package references restarts only its own package.
+        h.sys.clear_calls();
+        apply(&h, "cuprated", vec![change("outbound_peers", int(9))]).unwrap();
+        assert!(!h.sys.calls().iter().any(|c| c.contains("restart shop")));
+    }
+
+    #[test]
+    fn a_failing_dependent_rolls_back_the_whole_change() {
+        let h = with_endpoint().with_timing(crate::helper::Timing {
+            health_attempts: 3,
+            ..crate::helper::Timing::default()
+        });
+        h.sys.put(
+            "/p/sys/cuprated/settings.lua",
+            ENDPOINT_LUA
+                .replace(
+                    "default = 18081, public",
+                    "default = 18081, min = 1024, max = 65535, public",
+                )
+                .as_bytes(),
+        );
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        let cuprated_before = (h.sys.get(OUT), h.sys.get("/s/settings/cuprated.toml"));
+        let shop_before = (
+            h.sys.get("/etc/apps/shop/settings.toml"),
+            h.sys.get("/var/lib/nodo/env/shop.env"),
+            h.sys.get("/nft/shop.nft"),
+            h.sys.get("/sv/shop/run"),
+        );
+        h.sys.clear_calls();
+        // cuprated comes back healthy on its new port, then shop never stays up on it.
+        h.sys
+            .script_status("shop", &["down: shop: 1s, normally up, want up\n"; 3]);
+        let rollback = match apply(&h, "cuprated", vec![change("rpc_port", int(18089))]) {
+            Ok(Response::RolledBack(rollback)) => rollback,
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            rollback.reason.contains("shop depends on this change"),
+            "{rollback:?}"
+        );
+        assert!(rollback.recovered, "{rollback:?}");
+        assert_eq!(
+            cuprated_before,
+            (h.sys.get(OUT), h.sys.get("/s/settings/cuprated.toml"))
+        );
+        assert_eq!(
+            shop_before,
+            (
+                h.sys.get("/etc/apps/shop/settings.toml"),
+                h.sys.get("/var/lib/nodo/env/shop.env"),
+                h.sys.get("/nft/shop.nft"),
+                h.sys.get("/sv/shop/run"),
+            )
+        );
+        let calls = h.sys.calls();
+        let restarts: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.starts_with("sv force-restart"))
+            .collect();
+        assert_eq!(
+            restarts.len(),
+            4,
+            "both on the new files, then both on the old: {restarts:?}"
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| *c == "nft load /nft/main.conf")
+                .count(),
+            2,
+            "the old firewall is loaded again"
+        );
+    }
+
+    #[test]
+    fn a_dependent_that_no_longer_resolves_refuses_the_change() {
+        let h = with_endpoint();
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            br#"return { api_version = 1, settings = {
+                { name = "daemon_port", type = "int", label = "Daemon port", default = "$(monero-daemon.rpc-port)",
+                  validate = function(v) return v ~= 18089, "not that port" end },
+                { name = "label", type = "string", label = "Label" },
+            } }"#,
+        );
+        h.sys.put(
+            "/p/sys/cuprated/settings.lua",
+            ENDPOINT_LUA
+                .replace(
+                    "default = 18081, public",
+                    "default = 18081, min = 1024, max = 65535, public",
+                )
+                .as_bytes(),
+        );
+        let before = h.sys.get("/s/settings/cuprated.toml");
+        h.sys.clear_calls();
+        let Err(ApiError::Failed(message)) =
+            apply(&h, "cuprated", vec![change("rpc_port", int(18089))])
+        else {
+            panic!()
+        };
+        assert!(
+            message.contains("shop") && message.contains("not that port"),
+            "{message}"
+        );
+        assert_eq!(h.sys.get("/s/settings/cuprated.toml"), before, "put back");
+        assert!(!h
+            .sys
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("sv force-restart")));
+    }
+
+    #[test]
+    fn approving_a_grant_lets_a_package_read_a_secret_and_revoking_it_in_use_is_refused() {
+        let h = unlocked();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            br#"return { api_version = 1, settings = {
+                { name = "upstream_token", type = "secret", label = "Upstream token" },
+            } }"#,
+        );
+        apply(&h, "cuprated", vec![change("token", secret("node-secret"))]).unwrap();
+        let reference = || SettingInput::Reference {
+            target: "cuprated".into(),
+            setting: "token".into(),
+        };
+        assert!(apply(&h, "shop", vec![change("upstream_token", reference())]).is_err());
+        let grant = nodo_api::SettingGrant {
+            consumer: "shop".into(),
+            provider: "cuprated".into(),
+            setting: "token".into(),
+        };
+        h.handle(
+            1000,
+            Request::SetGrant {
+                grant: grant.clone(),
+                approved: true,
+            },
+        )
+        .unwrap();
+        apply(&h, "shop", vec![change("upstream_token", reference())]).unwrap();
+        let env = String::from_utf8(h.sys.get("/run/nodo/secrets/shop/env").unwrap()).unwrap();
+        assert!(env.contains("NODO_UPSTREAM_TOKEN='node-secret'"), "{env}");
+        let revoke = h.handle(
+            1000,
+            Request::SetGrant {
+                grant,
+                approved: false,
+            },
+        );
+        assert!(revoke.is_err(), "{revoke:?}");
+        assert_eq!(
+            h.load_bindings().unwrap().grants.len(),
+            1,
+            "the grant stays"
+        );
+    }
+
+    #[test]
+    fn a_placed_but_uninstalled_package_never_blocks_a_change() {
+        let h = unlocked();
+        // Its settings file is broken, which only matters once it is installed.
+        h.sys.add_manifest(
+            "api_version = 1\nid = \"ghost\"\nversion = \"1\"\nexec = [\"bin/g\"]\nsettings = \"s.lua\"\n",
+        );
+        h.sys.put("/opt/nodo/apps/ghost/s.lua", b"return nil");
+        apply(&h, "cuprated", vec![change("outbound_peers", int(9))]).unwrap();
+        h.handle(
+            1000,
+            Request::Unlock {
+                passphrase: Secret::new(PASS),
+            },
+        )
+        .unwrap();
+        assert!(!h.sys.calls().iter().any(|c| c.contains("ghost")));
+    }
+
+    #[test]
+    fn binding_a_role_re_renders_the_packages_that_use_it() {
+        let h = with_endpoint();
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        h.sys.add_manifest(
+            "api_version = 1\nid = \"othernode\"\nversion = \"1\"\nexec = [\"bin/node\"]\nprovides = [\"monero-daemon\"]\nsettings = \"s.lua\"\n\n[[network.inbound]]\nport = 28081\nprotocol = \"tcp\"\nscope = \"local\"\n",
+        );
+        h.sys.put(
+            "/opt/nodo/apps/othernode/s.lua",
+            br#"return { api_version = 1, settings = {
+                { name = "rpc", type = "int", label = "RPC", default = 28081, public = "rpc-port", endpoint = "tcp" },
+            } }"#,
+        );
+        h.handle(
+            1000,
+            Request::SetRoleBinding {
+                role: "monero-daemon".into(),
+                package: Some("othernode".into()),
+            },
+        )
+        .unwrap();
+        assert!(
+            fragment(&h).contains("tcp dport 28081 accept"),
+            "{}",
+            fragment(&h)
+        );
+        assert!(!fragment(&h).contains("18081"));
     }
 }

@@ -17,6 +17,15 @@ if [ -n "${DATA_MOUNT:-}" ]; then
 	install -d -o _shop -g _shop -m 750 "$data"
 fi
 
+if [ ! -r /var/lib/nodo/env/shop.env ]; then
+	echo "waiting: settings for shop have not been written"
+	sleep 5
+	exit 1
+fi
+set -a
+. /var/lib/nodo/env/shop.env
+set +a
+
 install -d -o _shop -g _shop -m 755 /run/apps/shop
 
 exec chpst -u _shop:_shop bwrap \

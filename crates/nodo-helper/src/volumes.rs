@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nodo_api::{ApiError, Response, Secret};
-use nodo_gen::{mapper_name, service_user, validate, volume_mount, VOLUME_ROOT};
+use nodo_gen::{
+    mapper_name, service_user, validate, volume_directories, volume_mount, VOLUME_ROOT,
+};
 use zeroize::Zeroizing;
 
 use crate::helper::{lock, Helper};
@@ -33,9 +35,53 @@ fn gen_failed(e: nodo_gen::GenError) -> ApiError {
     ApiError::Failed(e.to_string())
 }
 
+/// Where a package's volume file is, and the drive it needs, if any.
+pub(crate) struct VolumeLocation {
+    pub file: PathBuf,
+    pub drive: Option<PathBuf>,
+}
+
 impl<S: System> Helper<S> {
-    pub(crate) fn volume_file(&self, id: &str) -> PathBuf {
-        self.paths.volumes.join(format!("{id}.luks"))
+    /// On the data drive for a package approved to use it, so large encrypted volumes need not
+    /// fit the system disk. Only ciphertext is ever written there.
+    pub(crate) fn volume_location(&self, id: &str) -> Result<VolumeLocation, ApiError> {
+        let name = format!("{id}.luks");
+        Ok(match self.data_mount_of(id)? {
+            Some(mount) => VolumeLocation {
+                file: mount.join(".nodo-volumes").join(name),
+                drive: Some(mount.to_path_buf()),
+            },
+            None => VolumeLocation {
+                file: self.paths.volumes.join(name),
+                drive: None,
+            },
+        })
+    }
+
+    /// Makes a freshly mounted volume ready for its service: `config`, `log` and `data`
+    /// inside, and a root-owned top, so the service cannot replace `config` with a link that
+    /// redirects the helper's writes. Volumes from before this layout kept data at the top,
+    /// which moves into `data` within the same filesystem.
+    fn prepare_volume(&self, id: &str, mount: &Path) -> Result<(), String> {
+        let user = service_user(id).map_err(|e| e.to_string())?;
+        let entries = self.sys.list_dir(mount).map_err(|e| e.0)?;
+        if !entries.iter().any(|e| e == "data") {
+            let data = mount.join("data");
+            self.sys
+                .ensure_dir(&data, 0o750, Some(&user))
+                .map_err(|e| e.0)?;
+            for entry in entries.iter().filter(|e| *e != "lost+found") {
+                self.sys
+                    .rename(&mount.join(entry), &data.join(entry))
+                    .map_err(|e| e.0)?;
+            }
+        }
+        for dir in volume_directories(id).map_err(|e| e.to_string())? {
+            self.sys
+                .ensure_dir(Path::new(&dir.path), dir.mode, dir.owner.as_deref())
+                .map_err(|e| e.0)?;
+        }
+        self.sys.set_owner(mount, "root", 0o711).map_err(|e| e.0)
     }
 
     /// Doubles per consecutive failure, on top of the KDF's own cost per guess.
@@ -78,12 +124,28 @@ impl<S: System> Helper<S> {
         }
     }
 
+    /// Opens every volume, keeps the secrets key in memory, and renders the settings services
+    /// are waiting for.
     pub(crate) fn unlock(&self, passphrase: &Secret) -> Result<Response, ApiError> {
-        let mut failures = lock(&self.failed_unlocks);
-        let file = self.read_keystore()?;
-        let device_key = self.verify_passphrase(&mut failures, passphrase, &file)?;
-        // Still holding the lock, so a concurrent unlock cannot race these mounts.
-        self.open_all(&device_key)
+        let opened = {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            let device_key = self.verify_passphrase(&mut failures, passphrase, &file)?;
+            self.remember_device_key(&device_key);
+            // Still holding the lock, so a concurrent unlock cannot race these mounts.
+            self.open_all(&device_key)
+        };
+        let rendered = self.render_unlocked();
+        match (opened, rendered) {
+            (Ok(response), Ok(())) => Ok(response),
+            (Ok(_), Err(problem)) => Err(ApiError::Failed(format!(
+                "unlocked, but some settings could not be written: {problem}"
+            ))),
+            (Err(ApiError::Failed(volumes)), Err(problem)) => {
+                Err(ApiError::Failed(format!("{volumes}. Settings: {problem}")))
+            }
+            (Err(e), _) => Err(e),
+        }
     }
 
     /// Rewraps the same device key under a new passphrase. Volume keys derive from the device
@@ -139,12 +201,17 @@ impl<S: System> Helper<S> {
     }
 
     fn open_volume(&self, device_key: &[u8; DEVICE_KEY_LEN], id: &str) -> Result<(), String> {
-        let file = self.volume_file(id);
+        let location = self.volume_location(id).map_err(|e| e.to_string())?;
+        let file = location.file;
         let name = mapper_name(id).map_err(|e| e.to_string())?;
         let mount = volume_mount(id).map_err(|e| e.to_string())?;
         let mount = Path::new(&mount);
         if self.sys.is_mounted(mount) {
             return Ok(());
+        }
+        // Never look for, or create, a volume underneath an absent drive's mount point.
+        if let Some(drive) = location.drive.filter(|d| !self.sys.is_mounted(d)) {
+            return Err(format!("waiting for the data drive at {}", drive.display()));
         }
         let opened_here = !self.sys.mapper_active(&name);
         if opened_here {
@@ -166,40 +233,50 @@ impl<S: System> Helper<S> {
         if result.is_err() && opened_here {
             let _ = self.sys.luks_close(&name);
         }
-        result
+        result?;
+        self.prepare_volume(id, mount)
     }
 
     /// First-time setup. Refuses to replace an existing key, which would lose every volume.
     pub fn init_device(&self, passphrase: &Secret) -> Result<(), ApiError> {
         check_new_passphrase(passphrase)?;
-        let _guard = lock(&self.failed_unlocks);
-        if self.sys.read_file(&self.paths.keystore)?.is_some() {
-            return Err(ApiError::Failed("this device is already set up".to_owned()));
+        {
+            let _guard = lock(&self.failed_unlocks);
+            if self.sys.read_file(&self.paths.keystore)?.is_some() {
+                return Err(ApiError::Failed("this device is already set up".to_owned()));
+            }
+            let mut device_key = Zeroizing::new([0u8; DEVICE_KEY_LEN]);
+            self.sys.random(device_key.as_mut())?;
+            let mut random = [0u8; SALT_AND_NONCE_LEN];
+            self.sys.random(&mut random)?;
+            let file = keys::wrap_device_key(
+                passphrase.expose().as_bytes(),
+                &device_key,
+                &random,
+                self.kdf,
+            )
+            .map_err(|e| ApiError::Failed(e.to_string()))?;
+            if let Some(dir) = self.paths.keystore.parent() {
+                self.sys.ensure_dir(dir, 0o700, None)?;
+            }
+            self.sys
+                .atomic_write(&self.paths.keystore, &file, KEY_FILE)?;
+            // The user just typed the passphrase, so the device starts out unlocked.
+            self.remember_device_key(&device_key);
         }
-        let mut device_key = Zeroizing::new([0u8; DEVICE_KEY_LEN]);
-        self.sys.random(device_key.as_mut())?;
-        let mut random = [0u8; SALT_AND_NONCE_LEN];
-        self.sys.random(&mut random)?;
-        let file = keys::wrap_device_key(
-            passphrase.expose().as_bytes(),
-            &device_key,
-            &random,
-            self.kdf,
-        )
-        .map_err(|e| ApiError::Failed(e.to_string()))?;
-        if let Some(dir) = self.paths.keystore.parent() {
-            self.sys.ensure_dir(dir, 0o700, None)?;
-        }
-        self.sys
-            .atomic_write(&self.paths.keystore, &file, KEY_FILE)?;
-        Ok(())
+        // Secrets stored in clear before there was a key to seal them under are sealed now.
+        self.render_unlocked().map_err(|problem| {
+            ApiError::Failed(format!(
+                "the device is set up, but some settings could not be written: {problem}"
+            ))
+        })
     }
 
     /// Creates and mounts a new volume for a package. It takes the passphrase because the device
     /// key is never kept in memory after an unlock.
     pub fn create_volume(&self, id: &str, passphrase: &Secret, size: u64) -> Result<(), ApiError> {
         validate::package_id(id).map_err(gen_failed)?;
-        let user = service_user(id).map_err(gen_failed)?;
+        service_user(id).map_err(gen_failed)?;
         let name = mapper_name(id).map_err(gen_failed)?;
         let mount = volume_mount(id).map_err(gen_failed)?;
         let mount = Path::new(&mount);
@@ -209,9 +286,22 @@ impl<S: System> Helper<S> {
             let file = self.read_keystore()?;
             self.verify_passphrase(&mut failures, passphrase, &file)?
         };
+        self.remember_device_key(&device_key);
         let key = keys::volume_key(&device_key, id);
-        let file = self.volume_file(id);
-        self.sys.ensure_dir(&self.paths.volumes, 0o700, None)?;
+        let location = self.volume_location(id)?;
+        let file = location.file;
+        match &location.drive {
+            Some(drive) if !self.sys.is_mounted(drive) => {
+                return Err(ApiError::Failed(format!(
+                    "the data drive is not mounted at {}",
+                    drive.display()
+                )))
+            }
+            Some(drive) => self
+                .sys
+                .ensure_dir(&drive.join(".nodo-volumes"), 0o700, None)?,
+            None => self.sys.ensure_dir(&self.paths.volumes, 0o700, None)?,
+        }
         // Fails when the file exists, so reinstalling a package can never format over old data.
         self.sys.allocate_file(&file, size)?;
         if let Err(e) = self.sys.luks_format(&file, key.as_ref()) {
@@ -226,10 +316,11 @@ impl<S: System> Helper<S> {
             .and_then(|()| self.sys.ensure_dir(Path::new(VOLUME_ROOT), 0o711, None))
             .and_then(|()| self.sys.ensure_dir(mount, 0o700, None))
             .and_then(|()| self.sys.mount(&device, mount))
-            .and_then(|()| self.sys.set_owner(mount, &user, 0o700));
+            .map_err(|e| e.0)
+            .and_then(|()| self.prepare_volume(id, mount));
         if let Err(e) = result {
             let _ = self.sys.luks_close(&name);
-            return Err(e.into());
+            return Err(ApiError::Failed(e));
         }
         Ok(())
     }
@@ -466,13 +557,62 @@ mod tests {
     }
 
     #[test]
-    fn new_volume_is_private_to_its_user() {
+    fn new_volume_has_its_layout_and_a_root_owned_top() {
         let h = setup();
         h.create_volume("newapp", &s(PASS), 1 << 20).unwrap();
-        assert!(h
-            .sys
-            .calls()
-            .contains(&"chown /run/nodo/volumes/newapp _newapp 700".to_owned()));
+        let calls = h.sys.calls();
+        for expected in [
+            "mkdir /run/nodo/volumes/newapp/config 755 -",
+            "mkdir /run/nodo/volumes/newapp/log 750 _newapp",
+            "mkdir /run/nodo/volumes/newapp/data 750 _newapp",
+            "chown /run/nodo/volumes/newapp root 711",
+        ] {
+            assert!(
+                calls.contains(&expected.to_owned()),
+                "{expected}: {calls:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_volume_from_before_the_layout_moves_its_data_inside() {
+        let h = setup();
+        h.sys.put("/run/nodo/volumes/vault/blocks.db", b"chain");
+        h.sys.put("/run/nodo/volumes/vault/lost+found/x", b"");
+        unlock(&h, PASS).unwrap();
+        assert_eq!(
+            h.sys.get("/run/nodo/volumes/vault/data/blocks.db").unwrap(),
+            b"chain"
+        );
+        assert_eq!(h.sys.get("/run/nodo/volumes/vault/blocks.db"), None);
+        assert!(h.sys.get("/run/nodo/volumes/vault/lost+found/x").is_some());
+        // Once in the new layout, nothing moves again.
+        h.sys.reboot();
+        h.sys.put("/run/nodo/volumes/vault/data/keep", b"");
+        h.sys
+            .put("/run/nodo/volumes/vault/config/settings.toml", b"");
+        unlock(&h, PASS).unwrap();
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("rename")));
+    }
+
+    #[test]
+    fn unlocking_keeps_the_secrets_key_and_setup_starts_unlocked() {
+        let h = setup();
+        assert!(
+            h.secrets_key().is_some(),
+            "setup and installs take the passphrase"
+        );
+        let fresh = helper(FakeSystem::default());
+        assert!(fresh.secrets_key().is_none());
+        let h = Helper {
+            sys: h.sys,
+            ..fresh
+        };
+        assert!(h.secrets_key().is_none());
+        assert_eq!(unlock(&h, "nope nope nope"), Err(ApiError::BadPassphrase));
+        assert!(h.secrets_key().is_none());
+        unlock(&h, PASS).unwrap();
+        assert!(h.secrets_key().is_some());
     }
 
     #[test]

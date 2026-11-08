@@ -113,4 +113,10 @@ pub trait System: Send + Sync {
     fn probe(&self, probe: &Probe) -> bool;
     fn sleep(&self, duration: Duration);
     fn random(&self, out: &mut [u8]) -> SysResult<()>;
+
+    /// Renames within one filesystem, replacing nothing: fails if `to` exists.
+    fn rename(&self, from: &Path, to: &Path) -> SysResult<()>;
+    /// The body of a successful `GET` to a loopback port, at most `limit` bytes. Only ever
+    /// loopback, because the port can come from an untrusted package.
+    fn http_get_local(&self, port: u16, path: &str, limit: usize) -> SysResult<Vec<u8>>;
 }

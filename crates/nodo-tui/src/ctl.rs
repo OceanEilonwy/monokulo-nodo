@@ -8,7 +8,8 @@ use std::io::{self, BufRead, IsTerminal};
 use zeroize::Zeroizing;
 
 use nodo_api::{
-    Exposure, PublicConfirmation, RepairConfirmation, Request, Secret, SettingChange, SettingInput, SettingLiteral,
+    Exposure, PublicConfirmation, RepairConfirmation, Request, Secret, SettingChange, SettingGrant, SettingInput,
+    SettingLiteral,
     SiteId,
 };
 
@@ -28,6 +29,9 @@ nodo-tui --ctl COMMAND [ARGS]
   expose PACKAGE SITE LOCAL ONION PUBLIC [TYPED_HOST]   (each flag 0 or 1)
   add-key LINE | remove-key FINGERPRINT
   drive-check | drive-repair CHECK_ID | drive-mount
+  node | roles | bind ROLE PACKAGE | unbind ROLE | grants
+  grant CONSUMER PROVIDER SETTING | revoke CONSUMER PROVIDER SETTING
+  data-drive PACKAGE 0|1
   feeds | refresh-feeds | catalog | probe-feed ADDRESS | add-feed ADDRESS FINGERPRINT
   feed-enable NAME 0|1 | remove-feed NAME | feed-key NAME | trust-key NAME FROM TO TYPED_NAME
   review FEED PACKAGE
@@ -185,6 +189,16 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             accept_data_loss_risk: true,
         }),
         ["drive-mount"] => Request::MountDrive,
+        ["node"] => Request::NodeStatus,
+        ["roles"] => Request::ListRoleBindings,
+        ["bind", role, package] => Request::SetRoleBinding { role: id(role), package: Some(id(package)) },
+        ["unbind", role] => Request::SetRoleBinding { role: id(role), package: None },
+        ["grants"] => Request::ListGrants,
+        [verb @ ("grant" | "revoke"), consumer, provider, setting] => Request::SetGrant {
+            grant: SettingGrant { consumer: id(consumer), provider: id(provider), setting: id(setting) },
+            approved: *verb == "grant",
+        },
+        ["data-drive", package, on] => Request::UseDataDrive { package: id(package), enabled: flag(on)? },
         ["feeds"] => Request::ListFeeds,
         ["refresh-feeds"] => Request::RefreshFeeds,
         ["catalog"] => Request::Catalog,
@@ -270,5 +284,20 @@ mod tests {
         assert_eq!(confirmation.unwrap().typed_host, "shop.example.com");
         assert!(parse(&args("expose shop web 1 0 2")).is_err());
         assert!(parse(&args("bogus")).is_err());
+    }
+
+    #[test]
+    fn parses_bindings_and_grants() {
+        let Ok(Request::SetGrant { grant, approved: false }) = parse(&args("revoke shop cuprated token")) else {
+            panic!()
+        };
+        assert_eq!((grant.consumer.as_str(), grant.provider.as_str()), ("shop", "cuprated"));
+        assert!(matches!(
+            parse(&args("bind monero-daemon cuprated")),
+            Ok(Request::SetRoleBinding { package: Some(_), .. })
+        ));
+        assert!(matches!(parse(&args("unbind monero-daemon")), Ok(Request::SetRoleBinding { package: None, .. })));
+        assert!(matches!(parse(&args("data-drive vault 1")), Ok(Request::UseDataDrive { enabled: true, .. })));
+        assert!(matches!(parse(&args("node")), Ok(Request::NodeStatus)));
     }
 }

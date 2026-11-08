@@ -59,12 +59,12 @@ pub(crate) fn count_keys(text: &str) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-fn info(package: &Package) -> PackageInfo {
+fn info(package: &Package, feed: Option<String>) -> PackageInfo {
     let m = &package.manifest;
     PackageInfo {
         id: m.id.clone(),
         version: m.version.clone(),
-        origin: package.origin(),
+        origin: package.origin(feed),
         roles: m.provides.clone(),
         needs: m.needs.clone(),
         encrypted_storage: m.storage.encrypted,
@@ -76,6 +76,10 @@ impl<S: System> Helper<S> {
     pub(crate) fn encryption_state(&self) -> Result<EncryptionState, ApiError> {
         if !self.sys.exists(&self.paths.keystore) {
             return Ok(EncryptionState::NotSetUp);
+        }
+        // Sealed secrets need the key in memory, which a reboot or a helper restart loses.
+        if self.secrets_key().is_none() {
+            return Ok(EncryptionState::Locked);
         }
         let (packages, _) = self.packages()?;
         for package in &packages {
@@ -118,7 +122,12 @@ impl<S: System> Helper<S> {
 
     pub(crate) fn list_packages(&self) -> Result<Response, ApiError> {
         let (packages, _) = self.packages()?;
-        Ok(Response::Packages(packages.iter().map(info).collect()))
+        Ok(Response::Packages(
+            packages
+                .iter()
+                .map(|p| info(p, self.feed_of(p.id())))
+                .collect(),
+        ))
     }
 
     pub(crate) fn package_detail(&self, id: &str) -> Result<Response, ApiError> {
@@ -142,7 +151,7 @@ impl<S: System> Helper<S> {
             })
             .collect();
         Ok(Response::PackageDetail(PackageDetail {
-            info: info(&package),
+            info: info(&package, self.feed_of(id)),
             sites: m.web.iter().map(|web| web.name.clone()).collect(),
             inbound,
             outbound_internet: matches!(m.network.outbound, nodo_manifest::Outbound::Internet),
@@ -229,6 +238,12 @@ mod tests {
         h.sys.put("/k/device.key", b"x");
         assert_eq!(h.encryption_state(), Ok(EncryptionState::Locked));
         h.sys.set_mounted("/run/nodo/volumes/vault");
+        assert_eq!(
+            h.encryption_state(),
+            Ok(EncryptionState::Locked),
+            "the secrets key is not in memory"
+        );
+        h.remember_device_key(&[1; 32]);
         assert_eq!(h.encryption_state(), Ok(EncryptionState::Unlocked));
     }
 

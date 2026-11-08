@@ -189,6 +189,12 @@ impl<S: System> Helper<S> {
                 name: "exposure".into(),
                 path: self.paths.exposure_state.clone(),
             },
+            // Role bindings, approved grants and data drive choices.
+            Source {
+                category: Category::Settings,
+                name: "bindings".into(),
+                path: self.paths.bindings.clone(),
+            },
             Source {
                 category: Category::Secrets,
                 name: "nodo".into(),
@@ -454,6 +460,11 @@ impl<S: System> Helper<S> {
             tree(&staged("settings/nodo"), &self.paths.settings_store)?;
             report.restored.push("settings".into());
         }
+        if staged("settings/bindings").is_file() {
+            let bytes = fs::read(staged("settings/bindings")).map_err(io)?;
+            self.sys.atomic_write(&self.paths.bindings, &bytes, KEY_FILE)?;
+            report.restored.push("role bindings and grants".into());
+        }
         if staged("settings/exposure").is_file() {
             let bytes = fs::read(staged("settings/exposure")).map_err(io)?;
             self.sys
@@ -482,14 +493,20 @@ impl<S: System> Helper<S> {
                     .push(format!("{id} storage: not installed or locked here"));
                 continue;
             }
-            let meta = fs::metadata(&mount).map_err(io)?;
-            self.manage
-                .packages
-                .restore_tree(&staged(&format!("storage/{id}")), &mount, None)
-                .map_err(failed)?;
-            chown_tree(&mount, meta.uid(), meta.gid()).map_err(io)?;
-            fs::set_permissions(&mount, fs::Permissions::from_mode(meta.mode() & 0o7777))
-                .map_err(io)?;
+            // `config` is rendered again below. `data` and `log` keep the owner and mode the
+            // volume gives them here, since the backup may come from another device.
+            let from = staged(&format!("storage/{id}"));
+            for sub in ["data", "log"] {
+                let (source, target) = (from.join(sub), mount.join(sub));
+                if !source.is_dir() || !target.is_dir() {
+                    continue;
+                }
+                let meta = fs::metadata(&target).map_err(io)?;
+                self.manage.packages.restore_tree(&source, &target, None).map_err(failed)?;
+                chown_tree(&target, meta.uid(), meta.gid()).map_err(io)?;
+                fs::set_permissions(&target, fs::Permissions::from_mode(meta.mode() & 0o7777))
+                    .map_err(io)?;
+            }
             report.restored.push(format!("{id} storage"));
         }
         // Rendered files are made again from the restored values, with this device's owners.
@@ -515,22 +532,14 @@ impl<S: System> Helper<S> {
         Ok(())
     }
 
+    /// Settings files rendered again from the restored store, sealed secrets included when
+    /// the device is unlocked, with this device's owners and inside the volume for encrypted
+    /// packages.
     fn render_settings(&self, package: &crate::catalog::Package) -> Result<(), ApiError> {
         let (packages, _) = self.packages()?;
-        let ctx = crate::settings::SettingsContext {
-            sys: &self.sys,
-            paths: &self.paths,
-            packages: &packages,
-        };
-        for file in self.settings.plan(&ctx, package, &[])? {
-            if let Some(dir) = file.path.parent() {
-                self.sys.ensure_dir(dir, file.parent_mode, None)?;
-            }
-            let options = WriteOptions {
-                mode: file.mode,
-                group: file.group.as_deref(),
-            };
-            self.sys.atomic_write(&file.path, &file.bytes, options)?;
+        let plan = self.with_settings(&packages, |ctx| self.settings.plan(ctx, package, &[]))?;
+        for file in plan.files {
+            crate::apply::Write::from(file).apply(&self.sys)?;
         }
         Ok(())
     }

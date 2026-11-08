@@ -11,6 +11,14 @@ const COMM_LEN: usize = 15;
 /// Where unlocked encrypted volumes are mounted on the host.
 pub const VOLUME_ROOT: &str = "/run/nodo/volumes";
 
+/// Memory-backed home of rendered settings that must not reach a disk in clear: those of
+/// packages with sealed secrets or encrypted storage. It is empty after every reboot until the
+/// helper renders them again after an unlock.
+pub const SECRETS_ROOT: &str = "/run/nodo/secrets";
+
+/// Root-only resolved settings of packages whose settings may live on the system disk.
+pub const ENV_ROOT: &str = "/var/lib/nodo/env";
+
 /// How much a package is trusted. It comes from where the manifest was found, never from the
 /// manifest itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +41,38 @@ pub fn volume_mount(id: &str) -> Result<String, GenError> {
     Ok(format!("{VOLUME_ROOT}/{id}"))
 }
 
+/// Host directory holding a package's in-memory settings: `env` and, unless its volume holds
+/// it, `config`.
+pub fn secrets_dir(id: &str) -> Result<String, GenError> {
+    validate::package_id(id)?;
+    Ok(format!("{SECRETS_ROOT}/{id}"))
+}
+
+/// The directories inside an unlocked volume. The helper creates them after mounting it, since
+/// they cannot exist before. `config` is root's, so a service cannot swap it for a link that
+/// would redirect the helper's writes, and its files are readable through their group.
+pub fn volume_directories(id: &str) -> Result<Vec<Directory>, GenError> {
+    let mount = volume_mount(id)?;
+    let user = service_user(id)?;
+    Ok(vec![
+        Directory {
+            path: format!("{mount}/config"),
+            owner: None,
+            mode: 0o755,
+        },
+        Directory {
+            path: format!("{mount}/log"),
+            owner: Some(user.clone()),
+            mode: 0o750,
+        },
+        Directory {
+            path: format!("{mount}/data"),
+            owner: Some(user),
+            mode: 0o750,
+        },
+    ])
+}
+
 /// Device-mapper name for a package's volume.
 pub fn mapper_name(id: &str) -> Result<String, GenError> {
     validate::package_id(id)?;
@@ -42,32 +82,71 @@ pub fn mapper_name(id: &str) -> Result<String, GenError> {
 /// Host directories belonging to a package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
+    /// Where the helper writes rendered settings on the host.
     pub config_dir: String,
+    /// Where the sandbox sees `config_dir`, read-only. Packages always find their settings here.
+    pub config_mount: String,
+    /// The data directory inside the sandbox, and on the host for unencrypted packages.
     pub data_dir: String,
     pub log_dir: String,
     /// The package's own read-only tree. System packages live in `/usr` instead.
     pub app_dir: Option<String>,
+    /// Root-only `NAME='value'` lines of resolved settings. The run script reads it as root and
+    /// hands the values to the service as its environment, so they never appear in argv.
+    pub env_file: String,
+    /// Whether rendered settings live in memory, so the service waits for the helper to write
+    /// them after an unlock.
+    pub settings_in_memory: bool,
 }
 
 impl Layout {
     /// Apps get their own namespace. Their ids are attacker-chosen, and an app called `ssh` or
     /// `nodo` must not land on `/etc/ssh` or `/var/lib/nodo`.
-    pub fn new(id: &str, profile: Profile) -> Result<Self, GenError> {
+    ///
+    /// An encrypted package keeps its rendered settings and logs inside its volume and its
+    /// environment in memory, so nothing of it reaches the system disk in clear.
+    pub fn new(id: &str, profile: Profile, encrypted: bool) -> Result<Self, GenError> {
         validate::package_id(id)?;
-        Ok(match profile {
+        let mut layout = match profile {
             Profile::System => Layout {
                 config_dir: format!("/etc/{id}"),
+                config_mount: format!("/etc/{id}"),
                 data_dir: format!("/var/lib/{id}"),
                 log_dir: format!("/var/log/{id}"),
                 app_dir: None,
+                env_file: format!("{ENV_ROOT}/{id}.env"),
+                settings_in_memory: false,
             },
             Profile::App => Layout {
                 config_dir: format!("/etc/apps/{id}"),
+                config_mount: format!("/etc/apps/{id}"),
                 data_dir: format!("/var/lib/apps/{id}"),
                 log_dir: format!("/var/log/apps/{id}"),
                 app_dir: Some(format!("/opt/nodo/apps/{id}")),
+                env_file: format!("{ENV_ROOT}/{id}.env"),
+                settings_in_memory: false,
             },
-        })
+        };
+        if encrypted {
+            let mount = volume_mount(id)?;
+            layout.config_dir = format!("{mount}/config");
+            layout.log_dir = format!("{mount}/log");
+            layout.env_file = format!("{}/env", secrets_dir(id)?);
+            layout.settings_in_memory = true;
+        }
+        Ok(layout)
+    }
+
+    /// For a package whose settings hold secrets sealed under the device key: rendered settings
+    /// move to memory, where they exist only after an unlock.
+    pub fn with_sealed_settings(mut self, id: &str) -> Result<Self, GenError> {
+        let dir = secrets_dir(id)?;
+        if !self.config_dir.starts_with(VOLUME_ROOT) {
+            self.config_dir = format!("{dir}/config");
+        }
+        self.env_file = format!("{dir}/env");
+        self.settings_in_memory = true;
+        Ok(self)
     }
 }
 
@@ -97,12 +176,25 @@ pub struct ResolvedGrants {
     pub unrestricted_loopback: bool,
     /// Loopback TCP ports of granted dependencies.
     pub loopback_tcp_ports: Vec<u16>,
+    /// Loopback UDP ports of granted dependencies.
+    pub loopback_udp_ports: Vec<u16>,
     /// Addresses reachable despite the private range block.
     pub lan: Vec<LanGrant>,
     /// Dependencies whose `/run/apps/<id>` socket directory appears in this sandbox.
     pub socket_deps: Vec<String>,
-    /// A mount that must exist, overriding anything in the service's `conf`.
+    /// A mount that must exist, overriding anything in the service's `conf`. For encrypted
+    /// storage it only decides where the volume file lives, never where plaintext goes.
     pub data_mount: Option<String>,
+}
+
+/// What a package's resolved settings decide about its service.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Resolution {
+    /// `exec` with references substituted, from `nodo_settings::Installed::resolve`. Without
+    /// it the manifest's own command line runs, which must then hold no references.
+    pub exec: Option<Vec<String>>,
+    /// The package's settings include secrets sealed under the device key.
+    pub sealed_settings: bool,
 }
 
 /// A manifest and its grants after validation. Only this type reaches the generators.
@@ -117,6 +209,7 @@ pub struct ServiceSpec {
     pub(crate) internet: bool,
     pub(crate) encrypted: bool,
     pub(crate) bind_config: bool,
+    pub(crate) has_settings: bool,
     pub(crate) own_socket_dir: Option<String>,
     pub(crate) dep_socket_dirs: Vec<String>,
     pub(crate) data_mount: Option<String>,
@@ -134,11 +227,41 @@ impl ServiceSpec {
         profile: Profile,
         grants: &ResolvedGrants,
     ) -> Result<Self, GenError> {
+        Self::resolved(manifest, profile, grants, &Resolution::default())
+    }
+
+    pub fn resolved(
+        manifest: &Manifest,
+        profile: Profile,
+        grants: &ResolvedGrants,
+        resolution: &Resolution,
+    ) -> Result<Self, GenError> {
         let id = manifest.id.clone();
         let user = service_user(&id)?;
-        let layout = Layout::new(&id, profile)?;
+        let mut layout = Layout::new(&id, profile, manifest.storage.encrypted)?;
+        if resolution.sealed_settings {
+            layout = layout.with_sealed_settings(&id)?;
+        }
 
-        let (first, args) = manifest.exec.split_first().ok_or(GenError::Exec("empty"))?;
+        let (first, raw_args) = manifest.exec.split_first().ok_or(GenError::Exec("empty"))?;
+        let args = match &resolution.exec {
+            Some(resolved) => {
+                // The resolver never substitutes the program, so a different one means the
+                // resolution belongs to another manifest.
+                let (program, args) = resolved.split_first().ok_or(GenError::Exec("empty"))?;
+                if program != first {
+                    return Err(GenError::Exec("resolved for a different program"));
+                }
+                args
+            }
+            None => {
+                // An unresolved reference would reach the program as literal text.
+                if raw_args.iter().any(|arg| arg.contains("$(")) {
+                    return Err(GenError::Exec("has references that were not resolved"));
+                }
+                raw_args
+            }
+        };
         let program = program_path(first, profile, &layout)?;
         validate::exec_args(args)?;
         let comm = comm_pattern(&program);
@@ -148,9 +271,6 @@ impl ServiceSpec {
                 "only system packages get unrestricted loopback",
             ));
         }
-        if manifest.storage.encrypted && grants.data_mount.is_some() {
-            return Err(GenError::Grant("encrypted storage cannot use a data mount"));
-        }
         if let Some(mount) = &grants.data_mount {
             data_mount(mount)?;
         }
@@ -159,6 +279,9 @@ impl ServiceSpec {
         let mut loopback_udp = BTreeSet::new();
         for port in &grants.loopback_tcp_ports {
             loopback_tcp.insert(validate::port(*port)?);
+        }
+        for port in &grants.loopback_udp_ports {
+            loopback_udp.insert(validate::port(*port)?);
         }
 
         let mut inbound = Vec::new();
@@ -198,6 +321,7 @@ impl ServiceSpec {
             id,
             user,
             bind_config: profile == Profile::System || manifest.settings.is_some(),
+            has_settings: manifest.settings.is_some(),
             layout,
             program,
             args: args.to_vec(),
@@ -228,25 +352,27 @@ impl ServiceSpec {
         &self.layout
     }
 
+    /// An encrypted package's directories are inside its volume, so the helper creates them
+    /// only while it is mounted.
     pub fn directories(&self) -> Vec<Directory> {
+        if self.encrypted {
+            return volume_directories(&self.id).expect("id was validated by ServiceSpec::new");
+        }
         let owned = |path: &str| Directory {
             path: path.to_owned(),
             owner: Some(self.user.clone()),
             mode: 0o750,
         };
         let mut dirs = Vec::new();
-        if self.bind_config {
+        // In-memory settings are written after an unlock, which creates their directory.
+        if self.bind_config && !self.layout.settings_in_memory {
             dirs.push(Directory {
                 path: self.layout.config_dir.clone(),
                 owner: None,
                 mode: 0o755,
             });
         }
-        // bwrap creates the mount target inside the sandbox, so an encrypted package has no
-        // plaintext data directory on the host at all.
-        if !self.encrypted {
-            dirs.push(owned(&self.layout.data_dir));
-        }
+        dirs.push(owned(&self.layout.data_dir));
         dirs.push(owned(&self.layout.log_dir));
         dirs
     }

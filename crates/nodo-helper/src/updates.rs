@@ -248,7 +248,12 @@ impl<S: System> Updater<'_, S> {
             let mount = PathBuf::from(volume_mount(id).map_err(fail)?);
             Ok((mount.clone(), mount.join(IN_VOLUME_COPY), Some(IN_VOLUME_COPY)))
         } else {
-            let layout = Layout::new(id, Profile::App).map_err(fail)?;
+            if h.data_mount_of(id).map_err(fail)?.is_some() {
+                return Err(Failure(format!(
+                    "{id} keeps its data on the data drive, which an update cannot copy for a rollback yet"
+                )));
+            }
+            let layout = Layout::new(id, Profile::App, false).map_err(fail)?;
             Ok((PathBuf::from(layout.data_dir), h.manage.paths.rollback.join(id), None))
         }
     }
@@ -304,6 +309,7 @@ impl<S: System> Installer for Updater<'_, S> {
             .get(id)
             .ok_or_else(|| Failure(format!("{id} was not installed from a feed")))?;
         let feed = state.feed(&record.feed).map_err(fail)?;
+        let feed_name = record.feed.clone();
         let previous = record
             .kept
             .clone()
@@ -377,7 +383,7 @@ impl<S: System> Installer for Updater<'_, S> {
         let manifest = self.installed_manifest(id)?;
         h.place_manifest(id, &h.app_dir(id).map_err(fail)?, &manifest)
             .map_err(Failure)?;
-        h.install_by_id(id, None).map_err(fail)?;
+        h.install_package(id, None, Some(&feed_name)).map_err(fail)?;
         Ok(())
     }
 
@@ -418,7 +424,8 @@ impl<S: System> Installer for Updater<'_, S> {
             Ok(())
         })
         .map_err(fail)?;
-        h.install_by_id(id, None).map_err(fail)?;
+        let feed_name = h.read_feeds().ok().and_then(|s| s.installed.get(id).map(|r| r.feed.clone()));
+        h.install_package(id, None, feed_name.as_deref()).map_err(fail)?;
         if let Some(fresh) = self.fresh.remove(id).filter(|f| *f != previous) {
             h.manage.packages.remove_kept(&fresh);
         }
