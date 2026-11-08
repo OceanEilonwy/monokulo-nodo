@@ -66,6 +66,11 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let mut state = BackupState::new(true);
             state.busy = false;
             state.list = mock.backups().unwrap_or_default();
+            // The design shows a stick plugged in, with the focus on its backup.
+            let drive = mock.usb_drives().unwrap_or_default().remove(0);
+            let list = mock.usb_backups(&drive.device).ok();
+            state.usb = Some(UsbView { drive, list });
+            state.usb_focused = true;
             Screen::Backup(state)
         }
         ScreenId::NoDrive => Screen::NoDrive { choice: 0 },

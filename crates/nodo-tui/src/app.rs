@@ -76,12 +76,12 @@ pub enum ScreenId {
     WebCertificate,
     /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
     Setup,
-    /// Backups and restore. It has no design file either, and follows the others' style.
+    /// Backups and restore, on the device and on a USB drive.
     Backup,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 27] = [
+    pub const ALL: [ScreenId; 28] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -109,6 +109,7 @@ impl ScreenId {
         ScreenId::AutoUpdate,
         ScreenId::WebDomain,
         ScreenId::WebCertificate,
+        ScreenId::Backup,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -147,7 +148,7 @@ impl ScreenId {
     }
 
     pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL.into_iter().chain([ScreenId::Backup]).find(|id| id.slug() == slug)
+        Self::ALL.into_iter().find(|id| id.slug() == slug)
     }
 }
 
@@ -247,11 +248,42 @@ pub struct BackupState {
     pub busy: bool,
     /// The device key exists, so a backup asks for the device passphrase to include it.
     pub device_set_up: bool,
+    /// The USB drive, `None` while none is plugged in.
+    pub usb: Option<UsbView>,
+    /// The USB list has the focus rather than the device's own list.
+    pub usb_focused: bool,
+    pub usb_selected: usize,
+    /// The removable drive the step under way uses, `None` for the device's own backups.
+    pub target: Option<String>,
+    /// First boot: restoring a whole device from a USB drive instead of setting it up.
+    pub fresh: bool,
 }
 
 impl BackupState {
     pub fn new(device_set_up: bool) -> Self {
-        Self { list: Vec::new(), selected: 0, step: BackupStep::List, error: None, busy: true, device_set_up }
+        Self {
+            list: Vec::new(),
+            selected: 0,
+            step: BackupStep::List,
+            error: None,
+            busy: true,
+            device_set_up,
+            usb: None,
+            usb_focused: false,
+            usb_selected: 0,
+            target: None,
+            fresh: false,
+        }
+    }
+
+    /// The first-boot restore, which only offers USB drives.
+    pub fn fresh() -> Self {
+        Self { usb_focused: true, fresh: true, ..Self::new(false) }
+    }
+
+    /// Backups on the USB drive, when one can be used.
+    pub fn usb_list(&self) -> &[nodo_api::BackupInfo] {
+        self.usb.as_ref().and_then(|u| u.list.as_ref()).map(|l| l.backups.as_slice()).unwrap_or(&[])
     }
 }
 
@@ -825,10 +857,18 @@ pub enum Effect {
     LoadSshKeys,
     AddSshKey(String),
     RemoveSshKey(String),
+    /// The device's backups, and the first USB drive with its backups.
     LoadBackups,
-    CreateBackup { device_passphrase: Option<Secret>, backup_passphrase: Secret },
-    InspectBackup { name: String, passphrase: Secret },
-    RestoreBackup { name: String, passphrase: Secret, new_device_passphrase: Option<Secret>, typed: String },
+    /// `usb` names a removable drive to use instead of the device's own backup folder.
+    CreateBackup { device_passphrase: Option<Secret>, backup_passphrase: Secret, usb: Option<String> },
+    InspectBackup { name: String, passphrase: Secret, usb: Option<String> },
+    RestoreBackup {
+        name: String,
+        passphrase: Secret,
+        new_device_passphrase: Option<Secret>,
+        typed: String,
+        usb: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -877,4 +917,13 @@ pub enum Event {
     BackupCreated(Result<nodo_api::BackupCreated, String>),
     BackupInspected(Result<nodo_api::BackupContents, String>),
     BackupRestored(Result<nodo_api::RestoreReport, String>),
+    UsbLoaded(Result<UsbView, String>),
+}
+
+/// The USB drive the backup screen shows: the first one plugged in, with its backups when it
+/// can be used, or why it cannot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbView {
+    pub drive: nodo_api::UsbDrive,
+    pub list: Option<nodo_api::UsbBackupList>,
 }

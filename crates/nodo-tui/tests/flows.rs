@@ -1396,7 +1396,7 @@ fn a_new_backup_needs_matching_passphrases_and_the_device_passphrase() {
     key(&mut app, &mut mock, ENTER);
     type_text(&mut app, &mut mock, "backup passphrase one");
     let effects = update(&mut app, press(ENTER));
-    let [Effect::CreateBackup { device_passphrase: Some(device), backup_passphrase }] = effects.as_slice() else {
+    let [Effect::CreateBackup { device_passphrase: Some(device), backup_passphrase, usb: None }] = effects.as_slice() else {
         panic!("{effects:?}")
     };
     assert_eq!(device.expose(), "device pass");
@@ -1438,6 +1438,48 @@ fn trusting_a_new_key_sends_the_typed_name_and_both_keys() {
     type_text(&mut app, &mut mock, "old-tools");
     let effects = update(&mut app, press(ENTER));
     assert_eq!(effects, [Effect::TrustNewKey { change, typed: "old-tools".into() }]);
+}
+
+#[test]
+fn a_backup_goes_to_the_usb_drive_and_a_restore_reads_from_it() {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('b'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("USB drive · SanDisk Ultra Fit, BACKUP"), "{screen}");
+    assert!(screen.contains("nodo-1762473600.nodobak"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('u'));
+    assert!(screen_text(&app).contains("New backup on SanDisk Ultra Fit, BACKUP"), "{}", screen_text(&app));
+    type_text(&mut app, &mut mock, "device pass");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "backup passphrase one");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "backup passphrase one");
+    let effects = update(&mut app, press(ENTER));
+    let [Effect::CreateBackup { usb: Some(device), .. }] = effects.as_slice() else { panic!("{effects:?}") };
+    assert_eq!(device, "sda1");
+    for event in execute_effect(&mut mock, effects[0].clone()) {
+        dispatch(&mut app, &mut mock, event);
+    }
+    // Tab moves to the drive's list, and a restore from it names the drive.
+    keys(&mut app, &mut mock, &[TAB, ENTER]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("nodo-1762473600.nodobak, on SanDisk Ultra Fit, BACKUP"), "{screen}");
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    let effects = update(&mut app, press(ENTER));
+    let [Effect::InspectBackup { name, usb: Some(device), .. }] = effects.as_slice() else { panic!("{effects:?}") };
+    assert_eq!((name.as_str(), device.as_str()), ("nodo-1762473600.nodobak", "sda1"));
+}
+
+#[test]
+fn without_a_usb_drive_the_screen_says_so_and_u_explains() {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('b'));
+    let Screen::Backup(state) = &mut app.screen else { panic!() };
+    state.usb = None;
+    assert!(screen_text(&app).contains("No USB drive is plugged in."));
+    let effects = update(&mut app, press(KeyCode::Char('u')));
+    assert!(effects.is_empty());
+    assert!(screen_text(&app).contains("Plug in a USB drive"), "{}", screen_text(&app));
 }
 
 #[test]

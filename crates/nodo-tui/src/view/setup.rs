@@ -33,11 +33,15 @@ pub fn setup(t: &Theme, state: &SetupState) -> Page {
                 Item::Text(Line::from(vec![t.i("▸"), t.n(format!(" Use at least {MIN_PASSPHRASE_CHARS} characters. A few unrelated words work well."))])),
                 Item::Text(Line::from(vec![t.i("▸"), t.n(" There is no default passphrase and no way to recover a lost one.")])),
             ];
-            let keys = if *confirming { [("↵", "set passphrase"), ("Esc", "retype the first")] } else { [("↵", "next"), ("Ctrl-C", "quit")] };
+            let keys: &[(&str, &str)] = if *confirming {
+                &[("↵", "set passphrase"), ("Esc", "retype the first")]
+            } else {
+                &[("↵", "next"), ("Ctrl-R", "restore from a USB backup"), ("Ctrl-C", "quit")]
+            };
             Page::new(Line::from(t.b("Set up this device")), Line::from(t.d("Step 1 of 2")))
                 .panel(Panel::accent("Device passphrase", items))
                 .panel(Panel::new("About the passphrase", about).grow())
-                .footer(Item::Text(hints(t, &keys)))
+                .footer(Item::Text(hints(t, keys)))
         }
         SetupStep::Keys { keys, selected, adding } => {
             let mut items: Vec<Item> = keys

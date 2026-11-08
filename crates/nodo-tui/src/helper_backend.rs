@@ -881,6 +881,43 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::restore_backup(self, name, passphrase, new_device, typed)
     }
 
+    fn usb_drives(&self) -> Result<Vec<nodo_api::UsbDrive>, String> {
+        crate::helper_manage::usb_drives(self)
+    }
+
+    fn usb_backups(&self, device: &str) -> Result<nodo_api::UsbBackupList, String> {
+        crate::helper_manage::usb_backups(self, device)
+    }
+
+    fn create_usb_backup(
+        &mut self,
+        device: &str,
+        device_passphrase: Option<&Secret>,
+        backup: &Secret,
+    ) -> Result<nodo_api::BackupCreated, String> {
+        crate::helper_manage::create_usb_backup(self, device, device_passphrase, backup)
+    }
+
+    fn inspect_usb_backup(
+        &mut self,
+        device: &str,
+        name: &str,
+        passphrase: &Secret,
+    ) -> Result<nodo_api::BackupContents, String> {
+        crate::helper_manage::inspect_usb_backup(self, device, name, passphrase)
+    }
+
+    fn restore_usb_backup(
+        &mut self,
+        device: &str,
+        name: &str,
+        passphrase: &Secret,
+        new_device: Option<&Secret>,
+        typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        crate::helper_manage::restore_usb_backup(self, device, name, passphrase, new_device, typed)
+    }
+
     fn site_id(&self, key: &str) -> SiteId {
         if let Some(id) = self.sites.borrow().get(key) {
             return id.clone();

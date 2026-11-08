@@ -80,6 +80,40 @@ a feed signed in the VM: an update asking for internet access is held, one faili
 check is rolled back with its data and held, a held version is not retried, and a healthy one
 installs.
 
+**Encrypted packages across updates.** An update never touches the LUKS volume itself: the new
+version starts on the same volume with the same key. Two manifest fields describe what a version
+needs from it. `storage.size_mib` is the volume size (256 MiB when not given, 32 MiB to 1 TiB),
+and `storage.data_layout` is the version of the package's own data layout (1 when not given). The
+helper records the layout the data is in at the top of the volume (`.nodo-layout`, root-owned, out
+of the service's reach) when the volume is created and after an update passes its health check.
+
+- A version asking for a larger volume grows it in place before it starts, while it stays
+  mounted: the file is extended with real blocks, the loop device re-read, the LUKS2 mapping
+  resized and the ext4 filesystem grown online. LUKS2 keeps the volume key in the kernel keyring,
+  so resizing needs the key again, and the helper never keeps the device key after an unlock.
+  Such an update therefore needs the device passphrase (`ApplyUpdatesWithPassphrase`), and
+  automatic updates leave it waiting for the user ("needs the device passphrase to grow its
+  encrypted storage"). Volumes never shrink; a rollback keeps the larger volume, which holds the
+  old data just as well.
+- A version declaring a newer layout converts the data itself on its first start. A version
+  declaring an older layout than the data's is refused before anything is stopped, since it could
+  not read the data.
+- Rollback is copy-based. Before the old version stops, the whole volume (data, logs, rendered
+  settings and the layout record) is copied into `.nodo-rollback` inside the same volume, so the
+  copy is encrypted like the data. A failed install or health check stops the new version, puts
+  the copy back and starts the old version on exactly the data it left; a successful one removes
+  the copy. The copy needs as much free space in the volume as the data takes, plus 8 MiB, and an
+  update that does not fit is refused before anything changes. ext4 on a loop file has no
+  snapshots, and an LVM or btrfs layer would add a moving part to every volume for this one case,
+  which is why the copy was chosen. Before this change the margin was 256 MiB, which no default
+  volume could ever satisfy, so every encrypted update refused to start.
+
+Proven in the KVM VM by `tests/helper-e2e.sh` with `e2e-store`, an encrypted test feed package:
+1.0 writes data in layout 1; 2.0 asks for 320 MiB and layout 2, waits for the passphrase, then
+grows the same LUKS volume (same UUID) and its mounted filesystem and converts the data; 3.0
+destroys the data on its way to layout 3 and fails its health check, and the rollback brings back
+2.0 and its data byte for byte in layout 2; 4.0 declares layout 1 and is refused unchanged.
+
 ## 3. A/B system rollback on the NanoPC-T6N
 
 ### What the FriendlyElec boot chain does
@@ -182,8 +216,11 @@ The chain data stays on the NVMe drive and is not touched.
 ## 5. Backups and USB recovery
 
 `crates/nodo-backup`. A backup holds settings (`/var/lib/nodo/settings`, `exposure.toml`,
-`/etc/apps/<id>`), secrets, the unwrapped device key, the contents of unlocked encrypted volumes
-and Tor onion keys, never chain data. Format: magic, a TOML header with Argon2id parameters, salt
+`bindings.toml`, `/etc/apps/<id>`), secrets, Caddy's storage, the unwrapped device key, the
+contents of unlocked encrypted volumes and Tor onion keys, never chain data. It also holds
+`feeds.toml` (feeds, pinned keys and version floors, approvals, what each package was installed
+from), the auto-update policy and holds in `/var/lib/nodo/updates`, and the verified package files
+kept for rollback in `/var/lib/nodo/packages`. Format: magic, a TOML header with Argon2id parameters, salt
 and nonce, then the payload sealed with the STREAM construction over XChaCha20-Poly1305
 (RustCrypto `aead::stream`), with the header as associated data on every chunk. The backup
 passphrase has at least 12 characters and the same KDF cost as the device key.
@@ -203,14 +240,57 @@ storage it replaces, moves everything into place, renders settings again with th
 owners, starts what was running and deletes the staging copy. A device whose volumes already use
 their own key keeps it, since replacing it would lock them for good. Proven in the KVM VM: a
 wrong passphrase, a flipped byte and a missing typed word restore nothing, and a real restore
-brings back settings, secrets and a file inside an encrypted volume. Not yet: copying a backup to
-or from a USB stick, and restoring onto a fresh install where the packages are not installed yet.
+brings back settings, secrets and a file inside an encrypted volume. On a device that is already
+set up, feeds, approvals and packages stay as they are, since they match what is installed there.
+
+**USB drives** (`crates/nodo-helper/src/usb.rs`). The helper reads `/sys/block` and only ever uses
+a disk the kernel marks removable or that is attached over USB. It refuses a disk when any of its
+filesystems is mounted anywhere else, a device mapper or swap holds it, a partition or filesystem
+carries the `NODO_BLOCKCHAIN` label, or it is the configured data drive, so neither the system
+disk nor chain data can be named by a request. Device names are kernel names only (`sdb1`),
+checked again on every request. SD and eMMC slots, loop, device mapper and optical devices are
+never candidates. Only vfat, exfat and ext4 are mounted, always `nosuid,nodev,noexec,noatime`,
+FAT as root with no access for others, on the private `/run/nodo/usb`, read-only for listing,
+inspecting and restoring. Backups live in a `monokulo-nodo` folder that must be a real directory;
+files are opened without following links. A backup is written as `.nodo-<time>.nodobak.partial`,
+synced, renamed and the folder synced, then the drive is unmounted. Before writing, the helper
+estimates the size and refuses a full drive, and a backup over 4 GB on FAT32. A write error is
+reported by cause: full, read-only (write-protect switch) or unplugged (the device is gone or
+answered with an I/O error), and the partial file is removed, or cleaned up on the next write
+when the drive vanished. Listing never shows partial files. The TUI's Backups screen
+(`docs/design/tui/Backup.dc.html`) shows the device's backups and the first USB drive's, `u`
+writes one to the drive and Tab moves to its list for a restore.
+
+**Restore onto a new device.** First boot offers Ctrl-R, "restore from a USB backup", next to
+setting the passphrase. The owner picks a backup on the drive, types the backup passphrase, sees
+what it holds, types `restore` and chooses the device passphrase. The helper then wraps the
+backup's device key with that passphrase and keeps it in memory (unlocked), puts back settings,
+bindings, exposure, secrets, Tor keys, Caddy's storage, feeds, pins, approvals and update choices,
+and for every package in the backup's feed records reinstalls it, creates its volume at the
+declared size with the restored key, fills `data` and `log` and the layout record from the backup
+while the service is still held down (a runit `down` file), renders its settings and secrets, and
+starts it. Packages are reinstalled from the verified copies inside the backup, not downloaded:
+that works offline and with feeds that moved or vanished, and installs exactly the version the
+owner approved. Each copy is inspected again under the install rules and must ask for nothing
+beyond the stored approval; only a package whose copy is missing is fetched from its feed, under
+the restored pin, at the recorded version. The feed's version floor stays, so future updates
+still need the pinned key. A device that is not set up and a backup without a device key gets a
+new key instead, and the report says so.
+
+Proven in the KVM VM by `tests/usb-e2e.sh`, which runs on the host because it plugs disk image
+files in and out as USB drives through the QEMU monitor (`scripts/dev-vm.sh usb-create`,
+`usb-plug`, `usb-unplug`) and replaces the VM with a clean one (`scripts/dev-vm.sh fresh`) while
+the stick, a file in the VM's container, stays. It checks the refusals (system disk, a path, a
+`NODO_BLOCKCHAIN` USB disk, a missing device passphrase, a read-only stick, a full stick, a stick
+pulled out mid-write), then destroys the first VM, boots the clean image with the same stick,
+restores it and checks that the device is unlocked, the feed key, approval and package version
+are back without the feed, the volume has its declared size, data and layout, the service runs,
+the sealed secret opens, Caddy's files are identical and owned by `_caddy`, and that after a
+helper restart the new passphrase unlocks the restored storage while the old one does not.
 
 USB recovery plan, in order of what exists today:
 
-1. **Restore onto a fresh install.** Flash the SD image, boot, choose "restore from backup", pick
-   the file on a USB stick, enter the backup passphrase, set a new device passphrase. The helper
-   moves each staged category into place with services stopped and rewraps the device key.
+1. **Restore onto a fresh install.** Done, as above, from the first-boot screen.
 2. **Boot failure after an update.** The A/B fallback above. If both slots fail, boot the SD card
    image, which can repair the eMMC slots from a downloaded or USB-provided snapshot image.
 3. **Bricked bootloader.** Rockchip MaskROM mode with `rkdeveloptool` from another computer, using
@@ -312,10 +392,12 @@ The API, helper, TUI and installer parts listed here before are connected (secti
 Still open:
 
 - **nodo-manifest**: a way to ask for a memory limit, so `health.toml` can set one.
-- **nodo-helper**: copying a backup to and from a USB stick, restoring onto a fresh install before
-  its packages are installed, and copying the data of a package kept on the data drive before an
-  update (such an update is refused for now). A backup restored onto a device whose volumes keep
-  their own key keeps that key, so sealed secrets from the other device cannot be opened there.
+- **nodo-helper**: copying the data of a package kept on the data drive before an update (such an
+  update is refused for now). A backup restored onto a device whose volumes keep their own key
+  keeps that key, so sealed secrets from the other device cannot be opened there. A restore onto
+  a new device does not apply the restored site exposure to Caddy until the proxy next reloads.
+- **nodo-tui**: an update that grows encrypted storage is refused on the Updates screen with the
+  reason; the passphrase step for it exists only as `nodo-tui --ctl apply-update-pass`.
 - **System snapshots**: there is no update server, so only feed packages update today.
 - **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
   enable the `nodo-healthd` and `nodo-autoupdate` services from nodo-tools, and open the watchdog

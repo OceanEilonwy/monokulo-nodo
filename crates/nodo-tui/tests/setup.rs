@@ -37,6 +37,44 @@ fn init_calls(mock: &MockBackend) -> Vec<String> {
 }
 
 #[test]
+fn a_new_device_can_be_restored_from_a_usb_backup_instead_of_set_up() {
+    let (mut app, mut mock) = first_boot();
+    assert!(screen_text(&app).contains("Ctrl-R restore from a USB backup"), "{}", screen_text(&app));
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    assert_eq!(app.screen.id(), ScreenId::Backup);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up this device › Restore from a backup"), "{screen}");
+    assert!(screen.contains("nodo-1762473600.nodobak"), "{screen}");
+    assert!(screen.contains("Restoring sets up this device"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up this device from the backup"), "{screen}");
+    assert!(screen.contains("New device passphrase"), "{screen}");
+    type_text(&mut app, &mut mock, "restore");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Choose a new device passphrase"), "a new device always needs one");
+    type_text(&mut app, &mut mock, "a new device passphrase");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("✓ Restored"), "{}", screen_text(&app));
+    assert!(!mock.setup_needed);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert_eq!(app.screen.id(), ScreenId::Setup);
+    assert!(screen_text(&app).contains("SSH keys"), "{}", screen_text(&app));
+    assert!(init_calls(&mock).is_empty(), "the backup's key is used, no new one is made");
+}
+
+#[test]
+fn leaving_the_first_boot_restore_goes_back_to_setup() {
+    let (mut app, mut mock) = first_boot();
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::Setup);
+    assert!(screen_text(&app).contains("Device passphrase"));
+}
+
+#[test]
 fn first_boot_opens_setup_and_cannot_be_skipped() {
     let (mut app, mut mock) = first_boot();
     assert_eq!(app.screen.id(), ScreenId::Setup);

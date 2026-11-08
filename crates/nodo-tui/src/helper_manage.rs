@@ -658,6 +658,67 @@ pub fn inspect_backup(b: &HelperBackend, name: &str, passphrase: &Secret) -> Res
     }
 }
 
+pub fn usb_drives(b: &HelperBackend) -> Result<Vec<nodo_api::UsbDrive>, String> {
+    match text(b.ask(Request::ListUsbDrives))? {
+        Response::UsbDrives(list) => Ok(list),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+pub fn usb_backups(b: &HelperBackend, device: &str) -> Result<nodo_api::UsbBackupList, String> {
+    match text(b.ask(Request::ListUsbBackups { device: device.to_owned() }))? {
+        Response::UsbBackups(list) => Ok(list),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+pub fn create_usb_backup(
+    b: &HelperBackend,
+    device: &str,
+    device_passphrase: Option<&Secret>,
+    backup: &Secret,
+) -> Result<BackupCreated, String> {
+    let request = Request::CreateUsbBackup {
+        device: device.to_owned(),
+        device_passphrase: device_passphrase.map(api),
+        backup_passphrase: api(backup),
+    };
+    match text(b.ask(request))? {
+        Response::BackupCreated(created) => Ok(created),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+pub fn inspect_usb_backup(b: &HelperBackend, device: &str, name: &str, passphrase: &Secret) -> Result<BackupContents, String> {
+    let request =
+        Request::InspectUsbBackup { device: device.to_owned(), name: name.to_owned(), passphrase: api(passphrase) };
+    match text(b.ask(request))? {
+        Response::BackupContents(contents) => Ok(contents),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+pub fn restore_usb_backup(
+    b: &HelperBackend,
+    device: &str,
+    name: &str,
+    passphrase: &Secret,
+    new_device: Option<&Secret>,
+    typed: &str,
+) -> Result<RestoreReport, String> {
+    let request = Request::RestoreUsbBackup {
+        device: device.to_owned(),
+        name: name.to_owned(),
+        passphrase: api(passphrase),
+        new_device_passphrase: new_device.map(api),
+        typed: typed.to_owned(),
+    };
+    match text(b.ask(request))? {
+        Response::Restored(report) => Ok(report),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
 pub fn restore_backup(
     b: &HelperBackend,
     name: &str,

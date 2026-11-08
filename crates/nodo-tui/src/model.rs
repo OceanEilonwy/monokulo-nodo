@@ -786,4 +786,37 @@ pub trait ScreenData {
     ) -> Result<nodo_api::RestoreReport, String> {
         Err("Backups are not available here.".to_owned())
     }
+
+    fn usb_drives(&self) -> Result<Vec<nodo_api::UsbDrive>, String> {
+        Err("USB drives are not available here.".to_owned())
+    }
+    fn usb_backups(&self, _device: &str) -> Result<nodo_api::UsbBackupList, String> {
+        Err("USB drives are not available here.".to_owned())
+    }
+    fn create_usb_backup(
+        &mut self,
+        _device: &str,
+        _device_passphrase: Option<&Secret>,
+        _backup_passphrase: &Secret,
+    ) -> Result<nodo_api::BackupCreated, String> {
+        Err("USB drives are not available here.".to_owned())
+    }
+    fn inspect_usb_backup(
+        &mut self,
+        _device: &str,
+        _name: &str,
+        _passphrase: &Secret,
+    ) -> Result<nodo_api::BackupContents, String> {
+        Err("USB drives are not available here.".to_owned())
+    }
+    fn restore_usb_backup(
+        &mut self,
+        _device: &str,
+        _name: &str,
+        _passphrase: &Secret,
+        _new_device_passphrase: Option<&Secret>,
+        _typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        Err("USB drives are not available here.".to_owned())
+    }
 }
