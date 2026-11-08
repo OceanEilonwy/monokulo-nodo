@@ -106,6 +106,8 @@ pub struct Site {
     pub local_host: Option<String>,
     /// Overrides the subdomain under the connected domain. `@` means the domain itself.
     pub public_subdomain: Option<String>,
+    /// The full host the user chose, which wins over the subdomain and needs no connected domain.
+    pub public_host: Option<String>,
     /// Known only after Tor has created the service. See [`WebPlan::onion_pending`].
     pub onion_host: Option<String>,
     /// The user's choice on the Confirm screen. See [`DomainSettings::rate_limit`].
@@ -651,7 +653,12 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         })
         .transpose()?;
 
-    let public = if site.exposure.public {
+    let public = if let Some(host) = site.public_host.as_ref().filter(|_| site.exposure.public) {
+        if !names::is_public_name(host) {
+            return Err(WebConfigError::InvalidName { field: "public_host", value: quoted(host) });
+        }
+        Some(host.clone())
+    } else if site.exposure.public {
         let domain = settings.domain.as_deref().ok_or(WebConfigError::NoDomain { site: site_label })?;
         let sub = site.public_subdomain.as_deref().unwrap_or(label);
         let host = if sub == APEX { domain.to_owned() } else { format!("{sub}.{domain}") };

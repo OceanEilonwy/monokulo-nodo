@@ -17,6 +17,7 @@ pub mod ip;
 pub mod local;
 pub mod mdns;
 pub mod names;
+pub mod net;
 pub mod reachability;
 pub mod router;
 pub mod secret;

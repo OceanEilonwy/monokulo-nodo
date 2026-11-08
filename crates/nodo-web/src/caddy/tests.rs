@@ -23,6 +23,7 @@ fn site(package: &str, name: &str, port: u16, exposure: Exposure) -> Site {
         state: ServiceState::Running,
         local_host: None,
         public_subdomain: None,
+        public_host: None,
         onion_host: None,
         rate_limit: false,
     }
@@ -793,4 +794,14 @@ fn admin_regexp_escapes_dots_and_joins_paths() {
     let paths = vec!["/wp-admin/".to_owned(), "/v1.0/admin".to_owned(), "/".to_owned()];
     assert_eq!(admin_path_regexp(&paths).unwrap(), "(?i)^(?:/wp-admin|/v1\\.0/admin)(?:[^a-z0-9_~-]|$)");
     assert_eq!(admin_path_regexp(&[]), None);
+}
+
+#[test]
+fn a_chosen_public_host_needs_no_domain_and_is_validated() {
+    let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    shop.public_host = Some("shop.other.org".to_owned());
+    let plan = generate(std::slice::from_ref(&shop), &DomainSettings { domain: None, ..settings() }).unwrap();
+    assert_eq!(request(&plan, "public", "shop.other.org", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    shop.public_host = Some("shop.local".to_owned());
+    assert!(generate(&[shop], &settings()).is_err());
 }
