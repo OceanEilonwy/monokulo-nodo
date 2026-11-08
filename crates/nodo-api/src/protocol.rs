@@ -283,6 +283,13 @@ mod tests {
                 }],
                 passphrase: Secret::new("p"),
             },
+            Request::OnionStatus,
+            Request::SetNodeOnion { enabled: true },
+            Request::ListRollbacks,
+            Request::RollbackPackage {
+                package: "a".into(),
+                to: "1_1".into(),
+            },
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -536,6 +543,30 @@ mod tests {
                 free_bytes: 5,
                 read_only: true,
             })),
+            Ok(Response::Onion(OnionStatus {
+                tor_installed: true,
+                tor_running: false,
+                node: Some(NodeOnion {
+                    provider: "cuprated".into(),
+                    enabled: true,
+                    restricted_rpc: true,
+                    port: 18089,
+                    address: Some("abc.onion:18089".into()),
+                }),
+                sites: vec![SiteOnion {
+                    id: site(),
+                    exposure: Exposure::default(),
+                    multi_address: true,
+                    locked: false,
+                    url: None,
+                }],
+            })),
+            Ok(Response::Rollbacks(vec![RollbackOption {
+                package: "a".into(),
+                current: "2_1".into(),
+                previous: "1_1".into(),
+                blocked: Some("no".into()),
+            }])),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

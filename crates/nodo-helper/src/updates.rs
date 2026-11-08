@@ -239,6 +239,10 @@ fn record(state: &mut UpdateState, at: u64, outcome: auto::Outcome) {
     }
 }
 
+#[path = "updates_manual.rs"]
+mod manual;
+pub(crate) use manual::PreviousVersion;
+
 /// Runs one update on the device. Holds what a rollback needs between the calls.
 struct Updater<'a, S: System> {
     helper: &'a Helper<S>,
@@ -254,6 +258,8 @@ struct Updater<'a, S: System> {
     storage: BTreeMap<String, StorageTarget>,
     /// Given with the request, for growing encrypted volumes.
     passphrase: Option<&'a Secret>,
+    /// Packages going back by hand to their kept previous version, instead of a feed update.
+    downgrade: BTreeMap<String, PreviousVersion>,
 }
 
 /// What a new version asks of its encrypted volume.
@@ -282,6 +288,7 @@ impl<'a, S: System> Updater<'a, S> {
                 })
                 .collect(),
             passphrase,
+            downgrade: BTreeMap::new(),
         }
     }
 }
@@ -350,6 +357,9 @@ impl<S: System> Updater<'_, S> {
 
 impl<S: System> Installer for Updater<'_, S> {
     fn install(&mut self, c: &Candidate) -> Result<(), Failure> {
+        if let Some(previous) = self.downgrade.get(&c.package).cloned() {
+            return self.install_previous(c, &previous);
+        }
         let h = self.helper;
         let id = c.package.as_str();
         let state = h.read_feeds().map_err(fail)?;
@@ -493,6 +503,7 @@ impl<S: System> Installer for Updater<'_, S> {
         let h = self.helper;
         let package = h.package(&c.package).map_err(fail)?;
         let (_, copy, _) = self.data_copy(&c.package, package.manifest.storage.encrypted)?;
+        let old_layout = if package.manifest.storage.encrypted { h.data_layout_of(&c.package) } else { 1 };
         if package.manifest.storage.encrypted {
             // From now on the data is in the new version's layout.
             h.set_data_layout(&c.package, package.manifest.storage.layout())
@@ -502,7 +513,12 @@ impl<S: System> Installer for Updater<'_, S> {
         if let Some(previous) = self.previous.get(&c.package) {
             let current = h.read_feeds().ok().and_then(|s| s.installed.get(&c.package).and_then(|r| r.kept.clone()));
             if current.as_ref() != Some(previous) {
-                h.manage.packages.remove_kept(previous);
+                if self.downgrade.contains_key(&c.package) {
+                    h.manage.packages.remove_kept(previous);
+                } else {
+                    // Kept one generation deep, so the user can roll back by hand.
+                    self.keep_previous(&c.package, &c.from, previous, old_layout);
+                }
             }
         }
         Ok(())

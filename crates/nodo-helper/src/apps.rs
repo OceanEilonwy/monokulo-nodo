@@ -319,6 +319,7 @@ impl<S: System> Helper<S> {
                     feed: feed.to_owned(),
                     version: version.clone(),
                     kept: kept.clone().or(old_kept),
+                    previous: None,
                 },
             );
             Ok(())

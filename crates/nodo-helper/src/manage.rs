@@ -223,6 +223,8 @@ impl<S: System> Helper<S> {
                 updates,
                 passphrase,
             } => self.apply_updates_with(&updates, Some(&passphrase)),
+            Request::ListRollbacks => self.list_rollbacks(),
+            Request::RollbackPackage { package, to } => self.rollback_package(&package, &to),
             other => Err(ApiError::NotImplemented(format!(
                 "{} is not connected yet",
                 nodo_api::action_name(&other)

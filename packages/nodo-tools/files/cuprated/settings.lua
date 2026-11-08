@@ -8,7 +8,9 @@ return {
     { name = "inbound_peers", type = "int", label = "Inbound peer limit", default = 64, min = 0, max = 512,
       help = "Most connections other nodes may open to this one." },
     { name = "accept_inbound", type = "bool", label = "Accept inbound peers", default = true },
+    -- Public so the helper knows whether the node onion address has anything to serve.
     { name = "restricted_rpc", type = "bool", label = "Restricted RPC on the network", default = false,
+      public = "restricted-rpc",
       help = "Lets wallets on your network use this node on port 18089." },
     { name = "log_level", type = "enum", label = "Log level", default = "info",
       choices = { "error", "warn", "info", "debug" } },

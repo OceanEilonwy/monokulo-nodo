@@ -23,6 +23,7 @@ pub mod keys;
 pub mod manage;
 pub mod pkgsys;
 mod node;
+mod onion;
 mod policy;
 pub mod real;
 pub mod secrets;
