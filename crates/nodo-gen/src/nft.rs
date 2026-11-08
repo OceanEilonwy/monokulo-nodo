@@ -77,6 +77,11 @@ pub fn nft_fragment(spec: &ServiceSpec) -> String {
         output.push(format!("{who} ip daddr {PRIVATE_V4} drop"));
         // `meta l4proto tcp accept` below also matches IPv6, so the block must cover it too.
         output.push(format!("{who} ip6 daddr {PRIVATE_V6} drop"));
+        // The internet accept below would otherwise also match loopback, letting the service reach
+        // every local port, such as SSH and other packages. Granted loopback ports were accepted above.
+        if !spec.unrestricted_loopback {
+            output.push(format!("{who} oifname \"lo\" drop"));
+        }
         output.push(format!("{who} meta l4proto tcp accept"));
     }
     output.push(format!("{who} drop"));

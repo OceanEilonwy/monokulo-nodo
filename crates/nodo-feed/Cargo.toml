@@ -10,6 +10,10 @@ license.workspace = true
 nodo-manifest = { path = "../nodo-manifest" }
 serde.workspace = true
 thiserror.workspace = true
+base64 = "0.22"
+md5 = { package = "md-5", version = "0.10" }
+rsa = "0.9"
+sha2 = { version = "0.10", features = ["oid"] }
 # Without the default features, which decode obsolete zstd formats that xbps never writes.
 zstd = { version = "0.13", default-features = false }
 

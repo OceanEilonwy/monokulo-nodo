@@ -1,0 +1,41 @@
+# Template file for 'nodo-caddy'
+# Caddy with the DNS provider modules that DNS-01 certificates need, plus rate limiting. Void's own
+# caddy package has neither. Module versions are pinned by files/src/go.mod and go.sum.
+pkgname=nodo-caddy
+version=2.11.4
+revision=1
+archs="aarch64 x86_64"
+build_style=go
+go_import_path="monokulo.local/nodo-caddy"
+depends="bubblewrap nftables procps-ng"
+short_desc="Caddy web proxy for monokulo-nodo sites, with DNS provider modules"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="Apache-2.0"
+homepage="https://caddyserver.com"
+system_accounts="_caddy"
+_caddy_homedir="/var/lib/caddy"
+# Pure Go needs no C toolchain, and uses Go's own resolver, which reads only resolv.conf and hosts.
+export CGO_ENABLED=0
+
+make_dirs="/var/lib/caddy 0700 _caddy _caddy
+ /var/lib/nodo-web 0750 root _caddy
+ /var/log/nodo-caddy 0750 _caddy _caddy"
+
+do_extract() {
+	mkdir -p "${wrksrc}"
+	cp "${FILESDIR}"/src/main.go "${FILESDIR}"/src/go.mod "${FILESDIR}"/src/go.sum "${wrksrc}/"
+}
+
+# The build root has no strip for either target, so Go drops the symbol tables itself instead.
+nostrip=yes
+do_build() {
+	go install -p "$XBPS_MAKEJOBS" -mod=readonly -modcacherw -trimpath -ldflags "-s -w" "${go_import_path}"
+}
+
+post_install() {
+	vinstall ${FILESDIR}/empty.json 644 usr/share/nodo-caddy
+	vinstall ${FILESDIR}/nodo-caddy.nft 644 etc/nftables.d
+	vsv nodo-caddy
+	vmkdir etc/sv/nodo-caddy/control
+	vinstall ${FILESDIR}/nodo-caddy/control/t 755 etc/sv/nodo-caddy/control
+}

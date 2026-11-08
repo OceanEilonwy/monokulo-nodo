@@ -1,6 +1,8 @@
 # Sourced by the test runners. Expects ssh_vm, check and fail to be defined.
 echo "PASS ssh login with key"
 
+check "boot diagnostics are saved" 'for n in $(seq 1 30); do [ -s /var/log/monokulo-diag/latest.txt ] && break; sleep 2; done; grep -q "== services" /var/log/monokulo-diag/latest.txt && grep -q "run: /var/service/cuprated:" /var/log/monokulo-diag/latest.txt'
+check "console shows the IP address" 'grep -q "\\\\4" /etc/issue'
 check "loopback is up" "ip -o link show lo | grep -q LOWER_UP"
 check "password login disabled" 'sshd -T | grep -qix "passwordauthentication no"'
 check "root password locked" 'passwd -S root | grep -q "^root L"'
@@ -28,6 +30,7 @@ check "clean stop under TERM" 'for n in $(seq 1 60); do grep -q ":46A1 00000000:
 ssh_vm 'cat > /tmp/fw.sh' < /src/tests/firewall-traffic.sh
 ssh_vm 'sh /tmp/fw.sh </dev/null' || fail=1
 check "service restarts" 'sv -w 60 start cuprated | grep -q "^ok: run"'
+. /src/tests/web-checks.sh
 if [ "${SKIP_REBOOT:-}" != 1 ]; then
 ssh_vm 'for n in $(seq 1 60); do grep -q ":46A1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'
 boot1=$(ssh_vm 'cat /proc/sys/kernel/random/boot_id')

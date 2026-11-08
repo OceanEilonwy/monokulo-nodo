@@ -781,6 +781,7 @@ mod tests {
             public: None,
             endpoint: None,
             has_validator: false,
+            generate: None,
         }
     }
 

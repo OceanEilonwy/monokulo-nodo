@@ -317,6 +317,13 @@ mod tests {
     }
 
     #[test]
+    fn the_payment_gateway_app_may_use_its_own_name() {
+        let mut m = base();
+        m.id = "monokulo".into();
+        assert!(m.validate().is_empty());
+    }
+
+    #[test]
     fn rejects_exec_arguments_naming_outside_paths() {
         for arg in [
             "../secret",

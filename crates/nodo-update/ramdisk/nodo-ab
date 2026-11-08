@@ -1,0 +1,123 @@
+#!/bin/sh
+# initramfs-tools init-premount hook: chooses the A/B root filesystem.
+#
+# FriendlyElec's U-Boot always loads the same kernel and this ramdisk, and passes a fixed root=.
+# This hook reads the boot record from the raw "nodoboot" partition, counts down trial boots of a
+# newly written slot, falls back to the last slot that reached a healthy state, and overrides ROOT
+# through /conf/param.conf, which initramfs-tools sources after every premount script.
+#
+# The record format and decisions must match crates/nodo-update/src/slots.rs exactly. The Rust
+# tests run this script against that implementation.
+#
+# NODO_AB_DEV, NODO_AB_PARAM, NODO_AB_RUN and TMPDIR exist for those tests.
+
+PREREQ="udev"
+case "$1" in
+prereqs)
+	echo "$PREREQ"
+	exit 0
+	;;
+esac
+
+dev=${NODO_AB_DEV:-}
+param=${NODO_AB_PARAM:-/conf/param.conf}
+run=${NODO_AB_RUN:-/run/nodo}
+tmp=${TMPDIR:-/run}/nodo-ab.$$
+if [ -z "$dev" ]; then
+	dev=$(blkid -l -t PARTLABEL=nodoboot -o device 2>/dev/null) || dev=
+fi
+# Without the partition this is a single-slot install: keep the root= from the boot arguments.
+[ -n "$dev" ] && [ -e "$dev" ] || exit 0
+
+# Sets seq, active, tries and good from the copy at sector $1. Fails unless it parses exactly.
+read_copy() {
+	len=$(dd if="$dev" bs=512 skip="$1" count=1 2>/dev/null | tr -d '\000' | wc -c)
+	# Every NUL must come after the text, so the first $len bytes must contain none.
+	head=$(dd if="$dev" bs=512 skip="$1" count=1 2>/dev/null | head -c "$len" | tr -d '\000' | wc -c)
+	[ "$len" -gt 0 ] && [ "$len" -eq "$head" ] || return 1
+	raw=$(dd if="$dev" bs=512 skip="$1" count=1 2>/dev/null | tr -d '\000')
+	set -f
+	old_ifs=$IFS
+	IFS='
+'
+	# shellcheck disable=SC2086
+	set -- $raw
+	IFS=$old_ifs
+	set +f
+	[ $# -eq 6 ] && [ "$1" = NODOAB1 ] && [ "$6" = end ] || return 1
+	seq=${2#seq=}
+	active=${3#active=}
+	tries=${4#tries=}
+	good=${5#good=}
+	case $seq in '' | 0* | *[!0-9]*) return 1 ;; esac
+	[ "${#seq}" -le 9 ] || return 1
+	case $active in a | b) ;; *) return 1 ;; esac
+	case $tries in [0-9]) ;; *) return 1 ;; esac
+	case $good in ab | a | b | -) ;; *) return 1 ;; esac
+	# Rebuilding the canonical text and comparing lengths rejects blank lines and stray bytes.
+	canon=$(printf 'NODOAB1\nseq=%s\nactive=%s\ntries=%s\ngood=%s\nend\n' "$seq" "$active" "$tries" "$good" | wc -c)
+	[ "$canon" -eq "$len" ]
+}
+
+# Writes the record held in seq, active, tries and good to sector $1.
+write_copy() {
+	printf 'NODOAB1\nseq=%s\nactive=%s\ntries=%s\ngood=%s\nend\n' "$seq" "$active" "$tries" "$good" > "$tmp"
+	pad=$((512 - $(wc -c < "$tmp")))
+	dd if=/dev/zero bs=1 count="$pad" 2>/dev/null >> "$tmp"
+	# From a file, so dd never writes a short block from a partial pipe read.
+	dd if="$tmp" of="$dev" bs=512 seek="$1" count=1 conv=notrunc 2>/dev/null
+	rm -f "$tmp"
+	sync
+}
+
+is_good() {
+	case $good in *"$1"*) return 0 ;; esac
+	return 1
+}
+
+newest=
+if read_copy 0; then
+	newest=0
+	s0=$seq a0=$active t0=$tries g0=$good
+fi
+if read_copy 8; then
+	if [ -z "$newest" ] || [ "$seq" -gt "$s0" ]; then
+		newest=8
+	fi
+fi
+if [ "$newest" = 0 ]; then
+	seq=$s0 active=$a0 tries=$t0 good=$g0
+fi
+
+slot=a
+fallback=
+if [ -n "$newest" ]; then
+	slot=$active
+	if [ "$newest" = 0 ]; then target=8; else target=0; fi
+	if [ "$seq" -ge 999999999 ]; then next=1; else next=$((seq + 1)); fi
+	if is_good "$active"; then
+		:
+	elif [ "$tries" -gt 0 ]; then
+		seq=$next
+		tries=$((tries - 1))
+		write_copy "$target"
+	else
+		if [ "$active" = a ]; then other=b; else other=a; fi
+		if is_good "$other"; then
+			seq=$next
+			active=$other
+			slot=$other
+			fallback=1
+			write_copy "$target"
+		fi
+	fi
+fi
+
+echo "ROOT=PARTLABEL=rootfs_$slot" >> "$param"
+# /run moves into the real root, so the running system learns what happened here.
+mkdir -p "$run"
+echo "$slot" > "$run/boot-slot"
+if [ -n "$fallback" ]; then
+	echo "trial boots of the new system ran out, so the previous one was started" > "$run/boot-fallback"
+fi
+exit 0

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Saves a report shortly after boot and again once the network has had time to settle, so a
+# device that cannot be reached over SSH can still be diagnosed by reading its card on a PC.
+exec 2>&1
+exec </dev/null
+dir=/var/log/monokulo-diag
+mkdir -p "$dir"
+chmod 700 "$dir"
+boot=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
+for delay in 20 120; do
+	sleep "$delay"
+	/usr/bin/nodo-report > "$dir/boot-$boot.txt" 2>&1
+	cp "$dir/boot-$boot.txt" "$dir/latest.txt"
+done
+# Keep the newest 10 boot reports.
+ls -1t "$dir"/boot-*.txt 2>/dev/null | tail -n +11 | while read -r old; do rm -f -- "$old"; done
+exec chpst -b monokulo-diag pause

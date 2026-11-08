@@ -1,0 +1,26 @@
+[package]
+name = "nodo-update"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Signed system snapshots, the auto-update engine and A/B boot state for monokulo-nodo"
+
+[[bin]]
+name = "nodo-snapshot"
+path = "src/bin/nodo-snapshot.rs"
+
+[dependencies]
+nodo-feed = { path = "../nodo-feed" }
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+ed25519-dalek = { version = "2", features = ["std", "zeroize"] }
+getrandom = "0.3"
+hex = "0.4"
+sha2 = "0.10"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

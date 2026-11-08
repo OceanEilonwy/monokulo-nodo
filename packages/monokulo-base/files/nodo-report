@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prints a read-only status report for diagnosing a device. It contains no keys or secrets.
+section() { printf '\n== %s\n' "$1"; }
+section "time"; date -u
+section "device"; tr -d '\0' < /proc/device-tree/model 2>/dev/null; echo; uname -a
+section "uptime"; cat /proc/uptime
+section "network"; ip -br link; ip -br addr; ip route
+section "dns"; grep -v '^#' /etc/resolv.conf 2>/dev/null
+section "storage"; lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINT 2>/dev/null; df -h 2>/dev/null
+section "memory"; free -m
+section "services"; sv status /var/service/* 2>/dev/null
+section "firewall"; nft list ruleset 2>&1 | head -n 80
+section "cuprated log"; tail -n 40 /var/log/cuprated/current 2>/dev/null
+section "kernel warnings and errors"; dmesg --level=err,warn 2>/dev/null | tail -n 60
+section "kernel network and storage"; dmesg 2>/dev/null | grep -iE 'r8169|r8125|eth0|nvme|mmc|xfs|firmware' | tail -n 60

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _nododdns:_nododdns svlogd -tt /var/log/nodo-ddns

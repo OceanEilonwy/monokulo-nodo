@@ -1,4 +1,7 @@
 # Template file for 'nodo-tools'
+# Built from this repository's workspace, which the build container mounts at /src. The recipe hash
+# in scripts/lib.sh also covers the paths named on the monokulo-sources line, so source edits rebuild.
+# monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
 revision=1
@@ -21,11 +24,9 @@ system_groups="nodo"
 make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-helper 0750 root root"
 
-# The source is this repository's Rust workspace, which the build script packs into
-# files/workspace.tar because the recipe's `workspace` marker asks for it.
 do_extract() {
-	mkdir -p "$wrksrc"
-	tar -C "$wrksrc" -xf "${FILESDIR}/workspace.tar"
+	mkdir -p "${wrksrc}"
+	cp -r /src/Cargo.toml /src/Cargo.lock /src/LICENSE /src/crates "${wrksrc}/"
 }
 
 do_install() {

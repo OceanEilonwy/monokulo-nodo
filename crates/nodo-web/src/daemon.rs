@@ -173,6 +173,11 @@ impl<'a> Daemon<'a> {
         &self.state
     }
 
+    /// Records this daemon published for names no longer configured. Nothing is contacted.
+    pub fn stale(&self) -> Vec<String> {
+        self.stale_keys()
+    }
+
     fn stale_keys(&self) -> Vec<String> {
         self.state
             .published

@@ -782,3 +782,23 @@ fn shellcheck_accepts_generated_scripts() {
         }
     }
 }
+
+/// An app allowed out to the internet must still not reach arbitrary local ports, because the
+/// general TCP accept also matches loopback traffic.
+#[test]
+fn internet_access_does_not_open_loopback() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/shop/rules.nft"),
+    )
+    .unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let drop = lines
+        .iter()
+        .position(|l| *l == "meta skuid \"_shop\" oifname \"lo\" drop")
+        .expect("loopback drop rule");
+    let accept = lines
+        .iter()
+        .position(|l| *l == "meta skuid \"_shop\" meta l4proto tcp accept")
+        .expect("internet accept rule");
+    assert!(drop < accept, "loopback must be dropped before the internet accept");
+}
