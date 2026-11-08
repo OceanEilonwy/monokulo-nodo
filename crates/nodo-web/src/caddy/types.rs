@@ -170,8 +170,27 @@ pub enum Issuer {
     Acme {
         #[serde(skip_serializing_if = "Option::is_none")]
         email: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        challenges: Option<AcmeChallenges>,
     },
     Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AcmeChallenges {
+    pub dns: DnsChallengeConfig,
+}
+
+/// `provider` holds credentials. Keep it out of logs and give the config file to Caddy's user only.
+#[derive(Clone, PartialEq, Serialize)]
+pub struct DnsChallengeConfig {
+    pub provider: serde_json::Value,
+}
+
+impl std::fmt::Debug for DnsChallengeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DnsChallengeConfig").field("provider", &self.provider["name"]).finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

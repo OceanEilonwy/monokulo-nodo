@@ -1,0 +1,150 @@
+{
+  "admin": {
+    "listen": "unix//run/nodo-web/caddy-admin.sock",
+    "config": {
+      "persist": false
+    }
+  },
+  "apps": {
+    "http": {
+      "http_port": 10080,
+      "https_port": 10443,
+      "servers": {
+        "public": {
+          "listen": [
+            ":10443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "shop.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/admin",
+                            "/admin/*",
+                            "/admin;*"
+                          ]
+                        },
+                        {
+                          "path_regexp": {
+                            "name": "admin",
+                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
+                          }
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": "404"
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "127.0.0.1:3001"
+                            }
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "abort": true
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "errors": {
+            "routes": [
+              {
+                "handle": [
+                  {
+                    "handler": "static_response",
+                    "status_code": "{http.error.status_code}",
+                    "headers": {
+                      "Cache-Control": [
+                        "no-store"
+                      ],
+                      "Content-Type": [
+                        "text/html; charset=utf-8"
+                      ],
+                      "Retry-After": [
+                        "60"
+                      ]
+                    },
+                    "body": "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unavailable</title><body><h1>This site is unavailable</h1><p>Please try again later.</p></body></html>"
+                  }
+                ],
+                "terminal": true
+              }
+            ]
+          },
+          "tls_connection_policies": [
+            {
+              "match": {
+                "sni": [
+                  "shop.example.com"
+                ]
+              }
+            }
+          ],
+          "automatic_https": {},
+          "protocols": [
+            "h1",
+            "h2"
+          ],
+          "strict_sni_host": true
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "shop.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme",
+                "challenges": {
+                  "dns": {
+                    "provider": {
+                      "api_token": "cfut_0123456789abcdefghijABCDEFGHIJ0123456789",
+                      "name": "cloudflare"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

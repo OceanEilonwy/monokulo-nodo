@@ -43,6 +43,12 @@ body_has() { grep -q "$1" /tmp/body; }
 
 nodo-caddy validate --config "$fix/caddy.json" >/dev/null 2>&1
 result "caddy validate accepts the generated config" "$?"
+# Provisioning checks each DNS module's field names. Issuing still needs a real provider and ACME server.
+for f in "$fix"/dns01-*.json; do
+	name=${f##*/dns01-}
+	nodo-caddy validate --config "$f" >/dev/null 2>&1
+	result "caddy validate accepts DNS-01 config for ${name%.json}" "$?"
+done
 printf '{"apps":{"http":{"servers":{"x":{"listen":[":1"],"routes":[{"handle":[{"handler":"nope"}]}]}}}}}' > /tmp/bad.json
 ! nodo-caddy validate --config /tmp/bad.json >/dev/null 2>&1
 result "caddy validate rejects an unknown handler" "$?"

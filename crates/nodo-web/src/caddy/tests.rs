@@ -295,7 +295,7 @@ fn tls_issuers_match_each_exposure() {
     assert_eq!(policies[0].subjects, vec!["shop.local"]);
     assert_eq!(policies[0].issuers, vec![Issuer::Internal]);
     assert_eq!(policies[1].subjects, vec!["shop.example.com"]);
-    assert_eq!(policies[1].issuers, vec![Issuer::Acme { email: Some("me@example.com".to_owned()) }]);
+    assert_eq!(policies[1].issuers, vec![Issuer::Acme { email: Some("me@example.com".to_owned()), challenges: None }]);
     assert!(!plan.caddy.apps.pki.as_ref().unwrap().certificate_authorities["local"].install_trust);
     for name in ["public", "local"] {
         assert!(!plan.caddy.apps.http.servers[name].automatic_https.disable);
@@ -630,6 +630,55 @@ fn sites_with_no_exposure_produce_nothing() {
     assert_eq!(plan.firewall, FirewallPlan::default());
 }
 
+fn every_dns_challenge() -> Vec<(&'static str, DnsChallenge)> {
+    let s = |v: &str| Secret::new(v);
+    vec![
+        ("porkbun", DnsChallenge::Porkbun { api_key: s("pk1_test"), secret_key: s("sk1_test") }),
+        ("cloudflare", DnsChallenge::Cloudflare { api_token: s("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") }),
+        ("godaddy", DnsChallenge::GoDaddy { api_key: s("gdkey"), api_secret: s("gdsecret") }),
+        ("gandi", DnsChallenge::Gandi { personal_access_token: s("gandi-pat") }),
+        ("namedotcom", DnsChallenge::NameCom { username: "user".to_owned(), api_token: s("nc-token") }),
+        ("alidns", DnsChallenge::Alibaba { access_key_id: s("LTAItest"), access_key_secret: s("alisecret") }),
+    ]
+}
+
+fn dns_challenge_plan(challenge: DnsChallenge) -> WebPlan {
+    let shop = site("shop", "shop", 3001, Exposure { public: true, ..Exposure::default() });
+    generate(&[shop], &DomainSettings { dns_challenge: Some(challenge), ..settings() }).unwrap()
+}
+
+#[test]
+fn dns_challenges_use_each_module_field_names() {
+    for (name, challenge) in every_dns_challenge() {
+        let value = json(&dns_challenge_plan(challenge.clone()));
+        let issuer = &value["apps"]["tls"]["automation"]["policies"][0]["issuers"][0];
+        let provider = &issuer["challenges"]["dns"]["provider"];
+        assert_eq!(issuer["module"], "acme");
+        assert_eq!(provider["name"], name);
+        let shown = format!("{challenge:?} {:?}", dns_challenge_plan(challenge.clone()));
+        for secret in challenge.values().into_iter().filter(|v| *v != "user") {
+            assert!(!shown.contains(secret), "{name}: Debug shows a credential");
+        }
+    }
+    let godaddy = json(&dns_challenge_plan(every_dns_challenge().remove(2).1));
+    let provider = &godaddy["apps"]["tls"]["automation"]["policies"][0]["issuers"][0]["challenges"]["dns"]["provider"];
+    assert_eq!(provider["api_token"], "gdkey:gdsecret");
+}
+
+#[test]
+fn dns_challenge_credentials_cannot_carry_placeholders() {
+    // The Cloudflare module logs a token it rejects, so a malformed one must never reach Caddy.
+    for bad in ["{env.HOME}", "a b", "", "x\n", "cf-test-token", "cfut_short"] {
+        let challenge = DnsChallenge::Cloudflare { api_token: Secret::new(bad) };
+        let shop = site("shop", "shop", 3001, Exposure { public: true, ..Exposure::default() });
+        let error = generate(&[shop], &DomainSettings { dns_challenge: Some(challenge), ..settings() }).unwrap_err();
+        assert!(matches!(error, WebConfigError::InvalidSetting { field: "dns_challenge", .. }), "{bad:?}");
+        if !bad.is_empty() {
+            assert!(!error.to_string().contains(bad), "the error must not quote the credential");
+        }
+    }
+}
+
 /// The config the VM tier loads into real Caddy (`tests/web-routing.sh`). Public hosts use the internal
 /// CA there, because the VM is offline and cannot reach an ACME server. Run with `UPDATE_FIXTURES=1` to
 /// rewrite the files after a deliberate change.
@@ -660,6 +709,16 @@ fn vm_fixture_matches_the_generator() {
     }
     assert_eq!(std::fs::read_to_string(dir.join("caddy.json")).unwrap(), caddy, "run with UPDATE_FIXTURES=1");
     assert_eq!(std::fs::read_to_string(dir.join("web.nft")).unwrap(), nft, "run with UPDATE_FIXTURES=1");
+
+    // Each DNS provider module must accept the generated fields. The VM runs `caddy validate` on these.
+    for (name, challenge) in every_dns_challenge() {
+        let text = serde_json::to_string_pretty(&dns_challenge_plan(challenge).caddy).unwrap() + "\n";
+        let path = dir.join(format!("dns01-{name}.json"));
+        if std::env::var_os("UPDATE_FIXTURES").is_some() {
+            std::fs::write(&path, &text).unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "run with UPDATE_FIXTURES=1");
+    }
 }
 
 #[test]

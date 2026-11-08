@@ -28,6 +28,7 @@
 pub mod types;
 
 use crate::names::{self, quoted};
+use crate::secret::Secret;
 use nodo_api::{Exposure, ServiceState};
 use nodo_manifest::WebService;
 use serde::Serialize;
@@ -120,6 +121,71 @@ impl Default for RateLimit {
     }
 }
 
+/// Credentials for ACME DNS-01 challenges, so public certificates need no inbound port 80. Each
+/// variant matches the fields of its caddy-dns module in the `nodo-caddy` build. GoDaddy's module
+/// uses the older API key and secret, not the Personal Access Token the dynamic DNS client uses.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DnsChallenge {
+    Porkbun { api_key: Secret, secret_key: Secret },
+    Cloudflare { api_token: Secret },
+    GoDaddy { api_key: Secret, api_secret: Secret },
+    Gandi { personal_access_token: Secret },
+    NameCom { username: String, api_token: Secret },
+    Alibaba { access_key_id: Secret, access_key_secret: Secret },
+}
+
+impl DnsChallenge {
+    fn values(&self) -> Vec<&str> {
+        match self {
+            Self::Porkbun { api_key, secret_key } => vec![api_key.expose(), secret_key.expose()],
+            Self::Cloudflare { api_token } => vec![api_token.expose()],
+            Self::GoDaddy { api_key, api_secret } => vec![api_key.expose(), api_secret.expose()],
+            Self::Gandi { personal_access_token } => vec![personal_access_token.expose()],
+            Self::NameCom { username, api_token } => vec![username, api_token.expose()],
+            Self::Alibaba { access_key_id, access_key_secret } => vec![access_key_id.expose(), access_key_secret.expose()],
+        }
+    }
+
+    /// The Cloudflare module rejects a token outside its documented formats and puts the token in the
+    /// error, which Caddy logs. Checking first keeps a mistyped token out of the log.
+    fn module_accepts(&self) -> bool {
+        let token_chars = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        match self {
+            Self::Cloudflare { api_token } => {
+                let token = api_token.expose();
+                let scoped = ["cfut_", "cfat_"]
+                    .iter()
+                    .find_map(|prefix| token.strip_prefix(prefix))
+                    .is_some_and(|rest| (32..=256).contains(&rest.len()) && token_chars(rest));
+                scoped || ((35..=50).contains(&token.len()) && token_chars(token))
+            }
+            _ => true,
+        }
+    }
+
+    fn provider_json(&self) -> serde_json::Value {
+        use serde_json::json;
+        match self {
+            Self::Porkbun { api_key, secret_key } => {
+                json!({"name": "porkbun", "api_key": api_key.expose(), "api_secret_key": secret_key.expose()})
+            }
+            Self::Cloudflare { api_token } => json!({"name": "cloudflare", "api_token": api_token.expose()}),
+            Self::GoDaddy { api_key, api_secret } => {
+                json!({"name": "godaddy", "api_token": format!("{}:{}", api_key.expose(), api_secret.expose())})
+            }
+            Self::Gandi { personal_access_token } => {
+                json!({"name": "gandi", "bearer_token": personal_access_token.expose()})
+            }
+            Self::NameCom { username, api_token } => json!({
+                "name": "namedotcom", "user": username, "api_token": api_token.expose(), "server": "https://api.name.com"
+            }),
+            Self::Alibaba { access_key_id, access_key_secret } => json!({
+                "name": "alidns", "access_key_id": access_key_id.expose(), "access_key_secret": access_key_secret.expose()
+            }),
+        }
+    }
+}
+
 /// Device-wide settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DomainSettings {
@@ -136,6 +202,8 @@ pub struct DomainSettings {
     /// `None` for a Caddy build without the rate limit module. Sites that asked for rate limiting are
     /// then listed in [`WebPlan::rate_limit_unenforced`], so the screens do not claim protection.
     pub rate_limit: Option<RateLimit>,
+    /// `None` uses the HTTP and TLS-ALPN challenges, which need ports 80 and 443 forwarded.
+    pub dns_challenge: Option<DnsChallenge>,
 }
 
 impl Default for DomainSettings {
@@ -149,6 +217,7 @@ impl Default for DomainSettings {
             // The default TCP admin port would be reachable from every process on loopback.
             admin_listen: "unix//run/nodo-web/caddy-admin.sock".to_owned(),
             rate_limit: Some(RateLimit::default()),
+            dns_challenge: None,
         }
     }
 }
@@ -344,7 +413,12 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     if !public_subjects.is_empty() {
         policies.push(AutomationPolicy {
             subjects: public_subjects,
-            issuers: vec![Issuer::Acme { email: settings.acme_email.clone() }],
+            issuers: vec![Issuer::Acme {
+                email: settings.acme_email.clone(),
+                challenges: settings.dns_challenge.as_ref().map(|challenge| AcmeChallenges {
+                    dns: DnsChallengeConfig { provider: challenge.provider_json() },
+                }),
+            }],
         });
     }
 
@@ -438,6 +512,13 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
     }
     if !is_safe_path(&settings.tor_dir) {
         return Err(invalid("tor_dir", &settings.tor_dir));
+    }
+    // Some modules expand `{...}` placeholders in their fields, which could pull in environment values.
+    if let Some(challenge) = &settings.dns_challenge {
+        let safe = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_graphic() && b != b'{' && b != b'}');
+        if !challenge.values().into_iter().all(safe) || !challenge.module_accepts() {
+            return Err(WebConfigError::InvalidSetting { field: "dns_challenge", value: "(credential not shown)".to_owned() });
+        }
     }
     let admin_ok = settings.admin_listen.strip_prefix("unix/").is_some_and(is_safe_path);
     if !admin_ok {

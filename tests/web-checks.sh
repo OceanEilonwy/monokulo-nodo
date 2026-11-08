@@ -6,7 +6,7 @@ if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0
 	if push_packages nodo-caddy >/dev/null && push_mirror_packages curl; then
 		echo "PASS web test packages installed"
 		ssh_vm 'rm -rf /tmp/web && mkdir -p /tmp/web'
-		tar -C /src/crates/nodo-web/tests/fixtures/vm -cf - caddy.json web.nft | ssh_vm 'tar -C /tmp/web -xf -'
+		tar -C /src/crates/nodo-web/tests/fixtures/vm -cf - . | ssh_vm 'tar -C /tmp/web -xf -'
 		ssh_vm 'cat > /tmp/web-routing.sh' < /src/tests/web-routing.sh
 		ssh_vm 'sh /tmp/web-routing.sh </dev/null' || fail=1
 	else
