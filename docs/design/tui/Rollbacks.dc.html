@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rollbacks</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pa{border-color:#F2A33A}.pe{border-color:#FF8A7A}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Home <span class="d">›</span> <b>Rollbacks</b></div><div class="d"></div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div class="p pa" style="flex:1"><div class="pt">Roll back a package</div>
+<div class="r s"><span>▸moneropay       2.7.0_1      → 2.6.1_1</span><span>can roll back </span></div>
+<div class="r"><span>  wallet-relay    0.4.0_1      → 0.3.2_1</span><span class="a">▲ its data is in layout 2 </span></div>
+</div>
+<div class="p "><div class="pt">Updates that were rolled back</div>
+<div class="r"><span><span class="a">▲</span> bell 1.2.0_1 → 1.3.0_1 <span class="d">stayed on 1.2.0_1: bell did not pass its health check</span></span><span class="d">2026-11-07 </span></div>
+</div>
+<div class="p "><div class="pt">System</div>
+<div class="d"> The system runs the version it was updated to. No fallback happened.</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">↵</span> roll back  <span class="a">l</span> log  <span class="a">g</span> look again  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

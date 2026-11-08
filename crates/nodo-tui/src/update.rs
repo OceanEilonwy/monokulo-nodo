@@ -10,6 +10,9 @@ use crate::app::*;
 use crate::model::*;
 use crate::secret::{Input, Secret};
 
+#[path = "update_more.rs"]
+mod more;
+
 pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
     match event {
         Event::Key(key) => on_key(app, key),
@@ -135,6 +138,8 @@ fn help_document() -> Document {
             "u                unlock this device",
             "k                SSH keys that may log in",
             "b                backups and restore, from Home",
+            "r                rollbacks, from Home",
+            "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
             "Ctrl-C           quit, from anywhere",
             "",
@@ -217,6 +222,9 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebTrust => trust_key(app, key),
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
+        ScreenId::Onion => more::onion_key(app, key),
+        ScreenId::Restore => more::restore_key(app, key),
+        ScreenId::Rollbacks => more::rollbacks_key(app, key),
     }
 }
 
@@ -253,6 +261,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Setup(SetupState { step: SetupStep::Keys { adding, .. }, .. }) => adding.as_mut(),
         Screen::Review(state) => state.passphrase.as_mut(),
         Screen::Backup(state) => backup_input(&mut state.step),
+        Screen::Restore(state) => more::restore_input(&mut state.step),
         _ => None,
     }
 }
@@ -317,6 +326,7 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
             })
             .collect(),
         ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
+        ModalAction::RollBack { package, to } => more::roll_back(app, package, to),
         ModalAction::RemoveSshKey(fingerprint) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;
@@ -421,6 +431,7 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             push(app, Screen::Backup(BackupState::new(device_set_up)));
             return vec![Effect::LoadBackups];
         }
+        KeyCode::Char('r') => return more::open_rollbacks(app),
         _ => {}
     }
     Vec::new()
@@ -520,8 +531,7 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
     }
     if restore {
-        push(app, Screen::Backup(BackupState::fresh()));
-        return vec![Effect::LoadBackups];
+        return more::open_restore(app);
     }
     if leave {
         pop(app);
@@ -1386,6 +1396,7 @@ fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Char('l') => return open_logs(app, "System"),
+        KeyCode::Char('n') => return more::open_onion(app),
         KeyCode::Char('o') => {
             app.modal = Some(Modal {
                 title: "Take all sites offline?".to_owned(),
@@ -1837,6 +1848,14 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         | Event::BackupInspected(_)
         | Event::BackupRestored(_)
         | Event::UsbLoaded(_) => return on_backup_result(app, event),
+        Event::OnionLoaded(_)
+        | Event::OnionChanged(_)
+        | Event::RestoreDrives(_)
+        | Event::RestoreBackups(_)
+        | Event::RestoreInspected(_)
+        | Event::RestoreFinished(_)
+        | Event::RollbacksLoaded(_)
+        | Event::RolledBack(_) => return more::on_result(app, event),
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {

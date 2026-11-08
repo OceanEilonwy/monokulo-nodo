@@ -1540,3 +1540,134 @@ fn the_backup_screen_shows_its_copy() {
         assert!(screen.contains(needle), "{needle}\n{screen}");
     }
 }
+
+// Onion
+
+fn open_onion() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    assert_eq!(app.screen.id(), ScreenId::Onion);
+    (app, mock)
+}
+
+#[test]
+fn n_on_web_opens_the_onion_screen_with_the_node_and_sites() {
+    let (app, mock) = open_onion();
+    let screen = screen_text(&app);
+    assert!(screen.contains("Web › Onion addresses"), "{screen}");
+    assert!(screen.contains("nod…xyz.onion:18089"), "{screen}");
+    assert!(screen.contains("http://abc…xyz.onion"), "{screen}");
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::OnionStatus)));
+}
+
+#[test]
+fn the_node_onion_turns_off_and_on_through_the_helper() {
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::SetNodeOnion { enabled: false })));
+    assert!(!mock.node_onion.enabled);
+    assert!(screen_text(&app).contains("[ ] cuprated"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ENTER);
+    assert!(mock.node_onion.enabled);
+    assert!(screen_text(&app).contains("nod…xyz.onion:18089"));
+}
+
+#[test]
+fn the_node_onion_needs_restricted_rpc_and_says_where_to_turn_it_on() {
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    mock.node_onion.restricted_rpc = false;
+    key(&mut app, &mut mock, KeyCode::Char('g'));
+    assert!(screen_text(&app).contains("restricted RPC is off"), "{}", screen_text(&app));
+    mock.calls.clear();
+    key(&mut app, &mut mock, SPACE);
+    assert!(screen_text(&app).contains("Restricted RPC on the network"), "{}", screen_text(&app));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetNodeOnion { .. })), "nothing was asked");
+    // s asks for the node's settings form, where restricted RPC is turned on.
+    let effects = update(&mut app, press(KeyCode::Char('s')));
+    assert_eq!(effects, vec![Effect::OpenSettings("cuprated".to_owned())]);
+}
+
+#[test]
+fn a_site_onion_changes_only_the_onion_flag() {
+    let (mut app, mut mock) = open_onion();
+    keys(&mut app, &mut mock, &[DOWN, SPACE]);
+    let sent = exposure_calls(&mock);
+    assert_eq!(sent, vec![Exposure { local: true, onion: false, public: true }], "local and public stay as they were");
+    assert!(!mock.web.sites[0].exposure.onion);
+    assert!(screen_text(&app).contains("[ ] shop"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_single_address_site_cannot_add_an_onion_beside_another_address() {
+    let (mut app, mut mock) = open_onion();
+    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, SPACE]);
+    assert!(screen_text(&app).contains("moneropay works from a single address"), "{}", screen_text(&app));
+    assert!(exposure_calls(&mock).is_empty());
+    keys(&mut app, &mut mock, &[DOWN, SPACE]);
+    assert!(screen_text(&app).contains("wallet-relay is locked"), "{}", screen_text(&app));
+    assert!(exposure_calls(&mock).is_empty());
+    key(&mut app, &mut mock, ESC);
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+// Rollbacks
+
+fn open_rollbacks() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert_eq!(app.screen.id(), ScreenId::Rollbacks);
+    (app, mock)
+}
+
+#[test]
+fn r_on_home_shows_rollbacks_and_failed_updates() {
+    let (app, _) = open_rollbacks();
+    let screen = screen_text(&app);
+    assert!(screen.contains("moneropay       2.7.0_1      → 2.6.1_1"), "{screen}");
+    assert!(screen.contains("bell did not pass its health check"), "{screen}");
+}
+
+#[test]
+fn a_rollback_asks_first_with_the_safe_answer_focused_then_puts_the_version_back() {
+    let (mut app, mut mock) = open_rollbacks();
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.as_ref().expect("asks first");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert!(modal.body.iter().any(|l| l.contains("2.7.0_1 is held")), "{:?}", modal.body);
+    key(&mut app, &mut mock, ENTER);
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::RollbackPackage { .. })), "Enter on Cancel does nothing");
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert!(mock
+        .calls
+        .iter()
+        .any(|c| matches!(c, Request::RollbackPackage { package, to } if package == "moneropay" && to == "2.6.1_1")));
+    let screen = screen_text(&app);
+    assert!(screen.contains("✓ moneropay is back on 2.6.1_1."), "{screen}");
+    assert!(!screen.contains("can roll back"), "moneropay is no longer offered: {screen}");
+}
+
+#[test]
+fn a_blocked_rollback_says_why_and_asks_nothing() {
+    let (mut app, mut mock) = open_rollbacks();
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    assert!(app.modal.is_none());
+    assert!(screen_text(&app).contains("wallet-relay cannot roll back now: its data is in layout 2."));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::RollbackPackage { .. })));
+}
+
+#[test]
+fn nothing_to_roll_back_says_so() {
+    let (mut app, mut mock) = loaded();
+    mock.rollbacks.clear();
+    mock.update_history.clear();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Nothing to roll back."), "{screen}");
+    assert!(screen.contains("No update has failed."), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Nothing can be rolled back now."));
+}

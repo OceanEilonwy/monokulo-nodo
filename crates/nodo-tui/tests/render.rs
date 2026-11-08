@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 29, "28 design files plus the auto-update screen");
+    assert_eq!(ScreenId::ALL.len(), 32, "31 design files plus the auto-update screen");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -66,7 +66,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "restarted 3 times, press l for logs", "alternative node",
             "◆ This device is locked. Press u to unlock all waiting services.",
             "✕ bell keeps failing. Press l to read its log.",
-            "↑↓ move", "↵ open", "s start/stop", "/ search", "Tab next tab", "? help", "q quit",
+            "↑↓ move", "↵ open", "s start/stop", "/ search", "Tab next tab", "? help", "r rollbacks", "q quit",
         ],
         ScreenId::Search => &[
             "/ pay", "All feeds · Any status · 3 of 41 results", "moneropay", "official", "Payment gateway for Monero",
@@ -234,7 +234,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "A site can use any combination. Each address is switched on and off separately.", "example.com", "Porkbun",
             "✓ Renew in 61 days", "203.0.113.42", "✓ Yes", "3 days ago",
             "80 and 443 are open on this device because shop is public.", "✓ Reachable",
-            "↵ change exposure", "d domains", "t test reachability", "l proxy log", "o take all sites offline",
+            "↵ change exposure", "d domains", "t test reachability", "l proxy log", "n onion", "o take all sites offline",
         ],
         ScreenId::WebExposure => &[
             "Web › shop › Exposure", "● 1 unsaved change", "Where is shop available? Turn on any combination.",
@@ -313,6 +313,27 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "Never chain data. The node syncs it again.",
             "Encrypted with its own passphrase, at the same cost as the device key.",
             "↑↓ move", "Tab device or USB", "n new backup", "u back up to USB", "r restore", "Esc back",
+        ],
+        ScreenId::Onion => &[
+            "Web › Onion addresses", "● Tor running", "▸[x] cuprated", "restricted RPC, port 18089",
+            "nod…xyz.onion:18089", "[x] shop", "also local, public", "http://abc…xyz.onion", "[ ] moneropay",
+            "single address", "◆ locked", "About onion addresses",
+            "● The node's address serves only its restricted RPC, which wallets use. Never the full RPC.",
+            "↑↓ move", "Space turn on or off", "s node settings", "g look again", "Esc back",
+        ],
+        ScreenId::Restore => &[
+            "Set up this device › Restore from a USB backup › Drive", "USB drives", "▸sda1",
+            "SanDisk Ultra Fit, BACKUP", "32.0 GB", "Generic Flash Disk", "▲ it has no filesystem", "▸ Choose the drive",
+            "○ Confirm and restore", "Restoring sets up this device",
+            "● The system disk and the blockchain drive are never listed or written.",
+            "↑↓ move", "↵ choose", "g look again", "Esc back to setup",
+        ],
+        ScreenId::Rollbacks => &[
+            "Home › Rollbacks", "Roll back a package", "▸moneropay", "2.7.0_1", "→ 2.6.1_1", "can roll back",
+            "wallet-relay", "▲ its data is in layout 2", "Updates that were rolled back",
+            "▲ bell 1.2.0_1 → 1.3.0_1 stayed on 1.2.0_1: bell did not pass its health check", "2026-11-07", "System",
+            "The system runs the version it was updated to. No fallback happened.",
+            "↑↓ move", "↵ roll back", "l log", "g look again", "Esc back",
         ],
     }
 }

@@ -29,4 +29,4 @@
 │ ◆ This device is locked. Press u to unlock all waiting services.                                 │
 │ ✕ bell keeps failing. Press l to read its log.                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ move  ↵ open  s start/stop  / search  Tab next tab  ? help                                 q quit
+↑↓ move  ↵ open  s start/stop  / search  Tab next tab  ? help                    r rollbacks  q quit

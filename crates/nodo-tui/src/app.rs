@@ -79,10 +79,16 @@ pub enum ScreenId {
     Setup,
     /// Backups and restore, on the device and on a USB drive.
     Backup,
+    /// Tor exposure of the node and the sites.
+    Onion,
+    /// First boot: rebuilding the device from a backup on a USB drive.
+    Restore,
+    /// Rollbacks that happened, and putting a package back to its previous version.
+    Rollbacks,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 29] = [
+    pub const ALL: [ScreenId; 32] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -112,6 +118,9 @@ impl ScreenId {
         ScreenId::WebCertificate,
         ScreenId::WebTrust,
         ScreenId::Backup,
+        ScreenId::Onion,
+        ScreenId::Restore,
+        ScreenId::Rollbacks,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -147,6 +156,9 @@ impl ScreenId {
             ScreenId::WebTrust => "webtrust",
             ScreenId::Setup => "setup",
             ScreenId::Backup => "backup",
+            ScreenId::Onion => "onion",
+            ScreenId::Restore => "restore",
+            ScreenId::Rollbacks => "rollbacks",
         }
     }
 
@@ -287,6 +299,127 @@ impl BackupState {
     /// Backups on the USB drive, when one can be used.
     pub fn usb_list(&self) -> &[nodo_api::BackupInfo] {
         self.usb.as_ref().and_then(|u| u.list.as_ref()).map(|l| l.backups.as_slice()).unwrap_or(&[])
+    }
+}
+
+/// Onion exposure: the node's restricted RPC first, then every site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnionState {
+    pub status: Option<nodo_api::OnionStatus>,
+    pub selected: usize,
+    pub error: Option<String>,
+    pub busy: bool,
+}
+
+impl OnionState {
+    pub fn new() -> Self {
+        Self { status: None, selected: 0, error: None, busy: true }
+    }
+
+    /// The rows in order: the node, when one is installed, then the sites.
+    pub fn rows(&self) -> Vec<OnionRow> {
+        let Some(status) = &self.status else { return Vec::new() };
+        let node = status.node.iter().map(|_| OnionRow::Node);
+        node.chain((0..status.sites.len()).map(OnionRow::Site)).collect()
+    }
+}
+
+impl Default for OnionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnionRow {
+    Node,
+    /// An index into `OnionStatus::sites`.
+    Site(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreStep {
+    /// Every removable drive, with why one cannot be used.
+    Drives,
+    /// The backups on the chosen drive.
+    Backups { device: String },
+    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    Passphrase { device: String, name: String, passphrase: Input },
+    /// What comes back, the typed word and a new device passphrase, twice.
+    Confirm {
+        device: String,
+        name: String,
+        passphrase: Secret,
+        contents: nodo_api::BackupContents,
+        typed: Input,
+        first: Input,
+        second: Input,
+        field: usize,
+    },
+    /// The helper is restoring. `started` is the tick it began at.
+    Restoring { device: String, name: String, started: u64 },
+    /// Nothing was set up. `retry` is the backup to try again.
+    Failed { device: String, name: String, reason: String },
+    Done(nodo_api::RestoreReport),
+}
+
+/// The first-boot restore from a USB drive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreState {
+    pub drives: Vec<nodo_api::UsbDrive>,
+    pub backups: Option<nodo_api::UsbBackupList>,
+    pub selected: usize,
+    pub step: RestoreStep,
+    pub error: Option<String>,
+    pub busy: bool,
+}
+
+impl RestoreState {
+    pub fn new() -> Self {
+        Self { drives: Vec::new(), backups: None, selected: 0, step: RestoreStep::Drives, error: None, busy: true }
+    }
+
+    pub fn drive(&self, device: &str) -> Option<&nodo_api::UsbDrive> {
+        self.drives.iter().find(|d| d.device == device)
+    }
+}
+
+impl Default for RestoreState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// What the Rollbacks screen shows: rollbacks that happened and versions that can be put back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RollbackView {
+    pub options: Vec<nodo_api::RollbackOption>,
+    /// Failed updates that were rolled back, newest first.
+    pub events: Vec<nodo_api::UpdateEvent>,
+    /// The system went back to its previous version at boot, and why.
+    pub boot_fallback: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RollbacksState {
+    pub view: Option<RollbackView>,
+    /// Over `view.options`.
+    pub selected: usize,
+    pub error: Option<String>,
+    pub busy: bool,
+    /// The last rollback's outcome, shown until the next action.
+    pub result: Option<nodo_api::UpdateResult>,
+}
+
+impl RollbacksState {
+    pub fn new() -> Self {
+        Self { view: None, selected: 0, error: None, busy: true, result: None }
+    }
+}
+
+impl Default for RollbacksState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -645,6 +778,9 @@ pub enum Screen {
     WebTrust,
     Setup(SetupState),
     Backup(BackupState),
+    Onion(OnionState),
+    Restore(RestoreState),
+    Rollbacks(RollbacksState),
 }
 
 impl Screen {
@@ -680,6 +816,9 @@ impl Screen {
             Screen::WebTrust => ScreenId::WebTrust,
             Screen::Setup(_) => ScreenId::Setup,
             Screen::Backup(_) => ScreenId::Backup,
+            Screen::Onion(_) => ScreenId::Onion,
+            Screen::Restore(_) => ScreenId::Restore,
+            Screen::Rollbacks(_) => ScreenId::Rollbacks,
         }
     }
 
@@ -717,6 +856,8 @@ pub enum ModalAction {
     DiscardSettings,
     DiscardAutoUpdate,
     RemoveSshKey(String),
+    /// Puts a package back to the version given.
+    RollBack { package: String, to: String },
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -875,6 +1016,15 @@ pub enum Effect {
         typed: String,
         usb: Option<String>,
     },
+    LoadOnion,
+    SetNodeOnion(bool),
+    SetSiteExposure { site: nodo_api::SiteId, exposure: Exposure },
+    LoadRestoreDrives,
+    LoadRestoreBackups(String),
+    InspectRestore { device: String, name: String, passphrase: Secret },
+    RunRestore { device: String, name: String, passphrase: Secret, new_device_passphrase: Secret, typed: String },
+    LoadRollbacks,
+    RollBack { package: String, to: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -924,6 +1074,14 @@ pub enum Event {
     BackupInspected(Result<nodo_api::BackupContents, String>),
     BackupRestored(Result<nodo_api::RestoreReport, String>),
     UsbLoaded(Result<UsbView, String>),
+    OnionLoaded(Result<nodo_api::OnionStatus, String>),
+    OnionChanged(Result<(), String>),
+    RestoreDrives(Result<Vec<nodo_api::UsbDrive>, String>),
+    RestoreBackups(Result<nodo_api::UsbBackupList, String>),
+    RestoreInspected(Result<nodo_api::BackupContents, String>),
+    RestoreFinished(Result<nodo_api::RestoreReport, String>),
+    RollbacksLoaded(Result<RollbackView, String>),
+    RolledBack(Result<nodo_api::UpdateResult, String>),
 }
 
 /// The USB drive the backup screen shows: the first one plugged in, with its backups when it
