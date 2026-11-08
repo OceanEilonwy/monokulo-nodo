@@ -1,14 +1,14 @@
 #!/bin/sh
 # Fast loop: keep one VM running and push rebuilt packages into it.
 # Uses the KVM board by default. Set DEV_BOARD=qemu-virt for emulated aarch64.
-# Usage: scripts/dev-vm.sh up | push <package>... | check | ssh [command] | down
+# Usage: scripts/dev-vm.sh up | push <package>... | check | mirror <package>... | ssh [command] | down
 set -eu
 . "$(dirname "$0")/lib.sh"
 board=${DEV_BOARD:-x86-kvm}
 . "$root/boards/$board/board.env"
 # Worktrees get separate VMs, so parallel work never shares or stops another VM.
 name=monokulo-dev-$board-$(printf %s "$root" | sha256sum | cut -c1-8)
-cmd=${1:?usage: dev-vm.sh up|push|check|ssh|down}
+cmd=${1:?usage: dev-vm.sh up|push|check|mirror|ssh|down}
 [ $# -gt 0 ] && shift
 in_vm() { docker exec -i -e "ARCH=$BOARD_ARCH" "$name" sh -c '. /src/tests/_vm-lib.sh; "$@"' sh "$@"; }
 case $cmd in
@@ -26,6 +26,8 @@ push)
 	in_vm push_packages "$@"
 	;;
 check) docker exec -i -e SKIP_REBOOT=1 "$name" /src/tests/_vm-check.sh ;;
+# Test tools from the pinned Void mirror, such as curl and python3.
+mirror) in_vm push_mirror_packages "$@" ;;
 ssh) in_vm ssh_vm "$@" ;;
 down) docker stop -t 2 "$name" >/dev/null ;;
 *) echo "unknown command: $cmd" >&2; exit 2 ;;

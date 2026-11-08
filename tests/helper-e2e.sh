@@ -7,6 +7,8 @@
 #   scripts/build-packages.sh x86_64 monokulo     (optional: Monokulo installs from the test feed)
 #   scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.xbps' < out/feed/x86_64/monokulo-<version>.x86_64.xbps
 #   echo monokulo-<version>.x86_64.xbps | scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.name'
+#   tests/acme-prepare.sh                          (optional: real ACME certificates from Pebble)
+#   scripts/dev-vm.sh ssh 'cat > /tmp/acme-e2e.sh' < tests/acme-e2e.sh
 #   scripts/dev-vm.sh ssh 'cat > /tmp/e2e.sh' < tests/helper-e2e.sh
 #   scripts/dev-vm.sh ssh 'sh /tmp/e2e.sh </dev/null'
 set -u
@@ -383,6 +385,9 @@ web_down() {
 	nft -f /etc/nftables.conf
 }
 web_down
+# Public sites ask Pebble's address, never Let's Encrypt. The VM is offline either way.
+mkdir -p /etc/nodo
+printf 'directory = "https://203.0.113.1/dir"\n' > /etc/nodo/acme-test.toml
 ip netns add e2elan; ip netns add e2einet
 ip link add e2elan0 type veth peer name eth0 netns e2elan
 ip link add e2einet0 type veth peer name eth0 netns e2einet
@@ -485,6 +490,13 @@ check "a single-address site refuses two exposures" refused "single address" ctl
 check "a single-address site takes one" ctl expose e2e-app admin 0 1 0
 ctl expose e2e-app admin 0 0 0 >/dev/null
 web_down
+
+# Certificates from a real ACME server, Pebble, through every challenge
+if [ -f /tmp/acme-e2e.sh ]; then
+	. /tmp/acme-e2e.sh
+else
+	echo "SKIP acme: /tmp/acme-e2e.sh is not in the VM"
+fi
 
 # SSH keys
 
@@ -825,6 +837,7 @@ check "a setting that makes the app crash is rolled back" sh -c '
 	! grep -q crash "$0"' "$APPCONF"
 check "the app runs again on its old settings" running_for e2e-app 3
 
+rm -f /etc/nodo/acme-test.toml
 echo "helper log tail:"
 tail -n 5 /var/log/nodo-helper/current
 exit "$fail"

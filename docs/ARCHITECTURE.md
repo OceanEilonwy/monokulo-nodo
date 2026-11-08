@@ -49,6 +49,19 @@ codebase, and signed xbps packages from user-added feeds.
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. Admin paths are always blocked on public and
   onion addresses.
+- **Certificates:** Public certificates come from Let's Encrypt through Caddy's ACME issuer, with an
+  optional email and a staging choice. The helper picks the challenge: DNS-01 when the provider has a
+  bundled caddy-dns module and its credentials are stored, else HTTP-01 and TLS-ALPN-01, which need
+  80 and 443 forwarded. GoDaddy's module takes its own key and secret. DNS-01 credentials are opened
+  from the sealed store into the Caddy config, root:_caddy 640, so renewals go on while locked; that
+  file is the one copy at rest in clear. Caddy's storage, `/var/lib/caddy` (700 `_caddy`), is backed
+  up with the secrets. Status per host comes from that storage and a certificate log Caddy writes,
+  and success is shown only once a certificate is stored. `.local` names with Caddy's internal CA
+  stay the default. Local sites can instead be named under the owner's domain: the helper publishes
+  an A record with the local address through the provider, the certificate comes through DNS-01,
+  and the name is still served only on the local listener. This publishes the LAN address, and
+  routers with DNS rebinding protection can hide it, which a check on the Domains screen detects.
+  Tests point the helper at Pebble with `/etc/nodo/acme-test.toml`; nothing else changes.
 
 ## Layout
 
