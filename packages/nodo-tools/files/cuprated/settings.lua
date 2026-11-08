@@ -14,5 +14,9 @@ return {
       choices = { "error", "warn", "info", "debug" } },
     { name = "rpc_port", type = "int", label = "Local RPC port", default = 18081, min = 18081, max = 18081,
       public = "rpc-port", endpoint = "tcp", help = "Fixed. Other packages reference it." },
+    -- The node's RPC as a URL, which apps such as Monokulo reference through the role.
+    { name = "rpc_url", type = "url", label = "Local RPC address", default = "http://127.0.0.1:18081",
+      public = "public_rpc_url", endpoint = "tcp", help = "Fixed. Other packages reference it.",
+      validate = function(url) return url == "http://127.0.0.1:18081", "this address is fixed" end },
   },
 }

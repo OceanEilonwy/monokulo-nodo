@@ -140,6 +140,10 @@ fn main() -> ExitCode {
         Box::new(NoCaddyYet),
     )
     .with_paths(paths);
+    // The health daemon protects what is installed, so it learns that before anything else.
+    if let Err(e) = helper.refresh_health_config() {
+        eprintln!("nodo-helper: could not write the health configuration: {e}");
+    }
     if let Err(e) = server::serve(listener, Arc::new(helper)) {
         eprintln!("nodo-helper: {e}");
         return ExitCode::FAILURE;

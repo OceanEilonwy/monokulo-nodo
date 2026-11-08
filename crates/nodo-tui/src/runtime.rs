@@ -77,7 +77,7 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         },
         Effect::LoadDetail(id) => vec![Event::DetailLoaded(backend.package_detail(&id))],
         Effect::CheckInstall(id) => vec![Event::GateLoaded(backend.install_gate(&id))],
-        Effect::StartInstall(id) => match backend.start_install(&id) {
+        Effect::StartInstall { id, approval, passphrase } => match backend.start_install(&id, approval.as_ref(), passphrase.as_ref()) {
             Ok(snapshot) => vec![Event::InstallProgress(Some(snapshot))],
             Err(text) => vec![Event::Failed(text)],
         },
@@ -101,8 +101,8 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             vec![refresh(backend)]
         }
         Effect::LoadKeyChange(name) => vec![Event::KeyChangeLoaded(backend.key_change(&name))],
-        Effect::TrustNewKey(name) => {
-            let result = backend.trust_new_key(&name).map(|()| name);
+        Effect::TrustNewKey { change, typed } => {
+            let result = backend.trust_new_key(&change, &typed).map(|()| change.feed.clone());
             vec![Event::NewKeyTrusted(result), refresh(backend)]
         }
         Effect::OpenSettings(package) => {
@@ -131,11 +131,11 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             backend.check_updates();
             vec![refresh(backend)]
         }
-        Effect::ReviewUpdate { name, batch, pending_reviews } => {
-            vec![Event::UpdateReviewLoaded { review: backend.update_review(&name), batch, pending_reviews }]
+        Effect::ReviewUpdate { name, batch, pending_reviews, approvals } => {
+            vec![Event::UpdateReviewLoaded { review: backend.update_review(&name), batch, pending_reviews, approvals }]
         }
-        Effect::ApplyUpdates(names) => {
-            let report = backend.apply_updates(&names);
+        Effect::ApplyUpdates { names, approvals } => {
+            let report = backend.apply_updates(&names, &approvals);
             vec![Event::UpdatesApplied(report), refresh(backend)]
         }
         Effect::SetHeld { name, held } => {
@@ -196,6 +196,17 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         Effect::RemoveSshKey(fingerprint) => {
             let result = backend.remove_ssh_key(&fingerprint);
             vec![Event::SshKeyChanged(result), Event::SshKeysLoaded(backend.ssh_keys())]
+        }
+        Effect::LoadBackups => vec![Event::BackupsLoaded(backend.backups())],
+        Effect::CreateBackup { device_passphrase, backup_passphrase } => {
+            vec![Event::BackupCreated(backend.create_backup(device_passphrase.as_ref(), &backup_passphrase))]
+        }
+        Effect::InspectBackup { name, passphrase } => {
+            vec![Event::BackupInspected(backend.inspect_backup(&name, &passphrase))]
+        }
+        Effect::RestoreBackup { name, passphrase, new_device_passphrase, typed } => {
+            let result = backend.restore_backup(&name, &passphrase, new_device_passphrase.as_ref(), &typed);
+            vec![Event::BackupRestored(result), refresh(backend)]
         }
     }
 }

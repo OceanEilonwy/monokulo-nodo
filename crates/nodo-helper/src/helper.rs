@@ -119,6 +119,8 @@ pub struct Helper<S: System> {
     pub(crate) failed_unlocks: Mutex<u32>,
     /// The most recent read-only drive check, which a repair must quote.
     pub(crate) last_drive_check: Mutex<Option<DriveCheck>>,
+    /// Feeds, installs, updates, health and backups.
+    pub(crate) manage: crate::manage::Manage,
     /// Opens sealed secrets. Only in memory, from an unlock until the helper exits.
     pub(crate) secrets: Mutex<Option<std::sync::Arc<crate::secrets::SecretsKey>>>,
 }
@@ -152,6 +154,7 @@ impl<S: System> Helper<S> {
             service_lock: Mutex::new(()),
             failed_unlocks: Mutex::new(0),
             last_drive_check: Mutex::new(None),
+            manage: crate::manage::Manage::default(),
             secrets: Mutex::new(None),
         }
     }
@@ -222,13 +225,6 @@ impl<S: System> Helper<S> {
             Request::RemoveSshKey { fingerprint } => self.remove_ssh_key(&fingerprint),
             // Owned by other parts of the system that do not exist yet. Saying so is better than
             // inventing data, and the TUI shows it as such.
-            Request::ListFeeds | Request::ListUpdates => Err(ApiError::NotImplemented(
-                "feeds and updates are handled by the package manager, which is not connected yet"
-                    .to_owned(),
-            )),
-            Request::GetAutoUpdate | Request::SetAutoUpdate(_) => Err(ApiError::NotImplemented(
-                "automatic updates are not connected yet".to_owned(),
-            )),
             Request::CheckReachability { .. } | Request::ListProviders => {
                 Err(ApiError::NotImplemented(
                     "reachability checks and DNS providers are not connected yet".to_owned(),
@@ -242,6 +238,7 @@ impl<S: System> Helper<S> {
             Request::ListGrants => self.list_grants(),
             Request::SetGrant { grant, approved } => self.set_grant(&grant, approved),
             Request::UseDataDrive { package, enabled } => self.use_data_drive(&package, enabled),
+            other => self.handle_managed(uid, other),
         }
     }
 }
@@ -339,16 +336,9 @@ mod tests {
     #[test]
     fn missing_subsystems_say_so_instead_of_inventing_data() {
         let h = helper(FakeSystem::default());
-        for request in [
-            Request::ListFeeds,
-            Request::ListUpdates,
-            Request::GetAutoUpdate,
-            Request::ListProviders,
-        ] {
-            assert!(matches!(
-                h.handle(1000, request),
-                Err(ApiError::NotImplemented(_))
-            ));
-        }
+        assert!(matches!(
+            h.handle(1000, Request::ListProviders),
+            Err(ApiError::NotImplemented(_))
+        ));
     }
 }

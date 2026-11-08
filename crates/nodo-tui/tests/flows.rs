@@ -89,7 +89,7 @@ fn review_installs_only_after_moving_to_the_install_button() {
     assert!(update(&mut app, press(RIGHT)).is_empty());
     assert!(screen_text(&app).contains("▸Install and configure"));
     let effects = update(&mut app, press(ENTER));
-    assert!(matches!(effects.as_slice(), [Effect::StartInstall(id)] if id.name == "wallet-relay"));
+    assert!(matches!(effects.as_slice(), [Effect::StartInstall { id, .. }] if id.name == "wallet-relay"));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn rejected_packages_have_no_way_to_install() {
     let (mut app, _) = fixture(ScreenId::Rejected);
     for code in [ENTER, SPACE, KeyCode::Char('i'), KeyCode::Char('o'), RIGHT, TAB] {
         let effects = update(&mut app, press(code));
-        assert!(!effects.iter().any(|effect| matches!(effect, Effect::StartInstall(_))));
+        assert!(!effects.iter().any(|effect| matches!(effect, Effect::StartInstall { .. })));
         assert_eq!(app.screen.id(), ScreenId::Rejected);
     }
 }
@@ -1149,7 +1149,7 @@ fn packages_default_to_auto_update_off() {
     let mut mock = MockBackend::new();
     let before = mock.auto_update.enabled_count();
     let id = PackageId::new("community", "node-exporter");
-    mock.start_install(&id).unwrap();
+    mock.start_install(&id, None, None).unwrap();
     for _ in 0..200 {
         mock.poll_install();
     }
@@ -1326,4 +1326,124 @@ fn the_missing_drive_replaces_home_on_startup() {
     }
     assert_eq!(app.screen.id(), ScreenId::NoDrive);
     assert!(screen_text(&app).contains("✕ Node stopped"));
+}
+
+#[test]
+fn backups_open_from_home_and_a_restore_needs_the_passphrase_then_the_typed_word() {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('b'));
+    assert_eq!(app.screen.id(), ScreenId::Backup);
+    let screen = screen_text(&app);
+    assert!(screen.contains("nodo-1762560000.nodobak"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    type_text(&mut app, &mut mock, "wrong");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("passphrase did not open"), "{}", screen_text(&app));
+    let Screen::Backup(state) = &mut app.screen else { panic!() };
+    state.step =
+        BackupStep::Unlock { name: "nodo-1762560000.nodobak".into(), passphrase: nodo_tui::secret::Input::secret() };
+    state.error = None;
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Stops while restoring: moneropay, wallet-relay, tor"), "{screen}");
+    assert!(screen.contains("Type restore"), "{screen}");
+
+    // Enter alone, or the wrong word, restores nothing.
+    let effects = update(&mut app, press(ENTER));
+    assert!(effects.is_empty(), "{effects:?}");
+    type_text(&mut app, &mut mock, "yes");
+    assert!(update(&mut app, press(ENTER)).is_empty());
+    let Screen::Backup(state) = &mut app.screen else { panic!() };
+    let BackupStep::Confirm { typed, .. } = &mut state.step else { panic!() };
+    typed.clear();
+    type_text(&mut app, &mut mock, "restore");
+    key(&mut app, &mut mock, TAB);
+    type_text(&mut app, &mut mock, "a new device passphrase");
+    let effects = update(&mut app, press(ENTER));
+    let [Effect::RestoreBackup { typed, new_device_passphrase, passphrase, .. }] = effects.as_slice() else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(typed, "restore");
+    assert_eq!(passphrase.expose(), MOCK_PASSPHRASE);
+    assert_eq!(new_device_passphrase.as_ref().unwrap().expose(), "a new device passphrase");
+    assert!(!format!("{effects:?}").contains(MOCK_PASSPHRASE), "secrets never print");
+}
+
+#[test]
+fn a_new_backup_needs_matching_passphrases_and_the_device_passphrase() {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('b'));
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    type_text(&mut app, &mut mock, "device pass");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "backup passphrase one");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "backup passphrase two");
+    assert!(update(&mut app, press(ENTER)).is_empty());
+    assert!(screen_text(&app).contains("differ"), "{}", screen_text(&app));
+    type_text(&mut app, &mut mock, "backup passphrase one");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "backup passphrase one");
+    let effects = update(&mut app, press(ENTER));
+    let [Effect::CreateBackup { device_passphrase: Some(device), backup_passphrase }] = effects.as_slice() else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(device.expose(), "device pass");
+    assert_eq!(backup_passphrase.expose(), "backup passphrase one");
+}
+
+#[test]
+fn a_package_with_new_encrypted_storage_asks_for_the_device_passphrase_before_installing() {
+    let (mut app, _) = loaded();
+    let mut data = match MockBackend::default().install_gate(&PackageId::new("community", "wallet-relay")) {
+        InstallGate::Review(data) => data,
+        other => panic!("{other:?}"),
+    };
+    data.needs_passphrase = true;
+    data.approval =
+        Some(nodo_api::PermissionApproval { pkgver: "wallet-relay-0.4.2_1".into(), permissions: vec!["x".into()] });
+    app.screen = Screen::Review(ReviewState::new(data, ReviewPurpose::Install));
+    update(&mut app, press(RIGHT));
+    assert!(update(&mut app, press(ENTER)).is_empty());
+    assert!(screen_text(&app).contains("Device passphrase"));
+    for c in "correct horse".chars() {
+        update(&mut app, press(KeyCode::Char(c)));
+    }
+    let effects = update(&mut app, press(ENTER));
+    let [Effect::StartInstall { approval: Some(approval), passphrase: Some(passphrase), .. }] = effects.as_slice()
+    else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(approval.permissions, ["x"]);
+    assert_eq!(passphrase.expose(), "correct horse");
+}
+
+#[test]
+fn trusting_a_new_key_sends_the_typed_name_and_both_keys() {
+    let (mut app, mut mock) = loaded();
+    let change = mock.key_change("old-tools").expect("sample key change");
+    app.screen = Screen::FeedKey(FeedKeyState { change: change.clone(), choice: 1, typing: None, error: None });
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "old-tools");
+    let effects = update(&mut app, press(ENTER));
+    assert_eq!(effects, [Effect::TrustNewKey { change, typed: "old-tools".into() }]);
+}
+
+#[test]
+fn the_backup_screen_shows_its_copy() {
+    let (app, _) = fixture(ScreenId::Backup);
+    let screen = screen_text(&app);
+    for needle in [
+        "Home › Backups",
+        "Backups on this device",
+        "nodo-1762560000.nodobak",
+        "4.8 MB",
+        "A backup holds",
+        "Never chain data.",
+        "n new backup",
+        "r restore",
+    ] {
+        assert!(screen.contains(needle), "{needle}\n{screen}");
+    }
 }

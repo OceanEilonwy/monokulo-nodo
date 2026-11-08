@@ -31,7 +31,62 @@ nodo-tui --ctl COMMAND [ARGS]
   drive-check | drive-repair CHECK_ID | drive-mount
   node | roles | bind ROLE PACKAGE | unbind ROLE | grants
   grant CONSUMER PROVIDER SETTING | revoke CONSUMER PROVIDER SETTING
-  data-drive PACKAGE 0|1";
+  data-drive PACKAGE 0|1
+  feeds | refresh-feeds | catalog | probe-feed ADDRESS | add-feed ADDRESS FINGERPRINT
+  feed-enable NAME 0|1 | remove-feed NAME | feed-key NAME | trust-key NAME FROM TO TYPED_NAME
+  review FEED PACKAGE
+  install-pkg FEED PACKAGE PKGVER [PERMISSION...]   (sends exactly this approval)
+  approve-install FEED PACKAGE                      (reviews, then approves what it showed)
+  approve-install-encrypted FEED PACKAGE            (the same, device passphrase on stdin)
+  updates | update-status | check-updates | review-update PACKAGE
+  apply-update PACKAGE TO | apply-update-approved PACKAGE TO
+  hold PACKAGE VERSION 0|1 | dismiss PACKAGE | auto-run
+  auto-get | auto-set FREQUENCY START END [PACKAGE...]
+  health | backups | delete-backup NAME
+  backup                           (device passphrase or an empty line, then backup passphrase)
+  inspect-backup NAME              (backup passphrase on stdin)
+  restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)";
+
+/// A secret line where an empty line means none was given.
+fn optional_secret() -> Result<Option<Secret>, String> {
+    let secret = secret_line()?;
+    Ok((!secret.expose().is_empty()).then_some(secret))
+}
+
+/// The second request of a command that first reviews and then approves what the review
+/// showed, as a user does. The helper checks the approval against the package either way.
+pub fn follow_up(args: &[String], first: &nodo_api::Response) -> Result<Option<Request>, String> {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    let nodo_api::Response::InstallReview(review) = first else {
+        return Ok(None);
+    };
+    let approval = nodo_api::PermissionApproval {
+        pkgver: review.pkgver.clone(),
+        permissions: review.permissions.clone(),
+    };
+    Ok(match a.as_slice() {
+        ["approve-install", feed, package] => Some(Request::InstallPackage {
+            feed: (*feed).to_owned(),
+            package: (*package).to_owned(),
+            approval,
+            passphrase: None,
+        }),
+        ["approve-install-encrypted", feed, package] => Some(Request::InstallPackage {
+            feed: (*feed).to_owned(),
+            package: (*package).to_owned(),
+            approval,
+            passphrase: Some(secret_line()?),
+        }),
+        ["apply-update-approved", package, to] => Some(Request::ApplyUpdates {
+            updates: vec![nodo_api::UpdateApproval {
+                package: (*package).to_owned(),
+                to: (*to).to_owned(),
+                approval: Some(approval),
+            }],
+        }),
+        _ => None,
+    })
+}
 
 /// One line from stdin. On a terminal the line is typed without echo, so it never shows.
 fn secret_line() -> Result<Secret, String> {
@@ -144,6 +199,60 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             approved: *verb == "grant",
         },
         ["data-drive", package, on] => Request::UseDataDrive { package: id(package), enabled: flag(on)? },
+        ["feeds"] => Request::ListFeeds,
+        ["refresh-feeds"] => Request::RefreshFeeds,
+        ["catalog"] => Request::Catalog,
+        ["probe-feed", address] => Request::ProbeFeed { address: id(address) },
+        ["add-feed", address, fingerprint] => Request::AddFeed { address: id(address), fingerprint: id(fingerprint) },
+        ["feed-enable", name, on] => Request::SetFeedEnabled { name: id(name), enabled: flag(on)? },
+        ["remove-feed", name] => Request::RemoveFeed { name: id(name) },
+        ["feed-key", name] => Request::FeedKeyChange { name: id(name) },
+        ["trust-key", name, from, to, typed] => Request::TrustFeedKey {
+            name: id(name),
+            confirmation: nodo_api::KeyChangeConfirmation { from: id(from), to: id(to), typed_feed_name: id(typed) },
+        },
+        ["review", feed, package]
+        | ["approve-install", feed, package]
+        | ["approve-install-encrypted", feed, package] => Request::ReviewInstall { feed: id(feed), package: id(package) },
+        ["install-pkg", feed, package, pkgver, permissions @ ..] => Request::InstallPackage {
+            feed: id(feed),
+            package: id(package),
+            approval: nodo_api::PermissionApproval {
+                pkgver: id(pkgver),
+                permissions: permissions.iter().map(|p| id(p)).collect(),
+            },
+            passphrase: None,
+        },
+        ["updates"] => Request::ListUpdates,
+        ["update-status"] => Request::UpdateStatus,
+        ["check-updates"] => Request::CheckUpdates,
+        ["review-update", package] | ["apply-update-approved", package, _] => {
+            Request::ReviewUpdate { package: id(package) }
+        }
+        ["apply-update", package, to] => Request::ApplyUpdates {
+            updates: vec![nodo_api::UpdateApproval { package: id(package), to: id(to), approval: None }],
+        },
+        ["hold", package, version, on] => Request::SetHold { package: id(package), version: id(version), held: flag(on)? },
+        ["dismiss", package] => Request::DismissUpdate { package: id(package) },
+        ["auto-run"] => Request::RunAutoUpdate,
+        ["auto-get"] => Request::GetAutoUpdate,
+        ["auto-set", frequency, start, end, packages @ ..] => Request::SetAutoUpdate(nodo_api::AutoUpdatePrefs {
+            frequency: id(frequency),
+            window_start: id(start),
+            window_end: id(end),
+            enabled: packages.iter().map(|p| id(p)).collect(),
+        }),
+        ["health"] => Request::Health,
+        ["backups"] => Request::ListBackups,
+        ["delete-backup", name] => Request::DeleteBackup { name: id(name) },
+        ["backup"] => Request::CreateBackup { device_passphrase: optional_secret()?, backup_passphrase: secret_line()? },
+        ["inspect-backup", name] => Request::InspectBackup { name: id(name), passphrase: secret_line()? },
+        ["restore", name, typed] => Request::RestoreBackup {
+            name: id(name),
+            passphrase: secret_line()?,
+            new_device_passphrase: optional_secret()?,
+            typed: id(typed),
+        },
         _ => return Err(USAGE.to_owned()),
     })
 }

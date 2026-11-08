@@ -1,5 +1,6 @@
 //! Rendering. Each screen builds a `Page` from the state, and `layout` fits it to the terminal.
 
+mod backup;
 mod home;
 mod install;
 pub mod layout;
@@ -55,6 +56,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebConfirm(state) => web::confirm(app, t, state),
         Screen::WebCgnat(state) => web::cgnat(t, state),
         Screen::Setup(state) => setup::setup(t, state),
+        Screen::Backup(state) => backup::backup(t, state),
     };
     if let Some(notice) = &app.notice {
         let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {

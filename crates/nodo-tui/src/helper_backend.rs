@@ -26,6 +26,7 @@ pub struct HelperBackend {
     unavailable: RefCell<Vec<(Area, String)>>,
     /// The most recent read-only drive check, which a repair must quote.
     drive_check: Cell<Option<u64>>,
+    pub(crate) manage: RefCell<crate::helper_manage::Cache>,
 }
 
 fn origin_label(origin: &Origin) -> String {
@@ -111,15 +112,16 @@ impl HelperBackend {
             sites: RefCell::new(BTreeMap::new()),
             unavailable: RefCell::new(Vec::new()),
             drive_check: Cell::new(None),
+            manage: RefCell::new(crate::helper_manage::Cache::default()),
         })
     }
 
-    fn ask(&self, request: Request) -> Result<Response, ApiError> {
+    pub(crate) fn ask(&self, request: Request) -> Result<Response, ApiError> {
         self.client.borrow_mut().call(request)
     }
 
     /// Records an area as unavailable when the helper says it is, and passes other errors on.
-    fn missing(&self, area: Area, error: &ApiError) {
+    pub(crate) fn missing(&self, area: Area, error: &ApiError) {
         if let ApiError::NotImplemented(reason) = error {
             let mut list = self.unavailable.borrow_mut();
             if !list.iter().any(|(a, _)| *a == area) {
@@ -202,6 +204,7 @@ impl ScreenData for HelperBackend {
             .iter()
             .map(|s| (s.id.clone(), s.roles.first().cloned().unwrap_or_else(|| origin_label(&s.origin))))
             .collect();
+        let health = crate::helper_manage::health(self);
         let drive = o.drive.as_ref().filter(|d| !d.present || !d.mounted).map(|d| {
             let waiting: Vec<String> =
                 services.iter().filter(|s| s.state == ServiceState::Waiting).map(|s| s.id.clone()).collect();
@@ -222,7 +225,10 @@ impl ScreenData for HelperBackend {
                         text: format!("Mounted at {}", d.mount_point),
                         note: d.filesystem.clone().unwrap_or_else(|| "no filesystem found".to_owned()),
                     },
-                ],
+                ]
+                .into_iter()
+                .chain(crate::helper_manage::drive_checks(health.as_ref(), &d.mount_point))
+                .collect(),
                 waiting: if waiting.is_empty() { String::new() } else { format!("Waiting: {}", waiting.join(", ")) },
             }
         });
@@ -235,40 +241,35 @@ impl ScreenData for HelperBackend {
         } else {
             Vec::new()
         };
+        let status = self.manage.borrow().status.clone();
+        let mut device = Self::device_rows(&o);
+        device.extend(crate::helper_manage::health_rows(health.as_ref()));
         Overview {
             node,
-            device: Self::device_rows(&o),
+            device,
             service_origins,
             drive,
-            restarted: format!("Up for {}", duration(o.uptime_secs)),
+            restarted: match health.as_ref().and_then(|h| h.boot_fallback.as_ref()) {
+                Some(_) => format!("Up for {}, on the previous system", duration(o.uptime_secs)),
+                None => format!("Up for {}", duration(o.uptime_secs)),
+            },
             unlock_targets,
-            updates_checked: "Updates are not connected yet".to_owned(),
+            updates_checked: match status.as_ref().and_then(|s| s.last_check) {
+                Some(at) => format!("Last checked {}.", crate::helper_manage::ago(at)),
+                None => "Not checked yet. Press r to check now.".to_owned(),
+            },
             setup_needed: o.encryption == EncryptionState::NotSetUp,
+            attention: crate::helper_manage::attention(health.as_ref(), status.as_ref()),
         }
     }
 
     fn catalog(&self) -> Vec<PackageSummary> {
-        self.missing(
-            Area::Catalog,
-            &ApiError::NotImplemented("only installed packages are listed until feeds are connected".to_owned()),
-        );
-        self.packages()
-            .into_iter()
-            .map(|p| PackageSummary {
-                id: PackageId::new(&origin_label(&p.origin), &p.id),
-                status: PackageStatus::Installed,
-                version: p.version,
-                size: String::new(),
-                tagline: if p.roles.is_empty() { String::new() } else { format!("Provides {}", p.roles.join(", ")) },
-                description: Vec::new(),
-                needs: p.needs.into_iter().map(|name| Need { name, met: true, source: None }).collect(),
-            })
-            .collect()
+        crate::helper_manage::catalog(self, self.packages())
     }
 
     fn package_detail(&self, id: &PackageId) -> Option<PackageDetail> {
         let Ok(Response::PackageDetail(d)) = self.ask(Request::PackageDetail { id: id.name.clone() }) else {
-            return None;
+            return crate::helper_manage::available_detail(self, id);
         };
         let mut asks: Vec<(String, String)> = d.inbound.iter().map(|rule| ("Inbound".to_owned(), rule.clone())).collect();
         if d.outbound_internet {
@@ -277,7 +278,8 @@ impl ScreenData for HelperBackend {
         Some(PackageDetail {
             id: id.clone(),
             installed: true,
-            signature_verified: d.info.origin == Origin::System,
+            // Feed packages were verified against their pinned key when they were installed.
+            signature_verified: true,
             about: if d.info.roles.is_empty() { String::new() } else { format!("Provides {}", d.info.roles.join(", ")) },
             version: d.info.version,
             size: String::new(),
@@ -290,19 +292,17 @@ impl ScreenData for HelperBackend {
     }
 
     fn install_gate(&self, id: &PackageId) -> InstallGate {
-        InstallGate::Rejected(RejectionData {
-            id: id.clone(),
-            version: String::new(),
-            violations: vec![Violation {
-                passed: false,
-                rule: "Installing from feeds is not connected yet".to_owned(),
-                evidence: "Nothing was downloaded or changed.".to_owned(),
-            }],
-        })
+        crate::helper_manage::install_gate(self, id)
     }
 
-    fn start_install(&mut self, _id: &PackageId) -> Result<InstallSnapshot, String> {
-        Err("Installing from feeds is not connected yet.".to_owned())
+    /// The helper installs in one request, so the progress screen gets the finished steps.
+    fn start_install(
+        &mut self,
+        id: &PackageId,
+        approval: Option<&nodo_api::PermissionApproval>,
+        passphrase: Option<&Secret>,
+    ) -> Result<InstallSnapshot, String> {
+        crate::helper_manage::start_install(self, id, approval, passphrase)
     }
 
     fn poll_install(&mut self) -> Option<InstallSnapshot> {
@@ -314,53 +314,35 @@ impl ScreenData for HelperBackend {
     }
 
     fn feeds(&self) -> Vec<Feed> {
-        match self.ask(Request::ListFeeds) {
-            Ok(Response::Feeds(list)) => list
-                .into_iter()
-                .map(|f| Feed {
-                    name: f.name,
-                    packages: f.packages,
-                    key_state: if f.key_changed { KeyState::Changed } else { KeyState::Pinned },
-                    checked: f.last_checked.unwrap_or_default(),
-                    status: match (f.enabled, f.problem) {
-                        (false, _) => FeedStatus::Disabled,
-                        (true, Some(problem)) => FeedStatus::Unreachable(problem),
-                        (true, None) => FeedStatus::Healthy,
-                    },
-                    address: f.address,
-                    fingerprint: f.fingerprint,
-                    added: String::new(),
-                    installed_from: Vec::new(),
-                })
-                .collect(),
-            Err(e) => {
-                self.missing(Area::Feeds, &e);
-                Vec::new()
-            }
-            Ok(_) => Vec::new(),
-        }
+        crate::helper_manage::feeds(self)
     }
 
-    fn probe_feed(&self, _address: &str) -> Result<FeedProbe, String> {
-        Err("Adding feeds is not connected yet.".to_owned())
+    fn probe_feed(&self, address: &str) -> Result<FeedProbe, String> {
+        crate::helper_manage::probe_feed(self, address)
     }
 
-    fn trust_feed(&mut self, _probe: &FeedProbe) -> Result<(), String> {
-        Err("Adding feeds is not connected yet.".to_owned())
+    fn trust_feed(&mut self, probe: &FeedProbe) -> Result<(), String> {
+        crate::helper_manage::trust_feed(self, probe)
     }
 
-    fn refresh_feeds(&mut self) {}
-
-    fn toggle_feed(&mut self, _name: &str) {}
-
-    fn remove_feed(&mut self, _name: &str) {}
-
-    fn key_change(&self, _feed: &str) -> Option<KeyChange> {
-        None
+    fn refresh_feeds(&mut self) {
+        let _ = self.ask(Request::RefreshFeeds);
     }
 
-    fn trust_new_key(&mut self, _feed: &str) -> Result<(), String> {
-        Err("Feeds are not connected yet.".to_owned())
+    fn toggle_feed(&mut self, name: &str) {
+        crate::helper_manage::toggle_feed(self, name);
+    }
+
+    fn remove_feed(&mut self, name: &str) {
+        let _ = self.ask(Request::RemoveFeed { name: name.to_owned() });
+    }
+
+    fn key_change(&self, feed: &str) -> Option<KeyChange> {
+        crate::helper_manage::key_change(self, feed)
+    }
+
+    fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String> {
+        crate::helper_manage::trust_new_key(self, change, typed)
     }
 
     fn settings_form(&self, package: &str) -> Option<SettingsForm> {
@@ -424,44 +406,31 @@ impl ScreenData for HelperBackend {
     }
 
     fn updates(&self) -> Vec<UpdateItem> {
-        if let Err(e) = self.ask(Request::ListUpdates) {
-            self.missing(Area::Updates, &e);
-        }
-        Vec::new()
+        crate::helper_manage::updates(self)
     }
 
-    fn check_updates(&mut self) {}
-
-    fn update_review(&self, _name: &str) -> Option<ReviewData> {
-        None
+    fn check_updates(&mut self) {
+        crate::helper_manage::check_updates(self);
     }
 
-    fn apply_updates(&mut self, _names: &[String]) -> UpdateReport {
-        UpdateReport { results: Vec::new(), failure: None }
+    fn update_review(&self, name: &str) -> Option<ReviewData> {
+        crate::helper_manage::update_review(self, name)
     }
 
-    fn set_held(&mut self, _name: &str, _held: bool) {}
+    fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport {
+        crate::helper_manage::apply_updates(self, names, approvals)
+    }
+
+    fn set_held(&mut self, name: &str, held: bool) {
+        crate::helper_manage::set_held(self, name, held);
+    }
 
     fn auto_update(&self) -> AutoUpdatePrefs {
-        match self.ask(Request::GetAutoUpdate) {
-            Ok(Response::AutoUpdate(prefs)) => AutoUpdatePrefs {
-                frequency: prefs.frequency,
-                frequencies: Vec::new(),
-                window_start: prefs.window_start,
-                window_end: prefs.window_end,
-                next_run: String::new(),
-                packages: Vec::new(),
-            },
-            Err(e) => {
-                self.missing(Area::AutoUpdate, &e);
-                AutoUpdatePrefs::default()
-            }
-            Ok(_) => AutoUpdatePrefs::default(),
-        }
+        crate::helper_manage::auto_update(self)
     }
 
-    fn save_auto_update(&mut self, _prefs: &AutoUpdatePrefs) -> Result<(), String> {
-        Err("Automatic updates are not connected yet.".to_owned())
+    fn save_auto_update(&mut self, prefs: &AutoUpdatePrefs) -> Result<(), String> {
+        crate::helper_manage::save_auto_update(self, prefs)
     }
 
     fn copy_report(&mut self, _subject: &str) -> Result<String, String> {
@@ -618,6 +587,9 @@ impl ScreenData for HelperBackend {
     }
 
     fn document(&self, kind: &DocKind) -> Document {
+        if let Some(doc) = crate::helper_manage::document(self, kind) {
+            return doc;
+        }
         Document { title: format!("{kind:?}"), lines: vec!["Not available yet.".to_owned()] }
     }
 
@@ -639,6 +611,28 @@ impl ScreenData for HelperBackend {
 
     fn unavailable(&self) -> Vec<(Area, String)> {
         self.unavailable.borrow().clone()
+    }
+
+    fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
+        crate::helper_manage::backups(self)
+    }
+
+    fn create_backup(&mut self, device: Option<&Secret>, backup: &Secret) -> Result<nodo_api::BackupCreated, String> {
+        crate::helper_manage::create_backup(self, device, backup)
+    }
+
+    fn inspect_backup(&mut self, name: &str, passphrase: &Secret) -> Result<nodo_api::BackupContents, String> {
+        crate::helper_manage::inspect_backup(self, name, passphrase)
+    }
+
+    fn restore_backup(
+        &mut self,
+        name: &str,
+        passphrase: &Secret,
+        new_device: Option<&Secret>,
+        typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        crate::helper_manage::restore_backup(self, name, passphrase, new_device, typed)
     }
 
     fn site_id(&self, key: &str) -> SiteId {

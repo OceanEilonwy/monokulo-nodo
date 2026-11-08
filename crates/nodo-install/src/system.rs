@@ -31,6 +31,7 @@ pub trait System {
     /// Runs a program directly, never through a shell.
     fn run(&self, program: &str, args: &[OsString], env: &[(&str, &str)]) -> io::Result<Output>;
     fn remove_dir_all(&self, path: &Path) -> io::Result<()>;
+    fn remove_file(&self, path: &Path) -> io::Result<()>;
 }
 
 fn read_limited(reader: impl Read, limit: u64) -> io::Result<Vec<u8>> {
@@ -139,6 +140,10 @@ impl System for RealSystem {
 
     fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
         fs::remove_dir_all(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        fs::remove_file(path)
     }
 }
 

@@ -5,17 +5,23 @@
 
 #![forbid(unsafe_code)]
 
+mod apps;
+mod backup;
 mod apply;
 mod catalog;
 mod drive;
 mod exposure;
 #[cfg(test)]
 mod fake;
+mod feeds;
 mod health;
+mod healthcfg;
 mod helper;
 mod info;
 mod install;
 pub mod keys;
+pub mod manage;
+pub mod pkgsys;
 mod node;
 mod policy;
 pub mod real;
@@ -26,6 +32,7 @@ mod settings;
 mod ssh;
 mod stores;
 pub mod system;
+mod updates;
 mod volumes;
 pub mod worker;
 
