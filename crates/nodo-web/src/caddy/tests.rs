@@ -832,7 +832,7 @@ fn acme_issuer_names_its_directory_and_dns01_disables_the_port_challenges() {
     // Without DNS-01 Caddy uses HTTP-01 and TLS-ALPN-01, which need the forwarded ports.
     assert!(issuer.get("challenges").is_none());
     assert_eq!(value["logging"]["logs"]["nodo_tls"]["writer"]["filename"], TLS_EVENTS_LOG);
-    assert_eq!(value["logging"]["logs"]["nodo_tls"]["level"], "DEBUG");
+    assert_eq!(value["logging"]["logs"]["nodo_tls"]["level"], "INFO");
     assert!(value["apps"]["tls"]["automation"].get("renew_interval").is_none());
 
     let staging = DomainSettings {
