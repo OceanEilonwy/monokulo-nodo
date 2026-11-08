@@ -17,9 +17,14 @@
 //!     { name = "daemon", type = "url", label = "Daemon", default = "$(monero-daemon.rpc-url)" },
 //!     { name = "api_key", type = "secret", label = "API key",
 //!       validate = function(v) return #v >= 16, "must be at least 16 characters" end },
+//!     { name = "db_key", type = "secret", label = "Database key", required = true,
+//!       generate = { hex = 32 } },
 //!   },
 //! }
 //! ```
+//!
+//! `generate` asks the device to create a secret's value from fresh random bytes when the package
+//! is installed and no value is set. It is created once and never regenerated.
 //!
 //! Lua's own pattern functions are not available because their backtracking cannot be interrupted
 //! by the instruction limit. Validators use `nodo.matches(text, regex)`, which runs in linear time.
@@ -46,8 +51,8 @@ pub use resolve::{
 };
 pub use sandbox::{load_settings, Limit, Limits, LoadedSettings, SettingsError};
 pub use schema::{
-    is_valid_setting_name, DefaultValue, Endpoint, Schema, SecretString, SettingDef, SettingType, SettingValue,
-    Value, MAX_TEXT_LEN, SETTINGS_API_VERSION,
+    is_valid_setting_name, DefaultValue, Endpoint, Generate, Schema, SecretString, SettingDef, SettingType,
+    SettingValue, Value, MAX_GENERATED_BYTES, MAX_TEXT_LEN, MIN_GENERATED_BYTES, SETTINGS_API_VERSION,
 };
 pub use template::{escape_literal, parse_template, Part, Reference, TemplateError};
 pub use url::{check_url, ParsedUrl};

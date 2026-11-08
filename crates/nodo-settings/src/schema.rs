@@ -206,6 +206,49 @@ pub enum Endpoint {
     Unix,
 }
 
+/// Fewest random bytes a generated secret may have.
+pub const MIN_GENERATED_BYTES: u8 = 16;
+/// Most random bytes a generated secret may have.
+pub const MAX_GENERATED_BYTES: u8 = 64;
+
+/// How the device creates a secret's value when the package is installed and has none.
+///
+/// The value is made once and then kept like any other setting. Some programs can never change a
+/// key once data has been written with it, so nothing here ever regenerates a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Generate {
+    /// This many random bytes, written as lowercase hex.
+    Hex { bytes: u8 },
+}
+
+impl Generate {
+    /// How many random bytes [`Generate::encode`] needs.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Generate::Hex { bytes } => usize::from(*bytes),
+        }
+    }
+
+    /// Turns random bytes from the caller into the secret. The caller supplies the randomness so
+    /// this crate stays free of I/O.
+    pub fn encode(&self, random: &[u8]) -> Result<SecretString, String> {
+        if random.len() != self.byte_len() {
+            return Err(format!("needs {} random bytes, got {}", self.byte_len(), random.len()));
+        }
+        match self {
+            Generate::Hex { .. } => {
+                let mut text = String::with_capacity(random.len() * 2);
+                for byte in random {
+                    text.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+                    text.push(char::from(b"0123456789abcdef"[usize::from(byte & 0x0f)]));
+                }
+                Ok(SecretString::new(text))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingDef {
     pub name: String,
@@ -226,6 +269,9 @@ pub struct SettingDef {
     /// Whether the settings file supplies a validation function for this setting.
     #[serde(default)]
     pub has_validator: bool,
+    /// Only on secrets, and never together with a default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generate: Option<Generate>,
 }
 
 /// What a settings file declares. Plain data, so root code can use it without running any Lua.
@@ -300,6 +346,7 @@ mod tests {
             public: None,
             endpoint: None,
             has_validator: false,
+            generate: None,
         }
     }
 
@@ -373,12 +420,24 @@ mod tests {
     }
 
     #[test]
+    fn generated_secrets_are_hex_of_exactly_the_declared_length() {
+        let generate = Generate::Hex { bytes: 16 };
+        let secret = generate.encode(&[0x00, 0x0f, 0xa5, 0xff, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).unwrap();
+        assert_eq!(secret.expose(), "000fa5ff0102030405060708090a0b0c");
+        assert!(generate.encode(&[0; 15]).is_err());
+        assert!(generate.encode(&[0; 17]).is_err());
+        assert!(!format!("{secret:?}").contains("000f"));
+    }
+
+    #[test]
     fn schema_round_trips_through_toml() {
         let mut enumerated = def(SettingType::Enum { choices: vec!["a".into(), "b".into()] });
         enumerated.default = Some(DefaultValue::Text("a".into()));
         let mut number = def(SettingType::Int { min: Some(1), max: None });
         number.default = Some(DefaultValue::Int(4));
-        let schema = Schema { api_version: 1, settings: vec![enumerated, number] };
+        let mut key = def(SettingType::Secret);
+        key.generate = Some(Generate::Hex { bytes: 32 });
+        let schema = Schema { api_version: 1, settings: vec![enumerated, number, key] };
         let text = toml::to_string(&schema).unwrap();
         assert_eq!(toml::from_str::<Schema>(&text).unwrap(), schema);
     }

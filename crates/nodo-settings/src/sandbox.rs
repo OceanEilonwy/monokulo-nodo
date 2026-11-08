@@ -26,7 +26,8 @@ use regex::RegexBuilder;
 use thiserror::Error;
 
 use crate::schema::{
-    is_valid_setting_name, DefaultValue, Endpoint, Schema, SettingDef, SettingType, Value, SETTINGS_API_VERSION,
+    is_valid_setting_name, DefaultValue, Endpoint, Generate, Schema, SettingDef, SettingType, Value,
+    MAX_GENERATED_BYTES, MIN_GENERATED_BYTES, SETTINGS_API_VERSION,
 };
 use crate::template::{literal_text, parse_template, Part};
 
@@ -330,8 +331,33 @@ fn read_fields(issues: &mut Issues, field: &str, table: &Table, allowed: &[&str]
 
 const SETTING_KEYS: &[&str] = &[
     "name", "type", "label", "help", "required", "default", "public", "endpoint", "validate", "min", "max",
-    "choices",
+    "choices", "generate",
 ];
+
+fn read_generate(issues: &mut Issues, field: &str, value: Option<&LuaValue>) -> Option<Generate> {
+    let value = value?;
+    let LuaValue::Table(table) = value else {
+        issues.add(field, format!("must be a table such as {{ hex = 32 }}, not {}", value.type_name()));
+        return None;
+    };
+    let fields = read_fields(issues, field, table, &["hex"]);
+    let Some(bytes) = read_int(issues, &format!("{field}.hex"), fields.get("hex")) else {
+        if !fields.contains_key("hex") {
+            issues.add(field, "must say how many bytes, as { hex = 32 }");
+        }
+        return None;
+    };
+    match u8::try_from(bytes) {
+        Ok(bytes) if (MIN_GENERATED_BYTES..=MAX_GENERATED_BYTES).contains(&bytes) => Some(Generate::Hex { bytes }),
+        _ => {
+            issues.add(
+                &format!("{field}.hex"),
+                format!("must be between {MIN_GENERATED_BYTES} and {MAX_GENERATED_BYTES} bytes"),
+            );
+            None
+        }
+    }
+}
 
 fn read_type(issues: &mut Issues, field: &str, fields: &BTreeMap<String, LuaValue>) -> Option<SettingType> {
     let name = read_text(issues, &format!("{field}.type"), fields.get("type"));
@@ -512,6 +538,15 @@ fn read_setting(issues: &mut Issues, field: &str, table: &Table) -> Option<Setti
     }
     let endpoint = read_endpoint(issues, &format!("{field}.endpoint"), &ty, fields.get("endpoint"));
     let default = read_default(issues, &format!("{field}.default"), &ty, fields.get("default"));
+    let generate = read_generate(issues, &format!("{field}.generate"), fields.get("generate"));
+    if fields.contains_key("generate") {
+        if !matches!(ty, SettingType::Secret) {
+            issues.add(&format!("{field}.generate"), "only applies to type secret");
+        }
+        if fields.contains_key("default") {
+            issues.add(&format!("{field}.generate"), "cannot be combined with a default");
+        }
+    }
 
     Some(SettingDef {
         name: name?,
@@ -523,6 +558,7 @@ fn read_setting(issues: &mut Issues, field: &str, table: &Table) -> Option<Setti
         public,
         endpoint,
         has_validator,
+        generate,
     })
 }
 
@@ -1123,6 +1159,27 @@ mod tests {
             (r#"{ name = "a", type = "string", label = "\27[2J" }"#, "plain text"),
             (r#"{ name = "a", type = "string", label = "x", help = "\27[2J" }"#, "plain text"),
             (r#"{ name = "a", type = "string", label = "x", public = "Bad Name" }"#, "lowercase"),
+        ] {
+            let issues = invalid(&with_settings(body));
+            assert!(issues.iter().any(|i| i.contains(expected)), "{body}: wanted {expected:?}, got {issues:?}");
+        }
+    }
+
+    #[test]
+    fn secrets_can_ask_the_device_to_generate_them() {
+        let loaded =
+            load(&with_settings(r#"{ name = "k", type = "secret", label = "K", required = true, generate = { hex = 32 } }"#))
+                .unwrap();
+        assert_eq!(loaded.schema().setting("k").unwrap().generate, Some(Generate::Hex { bytes: 32 }));
+        for (body, expected) in [
+            (r#"{ name = "a", type = "string", label = "x", generate = { hex = 32 } }"#, "only applies to type secret"),
+            (r#"{ name = "a", type = "secret", label = "x", default = "$(o.k)", generate = { hex = 32 } }"#, "default"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = { hex = 8 } }"#, "between 16 and 64"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = { hex = 65 } }"#, "between 16 and 64"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = { hex = 1.5 } }"#, "must be an integer"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = { base64 = 32 } }"#, "unknown key"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = {} }"#, "how many bytes"),
+            (r#"{ name = "a", type = "secret", label = "x", generate = "hex" }"#, "must be a table"),
         ] {
             let issues = invalid(&with_settings(body));
             assert!(issues.iter().any(|i| i.contains(expected)), "{body}: wanted {expected:?}, got {issues:?}");
