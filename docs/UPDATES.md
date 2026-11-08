@@ -228,6 +228,15 @@ created; a syncing node on a real drive was not tested.
 
 ## 7. Encrypted packages leak to the unencrypted disk
 
+Implemented as proposed below and proven in the KVM dev VM (`tests/helper-e2e.sh`), with these
+differences: the volume's top is root-owned 0711 and `config` root-owned 0755 (files inside are
+0640 with the service's group), so the service user cannot swap `config` for a link that
+redirects the helper's writes; the resolved settings environment file goes to memory under
+`/run/nodo/secrets/<id>/env` rather than into the volume; data the old layout kept at the top of
+a volume moves into `data/` at the next unlock. Not done: moving an existing package's
+`/etc/apps/<id>` and `/var/log/apps/<id>` into the volume when an update makes it encrypted,
+and `fstrim` afterwards.
+
 Today an encrypted package's data is in its LUKS volume, but `/etc/apps/<id>` (rendered settings,
 which can include granted secrets) and `/var/log/apps/<id>` stay on the system disk, and
 `ServiceSpec::new` refuses a data mount for encrypted packages, so large encrypted volumes must

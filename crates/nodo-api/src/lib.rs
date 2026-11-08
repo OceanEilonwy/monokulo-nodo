@@ -325,6 +325,36 @@ pub struct SshKey {
     pub comment: String,
 }
 
+/// What the node's RPC reports about itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeStatus {
+    /// The package providing `monero-daemon`.
+    pub provider: String,
+    pub height: u64,
+    /// The height the network is at, or 0 when the node does not know yet.
+    pub target_height: u64,
+    pub outgoing_peers: u32,
+    pub incoming_peers: u32,
+    pub synchronized: bool,
+}
+
+/// A role, the installed packages providing it, and the user's choice among them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleBinding {
+    pub role: String,
+    pub providers: Vec<String>,
+    pub bound: Option<String>,
+}
+
+/// Approval for `consumer` to reference a secret or non-public `setting` of `provider`. The
+/// provider is always a package id, never a role, so a role moving does not carry approval.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SettingGrant {
+    pub consumer: String,
+    pub provider: String,
+    pub setting: String,
+}
+
 /// One site's addresses as the proxy serves them now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebSiteStatus {
@@ -491,6 +521,28 @@ pub enum Request {
     },
     /// Mounts the data drive as `/etc/fstab` describes it, for retrying after a repair.
     MountDrive,
+    /// Height and peers of the node providing `monero-daemon`, from its RPC.
+    NodeStatus,
+    ListRoleBindings,
+    /// Chooses which package provides a role, or `None` to clear the choice. Every package
+    /// referencing the role is re-rendered and restarted, and all of it rolls back together.
+    SetRoleBinding {
+        role: String,
+        package: Option<String>,
+    },
+    ListGrants,
+    /// Approves or revokes one package reading another's secret or non-public setting. The
+    /// consumer is re-rendered and restarted, and rolls back on failure.
+    SetGrant {
+        grant: SettingGrant,
+        approved: bool,
+    },
+    /// Keeps a package's data on the data drive. For encrypted storage this is where its volume
+    /// file goes. Only before the package is installed, since nothing is moved.
+    UseDataDrive {
+        package: String,
+        enabled: bool,
+    },
     /// Addresses, the local address, the domain and dynamic DNS, as the proxy has them now.
     WebStatus,
     /// The provider catalog with each provider's dynamic DNS and DNS-01 support.
@@ -533,6 +585,9 @@ pub enum Response {
     Reachability(ReachabilityReport),
     Providers(Vec<ProviderInfo>),
     SshKeys(Vec<SshKey>),
+    NodeStatus(NodeStatus),
+    RoleBindings(Vec<RoleBinding>),
+    Grants(Vec<SettingGrant>),
     WebStatus(WebStatus),
     DnsProviders(Vec<DnsProviderDetail>),
     /// What a provider test did, for the screen.
@@ -561,6 +616,9 @@ pub enum ApiError {
     NeedsConfirmation(String),
     #[error("encrypted storage has not been set up")]
     NotSetUp,
+    /// The action needs secrets or storage that open only with the device passphrase.
+    #[error("locked: {0}")]
+    Locked(String),
 }
 
 /// Implemented by the helper client and by a mock for TUI development and tests.
@@ -603,6 +661,12 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::AddSshKey { .. } => "add-ssh-key",
         Request::RemoveSshKey { .. } => "remove-ssh-key",
         Request::MountDrive => "mount-drive",
+        Request::NodeStatus => "node-status",
+        Request::ListRoleBindings => "list-role-bindings",
+        Request::SetRoleBinding { .. } => "set-role-binding",
+        Request::ListGrants => "list-grants",
+        Request::SetGrant { .. } => "set-grant",
+        Request::UseDataDrive { .. } => "use-data-drive",
         Request::WebStatus => "web-status",
         Request::ListDnsProviders => "list-dns-providers",
         Request::SetDnsProvider { .. } => "set-dns-provider",

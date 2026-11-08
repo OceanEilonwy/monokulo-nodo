@@ -54,6 +54,8 @@ pub struct Paths {
     pub installed: PathBuf,
     pub authorized_keys: PathBuf,
     pub drive: Option<DriveConfig>,
+    /// Role bindings, approved grants and data drive choices, in one root-only file.
+    pub bindings: PathBuf,
 }
 
 impl Default for Paths {
@@ -74,6 +76,7 @@ impl Default for Paths {
             installed: "/var/lib/nodo/installed".into(),
             authorized_keys: "/root/.ssh/authorized_keys".into(),
             drive: None,
+            bindings: "/var/lib/nodo/bindings.toml".into(),
         }
     }
 }
@@ -116,6 +119,8 @@ pub struct Helper<S: System> {
     pub(crate) failed_unlocks: Mutex<u32>,
     /// The most recent read-only drive check, which a repair must quote.
     pub(crate) last_drive_check: Mutex<Option<DriveCheck>>,
+    /// Opens sealed secrets. Only in memory, from an unlock until the helper exits.
+    pub(crate) secrets: Mutex<Option<std::sync::Arc<crate::secrets::SecretsKey>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -147,6 +152,7 @@ impl<S: System> Helper<S> {
             service_lock: Mutex::new(()),
             failed_unlocks: Mutex::new(0),
             last_drive_check: Mutex::new(None),
+            secrets: Mutex::new(None),
         }
     }
 
@@ -223,6 +229,14 @@ impl<S: System> Helper<S> {
             Request::GetAutoUpdate | Request::SetAutoUpdate(_) => Err(ApiError::NotImplemented(
                 "automatic updates are not connected yet".to_owned(),
             )),
+            Request::NodeStatus => self.node_status(),
+            Request::ListRoleBindings => self.list_role_bindings(),
+            Request::SetRoleBinding { role, package } => {
+                self.set_role_binding(&role, package.as_deref())
+            }
+            Request::ListGrants => self.list_grants(),
+            Request::SetGrant { grant, approved } => self.set_grant(&grant, approved),
+            Request::UseDataDrive { package, enabled } => self.use_data_drive(&package, enabled),
             request @ (Request::CheckReachability { .. }
             | Request::ListProviders
             | Request::WebStatus

@@ -214,6 +214,25 @@ mod tests {
                 fingerprint: "SHA256:x".into(),
             },
             Request::MountDrive,
+            Request::NodeStatus,
+            Request::ListRoleBindings,
+            Request::SetRoleBinding {
+                role: "monero-daemon".into(),
+                package: Some("monerod".into()),
+            },
+            Request::ListGrants,
+            Request::SetGrant {
+                grant: SettingGrant {
+                    consumer: "a".into(),
+                    provider: "b".into(),
+                    setting: "token".into(),
+                },
+                approved: true,
+            },
+            Request::UseDataDrive {
+                package: "a".into(),
+                enabled: true,
+            },
             Request::WebStatus,
             Request::ListDnsProviders,
             Request::SetDnsProvider {
@@ -392,6 +411,25 @@ mod tests {
             }),
             Err(ApiError::NeedsConfirmation("c".into())),
             Err(ApiError::NotSetUp),
+            Ok(Response::NodeStatus(NodeStatus {
+                provider: "cuprated".into(),
+                height: 3_000_000,
+                target_height: 3_100_000,
+                outgoing_peers: 32,
+                incoming_peers: 4,
+                synchronized: false,
+            })),
+            Ok(Response::RoleBindings(vec![RoleBinding {
+                role: "monero-daemon".into(),
+                providers: vec!["cuprated".into(), "monerod".into()],
+                bound: None,
+            }])),
+            Ok(Response::Grants(vec![SettingGrant {
+                consumer: "a".into(),
+                provider: "b".into(),
+                setting: "s".into(),
+            }])),
+            Err(ApiError::Locked("unlock first".into())),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

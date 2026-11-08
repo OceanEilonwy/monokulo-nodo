@@ -74,6 +74,7 @@ fn outcome(result: &CallResult) -> &'static str {
         Err(ApiError::RateLimited { .. }) => "rate limited",
         Err(ApiError::NeedsConfirmation(_)) => "needs confirmation",
         Err(ApiError::NotSetUp) => "not set up",
+        Err(ApiError::Locked(_)) => "locked",
     }
 }
 

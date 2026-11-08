@@ -20,6 +20,17 @@ codebase, and signed xbps packages from user-added feeds.
   approved by the user. A reference implies the dependency and the sandbox and firewall access.
 - **Encrypted storage:** Packages opt in. One single device passphrase unlocks all of it at once after a
   reboot. There are no per-package passphrases. Each volume is mounted only inside its own sandbox.
+- **Sealed secrets:** Secret setting values are stored sealed with XChaCha20-Poly1305 under a key derived
+  from the device key (HKDF-SHA-256, `nodo-secrets-v1`), as `v1.` and base64 of nonce and ciphertext, with
+  the package and setting as associated data. That key exists only in the helper's memory after an
+  unlock. An app with secret settings reads its rendered settings from `/run/nodo/secrets/<id>`, so
+  after a reboot it waits for the unlock like encrypted storage. Secrets stored in clear by older
+  helpers are sealed at the first unlock. Secret values cannot be set before the passphrase exists.
+- **Settings to services:** Resolved settings reach a service as `NODO_*` environment variables from a
+  root-only file read by its run script, never in argv. Every settings change regenerates the sandbox
+  and firewall fragment from the references it resolves, re-renders the packages referencing it, and
+  rolls all of them back together if any fails. Role bindings, approved grants and data drive choices
+  are kept in `/var/lib/nodo/bindings.toml`, and the install marker records the feed.
 - **Feeds:** Users add feeds, so packages are untrusted. Signing keys are pinned, and key changes and
   downgrades need approval. Reject install scripts, setuid files, paths outside the app directory and
   base package names. Feeds stay out of the system repo config. Permissions are shown for approval, and

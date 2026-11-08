@@ -1,17 +1,21 @@
 //! Applying settings: write the planned files, restart, health check, and roll back on failure.
 //!
 //! What to write is a [`SettingsPolicy`]'s decision. This module only guarantees that the
-//! service either runs on all of the new files or is put back on all of the old ones.
+//! service, and every package whose settings follow from it, either runs on all of the new
+//! files or is put back on all of the old ones.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use nodo_api::{ApiError, Response, Rollback, RollbackStage, SettingChange, SettingsForm};
+use nodo_api::{ApiError, Response, SettingChange, SettingsForm};
+use nodo_gen::ResolvedGrants;
 use zeroize::Zeroizing;
 
 use crate::catalog::Package;
 use crate::health::probe_for;
 use crate::helper::{lock, Helper, Paths};
-use crate::system::{Probe, SvAction, System, WriteOptions};
+use crate::secrets::SecretsKey;
+use crate::stores::Bindings;
+use crate::system::System;
 
 /// Upper bound on how many changes one request may carry.
 pub const MAX_CHANGES: usize = 512;
@@ -34,6 +38,38 @@ pub struct SettingsContext<'a> {
     pub paths: &'a Paths,
     /// Every installed package, for resolving references between them.
     pub packages: &'a [Package],
+    /// Present between an unlock and the helper's exit. Without it, sealed secrets can be
+    /// neither read nor written.
+    pub secrets: Option<&'a SecretsKey>,
+    /// Whether the device passphrase exists, which decides how a missing key is explained.
+    pub set_up: bool,
+    /// Role bindings and approved grants, which resolution follows.
+    pub bindings: &'a Bindings,
+}
+
+/// What a package's settings decide about its service, beyond its own files.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServiceInputs {
+    /// The command line with references substituted. `None` runs the manifest's own.
+    pub exec: Option<Vec<String>>,
+    /// Loopback ports and sockets of other packages that its references reach. A reference that
+    /// goes away takes its access with it, because this is computed afresh every time.
+    pub grants: ResolvedGrants,
+    /// Its settings hold secrets sealed under the device key, so they render to memory.
+    pub sealed: bool,
+}
+
+/// Every file a change produces, in the order to write them, and what it means for the service.
+pub struct Plan {
+    pub files: Vec<PlannedFile>,
+    pub service: ServiceInputs,
+}
+
+/// Something settings can resolve through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Package(String),
+    Role(String),
 }
 
 /// Turns typed changes into files, and describes settings for the form.
@@ -50,33 +86,63 @@ pub trait SettingsPolicy: Send + Sync {
         ctx: &SettingsContext,
         package: &Package,
         changes: &[SettingChange],
-    ) -> Result<Vec<PlannedFile>, ApiError>;
-}
+    ) -> Result<Plan, ApiError>;
 
-/// The previous content of each planned file, for putting it back.
-struct Saved {
-    path: PathBuf,
-    previous: Option<Vec<u8>>,
-    mode: u32,
-    group: Option<String>,
-}
+    /// Service inputs of a package without settings, whose command line may still reference
+    /// other packages.
+    fn service(
+        &self,
+        _ctx: &SettingsContext,
+        _package: &Package,
+    ) -> Result<ServiceInputs, ApiError> {
+        Ok(ServiceInputs::default())
+    }
 
-impl Saved {
-    fn options(&self) -> WriteOptions<'_> {
-        WriteOptions {
-            mode: self.mode,
-            group: self.group.as_deref(),
-        }
+    /// Packages whose resolved settings depend on the target, directly or through a chain.
+    fn dependents(
+        &self,
+        _ctx: &SettingsContext,
+        _target: &Target,
+    ) -> Result<Vec<String>, ApiError> {
+        Ok(Vec::new())
+    }
+
+    /// Seals secrets still stored in clear, such as those written before sealing existed, and
+    /// returns how many. Needs the secrets key.
+    fn seal_stored(&self, _ctx: &SettingsContext) -> Result<usize, ApiError> {
+        Ok(0)
+    }
+
+    /// The resolved value of a package's public setting, as text.
+    fn public_value(
+        &self,
+        _ctx: &SettingsContext,
+        _package: &Package,
+        _public_name: &str,
+    ) -> Result<Option<String>, ApiError> {
+        Ok(None)
     }
 }
 
 impl<S: System> Helper<S> {
-    fn settings_context<'a>(&'a self, packages: &'a [Package]) -> SettingsContext<'a> {
-        SettingsContext {
+    /// Runs `f` with everything a policy may read: packages, bindings and, when unlocked, the
+    /// secrets key.
+    pub(crate) fn with_settings<T>(
+        &self,
+        packages: &[Package],
+        f: impl FnOnce(&SettingsContext) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        let bindings = self.load_bindings()?;
+        let key = self.secrets_key();
+        let ctx = SettingsContext {
             sys: &self.sys,
             paths: &self.paths,
             packages,
-        }
+            secrets: key.as_deref(),
+            set_up: self.sys.exists(&self.paths.keystore),
+            bindings: &bindings,
+        };
+        f(&ctx)
     }
 
     pub(crate) fn settings_form(&self, id: &str) -> Result<Response, ApiError> {
@@ -85,14 +151,13 @@ impl<S: System> Helper<S> {
             return Err(ApiError::Failed(format!("{id} has no settings")));
         }
         let (packages, _) = self.packages()?;
-        let form = self
-            .settings
-            .form(&self.settings_context(&packages), &package)?;
+        let form = self.with_settings(&packages, |ctx| self.settings.form(ctx, &package))?;
         Ok(Response::SettingsForm(form))
     }
 
     /// Validate, write atomically, restart, health check, and restore on any failure past the
-    /// writes. A failure up to and including the writes leaves the service untouched.
+    /// writes. Packages referencing this one are re-rendered in the same change, and a failure
+    /// in any of them puts every package back.
     pub(crate) fn apply_settings(
         &self,
         id: &str,
@@ -111,9 +176,11 @@ impl<S: System> Helper<S> {
         let _guard = lock(&self.service_lock);
         // A locked service cannot pass a health check, and rolling back would misreport why.
         if self.is_locked(&package)? {
-            return Err(ApiError::Failed(format!("{id} is locked")));
+            return Err(ApiError::Locked(format!(
+                "{id} keeps encrypted storage, which opens with the device passphrase"
+            )));
         }
-        let probe = package
+        package
             .manifest
             .health
             .as_ref()
@@ -121,118 +188,20 @@ impl<S: System> Helper<S> {
             .transpose()
             .map_err(ApiError::Failed)?;
         let (packages, _) = self.packages()?;
-        let planned = self
-            .settings
-            .plan(&self.settings_context(&packages), &package, changes)?;
-
-        let mut saved = Vec::with_capacity(planned.len());
-        for file in &planned {
-            saved.push(Saved {
-                path: file.path.clone(),
-                previous: self.sys.read_file(&file.path)?,
-                mode: file.mode,
-                group: file.group.clone(),
-            });
-        }
-        let unchanged = planned
-            .iter()
-            .zip(&saved)
-            .all(|(file, old)| old.previous.as_deref() == Some(file.bytes.as_slice()));
-        if unchanged {
-            return Ok(Response::Ok);
-        }
-
-        for (index, file) in planned.iter().enumerate() {
-            let written = file
-                .path
-                .parent()
-                .map_or(Ok(()), |dir| {
-                    self.sys.ensure_dir(dir, file.parent_mode, None)
-                })
-                .and_then(|()| {
-                    self.sys
-                        .atomic_write(&file.path, &file.bytes, saved[index].options())
-                });
-            if let Err(e) = written {
-                // Nothing restarted yet, so putting back what was written is enough.
-                let restored = self.restore(&saved[..index]);
-                return Err(ApiError::Failed(match restored {
-                    Ok(()) => e.0,
-                    Err(problem) => {
-                        format!("{}. The old settings could not be restored: {problem}", e.0)
-                    }
-                }));
-            }
-        }
-
-        let (stage, reason) = match self.restart_and_check(&package, probe.as_ref()) {
-            Ok(()) => return Ok(Response::Ok),
-            Err(failure) => failure,
-        };
-        self.restore(&saved).map_err(|e| {
-            ApiError::Failed(format!(
-                "{reason}. The old settings could not be restored: {e}"
-            ))
-        })?;
-        let recovery_problem = self
-            .restart_and_check(&package, probe.as_ref())
-            .err()
-            .map(|(_, problem)| problem);
-        Ok(Response::RolledBack(Rollback {
-            stage,
-            reason,
-            recovered: recovery_problem.is_none(),
-            recovery_problem,
-        }))
-    }
-
-    fn restart_and_check(
-        &self,
-        package: &Package,
-        probe: Option<&Probe>,
-    ) -> Result<(), (RollbackStage, String)> {
-        let wait = Self::stop_wait(package);
-        self.sys
-            .sv(SvAction::ForceRestart, package.id(), wait)
-            .map_err(|e| (RollbackStage::Restart, format!("restart failed: {e}")))?;
-        self.wait_healthy(package.id(), probe).map_err(|e| {
-            (
-                RollbackStage::HealthCheck,
-                format!("health check failed: {e}"),
-            )
+        let plan =
+            self.with_settings(&packages, |ctx| self.settings.plan(ctx, &package, changes))?;
+        let unit = self.unit_for(&package, plan)?;
+        self.transact(unit, || {
+            self.dependent_units(&Target::Package(id.to_owned()), &[id])
         })
     }
-
-    /// Restores in reverse order and tries every file, so one failure does not leave the rest
-    /// on new settings.
-    fn restore(&self, saved: &[Saved]) -> Result<(), String> {
-        let mut problems = Vec::new();
-        for old in saved.iter().rev() {
-            let result = match &old.previous {
-                Some(bytes) => self.sys.atomic_write(&old.path, bytes, old.options()),
-                None => self.sys.remove_file(&old.path),
-            };
-            if let Err(e) = result {
-                problems.push(format!("{}: {}", display(&old.path), e.0));
-            }
-        }
-        if problems.is_empty() {
-            Ok(())
-        } else {
-            Err(problems.join("; "))
-        }
-    }
-}
-
-fn display(path: &Path) -> String {
-    path.display().to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fake::{helper, FakeSystem, ENCRYPTED, SHOP, STORE};
-    use nodo_api::{SettingInput, SettingLiteral};
+    use nodo_api::{Rollback, RollbackStage, SettingInput, SettingLiteral};
 
     const PATH: &str = "/etc/apps/shop/settings.toml";
     const OLD: &[u8] = b"color = \"blue\"\n";
@@ -363,7 +332,7 @@ mod tests {
         let h = helper(sys);
         assert!(matches!(
             h.apply_settings("vault", &[text("a", "b")]),
-            Err(ApiError::Failed(_))
+            Err(ApiError::Locked(_))
         ));
         assert_eq!(sv_restarts(&h), 0);
     }
