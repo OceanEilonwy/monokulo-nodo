@@ -1,7 +1,7 @@
 # Sourced by the test runners. Expects ssh_vm, check and fail to be defined.
 echo "PASS ssh login with key"
 
-check "boot diagnostics are saved" 'for n in $(seq 1 30); do [ -s /var/log/monokulo-diag/latest.txt ] && break; sleep 2; done; grep -q "== services" /var/log/monokulo-diag/latest.txt && grep -q "run: cuprated" /var/log/monokulo-diag/latest.txt'
+check "boot diagnostics are saved" 'for n in $(seq 1 30); do [ -s /var/log/monokulo-diag/latest.txt ] && break; sleep 2; done; grep -q "== services" /var/log/monokulo-diag/latest.txt && grep -q "run: /var/service/cuprated:" /var/log/monokulo-diag/latest.txt'
 check "console shows the IP address" 'grep -q "\\\\4" /etc/issue'
 check "loopback is up" "ip -o link show lo | grep -q LOWER_UP"
 check "password login disabled" 'sshd -T | grep -qix "passwordauthentication no"'
