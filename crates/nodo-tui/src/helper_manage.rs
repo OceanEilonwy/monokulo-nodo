@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nodo_api::{
     ApiError, BackupContents, BackupCreated, BackupInfo, CatalogEntry, HealthSeverity, HealthSummary, InstallReview,
-    KeyChangeConfirmation, PermissionApproval, Request, Response, RestoreReport, UpdateApproval, UpdateEventKind,
-    UpdateOutcome, UpdateStatus,
+    KeyChangeConfirmation, PermissionApproval, Request, Response, RestoreReport, SystemUpdateResult,
+    SystemUpdateStatus, UpdateApproval, UpdateEventKind, UpdateOutcome, UpdateStatus,
 };
 
 use crate::helper_backend::HelperBackend;
@@ -20,6 +20,10 @@ use crate::secret::Secret;
 #[derive(Default)]
 pub struct Cache {
     pub status: Option<UpdateStatus>,
+    /// The system snapshot status, whose available serial an update quotes back.
+    pub system: Option<SystemUpdateStatus>,
+    /// Updates that grow encrypted storage, by package, in words.
+    pub growth: Vec<(String, String)>,
 }
 
 fn api(secret: &Secret) -> nodo_api::Secret {
@@ -351,11 +355,81 @@ fn load_status(b: &HelperBackend, request: Request) -> Option<UpdateStatus> {
     }
 }
 
-pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
-    let Some(status) = load_status(b, Request::UpdateStatus) else {
-        return Vec::new();
+fn mb(bytes: u64) -> String {
+    format!("{} MB", bytes >> 20)
+}
+
+/// What the helper says about system updates, kept for the apply that quotes its serial.
+fn load_system(b: &HelperBackend, request: Request) -> Option<SystemUpdateStatus> {
+    let status = match b.ask(request) {
+        Ok(Response::SystemUpdate(status)) => Some(status),
+        _ => None,
     };
+    b.manage.borrow_mut().system = status.clone();
     status
+}
+
+/// The system snapshot as a row next to the packages, when a newer one is available.
+fn system_row(status: &SystemUpdateStatus) -> Option<UpdateItem> {
+    let available = status.available.as_ref()?;
+    let from = status.current_snapshot.clone().unwrap_or_else(|| format!("serial {}", status.current_serial));
+    let note = if available.withdraws_current {
+        UpdateNote::Withdrawal(from.clone())
+    } else if available.needs_restart {
+        UpdateNote::RestartNeeded
+    } else {
+        UpdateNote::Ready
+    };
+    Some(UpdateItem {
+        name: SYSTEM_BASE.to_owned(),
+        from,
+        to: available.snapshot.clone(),
+        source: "tested snapshot".to_owned(),
+        third_party: false,
+        note,
+        held: false,
+        preselected: true,
+        grows: None,
+    })
+}
+
+/// The Updates screen's line about the system, or `None` when system updates are not set up.
+pub fn system_note(b: &HelperBackend) -> Option<String> {
+    let cache = b.manage.borrow();
+    let status = cache.system.as_ref()?;
+    if status.unavailable.is_some() {
+        return None;
+    }
+    let current = status.current_snapshot.clone().unwrap_or_else(|| format!("serial {}", status.current_serial));
+    let mut line = format!("System: snapshot {current}");
+    if let Some(e) = &status.last_error {
+        line.push_str(&format!(". The last check failed: {e}"));
+    } else if let Some(at) = status.last_check {
+        line.push_str(&format!(", checked {}", ago(at)));
+    }
+    line.push_str(if status.automatic {
+        ". Automatic system updates are on."
+    } else {
+        ". Automatic system updates are off, so checks only notify."
+    });
+    Some(line)
+}
+
+pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
+    let system = load_system(b, Request::SystemUpdateStatus);
+    let growth: Vec<(String, String)> = match b.ask(Request::UpdateStorageGrowth) {
+        Ok(Response::StorageGrowth(list)) => list
+            .into_iter()
+            .map(|g| (g.package, format!("{} to {} of encrypted storage", mb(g.from_bytes), mb(g.to_bytes))))
+            .collect(),
+        _ => Vec::new(),
+    };
+    b.manage.borrow_mut().growth = growth.clone();
+    let mut rows: Vec<UpdateItem> = system.as_ref().and_then(system_row).into_iter().collect();
+    let Some(status) = load_status(b, Request::UpdateStatus) else {
+        return rows;
+    };
+    let packages = status
         .candidates
         .into_iter()
         .map(|c| {
@@ -370,7 +444,9 @@ pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
             } else {
                 UpdateNote::Ready
             };
+            let grows = growth.iter().find(|(name, _)| *name == c.info.package).map(|(_, words)| words.clone());
             UpdateItem {
+                grows,
                 name: c.info.package,
                 from: c.info.from,
                 to: c.info.to,
@@ -380,12 +456,55 @@ pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
                 note,
                 held: c.info.held,
             }
-        })
-        .collect()
+        });
+    rows.extend(packages);
+    rows
 }
 
 pub fn check_updates(b: &HelperBackend) {
     load_status(b, Request::CheckUpdates);
+    // A failed system check is recorded by the helper and shown in the system line.
+    let _ = b.ask(Request::CheckSystemUpdate);
+}
+
+/// The system update the user selected, as a result row.
+fn apply_system(b: &HelperBackend) -> UpdateResult {
+    let serial = b.manage.borrow().system.as_ref().and_then(|s| s.available.as_ref()).map(|a| a.serial);
+    let Some(serial) = serial else {
+        return UpdateResult {
+            name: SYSTEM_BASE.to_owned(),
+            applied: false,
+            version: String::new(),
+            note: "There is no system update to apply. Check again.".to_owned(),
+        };
+    };
+    match b.ask(Request::ApplySystemUpdate { serial }) {
+        Ok(Response::SystemUpdateApplied(result)) => system_result(&result),
+        Ok(other) => UpdateResult {
+            name: SYSTEM_BASE.to_owned(),
+            applied: false,
+            version: String::new(),
+            note: format!("unexpected reply: {other:?}"),
+        },
+        Err(e) => UpdateResult { name: SYSTEM_BASE.to_owned(), applied: false, version: String::new(), note: e.to_string() },
+    }
+}
+
+pub fn system_result(result: &SystemUpdateResult) -> UpdateResult {
+    let mut note = match result.changed.len() {
+        0 => "Applied, nothing changed".to_owned(),
+        1 => "Applied, 1 package changed".to_owned(),
+        n => format!("Applied, {n} packages changed"),
+    };
+    if let Some(withdrawn) = &result.withdrew {
+        note.push_str(&format!(", left withdrawn {withdrawn}"));
+    }
+    if result.needs_restart {
+        note.push_str(", restart when ready");
+    } else if !result.deferred.is_empty() {
+        note.push_str(&format!(", {} uses it after a restart", result.deferred.join(", ")));
+    }
+    UpdateResult { name: SYSTEM_BASE.to_owned(), applied: true, version: result.snapshot.clone(), note }
 }
 
 fn candidate_to(b: &HelperBackend, name: &str) -> Option<String> {
@@ -401,7 +520,33 @@ pub fn update_review(b: &HelperBackend, name: &str) -> Option<ReviewData> {
     Some(review_data(&PackageId::new(&r.feed, name), &r, true))
 }
 
-pub fn apply_updates(b: &HelperBackend, names: &[String], approvals: &[(String, PermissionApproval)]) -> UpdateReport {
+/// Package updates first, then the system snapshot, so a package update never runs on a system
+/// that changed under it within the same batch.
+pub fn apply_updates(
+    b: &HelperBackend,
+    names: &[String],
+    approvals: &[(String, PermissionApproval)],
+    passphrase: Option<&Secret>,
+) -> UpdateReport {
+    let packages: Vec<String> = names.iter().filter(|n| *n != SYSTEM_BASE).cloned().collect();
+    let mut report = if packages.is_empty() {
+        UpdateReport { results: Vec::new(), failure: None }
+    } else {
+        apply_packages(b, &packages, approvals, passphrase)
+    };
+    if names.iter().any(|n| n == SYSTEM_BASE) {
+        report.results.push(apply_system(b));
+        report.results.sort_by_key(|r| !r.applied);
+    }
+    report
+}
+
+fn apply_packages(
+    b: &HelperBackend,
+    names: &[String],
+    approvals: &[(String, PermissionApproval)],
+    passphrase: Option<&Secret>,
+) -> UpdateReport {
     let updates = names
         .iter()
         .map(|name| UpdateApproval {
@@ -410,7 +555,11 @@ pub fn apply_updates(b: &HelperBackend, names: &[String], approvals: &[(String, 
             approval: approvals.iter().find(|(n, _)| n == name).map(|(_, a)| a.clone()),
         })
         .collect();
-    let results = match b.ask(Request::ApplyUpdates { updates }) {
+    let request = match passphrase {
+        Some(p) => Request::ApplyUpdatesWithPassphrase { updates, passphrase: api(p) },
+        None => Request::ApplyUpdates { updates },
+    };
+    let results = match b.ask(request) {
         Ok(Response::UpdateResults(results)) => results,
         Ok(other) => {
             return UpdateReport {
@@ -481,7 +630,7 @@ pub fn auto_update(b: &HelperBackend) -> AutoUpdatePrefs {
         }
     };
     let next_window = b.manage.borrow().status.as_ref().and_then(|s| s.next_window.clone());
-    let packages = catalog_entries(b)
+    let mut packages: Vec<AutoUpdateEntry> = catalog_entries(b)
         .unwrap_or_default()
         .into_iter()
         .filter(|e| e.installed.is_some())
@@ -491,6 +640,13 @@ pub fn auto_update(b: &HelperBackend) -> AutoUpdatePrefs {
             entry
         })
         .collect();
+    // The system joins the list only where it can update, and stays off unless turned on.
+    let system = b.manage.borrow().system.clone().filter(|s| s.unavailable.is_none());
+    if let Some(system) = system {
+        let mut entry = AutoUpdateEntry::new(SYSTEM_BASE, "tested snapshot", false, "Off means notify only");
+        entry.enabled = system.automatic;
+        packages.push(entry);
+    }
     AutoUpdatePrefs {
         frequency: prefs.frequency,
         frequencies: vec!["Daily".to_owned(), "Weekly".to_owned(), "Manual".to_owned()],
@@ -509,9 +665,13 @@ pub fn save_auto_update(b: &HelperBackend, prefs: &AutoUpdatePrefs) -> Result<()
         frequency: prefs.frequency.clone(),
         window_start: prefs.window_start.clone(),
         window_end: prefs.window_end.clone(),
-        enabled: prefs.packages.iter().filter(|p| p.enabled).map(|p| p.name.clone()).collect(),
+        enabled: prefs.packages.iter().filter(|p| p.enabled && p.name != SYSTEM_BASE).map(|p| p.name.clone()).collect(),
     });
-    text(b.ask(request)).map(|_| ())
+    text(b.ask(request))?;
+    if let Some(system) = prefs.packages.iter().find(|p| p.name == SYSTEM_BASE) {
+        text(b.ask(Request::SetSystemAutoUpdate { enabled: system.enabled }))?;
+    }
+    Ok(())
 }
 
 pub fn document(b: &HelperBackend, kind: &DocKind) -> Option<Document> {
@@ -741,6 +901,59 @@ pub fn restore_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn system(available: Option<nodo_api::SystemSnapshot>) -> SystemUpdateStatus {
+        SystemUpdateStatus {
+            unavailable: None,
+            current_serial: 6,
+            current_snapshot: Some("2026.12".into()),
+            available,
+            last_check: Some(now()),
+            last_error: None,
+            automatic: false,
+            verdict: String::new(),
+            last_applied: None,
+        }
+    }
+
+    fn snapshot(needs_restart: bool, withdraws_current: bool) -> nodo_api::SystemSnapshot {
+        nodo_api::SystemSnapshot { serial: 7, snapshot: "2026.13".into(), needs_restart, withdraws_current }
+    }
+
+    #[test]
+    fn the_system_snapshot_is_a_row_beside_the_packages_only_when_one_is_available() {
+        assert_eq!(system_row(&system(None)), None);
+        let row = system_row(&system(Some(snapshot(false, false)))).unwrap();
+        assert_eq!((row.name.as_str(), row.from.as_str(), row.to.as_str()), (SYSTEM_BASE, "2026.12", "2026.13"));
+        assert_eq!((row.note, row.source.as_str()), (UpdateNote::Ready, "tested snapshot"));
+        assert_eq!(system_row(&system(Some(snapshot(true, false)))).unwrap().note, UpdateNote::RestartNeeded);
+        assert_eq!(
+            system_row(&system(Some(snapshot(true, true)))).unwrap().note,
+            UpdateNote::Withdrawal("2026.12".into()),
+            "a withdrawal is what the owner most needs to know"
+        );
+    }
+
+    #[test]
+    fn a_system_update_result_says_what_changed_and_what_waits() {
+        let mut result = SystemUpdateResult {
+            at: 0,
+            serial: 7,
+            snapshot: "2026.13".into(),
+            changed: vec!["nodo-tools: 0.1.0_2 -> 0.1.0_3".into()],
+            restarted: vec![],
+            deferred: vec!["nodo-helper".into()],
+            needs_restart: false,
+            withdrew: None,
+            automatic: false,
+        };
+        let row = system_result(&result);
+        assert!(row.applied);
+        assert_eq!(row.note, "Applied, 1 package changed, nodo-helper uses it after a restart");
+        result.withdrew = Some("2026.12".into());
+        result.needs_restart = true;
+        assert_eq!(system_result(&result).note, "Applied, 1 package changed, left withdrawn 2026.12, restart when ready");
+    }
 
     #[test]
     fn ago_reads_as_plain_english() {
