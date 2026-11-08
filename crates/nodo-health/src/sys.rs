@@ -1,11 +1,14 @@
 //! Everything the health daemon needs from the system, behind one trait.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::sockets::{self, Owner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Space {
@@ -35,6 +38,8 @@ pub trait System {
     fn space(&self, path: &Path) -> Option<Space>;
     fn is_mountpoint(&self, path: &Path) -> bool;
     fn read(&self, path: &Path) -> io::Result<Option<String>>;
+    /// For kernel files that may hold any byte, such as `/proc/net/unix`.
+    fn read_bytes(&self, path: &Path) -> io::Result<Option<Vec<u8>>>;
     /// Atomic replace, mode 0644.
     fn write(&self, path: &Path, contents: &str) -> io::Result<()>;
     /// Writes into an existing file in place, for kernel interfaces such as cgroupfs, where a
@@ -51,6 +56,10 @@ pub trait System {
     fn uid_of(&self, user: &str) -> Option<u32>;
     fn pids_of_uid(&self, uid: u32) -> Vec<u32>;
     fn now(&self) -> u64;
+    /// The processes holding each of these socket inodes. Complete only for root.
+    fn socket_owners(&self, inodes: &BTreeSet<u64>) -> BTreeMap<u64, Vec<Owner>>;
+    /// The Landlock ABI of the running kernel, `None` without Landlock.
+    fn landlock_abi(&self) -> Option<i64>;
 }
 
 pub struct RealSystem {
@@ -77,6 +86,14 @@ impl System for RealSystem {
     fn read(&self, path: &Path) -> io::Result<Option<String>> {
         match fs::read_to_string(path) {
             Ok(text) => Ok(Some(text)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_bytes(&self, path: &Path) -> io::Result<Option<Vec<u8>>> {
+        match fs::read(path) {
+            Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -174,12 +191,19 @@ impl System for RealSystem {
     fn now(&self) -> u64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
     }
+
+    fn socket_owners(&self, inodes: &BTreeSet<u64>) -> BTreeMap<u64, Vec<Owner>> {
+        sockets::find_owners(Path::new("/proc"), Path::new("/etc/passwd"), inodes)
+    }
+
+    fn landlock_abi(&self) -> Option<i64> {
+        nodo_confine::landlock_abi()
+    }
 }
 
 #[cfg(test)]
 pub mod fake {
     use std::cell::RefCell;
-    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
 
@@ -196,6 +220,8 @@ pub mod fake {
         pub users: BTreeMap<String, u32>,
         pub pids: BTreeMap<u32, Vec<u32>>,
         pub clock: std::cell::Cell<u64>,
+        pub owners: RefCell<BTreeMap<u64, Vec<Owner>>>,
+        pub landlock: std::cell::Cell<Option<i64>>,
     }
 
     impl FakeSystem {
@@ -235,6 +261,9 @@ pub mod fake {
         }
         fn read(&self, path: &Path) -> io::Result<Option<String>> {
             Ok(self.files.borrow().get(path).cloned())
+        }
+        fn read_bytes(&self, path: &Path) -> io::Result<Option<Vec<u8>>> {
+            Ok(self.files.borrow().get(path).map(|t| t.clone().into_bytes()))
         }
         fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
             self.calls.borrow_mut().push(format!("write {}", path.display()));
@@ -294,6 +323,12 @@ pub mod fake {
         }
         fn now(&self) -> u64 {
             self.clock.get()
+        }
+        fn socket_owners(&self, inodes: &BTreeSet<u64>) -> BTreeMap<u64, Vec<Owner>> {
+            self.owners.borrow().iter().filter(|(i, _)| inodes.contains(i)).map(|(i, o)| (*i, o.clone())).collect()
+        }
+        fn landlock_abi(&self) -> Option<i64> {
+            self.landlock.get()
         }
     }
 }

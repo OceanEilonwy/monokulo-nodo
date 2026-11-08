@@ -128,7 +128,8 @@ pub fn tick(cfg: &Config, state: &mut State, sys: &dyn System) -> Report {
         .iter()
         .map(|(service, s)| StoppedService { service: service.clone(), filesystem: s.filesystem.clone(), since: s.since })
         .collect();
-    let attention = report::attention(&disks, &stopped, &services_memory, &time);
+    let abstract_sockets = report::abstract_sockets(&cfg.abstract_sockets, sys);
+    let attention = report::attention(&disks, &stopped, &services_memory, &time, &abstract_sockets);
 
     if *state != before {
         if let Ok(text) = toml::to_string(state) {
@@ -151,6 +152,7 @@ pub fn tick(cfg: &Config, state: &mut State, sys: &dyn System) -> Report {
         time,
         temperature_c: report::temperature(sys),
         uptime_secs: report::uptime(sys),
+        abstract_sockets,
         attention,
     };
     if let Some(dir) = cfg.report_path.parent() {
@@ -341,5 +343,99 @@ mod tests {
         assert!(!wanted_up("down: x: 9s, normally up"));
         assert!(!wanted_up("run: x: (pid 1) 5s, want down"));
         assert!(!wanted_up(""));
+    }
+
+    const UNIX_HEADER: &str = "Num       RefCount Protocol Flags    Type St Inode Path\n";
+
+    fn listen(sys: &FakeSystem, entries: &[(u64, &str)]) {
+        let mut text = UNIX_HEADER.to_owned();
+        text.push_str("0000000000000000: 00000002 00000000 00010000 0001 01 7 /run/nodo/helper.sock\n");
+        for (inode, name) in entries {
+            text.push_str(&format!("0000000000000000: 00000002 00000000 00010000 0001 01 {inode} {name}\n"));
+        }
+        sys.put("/proc/net/unix", &text);
+    }
+
+    fn owner(pid: u32, process: &str, user: &str) -> crate::sockets::Owner {
+        crate::sockets::Owner { pid, process: process.into(), uid: 1000, user: user.into() }
+    }
+
+    fn socket_notes(r: &Report) -> Vec<&str> {
+        r.attention.iter().filter(|a| a.message.contains("abstract Unix socket")).map(|a| a.message.as_str()).collect()
+    }
+
+    #[test]
+    fn an_unexpected_abstract_listener_is_named_on_home_and_cleared_when_it_stops() {
+        let sys = sys();
+        let cfg = cfg();
+        let mut state = State::default();
+        sys.put("/proc/sys/kernel/osrelease", "6.1.99-rk3588\n");
+        sys.landlock.set(Some(4));
+        listen(&sys, &[]);
+        let r = tick(&cfg, &mut state, &sys);
+        assert!(r.abstract_sockets.scanned && r.abstract_sockets.listeners.is_empty());
+        assert!(socket_notes(&r).is_empty());
+
+        listen(&sys, &[(4242, "@nodo-e2e-probe")]);
+        sys.owners.borrow_mut().insert(4242, vec![owner(321, "python3", "nobody")]);
+        let r = tick(&cfg, &mut state, &sys);
+        let notes = socket_notes(&r);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].contains("@nodo-e2e-probe") && notes[0].contains("python3 (pid 321) as user nobody"),
+            "{}",
+            notes[0]
+        );
+        assert!(notes[0].contains("This kernel (6.1.99-rk3588) cannot stop"), "{}", notes[0]);
+        assert_eq!(r.attention.iter().find(|a| a.message == notes[0]).unwrap().severity, Severity::Warning);
+        assert!(sys.get("/run/nodo/health.json").unwrap().contains("\"name\": \"@nodo-e2e-probe\""));
+
+        sys.landlock.set(Some(6));
+        let r = tick(&cfg, &mut state, &sys);
+        assert!(socket_notes(&r)[0].ends_with("This kernel's sandbox keeps services away from it."));
+
+        listen(&sys, &[]);
+        let r = tick(&cfg, &mut state, &sys);
+        assert!(socket_notes(&r).is_empty());
+    }
+
+    #[test]
+    fn expected_listeners_stay_quiet_unless_another_user_holds_the_name() {
+        use crate::config::ExpectedSocket;
+        let sys = sys();
+        let mut cfg = cfg();
+        cfg.abstract_sockets.expected = vec![
+            ExpectedSocket { name: "@any-user".into(), user: None },
+            ExpectedSocket { name: "@root-only/*".into(), user: Some("root".into()) },
+        ];
+        listen(&sys, &[(1, "@any-user"), (2, "@root-only/a"), (3, "@root-only/b"), (4, "@root-only/c")]);
+        sys.owners.borrow_mut().insert(1, vec![owner(10, "daemon", "_shop")]);
+        sys.owners.borrow_mut().insert(2, vec![owner(11, "daemon", "root")]);
+        sys.owners.borrow_mut().insert(3, vec![owner(12, "daemon", "root"), owner(13, "squatter", "_shop")]);
+        let r = tick(&cfg, &mut State::default(), &sys);
+        let expected: Vec<bool> = r.abstract_sockets.listeners.iter().map(|l| l.expected).collect();
+        assert_eq!(expected, [true, true, false, false], "a name bound to root but held by another user, or by no one known");
+        let notes = socket_notes(&r);
+        assert_eq!(notes.len(), 2);
+        assert!(notes[0].contains("@root-only/b") && notes[0].contains("daemon (pid 12) as user root and 1 more process"));
+        assert!(notes[1].contains("@root-only/c") && notes[1].contains("a process that could not be found"));
+    }
+
+    #[test]
+    fn many_unexpected_listeners_are_counted_after_the_first_few() {
+        let sys = sys();
+        listen(&sys, &[(1, "@a"), (2, "@b"), (3, "@c"), (4, "@d"), (5, "@e")]);
+        let r = tick(&cfg(), &mut State::default(), &sys);
+        let notes = socket_notes(&r);
+        assert_eq!(notes.len(), 4);
+        assert!(notes[3].starts_with("2 more unexpected abstract Unix sockets"));
+        assert!(notes.iter().all(|n| n.len() < 300), "the helper keeps 300 characters");
+    }
+
+    #[test]
+    fn an_unreadable_socket_list_raises_nothing() {
+        let r = tick(&cfg(), &mut State::default(), &sys());
+        assert!(!r.abstract_sockets.scanned);
+        assert!(socket_notes(&r).is_empty());
     }
 }
