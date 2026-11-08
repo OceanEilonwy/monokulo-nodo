@@ -14,6 +14,7 @@ nodo-gen = { path = "../nodo-gen" }
 nodo-health = { path = "../nodo-health" }
 nodo-install = { path = "../nodo-install" }
 nodo-manifest = { path = "../nodo-manifest" }
+nodo-web = { path = "../nodo-web" }
 nodo-settings = { path = "../nodo-settings" }
 nodo-update = { path = "../nodo-update" }
 serde.workspace = true

@@ -10,15 +10,27 @@ fake=/tmp/fakeapi
 ip_seen=93.184.216.34
 zone=023e105f4ecef8ad9ca31a8372d0c353
 token=cf-test-token-1234567890
-conf=/etc/nodo-ddns/config.toml
+conf=/run/nodo/secrets/nodo-ddns/config.toml
 hosts="api.cloudflare.com api.ipify.org ipv4.icanhazip.com checkip.amazonaws.com v4.ident.me ipv4.wtfismyip.com"
 fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
+# Services stay linked between runs and are only switched down, with a down file so a reboot keeps
+# them down. Removing a link makes runsv linger while its log runs, and a lingering one ignores the
+# next start.
+service_up() {
+	rm -f "/etc/sv/$1/down"
+	ln -sfn "/etc/sv/$1" "/etc/runit/runsvdir/default/$1"
+	i=0; until sv -w 5 up "$1" >/dev/null 2>&1 || [ "$i" -ge 10 ]; do i=$((i+1)); sleep 2; done
+}
+service_down() {
+	[ -d "/etc/sv/$1" ] || return 0
+	touch "/etc/sv/$1/down"
+	sv -w 15 down "$1" >/dev/null 2>&1
+}
 cleanup() {
-	sv -w 30 stop nodo-ddns >/dev/null 2>&1
-	sv exit nodo-ddns >/dev/null 2>&1
-	rm -f /etc/runit/runsvdir/default/nodo-ddns "$conf" /var/lib/nodo-ddns/state.json
+	service_down nodo-ddns
+	rm -f "$conf" /var/lib/nodo-ddns/state.json
 	ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null
 	ip netns del "$ns" 2>/dev/null
 	ip link del ddns0 2>/dev/null
@@ -80,6 +92,8 @@ r=1; [ "$code" = 200 ] && r=0
 result "fake internet answers over trusted TLS ($code)" "$r"
 
 write_conf() {
+	install -d -m 711 /run/nodo/secrets
+	install -d -m 700 -o _nododdns -g _nododdns /run/nodo/secrets/nodo-ddns
 	install -m 600 -o _nododdns -g _nododdns /dev/null "$conf"
 	cat > "$conf" <<TOML
 domain = "example.com"
@@ -99,7 +113,7 @@ new_log() { tail -n "+$((mark + 1))" /var/log/nodo-ddns/current 2>/dev/null; }
 wait_log() { i=0; until new_log | grep -q "$1" || [ "$i" -ge 40 ]; do i=$((i+1)); sleep 1; done; new_log | grep -q "$1"; }
 
 mark
-ln -sfn /etc/sv/nodo-ddns /etc/runit/runsvdir/default/nodo-ddns
+service_up nodo-ddns
 wait_log "does not exist"
 result "service waits without a config" "$?"
 

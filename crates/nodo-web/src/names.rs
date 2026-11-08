@@ -46,6 +46,11 @@ pub fn is_local_name(value: &str) -> bool {
     is_dns_name(value) && value.contains('.') && LOCAL_SUFFIXES.iter().any(|suffix| has_suffix(value, suffix))
 }
 
+/// Names that multicast DNS resolves. Other local suffixes need the router's DNS.
+pub fn has_mdns_suffix(value: &str) -> bool {
+    is_local_name(value) && has_suffix(value, "local")
+}
+
 /// A v3 onion address, with no subdomain.
 pub fn is_onion_name(value: &str) -> bool {
     value.strip_suffix(".onion").is_some_and(|label| {

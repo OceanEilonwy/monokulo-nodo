@@ -403,6 +403,8 @@ pub struct LogView {
 pub enum CheckState {
     Passed,
     Failed,
+    /// Could not be determined, such as a port nobody outside tested. Never shown as a pass.
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,6 +486,8 @@ pub struct Site {
     /// Rate limiting is always on for public sites, except where the proxy reports it cannot
     /// enforce it for this site.
     pub rate_limit_unenforced: bool,
+    /// Local exposure is on, but the device has no local address to serve it on.
+    pub local_waiting: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -496,6 +500,9 @@ pub struct WebOverview {
     pub dns_matches: bool,
     pub dns_changed: String,
     pub reachable: bool,
+    /// Why local sites are not being served, and what to do about it.
+    pub local_problem: Option<String>,
+    pub local_remedy: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -513,6 +520,10 @@ pub struct Provider {
     pub dynamic_dns: Capability,
     pub https_without_ports: Capability,
     pub instructions: String,
+    /// The provider's credential fields, in the order the helper wants them.
+    pub fields: Vec<String>,
+    /// A note on certificates without open ports, such as different credentials.
+    pub dns01_note: Option<String>,
 }
 
 impl Provider {
@@ -540,7 +551,8 @@ pub struct PublicPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reachability {
-    Checked { checks: Vec<Check>, router: Option<RouterHelp>, plan: Option<PublicPlan> },
+    /// `manual` explains how to test the ports from outside, when nothing outside tested them.
+    Checked { checks: Vec<Check>, router: Option<RouterHelp>, plan: Option<PublicPlan>, manual: Vec<String> },
     Cgnat { wan_address: String, wan_range: String, internet_address: String },
 }
 

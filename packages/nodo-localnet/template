@@ -1,0 +1,35 @@
+# Template file for 'nodo-localnet'
+# The device's second LAN address, used only for local sites, and the mDNS responder for their names.
+# Built from this repository's workspace, which the build container mounts at /src.
+# monokulo-sources: Cargo.toml Cargo.lock crates
+pkgname=nodo-localnet
+version=0.1.0
+revision=2
+archs="aarch64 x86_64"
+build_style=cargo
+make_build_args="-p nodo-web --bin nodo-mdns"
+make_install_args="--path crates/nodo-web --bin nodo-mdns"
+depends="bubblewrap nftables procps-ng iproute2 dhcpcd"
+short_desc="Separate local address and mDNS names for monokulo-nodo local sites"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/OceanEilonwy/monokulo-nodo"
+system_accounts="_nodomdns"
+make_dirs="/var/lib/nodo-localnet 0755 root root
+ /var/log/nodo-localnet 0750 root root
+ /var/log/nodo-mdns 0750 _nodomdns _nodomdns"
+
+do_extract() {
+	mkdir -p "${wrksrc}"
+	cp -r /src/Cargo.toml /src/Cargo.lock /src/crates "${wrksrc}/"
+}
+
+post_install() {
+	vinstall ${FILESDIR}/nodo-mdns.nft 644 etc/nftables.d
+	for sv in nodo-localnet nodo-mdns; do
+		vsv $sv
+		vmkdir etc/sv/$sv/control
+		vinstall ${FILESDIR}/$sv/control/t 755 etc/sv/$sv/control
+	done
+	vinstall ${FILESDIR}/nodo-localnet/finish 755 etc/sv/nodo-localnet
+}

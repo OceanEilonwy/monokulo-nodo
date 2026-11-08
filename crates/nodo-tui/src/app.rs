@@ -468,6 +468,7 @@ pub struct WebCheckState {
     pub plan: Option<PublicPlan>,
     /// True when this check is a step towards going public, not just a test from the overview.
     pub going_public: bool,
+    pub manual: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

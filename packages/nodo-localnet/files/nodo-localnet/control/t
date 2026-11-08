@@ -1,0 +1,3 @@
+#!/bin/sh
+# The run script waits in a loop and exits on TERM, after which finish removes the address.
+exec kill -TERM "$(cat supervise/pid)"

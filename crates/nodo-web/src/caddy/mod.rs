@@ -9,30 +9,34 @@
 //! - **Public** hosts are served on the router-facing ports 80 and 443. Caddy runs unprivileged, so it
 //!   binds [`CADDY_HTTP_PORT`] and [`CADDY_HTTPS_PORT`], and nftables redirects 80 and 443 to them.
 //!   Admin paths are always blocked here.
-//! - **Local** hosts are served only on [`LOCAL_HTTPS_PORT`], open to LAN source addresses, so their
-//!   URLs carry a port: `https://shop.local:8443`.
+//! - **Local** hosts are served only on the device's second LAN address (see [`crate::local`]), at
+//!   port 443, so their URLs have no port: `https://shop.local`. nftables sends that address's 443 to
+//!   Caddy's [`CADDY_LOCAL_PORT`], which Caddy binds on that address alone, and only for LAN sources.
 //! - Every **onion** address has its own plain-HTTP server on its own loopback port, reachable only
 //!   through Tor. A shared socket would let anyone probing the public IP send `Host: <addr>.onion` and
 //!   link the onion site to the home IP.
 //!
-//! Local hosts used to share 443 with public hosts and relied on a `remote_ip` check. A router that
-//! masquerades forwarded connections makes every internet client look like the router's LAN address,
-//! and that check then lets the internet reach local hosts and their admin paths. With separate ports,
-//! what a request can reach depends on the port it arrived on, and the router only forwards 80 and 443.
-//! The `remote_ip` check stays on local hosts as a second layer. A user who forwards 8443 by hand still
-//! exposes local hosts, which the screens must warn about.
+//! Local hosts used to share the main address with public hosts and relied on a `remote_ip` check. A
+//! router that masquerades forwarded connections makes every internet client look like the router's
+//! LAN address, and that check then let the internet reach local hosts and their admin paths. Now what
+//! a request can reach depends on the address it was sent to. The router forwards only to the main
+//! address, so a forwarded connection can never be addressed to a local host, whatever its source. The
+//! `remote_ip` check stays on local hosts as a second layer. Without a second address, local sites are
+//! unavailable, listed in [`WebPlan::local`], and never served on the main address or another port.
 //!
 //! Each HTTPS listener also has TLS connection policies limited to its own host names, so a handshake
 //! for `shop.local` on the public port fails instead of presenting the local certificate.
 
 pub mod types;
 
+use crate::local::{LocalAddress, LocalUnavailable};
 use crate::names::{self, quoted};
 use crate::secret::Secret;
 use nodo_api::{Exposure, ServiceState};
 use nodo_manifest::WebService;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::net::{IpAddr, Ipv4Addr};
 use thiserror::Error;
 use types::*;
 
@@ -42,8 +46,8 @@ pub const PUBLIC_HTTP_PORT: u16 = 80;
 /// Unprivileged ports Caddy binds for public traffic. Only redirected connections are accepted on them.
 pub const CADDY_HTTPS_PORT: u16 = 10443;
 pub const CADDY_HTTP_PORT: u16 = 10080;
-/// Local hosts are only served here, never on the forwarded ports.
-pub const LOCAL_HTTPS_PORT: u16 = 8443;
+/// Caddy binds this on the local address only. nftables sends the local address's port 443 here.
+pub const CADDY_LOCAL_PORT: u16 = 10444;
 const ONION_VIRTUAL_PORT: u16 = 80;
 const INTERNAL_CA: &str = "local";
 const APEX: &str = "@";
@@ -100,6 +104,8 @@ pub struct Site {
     pub local_host: Option<String>,
     /// Overrides the subdomain under the connected domain. `@` means the domain itself.
     pub public_subdomain: Option<String>,
+    /// The full host the user chose, which wins over the subdomain and needs no connected domain.
+    pub public_host: Option<String>,
     /// Known only after Tor has created the service. See [`WebPlan::onion_pending`].
     pub onion_host: Option<String>,
     /// The user's choice on the Confirm screen. See [`DomainSettings::rate_limit`].
@@ -194,6 +200,8 @@ pub struct DomainSettings {
     pub acme_email: Option<String>,
     /// Client ranges allowed to reach local hosts.
     pub lan_ranges: Vec<String>,
+    /// The second LAN address that local hosts are served on, from `nodo-localnet`.
+    pub local_address: LocalAddress,
     /// Onion listeners are allocated upward from here on loopback.
     pub onion_port_base: u16,
     /// Parent of each hidden-service directory. Tor needs this to exist with strict permissions.
@@ -212,6 +220,7 @@ impl Default for DomainSettings {
             domain: None,
             acme_email: None,
             lan_ranges: DEFAULT_LAN_RANGES.iter().map(|r| (*r).to_owned()).collect(),
+            local_address: LocalAddress::default(),
             onion_port_base: 19000,
             tor_dir: "/var/lib/tor/nodo".to_owned(),
             // The default TCP admin port would be reachable from every process on loopback.
@@ -247,11 +256,30 @@ pub struct SiteAddress {
 pub struct FirewallPlan {
     /// Router-facing ports, open to the internet. Empty unless at least one site is public.
     pub public_tcp: Vec<u16>,
-    /// Where each public port is redirected, as `(public, caddy)`.
+    /// Where each public port is redirected, as `(public, caddy)`. Never applied to the local address.
     pub redirects: Vec<(u16, u16)>,
-    /// Open to [`Self::lan_ranges`] only.
-    pub lan_tcp: Vec<u16>,
+    pub local: Option<LocalFirewall>,
+}
+
+/// Port 443 and mDNS on the local address, for LAN sources only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalFirewall {
+    pub address: Ipv4Addr,
+    pub caddy_port: u16,
+    /// IPv4 ranges only, since the local address is IPv4.
     pub lan_ranges: Vec<String>,
+}
+
+/// Whether local sites are being served, and which are waiting for the local address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalStatus {
+    pub address: LocalAddress,
+    /// Sites with local exposure that have no local address yet.
+    pub waiting: Vec<SiteRef>,
+    /// The `.local` names the mDNS responder should answer with the local address.
+    pub mdns_names: Vec<String>,
+    /// What the user can do when sites are waiting. Every reason offers a static address or a fix.
+    pub remedy: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -290,6 +318,7 @@ pub struct WebPlan {
     /// Tor must start with `tor_lines` first. Generate again once its `hostname` files exist.
     pub onion_pending: Vec<SiteRef>,
     pub rate_limit_unenforced: Vec<SiteRef>,
+    pub local: LocalStatus,
 }
 
 struct Resolved<'a> {
@@ -307,7 +336,12 @@ struct Resolved<'a> {
 pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, WebConfigError> {
     validate_settings(settings)?;
 
-    let mut resolved = sites.iter().map(|site| resolve(site, settings)).collect::<Result<Vec<_>, _>>()?;
+    // A site with every exposure off produces nothing, so it cannot clash with anything either.
+    let mut resolved = sites
+        .iter()
+        .filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public)
+        .map(|site| resolve(site, settings))
+        .collect::<Result<Vec<_>, _>>()?;
     resolved.sort_by(|a, b| (&a.site.package, &a.site.service.name).cmp(&(&b.site.package, &b.site.service.name)));
     check_unique(&resolved)?;
 
@@ -326,7 +360,23 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut next_onion_port = u32::from(settings.onion_port_base);
 
     let public_listen = format!(":{CADDY_HTTPS_PORT}");
-    let local_listen = format!(":{LOCAL_HTTPS_PORT}");
+    // An address that is not private and inside the LAN ranges is treated as no address, so local
+    // sites wait instead of every exposure failing.
+    let local_address = match settings.local_address {
+        LocalAddress::Ready { address }
+            if !address.is_private()
+                || !settings.lan_ranges.iter().any(|range| range_contains(range, IpAddr::V4(address))) =>
+        {
+            LocalAddress::Unavailable { reason: LocalUnavailable::UnsuitableAddress(address) }
+        }
+        ref other => other.clone(),
+    };
+    let local_ip = match &local_address {
+        LocalAddress::Ready { address } => Some(*address),
+        LocalAddress::Unavailable { .. } => None,
+    };
+    let local_listen = local_ip.map(|ip| format!("{ip}:{CADDY_LOCAL_PORT}")).unwrap_or_default();
+    let mut local_waiting = Vec::new();
 
     for item in &resolved {
         let site = item.site;
@@ -353,7 +403,10 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             plan_addresses.push(address(AddressKind::Public, host, format!("https://{host}"), &public_listen));
         }
 
-        if let Some(host) = &item.local {
+        if let (Some(_), None) = (&item.local, local_ip) {
+            local_waiting.push(site_ref());
+        }
+        if let Some(host) = item.local.as_ref().filter(|_| local_ip.is_some()) {
             local_routes.push(host_route(
                 Matcher {
                     host: vec![host.clone()],
@@ -366,7 +419,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             plan_addresses.push(address(
                 AddressKind::Local,
                 host,
-                format!("https://{host}:{LOCAL_HTTPS_PORT}"),
+                format!("https://{host}"),
                 &local_listen,
             ));
         }
@@ -408,7 +461,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
 
     let mut policies = Vec::new();
     if !local_subjects.is_empty() {
-        policies.push(AutomationPolicy { subjects: local_subjects, issuers: vec![Issuer::Internal] });
+        policies.push(AutomationPolicy { subjects: local_subjects.clone(), issuers: vec![Issuer::Internal] });
     }
     if !public_subjects.is_empty() {
         policies.push(AutomationPolicy {
@@ -429,9 +482,15 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
         } else {
             Vec::new()
         },
-        lan_tcp: if any_local { vec![LOCAL_HTTPS_PORT] } else { Vec::new() },
-        lan_ranges: if any_local { settings.lan_ranges.clone() } else { Vec::new() },
+        local: local_ip.filter(|_| any_local).map(|address| LocalFirewall {
+            address,
+            caddy_port: CADDY_LOCAL_PORT,
+            lan_ranges: settings.lan_ranges.iter().filter(|r| !r.contains(':')).cloned().collect(),
+        }),
     };
+    let mut mdns_names: Vec<String> =
+        local_subjects.iter().filter(|host| names::has_mdns_suffix(host)).cloned().collect();
+    mdns_names.sort();
 
     let tor_lines = tor_services.iter().flat_map(TorHiddenService::lines).collect();
 
@@ -456,19 +515,43 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
         addresses: plan_addresses,
         onion_pending,
         rate_limit_unenforced,
+        local: LocalStatus {
+            remedy: match &local_address {
+                LocalAddress::Unavailable { reason } if !local_waiting.is_empty() => Some(reason.remedy()),
+                _ => None,
+            },
+            address: local_address,
+            waiting: local_waiting,
+            mdns_names,
+        },
     })
 }
 
 const LISTENER_PORTS: [u16; 5] =
-    [PUBLIC_HTTP_PORT, PUBLIC_HTTPS_PORT, CADDY_HTTP_PORT, CADDY_HTTPS_PORT, LOCAL_HTTPS_PORT];
+    [PUBLIC_HTTP_PORT, PUBLIC_HTTPS_PORT, CADDY_HTTP_PORT, CADDY_HTTPS_PORT, CADDY_LOCAL_PORT];
+const MDNS_GROUP: &str = "224.0.0.251";
+const MDNS_PORT: u16 = 5353;
 
 /// Renders the firewall plan as an nftables include for `/etc/nftables.d/`. It extends the base
-/// `inet monokulo` table, whose input policy is drop. Redirected ports are only accepted when the
-/// connection really was redirected, so Caddy's own public ports cannot be reached directly.
+/// `inet monokulo` table, whose input policy is drop.
+///
+/// Traffic to the local address leaves the NAT chain before the public redirects, so it can only
+/// reach the local listener, and only from LAN sources. Traffic to any other address can only reach
+/// the public listeners. Caddy's own ports accept only connections that really were translated, so
+/// none of them can be reached directly.
 pub fn render_nft(plan: &FirewallPlan) -> String {
     let mut out = String::from("# Generated by nodo-web. Changes are overwritten.\ntable inet monokulo {\n");
-    if !plan.redirects.is_empty() {
+    let lan = plan.local.as_ref().map(|l| format!("{{ {} }}", l.lan_ranges.join(", ")));
+    if !plan.redirects.is_empty() || plan.local.is_some() {
         out.push_str("\tchain web_prerouting {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n");
+        if let (Some(local), Some(lan)) = (&plan.local, &lan) {
+            let ip = local.address;
+            out.push_str(&format!(
+                "\t\tip daddr {ip} ip saddr {lan} tcp dport {PUBLIC_HTTPS_PORT} dnat ip to {ip}:{}\n",
+                local.caddy_port
+            ));
+            out.push_str(&format!("\t\tip daddr {ip} return\n"));
+        }
         for (from, to) in &plan.redirects {
             out.push_str(&format!("\t\ttcp dport {from} redirect to :{to}\n"));
         }
@@ -478,15 +561,13 @@ pub fn render_nft(plan: &FirewallPlan) -> String {
     for (_, to) in &plan.redirects {
         out.push_str(&format!("\t\ttcp dport {to} ct status dnat accept\n"));
     }
-    if !plan.lan_tcp.is_empty() {
-        let ports = plan.lan_tcp.iter().map(u16::to_string).collect::<Vec<_>>().join(", ");
-        let (v4, v6): (Vec<&String>, Vec<&String>) = plan.lan_ranges.iter().partition(|r| !r.contains(':'));
-        for (family, ranges) in [("ip", v4), ("ip6", v6)] {
-            if !ranges.is_empty() {
-                let list = ranges.iter().map(|r| r.as_str()).collect::<Vec<_>>().join(", ");
-                out.push_str(&format!("\t\t{family} saddr {{ {list} }} tcp dport {{ {ports} }} accept\n"));
-            }
-        }
+    if let (Some(local), Some(lan)) = (&plan.local, &lan) {
+        let ip = local.address;
+        out.push_str(&format!(
+            "\t\tip daddr {ip} ip saddr {lan} tcp dport {} ct status dnat accept\n",
+            local.caddy_port
+        ));
+        out.push_str(&format!("\t\tip daddr {MDNS_GROUP} ip saddr {lan} udp dport {MDNS_PORT} accept\n"));
     }
     out.push_str("\t}\n}\n");
     out
@@ -510,6 +591,7 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
             return Err(invalid("lan_ranges", range));
         }
     }
+
     if !is_safe_path(&settings.tor_dir) {
         return Err(invalid("tor_dir", &settings.tor_dir));
     }
@@ -580,7 +662,12 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         })
         .transpose()?;
 
-    let public = if site.exposure.public {
+    let public = if let Some(host) = site.public_host.as_ref().filter(|_| site.exposure.public) {
+        if !names::is_public_name(host) {
+            return Err(WebConfigError::InvalidName { field: "public_host", value: quoted(host) });
+        }
+        Some(host.clone())
+    } else if site.exposure.public {
         let domain = settings.domain.as_deref().ok_or(WebConfigError::NoDomain { site: site_label })?;
         let sub = site.public_subdomain.as_deref().unwrap_or(label);
         let host = if sub == APEX { domain.to_owned() } else { format!("{sub}.{domain}") };
@@ -689,6 +776,26 @@ fn is_email(value: &str) -> bool {
     !user.is_empty()
         && user.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
         && names::is_public_name(domain)
+}
+
+fn range_contains(range: &str, ip: IpAddr) -> bool {
+    let (base, prefix) = range.split_once('/').unwrap_or((range, ""));
+    match (base.parse::<IpAddr>(), ip) {
+        (Ok(IpAddr::V4(base)), IpAddr::V4(ip)) => {
+            let bits: u32 = prefix.parse().unwrap_or(32).min(32);
+            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+            u32::from(base) & mask == u32::from(ip) & mask
+        }
+        _ => false,
+    }
+}
+
+/// For the screens: why local sites cannot be served right now, if they cannot.
+pub fn local_problem(plan: &WebPlan) -> Option<&LocalUnavailable> {
+    match &plan.local.address {
+        LocalAddress::Unavailable { reason } if !plan.local.waiting.is_empty() => Some(reason),
+        _ => None,
+    }
 }
 
 fn is_ip_range(value: &str) -> bool {

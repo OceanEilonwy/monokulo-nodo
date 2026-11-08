@@ -357,6 +357,89 @@ pub struct SettingGrant {
     pub setting: String,
 }
 
+/// One site's addresses as the proxy serves them now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSiteStatus {
+    pub id: SiteId,
+    pub local_url: Option<String>,
+    pub onion_url: Option<String>,
+    pub public_url: Option<String>,
+    /// Local exposure is on, but there is no local address to serve it on.
+    pub local_waiting: bool,
+    /// The site asked for rate limiting and the proxy cannot enforce it.
+    pub rate_limit_unenforced: bool,
+}
+
+/// What the Web screens show beyond the saved exposure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebStatus {
+    pub sites: Vec<WebSiteStatus>,
+    /// The second LAN address local sites use.
+    pub local_address: Option<String>,
+    /// Why local sites are not being served, when some are waiting.
+    pub local_unavailable: Option<String>,
+    pub local_remedy: Option<String>,
+    pub domain: Option<String>,
+    pub provider: Option<String>,
+    pub ddns_running: bool,
+    pub public_ip: Option<String>,
+    /// Unix seconds of the last DNS change the dynamic DNS service made.
+    pub dns_changed_at: Option<u64>,
+    /// Records the dynamic DNS service published for names no longer in use.
+    pub stale_records: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Dns01Support {
+    Bundled,
+    BundledSeparateCredentials(String),
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DnsProviderDetail {
+    pub id: String,
+    pub name: String,
+    pub dynamic_dns: bool,
+    /// Why dynamic DNS is not available, when it is not.
+    pub unavailable_reason: Option<String>,
+    pub dns01: Dns01Support,
+    pub caveat: Option<String>,
+    /// The credential fields `SetDnsProvider` expects, in order.
+    pub fields: Vec<String>,
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckStatus {
+    Passed,
+    Failed,
+    /// Could not be determined. Never shown as a pass.
+    Unknown,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityItem {
+    pub id: String,
+    pub status: CheckStatus,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityDetail {
+    pub checks: Vec<ReachabilityItem>,
+    /// `ready`, `ports_unverified`, `needs_port_forward`, `blocked_by_cgnat` or `failed`.
+    pub verdict: String,
+    pub public_ip: Option<String>,
+    pub router_wan: Option<String>,
+    pub device_ip: Option<String>,
+    pub gateway: Option<String>,
+    /// Steps for testing the ports from outside by hand, when nothing outside tested them.
+    pub manual_check: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     ListServices,
@@ -548,6 +631,25 @@ pub enum Request {
     DeleteBackup {
         name: String,
     },
+    /// Addresses, the local address, the domain and dynamic DNS, as the proxy has them now.
+    WebStatus,
+    /// The provider catalog with each provider's dynamic DNS and DNS-01 support.
+    ListDnsProviders,
+    /// Stores the domain and provider credentials, root-only, and restarts dynamic DNS if a site
+    /// is public. `fields` follow [`DnsProviderDetail::fields`].
+    SetDnsProvider {
+        domain: String,
+        provider: String,
+        fields: Vec<(String, Secret)>,
+    },
+    /// Reads and writes a temporary record with the stored credentials, then removes it.
+    TestDnsProvider,
+    /// Deletes DNS records that dynamic DNS published for names no longer in use. Never automatic.
+    RetireStaleRecords,
+    /// Like `CheckReachability`, with unknown results kept apart from passes and the manual check.
+    CheckReachabilityDetail {
+        site: SiteId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -598,6 +700,12 @@ pub enum Response {
     BackupCreated(BackupCreated),
     BackupContents(BackupContents),
     Restored(RestoreReport),
+    WebStatus(WebStatus),
+    DnsProviders(Vec<DnsProviderDetail>),
+    /// What a provider test did, for the screen.
+    ProviderTest(String),
+    RetiredRecords(Vec<String>),
+    ReachabilityDetail(ReachabilityDetail),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -694,6 +802,12 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::InspectBackup { .. } => "inspect-backup",
         Request::RestoreBackup { .. } => "restore-backup",
         Request::DeleteBackup { .. } => "delete-backup",
+        Request::WebStatus => "web-status",
+        Request::ListDnsProviders => "list-dns-providers",
+        Request::SetDnsProvider { .. } => "set-dns-provider",
+        Request::TestDnsProvider => "test-dns-provider",
+        Request::RetireStaleRecords => "retire-stale-records",
+        Request::CheckReachabilityDetail { .. } => "check-reachability-detail",
     }
 }
 

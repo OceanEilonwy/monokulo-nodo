@@ -45,7 +45,9 @@ nodo-tui --ctl COMMAND [ARGS]
   health | backups | delete-backup NAME
   backup                           (device passphrase or an empty line, then backup passphrase)
   inspect-backup NAME              (backup passphrase on stdin)
-  restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)";
+  restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)
+  web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
+  set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -252,6 +254,16 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             passphrase: secret_line()?,
             new_device_passphrase: optional_secret()?,
             typed: id(typed),
+        },
+        ["web-status"] => Request::WebStatus,
+        ["dns-providers"] => Request::ListDnsProviders,
+        ["test-dns"] => Request::TestDnsProvider,
+        ["retire-stale"] => Request::RetireStaleRecords,
+        ["reach", package, s] => Request::CheckReachabilityDetail { site: site(package, s) },
+        ["set-dns", domain, provider, fields @ ..] if !fields.is_empty() => Request::SetDnsProvider {
+            domain: id(domain),
+            provider: id(provider),
+            fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
         },
         _ => return Err(USAGE.to_owned()),
     })

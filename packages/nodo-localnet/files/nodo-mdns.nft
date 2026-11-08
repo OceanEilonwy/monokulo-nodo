@@ -1,0 +1,8 @@
+# The mDNS responder may only send mDNS replies on the LAN. Inbound queries are allowed by the
+# generated /etc/nftables.d/nodo-web.nft, and only while local sites are served.
+table inet monokulo {
+	chain output {
+		meta skuid "_nodomdns" udp sport 5353 ip daddr { 224.0.0.251, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept
+		meta skuid "_nodomdns" drop
+	}
+}

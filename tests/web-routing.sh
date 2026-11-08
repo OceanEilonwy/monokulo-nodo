@@ -1,8 +1,11 @@
 #!/bin/sh
-# Runs on the device under test with nodo-caddy and curl installed, and the generated fixture in /tmp/web.
-# Loads the config nodo-web generates into the real packaged Caddy and sends real requests from two
-# network namespaces: one on a LAN address and one on an internet address. The LAN client sending to
-# the forwarded port is exactly what a router that masquerades port forwards delivers.
+# Runs on the device under test with nodo-caddy, nodo-localnet and curl installed, and the generated
+# fixture in /tmp/web. Loads the config nodo-web generates into the real packaged Caddy and sends real
+# requests from two network namespaces: one on a LAN address and one on an internet address.
+#
+# The device has a main address, 192.168.77.2, which the router would forward to, and a local address,
+# 192.168.77.3, which only local sites use. A LAN client sending to the main address's forwarded ports is
+# exactly what a router that masquerades port forwards delivers.
 #
 # The VM is offline, so public hosts use Caddy's internal CA instead of ACME. See the fixture test in
 # crates/nodo-web/src/caddy/tests.rs.
@@ -10,12 +13,26 @@ set -u
 fix=/tmp/web
 onion=abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion
 lan=192.168.77.2
+local=192.168.77.3
 wan=203.0.113.2
 root_crt=/var/lib/caddy/data/caddy/pki/authorities/local/root.crt
 fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 expect() { name=$1; want=$2; got=$3; if [ "$got" = "$want" ]; then echo "PASS $name"; else echo "FAIL $name: want $want, got $got"; fail=1; fi; }
 
+# Services stay linked between runs and are only switched down, with a down file so a reboot keeps
+# them down. Removing a link makes runsv linger while its log runs, and a lingering one ignores the
+# next start.
+service_up() {
+	rm -f "/etc/sv/$1/down"
+	ln -sfn "/etc/sv/$1" "/etc/runit/runsvdir/default/$1"
+	i=0; until sv -w 5 up "$1" >/dev/null 2>&1 || [ "$i" -ge 10 ]; do i=$((i+1)); sleep 2; done
+}
+service_down() {
+	[ -d "/etc/sv/$1" ] || return 0
+	touch "/etc/sv/$1/down"
+	sv -w 15 down "$1" >/dev/null 2>&1
+}
 cleanup() {
 	pkill -u nobody -x nodo-caddy 2>/dev/null
 	for ns in weblan webinet; do
@@ -24,8 +41,9 @@ cleanup() {
 	done
 	ip link del weblan0 2>/dev/null
 	ip link del webinet0 2>/dev/null
-	sv exit nodo-caddy >/dev/null 2>&1
-	rm -f /etc/runit/runsvdir/default/nodo-caddy /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
+	for s in nodo-caddy nodo-mdns nodo-localnet; do service_down "$s"; done
+	rm -f /etc/sv/nodo-localnet/conf /var/lib/nodo-localnet/mdns-names
+	rm -f /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
 	nft -f /etc/nftables.conf
 	rm -rf /tmp/up-shop /tmp/up-blog /tmp/body
 }
@@ -81,15 +99,24 @@ ip link set webinet0 up
 ip netns exec weblan ip addr add 192.168.77.1/24 dev eth0
 ip netns exec webinet ip addr add 203.0.113.1/24 dev eth0
 for ns in weblan webinet; do ip netns exec "$ns" ip link set lo up; ip netns exec "$ns" ip link set eth0 up; done
+ip netns exec webinet ip route add 192.168.77.0/24 via "$wan"
+
+# The local address comes first, because Caddy binds its local listener to it.
+printf 'MODE=static\nPARENT=weblan0\nADDRESS=%s/24\n' "$local" > /etc/sv/nodo-localnet/conf
+service_up nodo-localnet
+i=0; until grep -q '^status=ready' /run/nodo-localnet/state 2>/dev/null || [ "$i" -ge 15 ]; do i=$((i+1)); sleep 1; done
+grep -qx "address=$local" /run/nodo-localnet/state && ip -4 addr show dev weblan0 | grep -q "inet $local/24"
+result "static local address is up and reported" "$?"
+install -m 644 "$fix/mdns-names" /var/lib/nodo-localnet/mdns-names
+service_up nodo-mdns
 
 install -m 640 -g _caddy "$fix/caddy.json" /var/lib/nodo-web/caddy.json
 install -m 644 "$fix/web.nft" /etc/nftables.d/nodo-web.nft
 nft -f /etc/nftables.conf
 result "generated nftables rules load" "$?"
-ln -sfn /etc/sv/nodo-caddy /etc/runit/runsvdir/default/nodo-caddy
-# runsvdir rescans every few seconds. A supervisor left from an earlier run remembers being stopped.
-i=0; until sv -w 5 start nodo-caddy >/dev/null 2>&1 || [ "$i" -ge 6 ]; do i=$((i+1)); sleep 2; done
-i=0; until { [ -s "$root_crt" ] && grep -q ':20FB ' /proc/net/tcp6 /proc/net/tcp; } || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
+service_up nodo-caddy
+# 10444 is 28CC in /proc/net/tcp.
+i=0; until { [ -s "$root_crt" ] && grep -q ':28CC ' /proc/net/tcp; } || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
 sv status nodo-caddy | grep -q '^run:'
 result "nodo-caddy service runs" "$?"
 # Certificates are issued in the background after the listener opens.
@@ -137,7 +164,10 @@ code=$(get webinet --resolve "shop.example.com:443:$wan" -H "Host: blog.example.
 result "SNI of one public host cannot reach another ($code)" "$?"
 
 # Ports that must stay closed to the internet.
-expect "local port closed to the internet" ERR28 "$(get webinet --resolve "shop.local:8443:$wan" https://shop.local:8443/)"
+# The internet namespace can route to the local address too, as a misconfigured router might.
+expect "local address closed to the internet" ERR28 "$(get webinet --resolve "shop.local:443:$local" https://shop.local/)"
+expect "local listener not reachable directly from the internet" ERR28 \
+	"$(get webinet --resolve "shop.local:10444:$local" https://shop.local:10444/)"
 expect "caddy's own public port is not reachable directly" ERR28 \
 	"$(get webinet --resolve "shop.example.com:10443:$wan" https://shop.example.com:10443/)"
 code=$(get webinet -k "https://$wan:19000/")
@@ -154,20 +184,38 @@ code=$(get webinet -D /tmp/headers --resolve "shop.local:80:$wan" http://shop.lo
 result "port 80 serves no content for a local host ($code)" "$?"
 rm -f /tmp/headers
 
-# Local hosts from a LAN client.
-loc() { get weblan --resolve "$1:8443:$lan" "https://$1:8443$2" ${3:-}; }
+# Local hosts from a LAN client, at the local address on port 443, so the URL has no port.
+loc() { get weblan --resolve "$1:443:$local" "https://$1$2" ${3:-}; }
+found=$(ip netns exec weblan nodo-mdns --query shop.local --via 192.168.77.1 2>&1)
+expect "mDNS answers a local name with the local address" "$local" "$found"
+found=$(ip netns exec weblan nodo-mdns --query shop.example.com --via 192.168.77.1 2>&1)
+case $found in *"no answer"*) r=0 ;; *) r=1 ;; esac
+result "mDNS ignores names that are not local sites" "$r"
+found=$(ip netns exec webinet nodo-mdns --query shop.local --via 203.0.113.1 2>&1)
+case $found in *"no answer"*) r=0 ;; *) r=1 ;; esac
+result "mDNS does not answer the internet side" "$r"
 expect "local host reaches its upstream" 200 "$(loc shop.local /)"
 expect "local host serves admin paths to the LAN" 200 "$(loc shop.local /admin)"
 body_has "upstream shop /admin"; result "local admin path reaches the shop upstream" "$?"
 expect "stopped local site shows the unavailable page" 503 "$(loc pay.local /)"
-expect "public host refused on the local port" ERR35 "$(loc shop.example.com /)"
-code=$(get weblan --resolve "shop.local:8443:$lan" -H "Host: $onion" https://shop.local:8443/)
+expect "public host refused on the local address" ERR35 "$(loc shop.example.com /)"
+code=$(get weblan --resolve "shop.local:443:$local" -H "Host: $onion" https://shop.local/)
 ! body_has upstream && [ "$code" != 200 ]
-result "onion host refused on the local port ($code)" "$?"
+result "onion host refused on the local address ($code)" "$?"
+expect "local address has no plain HTTP" ERR28 "$(get weblan --resolve "shop.local:80:$local" http://shop.local/)"
+expect "local listener needs the local address's 443" ERR28 \
+	"$(get weblan --resolve "shop.local:10444:$local" https://shop.local:10444/)"
+expect "main address does not serve the local listener port" ERR28 \
+	"$(get weblan --resolve "shop.local:10444:$lan" https://shop.local:10444/)"
 
-# What a masquerading router delivers: internet traffic on the forwarded port, from a LAN address.
-expect "masqueraded client cannot reach a local host" ERR35 \
-	"$(get weblan --resolve "shop.local:443:$lan" https://shop.local/)"
+# What a masquerading router delivers: internet traffic to the main address's forwarded port, from a
+# LAN address. It must reach no local host, however the request names it.
+for host in shop.local pay.local; do
+	expect "masqueraded client cannot reach $host" ERR35 "$(get weblan --resolve "$host:443:$lan" "https://$host/")"
+done
+code=$(get weblan -k --resolve "shop.local:443:$lan" https://shop.local/admin)
+! body_has upstream
+result "masqueraded client cannot reach a local host even ignoring certificates ($code)" "$?"
 code=$(get weblan --resolve "shop.example.com:443:$lan" https://shop.example.com/admin)
 ! body_has upstream && [ "$code" = 404 ]
 result "masqueraded client cannot reach admin paths ($code)" "$?"
@@ -203,4 +251,7 @@ sv -w 30 stop nodo-caddy | grep -q '^ok: down'
 result "nodo-caddy stops cleanly under TERM" "$?"
 grep -q 'shutting down' /var/log/nodo-caddy/current
 result "caddy logged a graceful shutdown" "$?"
+sv -w 30 stop nodo-localnet >/dev/null
+! ip -4 addr show dev weblan0 | grep -q "inet $local/" && ! grep -q '^status=ready' /run/nodo-localnet/state
+result "stopping nodo-localnet removes the local address" "$?"
 exit "$fail"

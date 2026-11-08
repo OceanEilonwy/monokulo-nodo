@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _nodomdns:_nodomdns svlogd -tt /var/log/nodo-mdns

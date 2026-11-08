@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock crates
 pkgname=nodo-ddns
 version=0.1.0
-revision=1
+revision=2
 archs="aarch64 x86_64"
 build_style=cargo
 make_build_args="-p nodo-web --bin nodo-ddns"
@@ -17,7 +17,6 @@ homepage="https://github.com/OceanEilonwy/monokulo-nodo"
 system_accounts="_nododdns"
 _nododdns_homedir="/var/lib/nodo-ddns"
 make_dirs="/var/lib/nodo-ddns 0700 _nododdns _nododdns
- /etc/nodo-ddns 0750 root _nododdns
  /var/log/nodo-ddns 0750 _nododdns _nododdns"
 
 do_extract() {

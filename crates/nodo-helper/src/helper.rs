@@ -225,11 +225,6 @@ impl<S: System> Helper<S> {
             Request::RemoveSshKey { fingerprint } => self.remove_ssh_key(&fingerprint),
             // Owned by other parts of the system that do not exist yet. Saying so is better than
             // inventing data, and the TUI shows it as such.
-            Request::CheckReachability { .. } | Request::ListProviders => {
-                Err(ApiError::NotImplemented(
-                    "reachability checks and DNS providers are not connected yet".to_owned(),
-                ))
-            }
             Request::NodeStatus => self.node_status(),
             Request::ListRoleBindings => self.list_role_bindings(),
             Request::SetRoleBinding { role, package } => {
@@ -238,6 +233,14 @@ impl<S: System> Helper<S> {
             Request::ListGrants => self.list_grants(),
             Request::SetGrant { grant, approved } => self.set_grant(&grant, approved),
             Request::UseDataDrive { package, enabled } => self.use_data_drive(&package, enabled),
+            request @ (Request::CheckReachability { .. }
+            | Request::ListProviders
+            | Request::WebStatus
+            | Request::ListDnsProviders
+            | Request::SetDnsProvider { .. }
+            | Request::TestDnsProvider
+            | Request::RetireStaleRecords
+            | Request::CheckReachabilityDetail { .. }) => self.web_request(request),
             other => self.handle_managed(uid, other),
         }
     }

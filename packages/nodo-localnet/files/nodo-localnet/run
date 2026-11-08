@@ -1,0 +1,88 @@
+#!/bin/sh
+# Gives the device a second LAN address for local sites, and reports it in /run/nodo-localnet/state.
+# The router forwards only to the main address, so nothing forwarded can be addressed to this one.
+# On any failure local sites stay unavailable: there is no fallback to the main address or a port.
+#
+# ./conf may set:
+#   MODE=dhcp     a macvlan interface with its own MAC address, leased by the dhcpcd manager (default)
+#   MODE=static   ADDRESS=192.168.1.60/24 added to the main interface. Works on Wi-Fi and without DHCP.
+#   MODE=off      local sites are switched off
+#   PARENT=eth0   the main interface, by default the one with the default route
+#   LEASE_WAIT=60 seconds before a missing lease is reported as refused
+exec 2>&1
+exec </dev/null
+MODE=dhcp PARENT='' ADDRESS='' LEASE_WAIT=60
+[ -r ./conf ] && . ./conf
+dir=/run/nodo-localnet
+iface=nodo-local
+mkdir -p "$dir"
+
+report() {
+	{ echo "status=$1"; shift; for line in "$@"; do echo "$line"; done; } > "$dir/state.tmp"
+	mv "$dir/state.tmp" "$dir/state"
+}
+unavailable() {
+	report "$1" ${2:+"detail=$2"}
+	echo "local address unavailable: $1${2:+ ($2)}"
+	sleep 60
+	exit 1
+}
+idle() { trap 'exit 0' TERM; while :; do sleep 3600 & wait $!; done; }
+
+case $MODE in
+off) report disabled; idle ;;
+dhcp|static) ;;
+*) unavailable failed "unknown MODE" ;;
+esac
+[ -n "$PARENT" ] || PARENT=$(ip -4 route show default | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+[ -n "$PARENT" ] && [ -d "/sys/class/net/$PARENT" ] || unavailable no-parent
+
+if [ "$MODE" = static ]; then
+	case $ADDRESS in */*) ;; *) unavailable failed "ADDRESS needs a prefix length" ;; esac
+	# noprefixroute: the main address keeps the subnet route, so replies leave as before.
+	ip addr replace "$ADDRESS" dev "$PARENT" noprefixroute || unavailable failed "ip addr add $ADDRESS"
+	echo "$PARENT $ADDRESS" > "$dir/static"
+	report ready "address=${ADDRESS%/*}" "interface=$PARENT" "mode=static"
+	idle
+fi
+
+# Access points usually drop frames from a MAC address they did not associate.
+[ -d "/sys/class/net/$PARENT/wireless" ] && unavailable wireless "$PARENT"
+
+# A stable MAC address keeps the same lease and lets the user reserve it on the router.
+mac_file=/var/lib/nodo-localnet/mac
+if [ ! -s "$mac_file" ]; then
+	od -An -N5 -tx1 /dev/urandom | awk '{ printf "02:%s:%s:%s:%s:%s\n", $1, $2, $3, $4, $5 }' > "$mac_file"
+fi
+ip link del "$iface" 2>/dev/null
+ip link add "$iface" link "$PARENT" address "$(cat "$mac_file")" type macvlan mode bridge ||
+	unavailable failed "ip link add macvlan on $PARENT"
+# Each address answers ARP only on its own interface, so the LAN learns the right MAC for each.
+for i in "$PARENT" "$iface"; do
+	sysctl -qw "net.ipv4.conf.$i.arp_ignore=1" "net.ipv4.conf.$i.arp_announce=2"
+done
+ip link set "$iface" up || unavailable failed "ip link set up"
+report waiting "interface=$iface"
+
+trap 'exit 0' TERM
+started=$(date +%s)
+last=
+while :; do
+	lease=$(dhcpcd -U -4 "$iface" 2>/dev/null)
+	address=
+	# Without a DHCP server, dhcpcd falls back to a 169.254 link-local address. That is not a lease
+	# the router knows, and LAN devices could not reach it, so it never counts.
+	if printf '%s\n' "$lease" | grep -qx 'protocol=dhcp'; then
+		address=$(printf '%s\n' "$lease" | sed -n 's/^ip_address=//p')
+	fi
+	# The lease is only for an address. Outbound traffic must never leave from it.
+	ip -4 route show default dev "$iface" | grep -q . && ip -4 route del default dev "$iface"
+	if [ -n "$address" ]; then
+		[ "$address" = "$last" ] || report ready "address=$address" "interface=$iface" "mode=dhcp"
+		last=$address
+	elif [ -n "$last" ] || [ $(($(date +%s) - started)) -ge "$LEASE_WAIT" ]; then
+		[ "$last" = none ] || report no-lease "interface=$iface"
+		last=none
+	fi
+	sleep 10 & wait $!
+done

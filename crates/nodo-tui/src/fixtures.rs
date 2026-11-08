@@ -168,10 +168,10 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::WebProviders(state)
         }
         ScreenId::WebCheck => {
-            let Reachability::Checked { checks, router, plan } = reachability_checks("shop.example.com", false) else {
+            let Reachability::Checked { checks, router, plan, manual } = reachability_checks("shop.example.com", false) else {
                 unreachable!("this helper only builds checked results");
             };
-            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true })
+            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true, manual })
         }
         ScreenId::WebConfirm => {
             let Reachability::Checked { plan: Some(plan), .. } = reachability_checks("shop.example.com", true) else {
