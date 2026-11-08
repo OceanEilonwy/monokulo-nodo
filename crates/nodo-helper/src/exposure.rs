@@ -219,6 +219,14 @@ impl<S: System> Helper<S> {
         self.exposure.local_address_changed(&input).map_err(ApiError::Failed)
     }
 
+    /// Puts the saved exposure and public hosts into effect, as a restore leaves them. The
+    /// saved state stays as it is either way: it is what the owner chose on the backed-up device.
+    pub(crate) fn apply_saved_exposure(&self) -> Result<(), String> {
+        let _guard = lock(&self.service_lock);
+        let input = self.current_web_input().map_err(|e| e.to_string())?;
+        self.exposure.apply(&input)
+    }
+
     fn current_web_input(&self) -> Result<WebInput, ApiError> {
         let (state, _): (ExposureState, _) = self.load_toml(&self.paths.exposure_state)?;
         self.web_input(&state)
