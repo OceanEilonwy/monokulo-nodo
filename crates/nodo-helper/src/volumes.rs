@@ -58,7 +58,7 @@ impl<S: System> Helper<S> {
     /// Every passphrase check goes through here, so unlocking and changing the passphrase share
     /// one failure count. The caller holds the count's lock across the delay, so parallel
     /// guesses queue and each pays its own delay.
-    fn verify_passphrase(
+    pub(crate) fn verify_passphrase(
         &self,
         failures: &mut u32,
         passphrase: &Secret,
