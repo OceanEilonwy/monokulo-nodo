@@ -559,6 +559,52 @@ impl System for RealSystem {
         }
         Ok(body)
     }
+
+    fn file_size(&self, path: &Path) -> Option<u64> {
+        fs::symlink_metadata(path)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+    }
+
+    fn luks_grow(&self, file: &Path, name: &str, key: &[u8], size: u64) -> SysResult<()> {
+        let current = self
+            .file_size(file)
+            .ok_or_else(|| SysError(format!("{} is missing", file.display())))?;
+        if size <= current {
+            return Ok(());
+        }
+        // Real blocks for the new part too, as when the volume was created.
+        let handle = OpenOptions::new().write(true).open(file)?;
+        fallocate(&handle, FallocateFlags::empty(), current, size - current)
+            .map_err(io::Error::from)?;
+        handle.sync_all()?;
+        drop(handle);
+        // cryptsetup attached the file to a loop device when it opened it. The loop device keeps
+        // the old size until asked to read it again.
+        let mut cmd = command("losetup");
+        cmd.arg("-j").arg(file);
+        let (_, listing) = run_output("losetup", cmd)?;
+        let loop_device = listing
+            .lines()
+            .next()
+            .and_then(|line| line.split(':').next())
+            .filter(|dev| dev.starts_with("/dev/loop"))
+            .ok_or_else(|| SysError(format!("no loop device holds {}", file.display())))?
+            .to_owned();
+        let mut cmd = command("losetup");
+        cmd.arg("-c").arg(&loop_device);
+        run("losetup", cmd)?;
+        // LUKS2 keeps the volume key in the kernel keyring, so a resize needs the key again.
+        run_with_key(
+            "cryptsetup",
+            ["resize", "--key-file=-", name].iter().map(OsString::from),
+            key,
+        )?;
+        let mut cmd = command("resize2fs");
+        cmd.arg(Path::new("/dev/mapper").join(name));
+        run("resize2fs", cmd)
+    }
 }
 
 /// Feeds `input`, collects bounded output, and kills the child if it outlives `timeout`.

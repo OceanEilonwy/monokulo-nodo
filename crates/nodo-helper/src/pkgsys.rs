@@ -51,6 +51,9 @@ pub trait PackageBackend: Send + Sync {
         keep: &Path,
     ) -> Result<(Outcome, Option<PathBuf>), InstallError>;
     fn reinstall(&self, kept: &Path) -> Result<String, InstallError>;
+    /// Inspects a kept package file under the install rules and returns its `name-version` and
+    /// the permissions it asks for. Installs nothing.
+    fn inspect_kept(&self, kept: &Path) -> Result<(String, Permissions), InstallError>;
     fn remove(&self, name: &str) -> Result<(), InstallError>;
     fn now(&self) -> u64;
     /// Device-local minutes since midnight, for the update window.
@@ -261,6 +264,21 @@ impl PackageBackend for RealPackages {
     fn reinstall(&self, kept: &Path) -> Result<String, InstallError> {
         let mut pins = PinStore::new();
         self.installer(&mut pins, |i| i.reinstall_kept(kept))
+    }
+
+    fn inspect_kept(&self, kept: &Path) -> Result<(String, Permissions), InstallError> {
+        let io = |source| InstallError::Io {
+            action: "read the kept package".to_owned(),
+            source,
+        };
+        let (inspection, permissions) = nodo_install::inspect_file(kept, &Policy::default()).map_err(io)?;
+        if !inspection.is_clean() {
+            return Err(InstallError::Rejected(inspection.violations));
+        }
+        match (inspection.package, permissions) {
+            (Some(info), Some(permissions)) => Ok((format!("{}-{}", info.name, info.version), permissions)),
+            _ => Err(InstallError::IndexMismatch("the kept package has no metadata".to_owned())),
+        }
     }
 
     fn remove(&self, name: &str) -> Result<(), InstallError> {

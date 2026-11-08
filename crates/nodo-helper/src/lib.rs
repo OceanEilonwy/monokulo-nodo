@@ -33,6 +33,7 @@ mod ssh;
 mod stores;
 pub mod system;
 mod updates;
+pub mod usb;
 mod volumes;
 pub mod web;
 pub mod worker;

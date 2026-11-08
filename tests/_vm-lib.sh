@@ -11,6 +11,18 @@ push_packages() {
 		case $p in *-service) s=${p%-service}; ssh_vm "sv -w 120 restart $s" ;; esac
 	done
 }
+# A command to the QEMU monitor, which plugs virtual USB drives in and out.
+monitor() { bash -c 'exec 3<>/dev/tcp/127.0.0.1/4444 && printf "%s\n" "$1" >&3 && sleep 1 && timeout 1 cat <&3 | tr -d "\r" | grep -av "^QEMU\|^(qemu)" | grep -a . ; true' sh "$*"; }
+# Plugs in a disk image from the container as a removable USB drive. `ro` makes it read-only, as a
+# write-protect switch does.
+usb_plug() {
+	id=$1; file=$2; ro=${3:-off}
+	monitor "drive_add 0 if=none,id=$id-drive,file=$file,format=raw,readonly=$ro"
+	monitor "device_add usb-storage,id=$id,drive=$id-drive,removable=on,bus=xhci.0"
+}
+usb_unplug() { monitor "device_del $1"; }
+# Stops QEMU so that _vm-serve.sh boots a new VM from the clean image.
+fresh_vm() { touch /tmp/vm-fresh && pkill -f '^qemu-system' && sleep 5 && wait_ssh; }
 # Installs packages from the pinned Void mirror into the VM, which is offline. Only for test tools.
 push_mirror_packages() {
 	. /src/versions.env

@@ -36,6 +36,8 @@ pub struct ManagePaths {
     /// Rendered settings of apps, one directory per id.
     pub app_config: PathBuf,
     pub volume_root: PathBuf,
+    /// Where a removable drive is mounted while a backup request uses it. Root only.
+    pub usb_mount: PathBuf,
 }
 
 impl Default for ManagePaths {
@@ -55,6 +57,7 @@ impl Default for ManagePaths {
             caddy_data: "/var/lib/caddy/data/caddy".into(),
             app_config: "/etc/apps".into(),
             volume_root: nodo_gen::VOLUME_ROOT.into(),
+            usb_mount: "/run/nodo/usb".into(),
         }
     }
 }
@@ -62,6 +65,8 @@ impl Default for ManagePaths {
 pub struct Manage {
     pub paths: ManagePaths,
     pub packages: Box<dyn PackageBackend>,
+    /// Removable drives for backups.
+    pub media: Box<dyn crate::usb::RemovableMedia>,
     /// Held across a whole install, update or restore, so they never interleave.
     pub(crate) work: Mutex<()>,
     /// Held while the feed or update state is read, changed and written back.
@@ -73,6 +78,7 @@ impl Default for Manage {
         Manage {
             paths: ManagePaths::default(),
             packages: Box::new(RealPackages::default()),
+            media: Box::new(crate::usb::RealMedia),
             work: Mutex::new(()),
             state: Mutex::new(()),
         }
@@ -91,6 +97,11 @@ pub(crate) fn failed(e: impl std::fmt::Display) -> ApiError {
 impl<S: System> Helper<S> {
     pub fn with_packages(mut self, packages: Box<dyn PackageBackend>) -> Self {
         self.manage.packages = packages;
+        self
+    }
+
+    pub fn with_media(mut self, media: Box<dyn crate::usb::RemovableMedia>) -> Self {
+        self.manage.media = media;
         self
     }
 
@@ -183,6 +194,35 @@ impl<S: System> Helper<S> {
                 typed,
             } => self.restore_backup(&name, &passphrase, new_device_passphrase.as_ref(), &typed),
             Request::DeleteBackup { name } => self.delete_backup(&name),
+            Request::ListUsbDrives => self.list_usb_drives(),
+            Request::ListUsbBackups { device } => self.list_usb_backups(&device),
+            Request::CreateUsbBackup {
+                device,
+                device_passphrase,
+                backup_passphrase,
+            } => self.create_usb_backup(&device, device_passphrase.as_ref(), &backup_passphrase),
+            Request::InspectUsbBackup {
+                device,
+                name,
+                passphrase,
+            } => self.inspect_usb_backup(&device, &name, &passphrase),
+            Request::RestoreUsbBackup {
+                device,
+                name,
+                passphrase,
+                new_device_passphrase,
+                typed,
+            } => self.restore_usb_backup(
+                &device,
+                &name,
+                &passphrase,
+                new_device_passphrase.as_ref(),
+                &typed,
+            ),
+            Request::ApplyUpdatesWithPassphrase {
+                updates,
+                passphrase,
+            } => self.apply_updates_with(&updates, Some(&passphrase)),
             other => Err(ApiError::NotImplemented(format!(
                 "{} is not connected yet",
                 nodo_api::action_name(&other)

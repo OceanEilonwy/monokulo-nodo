@@ -70,6 +70,10 @@ struct State {
     fs_types: HashMap<String, String>,
     /// Whether each device's filesystem is damaged. A repair fixes it.
     damaged: BTreeSet<String>,
+    /// Sizes of allocated volume files.
+    sizes: HashMap<String, u64>,
+    /// Total and free bytes every filesystem reports, when a test sets them.
+    usage: Option<(u64, u64)>,
 }
 
 struct Failure {
@@ -119,6 +123,10 @@ impl FakeSystem {
             skip: 0,
             remaining: None,
         });
+    }
+
+    pub fn set_usage(&self, total: u64, free: u64) {
+        self.state().usage = Some((total, free));
     }
 
     pub fn fail_once(&self, prefix: &str) {
@@ -336,6 +344,7 @@ impl System for FakeSystem {
             return Err(SysError("file exists".to_owned()));
         }
         state.files.insert(text(path), Vec::new());
+        state.sizes.insert(text(path), size);
         Ok(())
     }
 
@@ -412,7 +421,7 @@ impl System for FakeSystem {
 
     fn fs_usage(&self, path: &Path) -> SysResult<(u64, u64)> {
         self.check(&format!("statvfs {}", text(path)))?;
-        Ok((1000, 400))
+        Ok(self.state().usage.unwrap_or((1000, 400)))
     }
 
     fn fs_type(&self, device: &Path) -> Option<String> {
@@ -493,6 +502,25 @@ impl System for FakeSystem {
             .get(&call)
             .cloned()
             .ok_or_else(|| SysError(format!("port {port}: Connection refused")))
+    }
+
+    fn file_size(&self, path: &Path) -> Option<u64> {
+        let state = self.state();
+        state.files.get(&text(path))?;
+        Some(state.sizes.get(&text(path)).copied().unwrap_or(0))
+    }
+
+    fn luks_grow(&self, file: &Path, name: &str, key: &[u8], size: u64) -> SysResult<()> {
+        self.record(format!("luks grow {} {name} {size}", text(file)))?;
+        let mut state = self.state();
+        if state.files.get(&text(file)).map(Vec::as_slice) != Some(key) {
+            return Err(SysError("No key available with this passphrase.".to_owned()));
+        }
+        if !state.mapped.contains(name) {
+            return Err(SysError(format!("{name} is not active")));
+        }
+        state.sizes.insert(text(file), size);
+        Ok(())
     }
 }
 

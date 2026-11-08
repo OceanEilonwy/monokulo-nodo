@@ -295,6 +295,62 @@ impl ScreenData for MockBackend {
         })
     }
 
+    fn usb_drives(&self) -> Result<Vec<nodo_api::UsbDrive>, String> {
+        Ok(vec![nodo_api::UsbDrive {
+            device: s("sda1"),
+            label: Some(s("BACKUP")),
+            model: s("SanDisk Ultra Fit"),
+            filesystem: Some(s("vfat")),
+            size_bytes: 32_008_000_000,
+            read_only: false,
+            problem: None,
+        }])
+    }
+
+    fn usb_backups(&self, device: &str) -> Result<nodo_api::UsbBackupList, String> {
+        Ok(nodo_api::UsbBackupList {
+            device: device.to_owned(),
+            backups: vec![nodo_api::BackupInfo {
+                name: s("nodo-1762473600.nodobak"),
+                size_bytes: 4_655_200,
+                created: 1_762_473_600,
+            }],
+            free_bytes: 30_112_000_000,
+            read_only: false,
+        })
+    }
+
+    fn create_usb_backup(
+        &mut self,
+        _device: &str,
+        device_passphrase: Option<&Secret>,
+        backup_passphrase: &Secret,
+    ) -> Result<nodo_api::BackupCreated, String> {
+        self.create_backup(device_passphrase, backup_passphrase)
+    }
+
+    fn inspect_usb_backup(
+        &mut self,
+        _device: &str,
+        name: &str,
+        passphrase: &Secret,
+    ) -> Result<nodo_api::BackupContents, String> {
+        self.inspect_backup(name, passphrase)
+    }
+
+    fn restore_usb_backup(
+        &mut self,
+        _device: &str,
+        name: &str,
+        passphrase: &Secret,
+        new_device_passphrase: Option<&Secret>,
+        typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        let report = self.restore_backup(name, passphrase, new_device_passphrase, typed)?;
+        self.setup_needed = false;
+        Ok(report)
+    }
+
     fn overview(&self) -> Overview {
         Overview {
             node: NodeInfo {

@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 28, "27 design files plus the auto-update screen");
+    assert_eq!(ScreenId::ALL.len(), 29, "28 design files plus the auto-update screen");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -305,8 +305,14 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ],
         ScreenId::Setup => &["Set up this device", "Device passphrase", "There is no default passphrase"],
         ScreenId::Backup => &[
-            "Home › Backups", "Backups on this device", "nodo-1762560000.nodobak", "4.8 MB", "A backup holds",
-            "The device key, so encrypted storage can be restored", "Never chain data.", "n new backup", "r restore",
+            "Home › Backups", "Backups on this device", "nodo-1762560000.nodobak", "nodo-1761955200.nodobak", "4.8 MB",
+            "4.5 MB", "USB drive · SanDisk Ultra Fit, BACKUP", "nodo-1762473600.nodobak", "4.7 MB", "FAT32 · 30.1 GB free",
+            "A backup holds", "✓ Package settings, secrets, certificates and Tor onion keys",
+            "✓ The device key, so encrypted storage can be restored", "✓ The contents of unlocked encrypted storage",
+            "✓ Feeds, pinned keys, approvals and the verified package files",
+            "Never chain data. The node syncs it again.",
+            "Encrypted with its own passphrase, at the same cost as the device key.",
+            "↑↓ move", "Tab device or USB", "n new backup", "u back up to USB", "r restore", "Esc back",
         ],
     }
 }

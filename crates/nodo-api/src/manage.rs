@@ -263,3 +263,29 @@ pub struct RestoreReport {
     pub stopped: Vec<String>,
     pub restarted: Vec<String>,
 }
+
+/// A removable drive for backups. Only drives the kernel reports as removable or attached over
+/// USB are listed, and never the system disk or the data drive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsbDrive {
+    /// The kernel's name for the partition, or for the disk when it has no partitions, such as
+    /// `sdb1`. Requests quote it back, and the helper checks it again each time.
+    pub device: String,
+    pub label: Option<String>,
+    /// Vendor and model, as the drive reports them.
+    pub model: String,
+    pub filesystem: Option<String>,
+    pub size_bytes: u64,
+    pub read_only: bool,
+    /// Why backups cannot use it, such as an unsupported filesystem. `None` when they can.
+    pub problem: Option<String>,
+}
+
+/// The backups in the `monokulo-nodo` folder of a removable drive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsbBackupList {
+    pub device: String,
+    pub backups: Vec<BackupInfo>,
+    pub free_bytes: u64,
+    pub read_only: bool,
+}

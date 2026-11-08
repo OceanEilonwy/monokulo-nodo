@@ -783,6 +783,78 @@ check "the auto-update timer service asks the helper" sh -c '
 	for _ in $(seq 1 20); do grep -q UpdateResults /var/log/nodo-autoupdate/current 2>/dev/null && exit 0; sleep 1; done; exit 1'
 rm -f /var/service/nodo-autoupdate
 
+# Encrypted storage across updates: the volume is kept, grows when a version asks for more, the
+# data layout is recorded, and a failed update puts the old data back from the copy in the volume.
+
+# Builds e2e-store, an encrypted app, at a version with extra [storage] lines and a start step.
+mkstore() {
+	ver=$1 storage=$2 start=$3
+	d=$APPROOT/e2e-store-$ver
+	rm -rf "$d"
+	mkdir -p "$d/opt/nodo/apps/e2e-store/bin"
+	chmod 755 "$d" "$d/opt" "$d/opt/nodo" "$d/opt/nodo/apps" "$d/opt/nodo/apps/e2e-store" "$d/opt/nodo/apps/e2e-store/bin"
+	printf 'api_version = 1\nid = "e2e-store"\nversion = "%s"\nexec = ["bin/run"]\nstop_timeout_secs = 5\n\n[storage]\nencrypted = true\n%s\n' \
+		"$ver" "$storage" > "$d/opt/nodo/apps/e2e-store/manifest.toml"
+	printf '#!/bin/sh\nD=/var/lib/apps/e2e-store\n%s\necho "e2e-store %s running"\nwhile :; do sleep 1; done\n' "$start" "$ver" \
+		> "$d/opt/nodo/apps/e2e-store/bin/run"
+	chmod 644 "$d/opt/nodo/apps/e2e-store/manifest.toml"
+	chmod 755 "$d/opt/nodo/apps/e2e-store/bin/run"
+	(cd "$APPROOT" && xbps-create -A x86_64 -n "e2e-store-${ver}_1" -s "e2e encrypted app" "$d" >/dev/null)
+	publish "$APPROOT/e2e-store-${ver}_1.x86_64.xbps"
+}
+STORE=/run/nodo/volumes/e2e-store
+mkstore 1.0 '' '[ -e "$D/notes.txt" ] || echo "first note" > "$D/notes.txt"'
+ctl refresh-feeds >/dev/null
+check "an encrypted feed package installs with the device passphrase" sh -c '
+	printf "%s\n" "$0" | nodo-tui --ctl approve-install-encrypted e2e-feed e2e-store | tee /tmp/e2e.si; grep -q "problem: None" /tmp/e2e.si' "$PASS2"
+check "its volume has the default size and records data layout 1" sh -c '
+	[ "$(stat -c %s /var/lib/nodo/volumes/e2e-store.luks)" = 268435456 ] && [ "$(cat '"$STORE"'/.nodo-layout)" = 1 ] &&
+	[ "$(stat -c "%a %U" '"$STORE"'/.nodo-layout)" = "644 root" ]'
+check "version 1.0 writes its data in layout 1" sh -c '
+	for _ in $(seq 1 20); do [ -f '"$STORE"'/data/notes.txt ] && exit 0; sleep 1; done; exit 1'
+echo user-data > "$STORE/data/user.txt" && chown _e2e-store: "$STORE/data/user.txt"
+uuid=$(cryptsetup luksUUID /var/lib/nodo/volumes/e2e-store.luks)
+fs_before=$(df -k --output=size "$STORE" | tail -n 1)
+mkstore 2.0 'size_mib = 320
+data_layout = 2' 'if [ -e "$D/notes.txt" ]; then { echo "format 2"; cat "$D/notes.txt"; } > "$D/notes.new" && mv "$D/notes.new" "$D/notes.v2" && rm "$D/notes.txt"; fi'
+ctl auto-set daily 00:00 23:59 e2e-pay e2e-store >/dev/null
+check "an update asking for a larger volume waits for the device passphrase" sh -c '
+	ctl check-updates | tee /tmp/e2e.st; grep -q "needs the device passphrase to grow its encrypted storage" /tmp/e2e.st'
+check "applying it without the passphrase is refused and changes nothing" sh -c '
+	ctl apply-update e2e-store 2.0_1 | tee /tmp/e2e.st2; grep -q "Refused" /tmp/e2e.st2 && grep -q passphrase /tmp/e2e.st2 &&
+	[ "$(xbps-query -p pkgver e2e-store)" = e2e-store-1.0_1 ] && [ "$(stat -c %s /var/lib/nodo/volumes/e2e-store.luks)" = 268435456 ]'
+check "with the passphrase the volume grows in place and 2.0 is installed on it" sh -c '
+	printf "%s\n" "$0" | nodo-tui --ctl apply-update-pass e2e-store 2.0_1 | tee /tmp/e2e.st3; grep -q Updated /tmp/e2e.st3 &&
+	[ "$(xbps-query -p pkgver e2e-store)" = e2e-store-2.0_1 ]' "$PASS2"
+check "it is the same LUKS volume, larger, with its filesystem grown while mounted" sh -c '
+	cryptsetup luksUUID /var/lib/nodo/volumes/e2e-store.luks; stat -c %s /var/lib/nodo/volumes/e2e-store.luks; df -k '"$STORE"'; echo "before: $1"
+	[ "$(cryptsetup luksUUID /var/lib/nodo/volumes/e2e-store.luks)" = "$0" ] &&
+	[ "$(stat -c %s /var/lib/nodo/volumes/e2e-store.luks)" = 335544320 ] &&
+	[ "$(df -k --output=size '"$STORE"' | tail -n 1)" -gt "$(($1 + 50000))" ] && mountpoint -q '"$STORE"'' "$uuid" "$fs_before"
+check "2.0 converted the data to layout 2, kept the rest, and the layout is recorded" sh -c '
+	for _ in $(seq 1 20); do [ -f '"$STORE"'/data/notes.v2 ] && break; sleep 1; done
+	grep -q "first note" '"$STORE"'/data/notes.v2 && [ ! -e '"$STORE"'/data/notes.txt ] &&
+	[ "$(cat '"$STORE"'/data/user.txt)" = user-data ] && [ "$(cat '"$STORE"'/.nodo-layout)" = 2 ]'
+check "no copy of the old data is left behind" sh -c '[ ! -e '"$STORE"'/.nodo-rollback ]'
+check "2.0 runs on the kept volume" running_for e2e-store 3
+sum=$(cat "$STORE/data/notes.v2" "$STORE/data/user.txt" | sha256sum)
+mkstore 3.0 'data_layout = 3' 'rm -f "$D/notes.v2" "$D/user.txt"; echo "format 3, half done" > "$D/notes.v3"; echo "migration to layout 3 failed" >&2; exit 1'
+check "an update to layout 3 that breaks its data and fails its health check rolls back" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-store 3.0_1 | tee /tmp/e2e.st4; grep -q RolledBack /tmp/e2e.st4 &&
+	grep -q "recovered: true" /tmp/e2e.st4'
+check "the data is back exactly as 2.0 left it, still in layout 2" sh -c '
+	[ "$(cat '"$STORE"'/data/notes.v2 '"$STORE"'/data/user.txt | sha256sum)" = "$0" ] && [ ! -e '"$STORE"'/data/notes.v3 ] &&
+	[ "$(cat '"$STORE"'/.nodo-layout)" = 2 ] && [ ! -e '"$STORE"'/.nodo-rollback ] &&
+	[ "$(xbps-query -p pkgver e2e-store)" = e2e-store-2.0_1 ] &&
+	[ "$(cryptsetup luksUUID /var/lib/nodo/volumes/e2e-store.luks)" = "$1" ]' "$sum" "$uuid"
+check "2.0 runs again after the rollback" running_for e2e-store 3
+mkstore 4.0 '' 'true'
+check "a version declaring an older data layout is refused before anything changes" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-store 4.0_1 | tee /tmp/e2e.st5; grep -q "data layout 1, older" /tmp/e2e.st5 &&
+	[ "$(xbps-query -p pkgver e2e-store)" = e2e-store-2.0_1 ] && [ "$(cat '"$STORE"'/data/notes.v2 '"$STORE"'/data/user.txt | sha256sum)" = "$0" ]' "$sum"
+check "2.0 still runs" running_for e2e-store 3
+ctl auto-set daily 00:00 23:59 e2e-pay >/dev/null
+
 # A changed feed key blocks the feed until the user types its name
 KEY=/root/e2e-feed-key2.pem publish "$APPROOT/e2e-pay-1.3_1.x86_64.xbps"
 check "a re-signed feed shows as key changed" sh -c 'ctl refresh-feeds | grep -q "key_changed: true"'

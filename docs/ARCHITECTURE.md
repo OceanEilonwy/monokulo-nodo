@@ -20,6 +20,16 @@ codebase, and signed xbps packages from user-added feeds.
   approved by the user. A reference implies the dependency and the sandbox and firewall access.
 - **Encrypted storage:** Packages opt in. One single device passphrase unlocks all of it at once after a
   reboot. There are no per-package passphrases. Each volume is mounted only inside its own sandbox.
+  A manifest may ask for a volume size and declare a data layout version. An update keeps the
+  volume, grows it in place when asked (with the device passphrase, since LUKS2 needs the key to
+  resize), records the layout, refuses a version older than the data's layout, and rolls back by
+  copying the whole volume into itself first (`docs/UPDATES.md`, section 2).
+- **Backups:** Encrypted with their own passphrase and holding the device key, settings, secrets,
+  storage, Caddy's storage, feeds, pins, approvals and the verified package files. They go to the
+  device's backup folder or a removable USB drive (removable or USB-attached only, never the system
+  disk or the `NODO_BLOCKCHAIN` drive, vfat, exfat or ext4, `nosuid,nodev,noexec`, temporary name,
+  sync, rename). A device that is not set up can be restored whole from a USB drive at first boot;
+  packages come back from the kept verified copies, so no feed is needed (`docs/UPDATES.md`, section 5).
 - **Sealed secrets:** Secret setting values are stored sealed with XChaCha20-Poly1305 under a key derived
   from the device key (HKDF-SHA-256, `nodo-secrets-v1`), as `v1.` and base64 of nonce and ciphertext, with
   the package and setting as associated data. That key exists only in the helper's memory after an

@@ -46,6 +46,11 @@ nodo-tui --ctl COMMAND [ARGS]
   backup                           (device passphrase or an empty line, then backup passphrase)
   inspect-backup NAME              (backup passphrase on stdin)
   restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)
+  usb-drives | usb-backups DEVICE
+  usb-backup DEVICE                (device passphrase or an empty line, then backup passphrase)
+  usb-inspect DEVICE NAME          (backup passphrase on stdin)
+  usb-restore DEVICE NAME TYPED_WORD   (backup passphrase, then new device passphrase or empty)
+  apply-update-pass PACKAGE TO     (device passphrase on stdin, for an update that grows storage)
   web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
   set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)
   acme | certs | local-names | local-status
@@ -258,6 +263,27 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             passphrase: secret_line()?,
             new_device_passphrase: optional_secret()?,
             typed: id(typed),
+        },
+        ["usb-drives"] => Request::ListUsbDrives,
+        ["usb-backups", device] => Request::ListUsbBackups { device: id(device) },
+        ["usb-backup", device] => Request::CreateUsbBackup {
+            device: id(device),
+            device_passphrase: optional_secret()?,
+            backup_passphrase: secret_line()?,
+        },
+        ["usb-inspect", device, name] => {
+            Request::InspectUsbBackup { device: id(device), name: id(name), passphrase: secret_line()? }
+        }
+        ["usb-restore", device, name, typed] => Request::RestoreUsbBackup {
+            device: id(device),
+            name: id(name),
+            passphrase: secret_line()?,
+            new_device_passphrase: optional_secret()?,
+            typed: id(typed),
+        },
+        ["apply-update-pass", package, to] => Request::ApplyUpdatesWithPassphrase {
+            updates: vec![nodo_api::UpdateApproval { package: id(package), to: id(to), approval: None }],
+            passphrase: secret_line()?,
         },
         ["web-status"] => Request::WebStatus,
         ["dns-providers"] => Request::ListDnsProviders,

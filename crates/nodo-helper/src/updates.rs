@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use nodo_api::{
-    ApiError, AutoUpdatePrefs, InstallReview, PermissionApproval, Response, UpdateApproval,
+    ApiError, AutoUpdatePrefs, Secret, InstallReview, PermissionApproval, Response, UpdateApproval,
     UpdateCandidate, UpdateEvent, UpdateEventKind, UpdateInfo, UpdateOutcome, UpdateResult,
     UpdateStatus,
 };
@@ -33,6 +33,8 @@ const HISTORY_LEN: usize = 50;
 const IN_VOLUME_COPY: &str = ".nodo-rollback";
 /// Room left over after copying a package's data, so the copy never fills the disk.
 const COPY_MARGIN: u64 = 256 * 1024 * 1024;
+/// The same inside an encrypted volume, which is small and holds nothing else.
+const IN_VOLUME_MARGIN: u64 = 8 * 1024 * 1024;
 
 /// What the last check found for one package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +50,15 @@ pub(crate) struct CandidateRecord {
     pub key_changed: bool,
     #[serde(default)]
     pub checks_failed: Option<String>,
+    /// The encrypted volume size the new version asks for, in bytes.
+    #[serde(default)]
+    pub volume_bytes: Option<u64>,
+    /// The data layout the new version declares, for encrypted packages.
+    #[serde(default)]
+    pub data_layout: Option<u32>,
+    /// The volume must grow first, which needs the device passphrase.
+    #[serde(default)]
+    pub grows: bool,
 }
 
 impl CandidateRecord {
@@ -68,6 +79,7 @@ impl CandidateRecord {
                 None => Checks::Passed,
             },
             needs_restart: false,
+            needs_passphrase: self.grows,
         }
     }
 }
@@ -121,6 +133,9 @@ fn verdict_text(verdict: &Verdict) -> String {
                     auto::Blocker::FailedChecks(r) => format!("failed the install checks: {r}"),
                     auto::Blocker::Held => "this version is on hold".to_owned(),
                     auto::Blocker::RestartNeeded => "needs a system restart".to_owned(),
+                    auto::Blocker::NeedsPassphrase => {
+                        "needs the device passphrase to grow its encrypted storage".to_owned()
+                    }
                 })
                 .collect();
             format!("waits for you: {}", reasons.join(", "))
@@ -235,6 +250,40 @@ struct Updater<'a, S: System> {
     logs: BTreeMap<String, Vec<String>>,
     /// The new version's kept file, which a rollback removes again.
     fresh: BTreeMap<String, PathBuf>,
+    /// What each update's new version asks of its encrypted storage, from the last check.
+    storage: BTreeMap<String, StorageTarget>,
+    /// Given with the request, for growing encrypted volumes.
+    passphrase: Option<&'a Secret>,
+}
+
+/// What a new version asks of its encrypted volume.
+#[derive(Debug, Clone, Copy, Default)]
+struct StorageTarget {
+    volume_bytes: Option<u64>,
+    data_layout: Option<u32>,
+}
+
+impl<'a, S: System> Updater<'a, S> {
+    fn new(helper: &'a Helper<S>, records: &[CandidateRecord], passphrase: Option<&'a Secret>) -> Self {
+        Updater {
+            helper,
+            approvals: BTreeMap::new(),
+            previous: BTreeMap::new(),
+            logs: BTreeMap::new(),
+            fresh: BTreeMap::new(),
+            storage: records
+                .iter()
+                .map(|r| {
+                    let target = StorageTarget {
+                        volume_bytes: r.volume_bytes,
+                        data_layout: r.data_layout,
+                    };
+                    (r.package.clone(), target)
+                })
+                .collect(),
+            passphrase,
+        }
+    }
 }
 
 fn fail(e: impl std::fmt::Display) -> Failure {
@@ -329,9 +378,42 @@ impl<S: System> Installer for Updater<'_, S> {
         if encrypted && !h.sys.is_mounted(&data) {
             return Err(Failure(format!("{id}'s encrypted storage is locked")));
         }
+        let target = self.storage.get(id).copied().unwrap_or_default();
+        if encrypted {
+            // Checked before anything changes: a version that declares an older layout than
+            // the data is in cannot read it.
+            let current = h.data_layout_of(id);
+            if let Some(layout) = target.data_layout.filter(|l| *l < current) {
+                return Err(Failure(format!(
+                    "{id} {} uses data layout {layout}, older than the layout {current} its data is in, \
+                     so it could not read it",
+                    c.to
+                )));
+            }
+            if let Some(want) = target.volume_bytes {
+                let have = h
+                    .sys
+                    .file_size(&h.volume_location(id).map_err(fail)?.file)
+                    .unwrap_or(0);
+                if want > have {
+                    let passphrase = self.passphrase.ok_or_else(|| {
+                        Failure(format!(
+                            "{id} {} asks for {} MB of encrypted storage instead of {} MB. Growing it \
+                             needs the device passphrase.",
+                            c.to,
+                            want >> 20,
+                            have >> 20
+                        ))
+                    })?;
+                    // Growing keeps every byte, so a rollback keeps the larger volume.
+                    h.grow_volume(id, passphrase, want).map_err(fail)?;
+                }
+            }
+        }
         let size = h.manage.packages.tree_size(&data);
         let free = h.manage.packages.free_bytes(&data);
-        if size.saturating_add(COPY_MARGIN) > free {
+        let margin = if encrypted { IN_VOLUME_MARGIN } else { COPY_MARGIN };
+        if size.saturating_add(margin) > free {
             return Err(Failure(format!(
                 "there is not enough free space to keep a copy of {id}'s data for a rollback"
             )));
@@ -381,6 +463,25 @@ impl<S: System> Installer for Updater<'_, S> {
         })
         .map_err(fail)?;
         let manifest = self.installed_manifest(id)?;
+        if encrypted {
+            // The feed could have changed between the check and this install.
+            let current = h.data_layout_of(id);
+            if manifest.storage.layout() < current {
+                return Err(Failure(format!(
+                    "{pkgver} uses data layout {}, older than its data's layout {current}",
+                    manifest.storage.layout()
+                )));
+            }
+            let have = h
+                .sys
+                .file_size(&h.volume_location(id).map_err(fail)?.file)
+                .unwrap_or(0);
+            if manifest.storage.volume_bytes() > have {
+                return Err(Failure(format!(
+                    "{pkgver} asks for a larger encrypted volume than the check found. Check for updates again."
+                )));
+            }
+        }
         h.place_manifest(id, &h.app_dir(id).map_err(fail)?, &manifest)
             .map_err(Failure)?;
         h.install_package(id, None, Some(&feed_name)).map_err(fail)?;
@@ -392,6 +493,11 @@ impl<S: System> Installer for Updater<'_, S> {
         let h = self.helper;
         let package = h.package(&c.package).map_err(fail)?;
         let (_, copy, _) = self.data_copy(&c.package, package.manifest.storage.encrypted)?;
+        if package.manifest.storage.encrypted {
+            // From now on the data is in the new version's layout.
+            h.set_data_layout(&c.package, package.manifest.storage.layout())
+                .map_err(fail)?;
+        }
         let _ = h.manage.packages.remove_tree(&copy);
         if let Some(previous) = self.previous.get(&c.package) {
             let current = h.read_feeds().ok().and_then(|s| s.installed.get(&c.package).and_then(|r| r.kept.clone()));
@@ -530,13 +636,27 @@ impl<S: System> Helper<S> {
                 added: Vec::new(),
                 key_changed: feed.offered_key.is_some(),
                 checks_failed: None,
+                volume_bytes: None,
+                data_layout: None,
+                grows: false,
             };
             if !record.key_changed {
                 let mut pins = state.pins.clone();
                 let approved = state.approved.get(id);
                 match self.manage.packages.review(&mut pins, &feed.address, id, approved) {
-                    Ok(Reviewed::Ready { added, pkgver, .. }) => {
+                    Ok(Reviewed::Ready { added, pkgver, manifest, .. }) => {
                         record.added = added.iter().map(ToString::to_string).collect();
+                        if manifest.storage.encrypted {
+                            let want = manifest.storage.volume_bytes();
+                            let have = self
+                                .volume_location(id)
+                                .ok()
+                                .and_then(|l| self.sys.file_size(&l.file))
+                                .unwrap_or(0);
+                            record.volume_bytes = Some(want);
+                            record.data_layout = Some(manifest.storage.layout());
+                            record.grows = have > 0 && want > have;
+                        }
                         if pkgver != record.pkgver() {
                             record.checks_failed = Some(format!("the feed now offers {pkgver}"));
                         }
@@ -650,8 +770,14 @@ impl<S: System> Helper<S> {
         selected: &UpdateApproval,
         candidate: Option<&CandidateRecord>,
         updates: &UpdateState,
+        passphrase: bool,
     ) -> Result<Option<Permissions>, String> {
         let c = candidate.ok_or("there is no update for it. Check for updates again.")?;
+        if c.grows && !passphrase {
+            return Err(
+                "it asks for a larger encrypted volume. Growing it needs the device passphrase.".into(),
+            );
+        }
         if c.to != selected.to {
             return Err(format!("the update is now to {}. Check it again.", c.to));
         }
@@ -696,17 +822,21 @@ impl<S: System> Helper<S> {
     }
 
     pub(crate) fn apply_updates(&self, selected: &[UpdateApproval]) -> Result<Response, ApiError> {
+        self.apply_updates_with(selected, None)
+    }
+
+    /// Updates the user selected. The device passphrase is only needed, and only used, to grow
+    /// an encrypted volume.
+    pub(crate) fn apply_updates_with(
+        &self,
+        selected: &[UpdateApproval],
+        passphrase: Option<&Secret>,
+    ) -> Result<Response, ApiError> {
         let _work = lock(&self.manage.work);
         let candidates = self.candidates()?;
         let mut updates = self.update_state()?;
         let mut results = Vec::new();
-        let mut updater = Updater {
-            helper: self,
-            approvals: BTreeMap::new(),
-            previous: BTreeMap::new(),
-            logs: BTreeMap::new(),
-            fresh: BTreeMap::new(),
-        };
+        let mut updater = Updater::new(self, &candidates, passphrase);
         let disk_low = self.installs_refused()?;
         let mut run = Vec::new();
         for s in selected {
@@ -714,7 +844,7 @@ impl<S: System> Helper<S> {
             let refused = if disk_low {
                 Err("the system disk is low on space, so updates wait".to_owned())
             } else {
-                self.check_selected(s, c, &updates)
+                self.check_selected(s, c, &updates, passphrase.is_some())
             };
             let refused = refused.and_then(|a| c.map(|c| (a, c)).ok_or_else(String::new));
             match refused {
@@ -846,14 +976,9 @@ impl<S: System> Helper<S> {
         }
         let _work = lock(&self.manage.work);
         let mut updates = self.update_state()?;
-        let candidates: Vec<Candidate> = self.candidates()?.iter().map(CandidateRecord::candidate).collect();
-        let mut updater = Updater {
-            helper: self,
-            approvals: BTreeMap::new(),
-            previous: BTreeMap::new(),
-            logs: BTreeMap::new(),
-            fresh: BTreeMap::new(),
-        };
+        let records = self.candidates()?;
+        let candidates: Vec<Candidate> = records.iter().map(CandidateRecord::candidate).collect();
+        let mut updater = Updater::new(self, &records, None);
         let outcomes = auto::run(&policy, &mut updates, &candidates, &Live(self), &mut updater, now);
         {
             let _guard = lock(&self.manage.state);

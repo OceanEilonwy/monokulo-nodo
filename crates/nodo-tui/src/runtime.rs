@@ -19,7 +19,7 @@ use nodo_api::{ApiError, Backend, PublicConfirmation, Request, Response};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, Effect, Event, ExposureAfter, TICKS_PER_SECOND};
+use crate::app::{App, Effect, Event, ExposureAfter, UsbView, TICKS_PER_SECOND};
 use crate::model::*;
 use crate::theme::Theme;
 use crate::update::update;
@@ -207,18 +207,47 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let result = backend.remove_ssh_key(&fingerprint);
             vec![Event::SshKeyChanged(result), Event::SshKeysLoaded(backend.ssh_keys())]
         }
-        Effect::LoadBackups => vec![Event::BackupsLoaded(backend.backups())],
-        Effect::CreateBackup { device_passphrase, backup_passphrase } => {
-            vec![Event::BackupCreated(backend.create_backup(device_passphrase.as_ref(), &backup_passphrase))]
+        Effect::LoadBackups => vec![Event::BackupsLoaded(backend.backups()), Event::UsbLoaded(load_usb(backend))],
+        Effect::CreateBackup { device_passphrase, backup_passphrase, usb } => {
+            let result = match usb {
+                Some(device) => backend.create_usb_backup(&device, device_passphrase.as_ref(), &backup_passphrase),
+                None => backend.create_backup(device_passphrase.as_ref(), &backup_passphrase),
+            };
+            vec![Event::BackupCreated(result)]
         }
-        Effect::InspectBackup { name, passphrase } => {
-            vec![Event::BackupInspected(backend.inspect_backup(&name, &passphrase))]
+        Effect::InspectBackup { name, passphrase, usb } => {
+            let result = match usb {
+                Some(device) => backend.inspect_usb_backup(&device, &name, &passphrase),
+                None => backend.inspect_backup(&name, &passphrase),
+            };
+            vec![Event::BackupInspected(result)]
         }
-        Effect::RestoreBackup { name, passphrase, new_device_passphrase, typed } => {
-            let result = backend.restore_backup(&name, &passphrase, new_device_passphrase.as_ref(), &typed);
+        Effect::RestoreBackup { name, passphrase, new_device_passphrase, typed, usb } => {
+            let result = match usb {
+                Some(device) => {
+                    backend.restore_usb_backup(&device, &name, &passphrase, new_device_passphrase.as_ref(), &typed)
+                }
+                None => backend.restore_backup(&name, &passphrase, new_device_passphrase.as_ref(), &typed),
+            };
             vec![Event::BackupRestored(result), refresh(backend)]
         }
     }
+}
+
+/// The first usable USB drive with its backups, or the first drive and why it cannot be used.
+fn load_usb<T: Backend + ScreenData>(backend: &mut T) -> Result<UsbView, String> {
+    let drives = backend.usb_drives()?;
+    let drive = drives
+        .iter()
+        .find(|d| d.problem.is_none())
+        .or_else(|| drives.first())
+        .cloned()
+        .ok_or_else(|| "No USB drive is plugged in.".to_owned())?;
+    let list = match drive.problem {
+        None => Some(backend.usb_backups(&drive.device)?),
+        Some(_) => None,
+    };
+    Ok(UsbView { drive, list })
 }
 
 fn service_command<T: Backend + ScreenData>(backend: &mut T, request: Request) -> Vec<Event> {

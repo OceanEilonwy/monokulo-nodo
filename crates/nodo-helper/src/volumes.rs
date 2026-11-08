@@ -237,6 +237,62 @@ impl<S: System> Helper<S> {
         self.prepare_volume(id, mount)
     }
 
+    /// The data layout a package's volume holds, from the record at its top. A volume from
+    /// before layouts were recorded is in layout 1.
+    pub(crate) fn data_layout_of(&self, id: &str) -> u32 {
+        let Ok(mount) = volume_mount(id) else { return 1 };
+        self.sys
+            .read_file(&Path::new(&mount).join(crate::backup::LAYOUT_FILE))
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| text.trim().parse().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(1)
+    }
+
+    /// Records the layout at the top of the volume, which only root can write.
+    pub(crate) fn set_data_layout(&self, id: &str, layout: u32) -> Result<(), ApiError> {
+        let mount = volume_mount(id).map_err(gen_failed)?;
+        self.sys.atomic_write(
+            &Path::new(&mount).join(crate::backup::LAYOUT_FILE),
+            format!("{layout}\n").as_bytes(),
+            WriteOptions {
+                mode: 0o644,
+                group: None,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Grows a package's open volume to `size` bytes, without unmounting it. Takes the
+    /// passphrase because resizing a LUKS2 mapping needs its key again.
+    pub(crate) fn grow_volume(&self, id: &str, passphrase: &Secret, size: u64) -> Result<(), ApiError> {
+        let name = mapper_name(id).map_err(gen_failed)?;
+        let mount = volume_mount(id).map_err(gen_failed)?;
+        if !self.sys.is_mounted(Path::new(&mount)) {
+            return Err(ApiError::Locked(format!("{id}'s encrypted storage is locked")));
+        }
+        let device_key: DeviceKey = {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            self.verify_passphrase(&mut failures, passphrase, &file)?
+        };
+        let file = self.volume_location(id)?.file;
+        let have = self.sys.file_size(&file).unwrap_or(0);
+        let parent = file.parent().unwrap_or(Path::new("/"));
+        let (_, free) = self.sys.fs_usage(parent).unwrap_or((0, u64::MAX));
+        if size.saturating_sub(have) > free {
+            return Err(ApiError::Failed(format!(
+                "there is not enough free space to grow {id}'s encrypted storage to {} MB",
+                size >> 20
+            )));
+        }
+        let key = keys::volume_key(&device_key, id);
+        self.sys.luks_grow(&file, &name, key.as_ref(), size)?;
+        Ok(())
+    }
+
     /// First-time setup. Refuses to replace an existing key, which would lose every volume.
     pub fn init_device(&self, passphrase: &Secret) -> Result<(), ApiError> {
         check_new_passphrase(passphrase)?;
@@ -323,6 +379,50 @@ impl<S: System> Helper<S> {
             return Err(ApiError::Failed(e));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod growth_tests {
+    use super::*;
+    use crate::fake::{helper, FakeSystem, ENCRYPTED};
+
+    const PASS: &str = "correct horse battery";
+
+    #[test]
+    fn a_volume_grows_in_place_with_the_passphrase_and_keeps_its_layout_record() {
+        let sys = FakeSystem::default();
+        sys.add_manifest(ENCRYPTED);
+        let h = helper(sys);
+        h.init_device(&Secret::new(PASS)).unwrap();
+        h.create_volume("vault", &Secret::new(PASS), 100).unwrap();
+        assert_eq!(h.data_layout_of("vault"), 1);
+        h.set_data_layout("vault", 3).unwrap();
+        assert_eq!(h.data_layout_of("vault"), 3);
+        assert_eq!(
+            h.grow_volume("vault", &Secret::new("nope nope nope"), 300),
+            Err(ApiError::BadPassphrase)
+        );
+        let full = h.grow_volume("vault", &Secret::new(PASS), 100_000).unwrap_err();
+        assert!(full.to_string().contains("not enough free space"), "{full}");
+        h.grow_volume("vault", &Secret::new(PASS), 300).unwrap();
+        assert_eq!(h.sys.file_size(Path::new("/v/vault.luks")), Some(300));
+        assert_eq!(h.sys.format_keys().len(), 1, "growing never formats");
+        assert_eq!(h.data_layout_of("vault"), 3);
+    }
+
+    #[test]
+    fn a_locked_volume_is_not_grown() {
+        let sys = FakeSystem::default();
+        sys.add_manifest(ENCRYPTED);
+        let h = helper(sys);
+        h.init_device(&Secret::new(PASS)).unwrap();
+        h.create_volume("vault", &Secret::new(PASS), 1 << 20).unwrap();
+        h.sys.reboot();
+        assert!(matches!(
+            h.grow_volume("vault", &Secret::new(PASS), 2 << 20),
+            Err(ApiError::Locked(_))
+        ));
     }
 }
 

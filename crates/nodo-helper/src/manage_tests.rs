@@ -44,6 +44,8 @@ struct Inner {
     kept: BTreeSet<PathBuf>,
     log: Vec<String>,
     minute: u16,
+    /// Free bytes reported for every filesystem, when a test sets it.
+    free: Option<u64>,
 }
 
 type Ready = (String, Permissions, Vec<nodo_install::Permission>, Manifest);
@@ -199,6 +201,16 @@ impl PackageBackend for FakePackages {
         Ok(pkgver)
     }
 
+    fn inspect_kept(&self, kept: &Path) -> Result<(String, Permissions), InstallError> {
+        let name = kept.file_name().unwrap().to_str().unwrap();
+        let pkgver = name.strip_suffix(".x86_64.xbps").unwrap().to_owned();
+        let version = pkgver.strip_prefix("demo-").unwrap();
+        let inner = self.0.lock().unwrap();
+        let pkg = inner.feeds.values().flat_map(|(_, p)| p).find(|p| p.version == version).unwrap();
+        let m = Manifest::parse(&pkg.manifest).unwrap();
+        Ok((pkgver, Permissions::of(&m, &[])))
+    }
+
     fn remove(&self, name: &str) -> Result<(), InstallError> {
         let mut inner = self.0.lock().unwrap();
         inner.installed.remove(name);
@@ -234,7 +246,7 @@ impl PackageBackend for FakePackages {
     }
 
     fn free_bytes(&self, _path: &Path) -> u64 {
-        1 << 40
+        self.0.lock().unwrap().free.unwrap_or(1 << 40)
     }
 
     fn kept_exists(&self, path: &Path) -> bool {
@@ -615,6 +627,111 @@ fn a_failed_health_check_rolls_back_and_holds_that_version() {
     assert!(s.attention.is_empty() && !s.candidates[0].info.held);
 }
 
+mod encrypted_updates {
+    use super::*;
+    use crate::system::System;
+
+    const DEVICE: &str = "correct horse battery";
+
+    fn encrypted(extra: &str) -> String {
+        manifest(&format!("\n[storage]\nencrypted = true\n{extra}"))
+    }
+
+    /// An encrypted demo 1.0, installed with its volume, and an update to `next` checked.
+    fn updating(next: &str) -> (Helper<FakeSystem>, FakePackages) {
+        let (h, packages) = setup();
+        packages.0.lock().unwrap().feeds.clear();
+        packages.publish("1.0_1", &encrypted(""));
+        h.sys.put("/opt/nodo/apps/demo/manifest.toml", encrypted("").as_bytes());
+        h.sys.set_usage(1 << 40, 1 << 40);
+        h.init_device(&Secret::new(DEVICE)).unwrap();
+        add_feed(&h);
+        let r = review(&h);
+        let Ok(Response::InstallReport(report)) = call(
+            &h,
+            Request::InstallPackage {
+                feed: "apps".into(),
+                package: "demo".into(),
+                approval: approve(&r),
+                passphrase: Some(Secret::new(DEVICE)),
+            },
+        ) else {
+            panic!()
+        };
+        assert_eq!(report.problem, None, "{report:?}");
+        assert_eq!(h.data_layout_of("demo"), 1);
+        packages.publish("2.0_1", &encrypted(next));
+        h.sys.put("/opt/nodo/apps/demo/manifest.toml", encrypted(next).as_bytes());
+        call(&h, Request::CheckUpdates).unwrap();
+        (h, packages)
+    }
+
+    fn apply(h: &Helper<FakeSystem>, passphrase: Option<&str>) -> Vec<nodo_api::UpdateResult> {
+        let updates = vec![UpdateApproval { package: "demo".into(), to: "2.0_1".into(), approval: None }];
+        let request = match passphrase {
+            Some(p) => Request::ApplyUpdatesWithPassphrase { updates, passphrase: Secret::new(p) },
+            None => Request::ApplyUpdates { updates },
+        };
+        let Ok(Response::UpdateResults(results)) = call(h, request) else { panic!() };
+        results
+    }
+
+    #[test]
+    fn a_new_layout_keeps_the_volume_copies_the_data_and_records_the_layout() {
+        let (h, packages) = updating("data_layout = 2\n");
+        let results = apply(&h, None);
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert_eq!(h.data_layout_of("demo"), 2);
+        let log = packages.log();
+        assert!(log.iter().any(|l| l == "copy /run/nodo/volumes/demo /run/nodo/volumes/demo/.nodo-rollback"), "{log:?}");
+        assert_eq!(h.sys.format_keys().len(), 1, "the volume is kept, never formatted again");
+    }
+
+    #[test]
+    fn a_larger_volume_waits_for_the_passphrase_then_grows_in_place() {
+        let (h, packages) = updating("size_mib = 512\n");
+        auto_on(&h);
+        let s = status(&h);
+        assert!(s.candidates[0].verdict.contains("needs the device passphrase"), "{s:?}");
+        assert!(matches!(&apply(&h, None)[0].outcome, UpdateOutcome::Refused(r) if r.contains("passphrase")));
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        let results = apply(&h, Some(DEVICE));
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert!(h.sys.calls().iter().any(|c| c == "luks grow /v/demo.luks nodo-demo 536870912"));
+        assert_eq!(h.sys.file_size(Path::new("/v/demo.luks")), Some(512 << 20));
+    }
+
+    #[test]
+    fn an_older_layout_is_refused_before_anything_changes() {
+        let (h, packages) = updating("data_layout = 2\n");
+        apply(&h, None);
+        packages.publish("3.0_1", &encrypted(""));
+        h.sys.put("/opt/nodo/apps/demo/manifest.toml", encrypted("").as_bytes());
+        call(&h, Request::CheckUpdates).unwrap();
+        let updates = vec![UpdateApproval { package: "demo".into(), to: "3.0_1".into(), approval: None }];
+        let Ok(Response::UpdateResults(results)) = call(&h, Request::ApplyUpdates { updates }) else { panic!() };
+        assert!(
+            matches!(&results[0].outcome, UpdateOutcome::RolledBack { reason, recovered: true, .. } if reason.contains("data layout 1")),
+            "{results:?}"
+        );
+        assert_eq!(packages.installed().as_deref(), Some("2.0_1"));
+        assert_eq!(h.data_layout_of("demo"), 2);
+    }
+
+    #[test]
+    fn a_failed_health_check_puts_the_old_data_back() {
+        let (h, packages) = updating("data_layout = 2\n");
+        h.sys.script_probes(&[false, false, false, false, false]);
+        let results = apply(&h, None);
+        assert!(matches!(&results[0].outcome, UpdateOutcome::RolledBack { recovered: true, .. }), "{results:?}");
+        assert!(packages
+            .log()
+            .iter()
+            .any(|l| l == "restore /run/nodo/volumes/demo/.nodo-rollback /run/nodo/volumes/demo"));
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+    }
+}
+
 #[test]
 fn health_comes_from_the_daemons_report_and_the_boot_notice() {
     let (h, _) = setup();
@@ -766,5 +883,175 @@ mod backups {
             restore(&h, "../etc/shadow", "backup passphrase 1", "restore"),
             Err(ApiError::NotFound(_))
         ));
+    }
+}
+
+mod usb {
+    use super::*;
+    use crate::usb::tests::{stick, FakeMedia};
+    use crate::usb::{BlockInfo, READ_ONLY, USB_DIR};
+    use std::fs;
+
+    const PASS: &str = "backup passphrase 1";
+
+    struct Rig {
+        h: Helper<FakeSystem>,
+        media: FakeMedia,
+        packages: FakePackages,
+        dir: tempfile::TempDir,
+    }
+
+    fn rig(devices: Vec<BlockInfo>) -> Rig {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("secrets")).unwrap();
+        fs::write(root.join("secrets/token"), b"top secret").unwrap();
+        let paths = ManagePaths {
+            backups: root.join("backups"),
+            restore_staging: root.to_path_buf(),
+            secrets: root.join("secrets"),
+            onion: root.join("tor"),
+            caddy_data: root.join("caddy/data/caddy"),
+            app_config: root.join("apps"),
+            volume_root: root.join("volumes"),
+            usb_mount: root.join("usb"),
+            ..test_paths()
+        };
+        let media = FakeMedia::default();
+        media.0.lock().unwrap().devices = devices;
+        let (h, packages) = setup();
+        let h = h.with_manage_paths(paths).with_media(Box::new(media.clone()));
+        Rig { h, media, packages, dir }
+    }
+
+    fn system_disk() -> BlockInfo {
+        BlockInfo {
+            name: "vda1".into(),
+            disk: "vda".into(),
+            fs_type: Some("ext4".into()),
+            in_use: true,
+            ..BlockInfo::default()
+        }
+    }
+
+    fn create(r: &Rig, device: &str) -> Result<Response, ApiError> {
+        call(
+            &r.h,
+            Request::CreateUsbBackup {
+                device: device.into(),
+                device_passphrase: None,
+                backup_passphrase: Secret::new(PASS),
+            },
+        )
+    }
+
+    #[test]
+    fn only_removable_drives_are_listed_and_unusable_ones_say_why() {
+        let ntfs = BlockInfo { name: "sdc1".into(), disk: "sdc".into(), fs_type: Some("ntfs".into()), ..stick() };
+        let r = rig(vec![stick(), system_disk(), ntfs]);
+        let Ok(Response::UsbDrives(list)) = call(&r.h, Request::ListUsbDrives) else { panic!() };
+        let names: Vec<&str> = list.iter().map(|d| d.device.as_str()).collect();
+        assert_eq!(names, ["sdb1", "sdc1"], "the system disk is never listed");
+        assert_eq!(list[0].problem, None);
+        assert!(list[1].problem.as_deref().unwrap().contains("not supported"));
+    }
+
+    #[test]
+    fn the_system_disk_an_unknown_name_and_a_path_are_refused_without_mounting() {
+        let r = rig(vec![stick(), system_disk()]);
+        assert!(matches!(create(&r, "vda1"), Err(ApiError::Failed(e)) if e.contains("not a removable drive")));
+        assert!(matches!(create(&r, "sdz1"), Err(ApiError::NotFound(_))));
+        assert!(matches!(create(&r, "../vda1"), Err(ApiError::NotFound(_))));
+        assert!(r.media.0.lock().unwrap().calls.is_empty());
+    }
+
+    #[test]
+    fn a_backup_is_written_under_a_temporary_name_then_listed_inspected_and_restored() {
+        let r = rig(vec![stick()]);
+        let Ok(Response::BackupCreated(created)) = create(&r, "sdb1") else { panic!() };
+        let folder = r.dir.path().join("usb").join(USB_DIR);
+        let names: Vec<String> =
+            fs::read_dir(&folder).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, std::slice::from_ref(&created.info.name), "no temporary file is left");
+        {
+            let s = r.media.0.lock().unwrap();
+            assert!(!s.mounted, "unmounted after writing");
+            assert!(s.calls[0].contains("ro=false"), "{:?}", s.calls);
+        }
+        let Ok(Response::UsbBackups(list)) = call(&r.h, Request::ListUsbBackups { device: "sdb1".into() }) else {
+            panic!()
+        };
+        assert_eq!(list.backups[0].name, created.info.name);
+        assert!(r.media.0.lock().unwrap().calls.iter().rfind(|c| c.starts_with("mount")).unwrap().contains("ro=true"));
+        let Ok(Response::BackupContents(_)) = call(
+            &r.h,
+            Request::InspectUsbBackup { device: "sdb1".into(), name: created.info.name.clone(), passphrase: Secret::new(PASS) },
+        ) else {
+            panic!()
+        };
+        fs::write(r.dir.path().join("secrets/token"), b"changed").unwrap();
+        // The device is set up, so this is an ordinary restore of what the backup holds.
+        r.h.sys.put("/k/device.key", b"x");
+        let restored = call(
+            &r.h,
+            Request::RestoreUsbBackup {
+                device: "sdb1".into(),
+                name: created.info.name,
+                passphrase: Secret::new(PASS),
+                new_device_passphrase: None,
+                typed: "restore".into(),
+            },
+        );
+        let Ok(Response::Restored(report)) = restored else { panic!("{restored:?}") };
+        assert!(report.restored.contains(&"secrets".to_owned()), "{report:?}");
+        // The scripted package backend records the move rather than copying.
+        assert!(r.packages.log().iter().any(|l| l.starts_with("restore ") && l.ends_with("/secrets")));
+        assert!(!r.media.0.lock().unwrap().mounted);
+    }
+
+    #[test]
+    fn a_read_only_or_full_drive_is_refused_in_plain_words_and_left_unchanged() {
+        let r = rig(vec![BlockInfo { read_only: true, ..stick() }]);
+        assert_eq!(create(&r, "sdb1"), Err(ApiError::Failed(READ_ONLY.into())));
+        assert!(r.media.0.lock().unwrap().calls.is_empty());
+
+        let r = rig(vec![stick()]);
+        r.packages.0.lock().unwrap().free = Some(1000);
+        let Err(ApiError::Failed(full)) = create(&r, "sdb1") else { panic!() };
+        assert!(full.starts_with("The USB drive is full"), "{full}");
+        let folder = r.dir.path().join("usb").join(USB_DIR);
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);
+        assert!(!r.media.0.lock().unwrap().mounted, "unmounted after a refusal too");
+    }
+
+    #[test]
+    fn a_partial_file_from_an_interrupted_write_is_removed_and_never_listed() {
+        let r = rig(vec![stick()]);
+        let folder = r.dir.path().join("usb").join(USB_DIR);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join(".nodo-5.nodobak.partial"), b"half").unwrap();
+        let Ok(Response::UsbBackups(list)) = call(&r.h, Request::ListUsbBackups { device: "sdb1".into() }) else {
+            panic!()
+        };
+        assert!(list.backups.is_empty());
+        create(&r, "sdb1").unwrap();
+        assert!(!folder.join(".nodo-5.nodobak.partial").exists());
+    }
+
+    #[test]
+    fn a_restore_needs_the_typed_word_before_touching_the_drive() {
+        let r = rig(vec![stick()]);
+        let refused = call(
+            &r.h,
+            Request::RestoreUsbBackup {
+                device: "sdb1".into(),
+                name: "nodo-1.nodobak".into(),
+                passphrase: Secret::new(PASS),
+                new_device_passphrase: None,
+                typed: "yes".into(),
+            },
+        );
+        assert!(matches!(refused, Err(ApiError::NeedsConfirmation(_))));
+        assert!(r.media.0.lock().unwrap().calls.is_empty());
     }
 }

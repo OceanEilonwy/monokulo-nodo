@@ -22,8 +22,6 @@ const CONFIG: WriteOptions = WriteOptions {
     mode: 0o644,
     group: None,
 };
-/// Manifests cannot ask for a size yet, so every encrypted volume gets this much.
-const DEFAULT_VOLUME_SIZE: u64 = 256 * 1024 * 1024;
 
 impl<S: System> Helper<S> {
     /// The fragment is checked under another name first, because the main ruleset includes
@@ -61,6 +59,27 @@ impl<S: System> Helper<S> {
         id: &str,
         passphrase: Option<&Secret>,
         feed: Option<&str>,
+    ) -> Result<Response, ApiError> {
+        self.install_package_inner(id, passphrase, feed, false)
+    }
+
+    /// Like [`Helper::install_package`], with the service left down, so a restore can fill its
+    /// storage before it first starts.
+    pub(crate) fn install_package_held(
+        &self,
+        id: &str,
+        passphrase: Option<&Secret>,
+        feed: Option<&str>,
+    ) -> Result<Response, ApiError> {
+        self.install_package_inner(id, passphrase, feed, true)
+    }
+
+    fn install_package_inner(
+        &self,
+        id: &str,
+        passphrase: Option<&Secret>,
+        feed: Option<&str>,
+        held: bool,
     ) -> Result<Response, ApiError> {
         let package = self.package(id)?;
         if package.profile == Profile::System {
@@ -131,9 +150,16 @@ impl<S: System> Helper<S> {
             self.sys.create_user(&user, Path::new(&layout.data_dir))?;
         }
         if let (true, Some(passphrase)) = (needs_volume, passphrase) {
-            self.create_volume(id, passphrase, DEFAULT_VOLUME_SIZE)?;
+            self.create_volume(id, passphrase, package.manifest.storage.volume_bytes())?;
+            // A new volume holds data in the layout this version declares.
+            self.set_data_layout(id, package.manifest.storage.layout())?;
         }
         self.write_service(id, &artifacts)?;
+        if held {
+            // runsv leaves a service with a `down` file stopped until it is started.
+            self.sys
+                .atomic_write(&service.join("down"), b"", CONFIG)?;
+        }
         // Settings, including generated secrets, exist before the service first starts.
         for file in plan.map(|plan| plan.files).unwrap_or_default() {
             Write::from(file).apply(&self.sys)?;

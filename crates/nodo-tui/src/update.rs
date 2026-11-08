@@ -436,9 +436,18 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     }
     let mut leave = false;
+    let mut restore = false;
     let mut effects = Vec::new();
     match stage {
         SetupStep::Passphrase { first, second, confirming } => match key.code {
+            // A new device can instead be rebuilt from a backup on a USB drive.
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                first.clear();
+                second.clear();
+                *confirming = false;
+                *error = None;
+                restore = true;
+            }
             KeyCode::Enter if !*confirming => {
                 if first.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
                     *error = Some(format!("Use at least {MIN_PASSPHRASE_CHARS} characters."));
@@ -509,6 +518,10 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 _ => {}
             }
         }
+    }
+    if restore {
+        push(app, Screen::Backup(BackupState::fresh()));
+        return vec![Effect::LoadBackups];
     }
     if leave {
         pop(app);
@@ -1822,7 +1835,8 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         Event::BackupsLoaded(_)
         | Event::BackupCreated(_)
         | Event::BackupInspected(_)
-        | Event::BackupRestored(_) => return on_backup_result(app, event),
+        | Event::BackupRestored(_)
+        | Event::UsbLoaded(_) => return on_backup_result(app, event),
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {
@@ -2171,6 +2185,8 @@ fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
 
 /// Backups and restore. A restore asks for the backup passphrase, shows what the verified backup
 /// holds and which services stop, then needs the typed word. The helper checks the word again.
+/// Tab moves between the device's backups and a USB drive's. On first boot only the USB drive is
+/// offered, and the restore sets the whole device up.
 fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
@@ -2179,20 +2195,52 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     }
     let device_set_up = state.device_set_up;
+    let fresh = state.fresh;
     let mut effects = Vec::new();
     let mut leave = false;
+    let mut finished_fresh = false;
     let mut next = None;
+    let usb_device = state.usb.as_ref().filter(|u| u.list.is_some()).map(|u| u.drive.device.clone());
     match &mut state.step {
         BackupStep::List => match key.code {
-            KeyCode::Down | KeyCode::Up => step(&mut state.selected, state.list.len(), key.code == KeyCode::Down),
-            KeyCode::Char('n') => {
-                let field = if device_set_up { 0 } else { 1 };
-                next = Some(BackupStep::Create { device: Input::secret(), first: Input::secret(), second: Input::secret(), field });
+            KeyCode::Tab if !fresh && usb_device.is_some() => state.usb_focused = !state.usb_focused,
+            KeyCode::Down | KeyCode::Up => {
+                let down = key.code == KeyCode::Down;
+                if state.usb_focused {
+                    let len = state.usb_list().len();
+                    step(&mut state.usb_selected, len, down);
+                } else {
+                    step(&mut state.selected, state.list.len(), down);
+                }
+            }
+            KeyCode::Char(c @ ('n' | 'u')) if !fresh => {
+                if c == 'u' && usb_device.is_none() {
+                    state.error = Some("Plug in a USB drive formatted as FAT32, exFAT or ext4 first.".to_owned());
+                } else {
+                    state.target = if c == 'u' { usb_device.clone() } else { None };
+                    let field = if device_set_up { 0 } else { 1 };
+                    next = Some(BackupStep::Create {
+                        device: Input::secret(),
+                        first: Input::secret(),
+                        second: Input::secret(),
+                        field,
+                    });
+                }
             }
             KeyCode::Char('r') | KeyCode::Enter => {
-                if let Some(chosen) = state.list.get(state.selected) {
-                    next = Some(BackupStep::Unlock { name: chosen.name.clone(), passphrase: Input::secret() });
+                let chosen = if state.usb_focused {
+                    state.usb_list().get(state.usb_selected).map(|b| b.name.clone())
+                } else {
+                    state.list.get(state.selected).map(|b| b.name.clone())
+                };
+                if let Some(name) = chosen {
+                    state.target = if state.usb_focused { usb_device.clone() } else { None };
+                    next = Some(BackupStep::Unlock { name, passphrase: Input::secret() });
                 }
+            }
+            KeyCode::Char('g') => {
+                state.busy = true;
+                effects.push(Effect::LoadBackups);
             }
             KeyCode::Esc => leave = true,
             _ => {}
@@ -2218,7 +2266,11 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     state.busy = true;
                     let device_passphrase = device_set_up.then(|| device.take_secret());
                     second.clear();
-                    effects.push(Effect::CreateBackup { device_passphrase, backup_passphrase: first.take_secret() });
+                    effects.push(Effect::CreateBackup {
+                        device_passphrase,
+                        backup_passphrase: first.take_secret(),
+                        usb: state.target.clone(),
+                    });
                 }
             }
             _ => {
@@ -2235,51 +2287,72 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             KeyCode::Enter if !passphrase.is_empty() => {
                 state.busy = true;
                 state.error = None;
-                effects.push(Effect::InspectBackup { name: name.clone(), passphrase: passphrase.secret_value() });
+                effects.push(Effect::InspectBackup {
+                    name: name.clone(),
+                    passphrase: passphrase.secret_value(),
+                    usb: state.target.clone(),
+                });
             }
             _ => {
                 edit_input(passphrase, key);
             }
         },
-        BackupStep::Confirm { name, passphrase, contents, typed, device, field } => match key.code {
-            KeyCode::Esc => next = Some(BackupStep::List),
-            KeyCode::Tab if contents.has_device_key => *field = 1 - *field,
-            KeyCode::Enter => {
-                if typed.text() != RESTORE_WORD {
-                    state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
-                    *field = 0;
-                } else if contents.has_device_key && device.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
-                    state.error = Some(format!(
-                        "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters for the backup's key."
-                    ));
-                    *field = 1;
-                } else {
-                    state.error = None;
-                    state.busy = true;
-                    let new_device_passphrase = contents.has_device_key.then(|| device.take_secret());
-                    effects.push(Effect::RestoreBackup {
-                        name: name.clone(),
-                        passphrase: passphrase.clone(),
-                        new_device_passphrase,
-                        typed: typed.text().to_owned(),
-                    });
+        BackupStep::Confirm { name, passphrase, contents, typed, device, field } => {
+            // A device that is not set up always needs a passphrase of its own.
+            let asks_device = contents.has_device_key || fresh;
+            match key.code {
+                KeyCode::Esc => next = Some(BackupStep::List),
+                KeyCode::Tab if asks_device => *field = 1 - *field,
+                KeyCode::Enter => {
+                    if typed.text() != RESTORE_WORD {
+                        state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
+                        *field = 0;
+                    } else if asks_device && device.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
+                        state.error = Some(format!(
+                            "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters for the backup's key."
+                        ));
+                        *field = 1;
+                    } else {
+                        state.error = None;
+                        state.busy = true;
+                        let new_device_passphrase = asks_device.then(|| device.take_secret());
+                        effects.push(Effect::RestoreBackup {
+                            name: name.clone(),
+                            passphrase: passphrase.clone(),
+                            new_device_passphrase,
+                            typed: typed.text().to_owned(),
+                            usb: state.target.clone(),
+                        });
+                    }
+                }
+                _ => {
+                    edit_input(if *field == 0 { typed } else { device }, key);
                 }
             }
-            _ => {
-                edit_input(if *field == 0 { typed } else { device }, key);
-            }
-        },
+        }
         BackupStep::Restored(_) => {
             if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
-                next = Some(BackupStep::List);
-                state.busy = true;
-                effects.push(Effect::LoadBackups);
+                if fresh {
+                    finished_fresh = true;
+                } else {
+                    next = Some(BackupStep::List);
+                    state.busy = true;
+                    effects.push(Effect::LoadBackups);
+                }
             }
         }
     }
     if let Some(step) = next {
         state.error = None;
         state.step = step;
+    }
+    if finished_fresh {
+        // Set up from the backup. SSH keys are offered next, as after a first-boot setup.
+        pop(app);
+        if let Screen::Setup(setup) = &mut app.screen {
+            *setup = SetupState::keys();
+        }
+        return vec![Effect::LoadSshKeys, Effect::Refresh];
     }
     if leave {
         pop(app);
@@ -2295,16 +2368,25 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
-    state.busy = false;
     match event {
         Event::BackupsLoaded(Ok(list)) => {
             state.selected = state.selected.min(list.len().saturating_sub(1));
             state.list = list;
         }
+        Event::UsbLoaded(result) => {
+            state.busy = false;
+            state.usb = result.ok();
+            let len = state.usb_list().len();
+            state.usb_selected = state.usb_selected.min(len.saturating_sub(1));
+            if len == 0 && !state.fresh {
+                state.usb_focused = false;
+            }
+        }
         Event::BackupCreated(Ok(created)) => {
             state.step = BackupStep::List;
             state.busy = true;
-            let mut text = format!("Backup {} written.", created.info.name);
+            let place = if state.target.take().is_some() { " to the USB drive" } else { "" };
+            let mut text = format!("Backup {} written{place}.", created.info.name);
             if !created.locked.is_empty() {
                 text.push_str(&format!(" Locked storage was left out: {}.", created.locked.join(", ")));
             }
@@ -2312,6 +2394,7 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
             return vec![Effect::LoadBackups];
         }
         Event::BackupInspected(Ok(contents)) => {
+            state.busy = false;
             if let BackupStep::Unlock { name, passphrase } = &mut state.step {
                 state.step = BackupStep::Confirm {
                     name: name.clone(),
@@ -2323,11 +2406,20 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
                 };
             }
         }
-        Event::BackupRestored(Ok(report)) => state.step = BackupStep::Restored(report),
-        Event::BackupsLoaded(Err(e))
-        | Event::BackupCreated(Err(e))
-        | Event::BackupInspected(Err(e))
-        | Event::BackupRestored(Err(e)) => state.error = Some(e),
+        Event::BackupRestored(Ok(report)) => {
+            state.busy = false;
+            state.step = BackupStep::Restored(report);
+        }
+        Event::BackupsLoaded(Err(e)) => {
+            // On first boot the device has no backups of its own, which is no error.
+            if !state.fresh {
+                state.error = Some(e);
+            }
+        }
+        Event::BackupCreated(Err(e)) | Event::BackupInspected(Err(e)) | Event::BackupRestored(Err(e)) => {
+            state.busy = false;
+            state.error = Some(e);
+        }
         _ => {}
     }
     Vec::new()

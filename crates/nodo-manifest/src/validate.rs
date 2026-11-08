@@ -304,6 +304,20 @@ impl Manifest {
             }
         }
 
+        if let Some(size) = self.storage.size_mib {
+            if !self.storage.encrypted {
+                c.add("storage.size_mib", "only applies to encrypted storage");
+            } else if !(crate::MIN_VOLUME_MIB..=crate::MAX_VOLUME_MIB).contains(&size) {
+                c.add(
+                    "storage.size_mib",
+                    format!("must be from {} to {}", crate::MIN_VOLUME_MIB, crate::MAX_VOLUME_MIB),
+                );
+            }
+        }
+        if self.storage.data_layout == Some(0) {
+            c.add("storage.data_layout", "starts at 1");
+        }
+
         let mut bound = BTreeSet::new();
         for (index, inbound) in self.network.inbound.iter().enumerate() {
             let field = format!("network.inbound[{index}].port");
