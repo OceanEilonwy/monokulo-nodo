@@ -423,6 +423,21 @@ check "the device key used by this device's volumes was kept" sh -c '
 check "the restored services run" running_for e2e-vault 3
 check "no staging copy is left behind" sh -c '! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
 
+# The real TUI against the real helper: feeds, packages, updates, Home's attention and backups
+
+rm -f /tmp/e2e-tui.out
+(
+	sleep 4; printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
+	printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
+	printf 'b'; sleep 3; printf '\033'; sleep 2; printf 'q'; sleep 1
+) | script -qfec 'stty rows 32 cols 100; TERM=xterm-256color nodo-tui' /tmp/e2e-tui.out >/dev/null 2>&1
+sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Z0-9]//g' /tmp/e2e-tui.out > /tmp/e2e-tui.txt
+for want in "Your feeds" "e2e-feed" "e2e-pay" "e2e-bad" "Backups on this device" "$bk" "is back and the update is on hold"; do
+	check "the TUI showed: $want" grep -q "$want" /tmp/e2e-tui.txt
+done
+check "the TUI no longer says feeds or updates are not available" sh -c '! grep -q "Not available yet: feeds\|Not available yet: automatic" /tmp/e2e-tui.txt'
+check "the TUI never showed a passphrase" sh -c '! grep -q "horse" /tmp/e2e-tui.txt'
+
 # Health: the daemon's configuration from manifests, and a low disk on a small loop filesystem
 
 hloop=$(losetup -j /var/tmp/e2e-health.img | cut -d: -f1)
