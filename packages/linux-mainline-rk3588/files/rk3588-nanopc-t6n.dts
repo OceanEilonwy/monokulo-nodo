@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * FriendlyElec NanoPC-T6N, for monokulo-nodo.
+ *
+ * Mainline Linux has no device tree for the T6N. The board is a NanoPC-T6 variant, so this
+ * starts from mainline's rk3588-nanopc-t6.dtsi and applies the differences found in
+ * FriendlyElec's own T6N device tree, rk3588-nanopi6-rev08.dts in kernel-rockchip
+ * nanopi6-v6.1.y at commit 30d3e1c2470a7282f37b96fdd4354314dda69aa3. docs/MAINLINE_KERNEL.md
+ * lists each difference and which ones are unverified on hardware.
+ *
+ * Build with dtc -@ so FriendlyElec's dtbo partition, which targets the "chosen" label, can
+ * still be applied by their bootloader.
+ */
+
+/dts-v1/;
+
+#include "rk3588-nanopc-t6.dtsi"
+
+/ {
+	model = "FriendlyElec NanoPC-T6N";
+	compatible = "friendlyelec,nanopc-t6n", "friendlyarm,nanopc-t6", "rockchip,rk3588";
+
+	aliases {
+		/*
+		 * The same numbering as FriendlyElec's kernel, so the microSD card is mmcblk0 and
+		 * root=/dev/mmcblk0p8 means the card on both images. Mainline's T6 numbering would
+		 * make mmcblk0 the eMMC, which holds the original Nodo system.
+		 */
+		/delete-property/ mmc1;
+		mmc0 = &sdmmc;
+		mmc2 = &sdhci;
+		/* FriendlyElec's bootloader writes the board's MAC address into this node. */
+		ethernet0 = &r8125;
+	};
+
+	/*
+	 * FriendlyElec's bootloader joins bootargs and bootargs_ext. Their dtbo partition then
+	 * replaces bootargs_ext with the same root, so this copy only matters if it cannot.
+	 */
+	chosen: chosen {
+		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=ttyS2,1500000n8 coherent_pool=1m";
+		bootargs_ext = "root=/dev/mmcblk0p8 rw rootfstype=ext4 rootwait";
+	};
+
+	/* The T6N's USB 3.0 Type-A port. */
+	vcc5v0_host_30: regulator-vcc5v0-host-30 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio3 RK_PA5 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc5v0_host30_en>;
+		regulator-name = "vcc5v0_host_30";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc5v0_sys>;
+	};
+};
+
+/* Only the system LED exists on the T6N. */
+/delete-node/ &usr_led;
+
+/*
+ * The M.2 E-key slot (the Wi-Fi card) uses this controller, with the reset and power pins the
+ * T6 uses for its second Ethernet controller. The T6N has no second Ethernet port.
+ */
+&pcie2x1l0 {
+	reset-gpios = <&gpio4 RK_PA2 GPIO_ACTIVE_HIGH>;
+	vpcie3v3-supply = <&vcc3v3_pcie2x1l0>;
+	pinctrl-0 = <&pcie2_1_rst>;
+};
+
+&pcie2x1l1 {
+	status = "disabled";
+};
+
+/* The 2.5GbE port, an RTL8125 on PCIe. The bootloader fills in local-mac-address. */
+&pcie2x1l2 {
+	pcie@0,0 {
+		reg = <0x400000 0 0 0 0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+		device_type = "pci";
+		bus-range = <0x40 0x4f>;
+
+		r8125: ethernet@0,0 {
+			compatible = "pci10ec,8125";
+			reg = <0x410000 0 0 0 0>;
+			local-mac-address = [ 00 00 00 00 00 00 ];
+		};
+	};
+};
+
+/* FriendlyElec's T6N tree defines no fan, and leaves this PWM off. */
+&pwm1 {
+	status = "disabled";
+};
+
+/* The T6N tree has no SPI flash. */
+&sfc {
+	status = "disabled";
+};
+
+/*
+ * USB. The second Type-C port has its own FUSB302 controller on i2c4 and takes the power
+ * switch that drives the T6's USB-A port, so that switch only turns on when the port
+ * negotiates the source role. The Type-A port is USB 3.0 on the third controller.
+ */
+&vbus5v0_usb {
+	regulator-name = "vbus5v1_typec";
+};
+
+&i2c4 {
+	clock-frequency = <200000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c4m3_xfer>;
+	status = "okay";
+
+	usbc1: usb-typec@22 {
+		compatible = "fcs,fusb302";
+		reg = <0x22>;
+		interrupt-parent = <&gpio4>;
+		interrupts = <RK_PA3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc1_int>;
+		vbus-supply = <&vbus5v0_usb>;
+		status = "okay";
+
+		connector {
+			compatible = "usb-c-connector";
+			data-role = "dual";
+			label = "USB-C";
+			op-sink-microwatt = <1000000>;
+			pd-revision = /bits/ 8 <0x2 0x0 0x1 0x2>;
+			power-role = "dual";
+			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+			source-pdos = <PDO_FIXED(5000, 2000, PDO_FIXED_USB_COMM)>;
+			try-power-role = "sink";
+			typec-power-opmode = "1.5A";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usbc1_hs: endpoint {
+						remote-endpoint = <&usb_host1_xhci_drd_sw>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					usbc1_ss: endpoint {
+						remote-endpoint = <&usbdp_phy1_typec_ss>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+					usbc1_sbu: endpoint {
+						remote-endpoint = <&usbdp_phy1_typec_sbu>;
+					};
+				};
+			};
+		};
+	};
+};
+
+&usbdp_phy1 {
+	/delete-property/ phy-supply;
+	mode-switch;
+	orientation-switch;
+	sbu1-dc-gpios = <&gpio4 RK_PA0 GPIO_ACTIVE_HIGH>;
+	sbu2-dc-gpios = <&gpio4 RK_PA1 GPIO_ACTIVE_HIGH>;
+
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		usbdp_phy1_typec_ss: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&usbc1_ss>;
+		};
+
+		usbdp_phy1_typec_sbu: endpoint@1 {
+			reg = <1>;
+			remote-endpoint = <&usbc1_sbu>;
+		};
+	};
+};
+
+&usb_host1_xhci {
+	dr_mode = "otg";
+	usb-role-switch;
+
+	port {
+		usb_host1_xhci_drd_sw: endpoint {
+			remote-endpoint = <&usbc1_hs>;
+		};
+	};
+};
+
+&u2phy3_host {
+	phy-supply = <&vcc5v0_host_30>;
+};
+
+&usb_host2_xhci {
+	status = "okay";
+};
+
+&pinctrl {
+	usb {
+		usbc1_int: usbc1-int {
+			rockchip,pins = <4 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		vcc5v0_host30_en: vcc5v0-host30-en {
+			rockchip,pins = <3 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
