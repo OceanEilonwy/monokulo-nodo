@@ -146,6 +146,14 @@ a feed signed in the VM: an update asking for internet access is held, one faili
 check is rolled back with its data and held, a held version is not retried, and a healthy one
 installs.
 
+**Rolling back by hand.** A successful update keeps the previous version's verified file one
+generation deep, with the data layout its data was in (`previous` in the feed state). `ListRollbacks`
+offers it, and `RollbackPackage` (the TUI's Home › Rollbacks) puts it back through the same engine:
+the data is copied, the kept file reinstalled, the old version health checked, and on failure the
+newer version and its data come back. The version left is then held. It refuses data already in a
+newer layout than the old version's, a kept file asking for permissions no longer approved, a locked
+device, low disk, and data on the data drive.
+
 **Encrypted packages across updates.** An update never touches the LUKS volume itself: the new
 version starts on the same volume with the same key. Two manifest fields describe what a version
 needs from it. `storage.size_mib` is the volume size (256 MiB when not given, 32 MiB to 1 TiB),

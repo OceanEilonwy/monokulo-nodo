@@ -88,6 +88,11 @@ codebase, and signed xbps packages from user-added feeds.
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. Admin paths are always blocked on public and
   onion addresses.
+- **Node onion address:** The node is not a site, so it has its own switch (`SetNodeOnion`, the TUI's
+  Web › Onion screen). Tor forwards the onion address's port 18089 straight to the node's restricted
+  RPC on loopback, never to the full RPC, and only while the node's public `restricted-rpc` setting is
+  true, so turning restricted RPC off withdraws it at the next apply. When every onion address is off,
+  the helper rewrites the torrc without services and stops Tor, which before kept publishing them.
 - **Local address changes:** When the local address changes (a new lease, a lost one, or a new
   static address), nodo-localnet sends the helper a root-only `LocalAddressChanged` as it writes
   its new state, and the helper also checks once a minute in case that message was lost. The helper

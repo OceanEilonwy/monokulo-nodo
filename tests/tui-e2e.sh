@@ -17,4 +17,11 @@ tar -C "$root/tests" -cf - tui acme/fake-dns.py |
 	vm ssh 'rm -rf /tmp/tui && mkdir -p /tmp/tui-src && tar -C /tmp/tui-src -xf - && mv /tmp/tui-src/tui /tmp/tui && mv /tmp/tui-src/acme/fake-dns.py /tmp/tui/ && rm -rf /tmp/tui-src'
 args=
 for a in "$@"; do args="$args '$a'"; done
+# TUI_E2E_USB=1 plugs in a blank virtual stick (a file in the VM's container, never a host device),
+# so the first-boot restore journey also sees a drive it must refuse. Without it, it sees none.
+if [ "${TUI_E2E_USB:-}" = 1 ]; then
+	vm usb-create tui-blank 64
+	vm usb-plug tui-blank
+	trap 'vm usb-unplug tui-blank || true' EXIT
+fi
 vm ssh "python3 /tmp/tui/journeys.py $args </dev/null"
