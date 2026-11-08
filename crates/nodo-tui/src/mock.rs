@@ -816,6 +816,60 @@ impl ScreenData for MockBackend {
         Ok(())
     }
 
+    fn save_acme(&mut self, settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
+        if settings.email.as_deref().is_some_and(|e| !e.contains('@')) {
+            return Err(s("that email address is not valid"));
+        }
+        if let Some(domain) = &settings.local_domain {
+            if !self.web.acme.dns01 {
+                return Err(s("local names under your domain need certificates through your DNS provider"));
+            }
+            if !domain.ends_with(&self.web.domain) {
+                return Err(format!("local names must be under {}", self.web.domain));
+            }
+        }
+        let acme = &mut self.web.acme;
+        acme.email = settings.email.clone().unwrap_or_default();
+        acme.staging = settings.staging;
+        acme.local_domain = settings.local_domain.clone();
+        for site in &mut self.web.sites {
+            site.local_url = match &settings.local_domain {
+                Some(domain) => format!("https://{}.{domain}", site.package),
+                None => format!("https://{}.local", site.package),
+            };
+        }
+        Ok(())
+    }
+
+    fn save_dns01(&mut self, first: &Secret, second: &Secret) -> Result<(), String> {
+        if first.is_empty() || second.is_empty() {
+            return Err(s("Enter both the API key and the secret."));
+        }
+        self.web.acme.dns01_stored = true;
+        Ok(())
+    }
+
+    fn check_local_names(&mut self) -> Result<Vec<nodo_api::LocalNameCheck>, String> {
+        let Some(domain) = self.web.acme.local_domain.clone() else {
+            return Ok(Vec::new());
+        };
+        let address = self.web.acme.local_address.clone().unwrap_or_default();
+        Ok(self
+            .web
+            .sites
+            .iter()
+            .filter(|site| site.exposure.local)
+            .map(|site| nodo_api::LocalNameCheck {
+                host: format!("{}.{domain}", site.package),
+                address: address.clone(),
+                published: vec![address.clone()],
+                resolves_to: vec![address.clone()],
+                verdict: nodo_api::LocalNameVerdict::Resolves,
+                explanation: format!("{}.{domain} resolves to {address} on this network.", site.package),
+            })
+            .collect())
+    }
+
     fn reachability(&mut self, site: &str) -> Reachability {
         let attempt = self.reach_attempts.entry(s(site)).or_insert(0);
         *attempt += 1;
@@ -1442,7 +1496,52 @@ fn sample_web() -> WebOverview {
         reachable: true,
         local_problem: None,
         local_remedy: None,
+        certs: sample_certs(),
+        acme: AcmeView {
+            email: s("me@example.com"),
+            staging: false,
+            test_server: None,
+            dns01: true,
+            challenge: s("DNS-01 through Porkbun"),
+            dns01_fields: Vec::new(),
+            dns01_stored: false,
+            local_domain: None,
+            local_address: Some(s("192.168.1.60")),
+            local_ca: Some(s("3F:9A:21:C4:7E:05:B8:D2:61:4A:93:0C:EE:17:5B:28:A6:D9:40:7F:12:C3:8B:65:E0:94:2D:71:BC:58:0A:F6")),
+        },
     }
+}
+
+fn sample_certs() -> Vec<CertRow> {
+    let local = |site: &str| CertRow {
+        site: s(site),
+        host: format!("{site}.local"),
+        kind: CertKind::LocalInternal,
+        state: nodo_api::CertState::Valid,
+        issuer: s("this device's local CA"),
+        days_left: Some(6),
+        renewed: Some(s("18 hours ago")),
+        challenge: None,
+        problem: None,
+        problem_detail: None,
+    };
+    vec![
+        CertRow {
+            site: s("shop"),
+            host: s("shop.example.com"),
+            kind: CertKind::Public,
+            state: nodo_api::CertState::Valid,
+            issuer: s("Let's Encrypt (R11)"),
+            days_left: Some(61),
+            renewed: Some(s("29 days ago")),
+            challenge: Some(s("DNS-01")),
+            problem: None,
+            problem_detail: None,
+        },
+        local("shop"),
+        local("monokulo-pay"),
+        local("moneropay"),
+    ]
 }
 
 fn sample_providers() -> Vec<Provider> {

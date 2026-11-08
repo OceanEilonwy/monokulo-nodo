@@ -178,6 +178,16 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let result = backend.save_provider(&provider, &domain, &api_key, &secret_key);
             vec![Event::ProviderSaved(result), refresh(backend)]
         }
+        Effect::SaveAcme { settings, dns01 } => {
+            // The credentials go first, since local names under the domain need DNS-01.
+            let stored = match dns01 {
+                Some((first, second)) => backend.save_dns01(&first, &second),
+                None => Ok(()),
+            };
+            let result = stored.and_then(|()| backend.save_acme(&settings));
+            vec![Event::AcmeSaved(result), refresh(backend)]
+        }
+        Effect::CheckLocalNames => vec![Event::LocalNamesChecked(backend.check_local_names())],
         Effect::ShowDocument(kind) => vec![Event::DocumentLoaded(backend.document(&kind))],
         Effect::CopyReport(subject) => match backend.copy_report(&subject) {
             Ok(text) => vec![Event::Info(text)],

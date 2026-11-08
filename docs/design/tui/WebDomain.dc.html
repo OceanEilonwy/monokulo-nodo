@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Domains and certificates</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> <b>Domains</b></div><div class="ok">✓ Certificates in place</div></div>
+<div style="display:flex;gap:16px;padding-top:8px">
+<div class="p" style="flex:42"><div class="pt">Domain</div>
+<div class="r"><span class="d">Domain</span><span>example.com</span></div>
+<div class="r"><span class="d">Provider</span><span>Porkbun</span></div>
+<div class="r"><span class="d">Validation</span><span class="ok">DNS-01 through Porkbun</span></div>
+<div class="d">No open ports needed.</div>
+</div>
+<div class="p" style="flex:58"><div class="pt">Certificates</div>
+<div class="r"><span>shop.example.com</span><span class="ok">✓ Valid, 61 days left</span></div>
+<div class="r"><span>shop.local</span><span class="ok">✓ Valid, 6 days left</span></div>
+<div class="r"><span>monokulo-pay.local</span><span class="ok">✓ Valid, 6 days left</span></div>
+<div class="r"><span>moneropay.local</span><span class="ok">✓ Valid, 6 days left</span></div>
+</div>
+</div>
+<div class="p"><div class="pt">Let's Encrypt</div>
+<div class="r"><span>  Email for expiry notices</span><span>me@example.com</span></div>
+<div class="r"><span>  [ ] Use the staging server</span><span class="d">Untrusted certificates, for testing</span></div>
+</div>
+<div class="p" style="flex:1"><div class="pt">Local site names</div>
+<div class="r"><span>  ( ) site.local, with this device's own CA</span><span class="d">Browsers warn until you trust it</span></div>
+<div class="r s"><span>▸ (•) Under your domain: site.home.example.com </span><span>Real certificates through DNS-01 </span></div>
+<div><span class="a">   ▲</span> Each name gets a public DNS record with this device's LAN address, 192.168.1.60.</div>
+<div><span class="a">   ▲</span> Some routers hide private addresses in DNS answers. Press t to test this network.</div>
+<div class="r"><span>   <span class="a">▲</span> shop.home.example.com</span><span class="a">Hidden by this network</span></div>
+<div class="d">     Your router hides it. Allow home.example.com in its rebinding exceptions.</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> fields  <span class="a">type</span> to edit  <span class="a">↵</span> save  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -503,6 +503,65 @@ pub struct WebOverview {
     /// Why local sites are not being served, and what to do about it.
     pub local_problem: Option<String>,
     pub local_remedy: Option<String>,
+    /// One row per served host, public and local.
+    pub certs: Vec<CertRow>,
+    pub acme: AcmeView,
+}
+
+impl WebOverview {
+    pub fn cert(&self, host: &str) -> Option<&CertRow> {
+        self.certs.iter().find(|c| c.host == host)
+    }
+
+    /// The certificate rows of one site, as the screens key sites.
+    pub fn site_certs<'a>(&'a self, site: &'a str) -> impl Iterator<Item = &'a CertRow> + 'a {
+        self.certs.iter().filter(move |c| c.site == site)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertKind {
+    Public,
+    /// A local site named under the owner's domain.
+    LocalDomain,
+    /// A `.local` name with the device's own CA.
+    LocalInternal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertRow {
+    pub site: String,
+    pub host: String,
+    pub kind: CertKind,
+    pub state: nodo_api::CertState,
+    pub issuer: String,
+    pub days_left: Option<u64>,
+    /// Such as "3 days ago".
+    pub renewed: Option<String>,
+    /// `HTTP-01`, `TLS-ALPN-01` or `DNS-01`.
+    pub challenge: Option<String>,
+    pub problem: Option<String>,
+    pub problem_detail: Option<String>,
+}
+
+/// The certificate choices and what the helper picked.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AcmeView {
+    pub email: String,
+    pub staging: bool,
+    /// Set when a test ACME server replaces Let's Encrypt, to its address.
+    pub test_server: Option<String>,
+    /// DNS-01 through the provider, so no port is needed.
+    pub dns01: bool,
+    /// The method in words, or why ports are needed.
+    pub challenge: String,
+    /// Extra fields the provider's certificate module needs, such as GoDaddy's key and secret.
+    pub dns01_fields: Vec<String>,
+    pub dns01_stored: bool,
+    pub local_domain: Option<String>,
+    pub local_address: Option<String>,
+    /// SHA-256 of the local CA root, for checking it when trusting it on a computer.
+    pub local_ca: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -684,6 +743,16 @@ pub trait ScreenData {
     fn reachability(&mut self, site: &str) -> Reachability;
     fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String>;
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
+    fn save_acme(&mut self, _settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
+        Err("Certificate settings are not available here.".to_owned())
+    }
+    /// The provider's separate certificate credentials, as two fields such as key and secret.
+    fn save_dns01(&mut self, _first: &Secret, _second: &Secret) -> Result<(), String> {
+        Err("Certificate settings are not available here.".to_owned())
+    }
+    fn check_local_names(&mut self) -> Result<Vec<nodo_api::LocalNameCheck>, String> {
+        Err("Checking local names is not available here.".to_owned())
+    }
 
     fn document(&self, kind: &DocKind) -> Document;
 

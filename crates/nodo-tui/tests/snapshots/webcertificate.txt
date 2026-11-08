@@ -1,0 +1,32 @@
+Web › shop › Certificate                                                     ◆ Getting a certificate
+┌ shop.example.com ────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ shop.example.com is configured on this device                                                  │
+│ ◆ Asking Let's Encrypt to prove control of the name                       DNS-01 through Porkbun │
+│ ○ Certificate in place                                                                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ What happens now ────────────────────────────────────────────────────────────────────────────────┐
+│ Let's Encrypt checks that you control shop.example.com. It usually takes under a minute.         │
+│ Browsers show an error for the address until the certificate is in place.                        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+r refresh  l proxy log  d domains and certificates  Esc back

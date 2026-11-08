@@ -141,6 +141,64 @@ fn check_label(id: &str, status: nodo_api::CheckStatus) -> &'static str {
 }
 
 impl HelperBackend {
+    /// Certificate rows keyed like the sites, and the ACME choices. Empty when the helper is too
+    /// old to report them, so nothing is invented.
+    fn certificates(&self) -> (Vec<CertRow>, AcmeView) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let report = match self.ask(Request::CertificateStatus) {
+            Ok(Response::Certificates(report)) => Some(report),
+            _ => None,
+        };
+        let names = self.sites.borrow().clone();
+        let key = |id: &SiteId| {
+            names.iter().find(|(_, v)| *v == id).map_or_else(|| id.package.clone(), |(k, _)| k.clone())
+        };
+        let certs = report
+            .as_ref()
+            .map(|r| {
+                r.hosts
+                    .iter()
+                    .map(|h| CertRow {
+                        site: key(&h.site),
+                        host: h.host.clone(),
+                        kind: match h.kind {
+                            nodo_api::HostKind::Public => CertKind::Public,
+                            nodo_api::HostKind::LocalDomain => CertKind::LocalDomain,
+                            nodo_api::HostKind::LocalInternal => CertKind::LocalInternal,
+                        },
+                        state: h.state,
+                        issuer: h.issuer.clone().unwrap_or_default(),
+                        days_left: h.not_after.map(|t| t.saturating_sub(now) / 86_400),
+                        renewed: h.last_renewal.map(ago),
+                        challenge: h.challenge.as_deref().map(|c| c.to_ascii_uppercase()),
+                        problem: h.last_error.as_ref().map(|e| e.summary.clone()),
+                        problem_detail: h.last_error.as_ref().map(|e| e.detail.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut acme = AcmeView::default();
+        if let Ok(Response::AcmeSettings(info)) = self.ask(Request::AcmeSettings) {
+            let (dns01, challenge) = match info.challenge {
+                nodo_api::ChallengeChoice::Dns01 { provider } => (true, format!("DNS-01 through {provider}")),
+                nodo_api::ChallengeChoice::PortsNeeded { reason } => (false, reason),
+            };
+            acme = AcmeView {
+                email: info.email.unwrap_or_default(),
+                staging: info.staging,
+                test_server: info.test_server.then_some(info.directory),
+                dns01,
+                challenge,
+                dns01_fields: info.dns01_fields,
+                dns01_stored: info.dns01_stored,
+                local_domain: info.local_domain,
+                local_address: info.local_address,
+                local_ca: report.and_then(|r| r.local_ca_fingerprint),
+            };
+        }
+        (certs, acme)
+    }
+
     fn dns_providers(&self) -> Vec<nodo_api::DnsProviderDetail> {
         match self.ask(Request::ListDnsProviders) {
             Ok(Response::DnsProviders(list)) => list,
@@ -594,8 +652,9 @@ impl ScreenData for HelperBackend {
             })
             .collect();
         *self.sites.borrow_mut() = map;
+        let (certs, acme) = self.certificates();
         let Some(status) = status else {
-            return WebOverview { sites, ..WebOverview::default() };
+            return WebOverview { sites, certs, acme, ..WebOverview::default() };
         };
         let provider = status.provider.as_deref().map(|id| {
             self.dns_providers().into_iter().find(|p| p.id == id).map_or_else(|| id.to_owned(), |p| p.name)
@@ -612,8 +671,11 @@ impl ScreenData for HelperBackend {
             reachable: false,
             local_problem: status.local_unavailable,
             local_remedy: status.local_remedy,
+            certs,
+            acme,
         }
     }
+
 
     fn providers(&self) -> Vec<Provider> {
         let list = self.dns_providers();
@@ -733,6 +795,32 @@ impl ScreenData for HelperBackend {
     fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
         let request = Request::SetPublicHost { site: self.site_id(site), host: host.to_owned() };
         self.ask(request).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn save_acme(&mut self, settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
+        self.ask(Request::SetAcmeSettings(settings.clone())).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn save_dns01(&mut self, first: &Secret, second: &Secret) -> Result<(), String> {
+        let fields = match self.ask(Request::AcmeSettings) {
+            Ok(Response::AcmeSettings(info)) => info.dns01_fields,
+            Ok(_) => return Err("unexpected reply".to_owned()),
+            Err(e) => return Err(e.to_string()),
+        };
+        let fields = fields
+            .into_iter()
+            .zip([first, second])
+            .map(|(name, value)| (name, nodo_api::Secret::new(value.expose())))
+            .collect();
+        self.ask(Request::SetDns01Credentials { fields }).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn check_local_names(&mut self) -> Result<Vec<nodo_api::LocalNameCheck>, String> {
+        match self.ask(Request::CheckLocalNames) {
+            Ok(Response::LocalNames(list)) => Ok(list),
+            Ok(_) => Err("unexpected reply".to_owned()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     fn set_public_access(&mut self, _site: &str, access: &PublicAccess) -> Result<(), String> {

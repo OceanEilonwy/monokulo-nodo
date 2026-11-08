@@ -23,6 +23,14 @@ pub fn fixture(id: ScreenId) -> (App, MockBackend) {
     if matches!(id, ScreenId::WebExposure | ScreenId::WebCheck | ScreenId::WebConfirm | ScreenId::WebCgnat) {
         mock.web.sites[0].exposure = Exposure { local: true, onion: true, public: false };
     }
+    // Just after confirming: Caddy is still getting the certificate.
+    if id == ScreenId::WebCertificate {
+        let shop = &mut mock.web.certs[0];
+        shop.state = nodo_api::CertState::Obtaining;
+        shop.days_left = None;
+        shop.renewed = None;
+        shop.issuer = String::new();
+    }
     let mut app = App::new();
     app.data = load_snapshot(&mut mock).expect("the mock always answers");
     mock.calls.clear();
@@ -186,6 +194,24 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 error: None,
             })
         }
+        ScreenId::WebDomain => {
+            let mut state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
+            state.under_domain = true;
+            state.focus = DomainFocus::UnderDomain;
+            state.checks = Some(Ok(vec![nodo_api::LocalNameCheck {
+                host: "shop.home.example.com".to_owned(),
+                address: "192.168.1.60".to_owned(),
+                published: vec!["192.168.1.60".to_owned()],
+                resolves_to: Vec::new(),
+                verdict: nodo_api::LocalNameVerdict::Blocked,
+                explanation: "Your router hides it. Allow home.example.com in its rebinding exceptions.".to_owned(),
+            }]));
+            Screen::WebDomain(state)
+        }
+        ScreenId::WebCertificate => Screen::WebCertificate(CertificateState {
+            site: "shop".to_owned(),
+            host: "shop.example.com".to_owned(),
+        }),
         ScreenId::WebCgnat => Screen::WebCgnat(CgnatState {
             site: "shop".to_owned(),
             wan_address: "100.72.14.9".to_owned(),

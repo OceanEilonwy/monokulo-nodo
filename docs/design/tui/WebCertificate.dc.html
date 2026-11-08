@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting a certificate</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Web <span class="d">›</span> shop <span class="d">›</span> <b>Certificate</b></div><div class="a">◆ Getting a certificate</div></div>
+<div class="p" style="margin-top:8px"><div class="pt">shop.example.com</div>
+<div class="r"><span><span class="ok">✓</span> shop.example.com is configured on this device</span><span></span></div>
+<div class="r"><span><span class="a">◆</span> Asking Let's Encrypt to prove control of the name</span><span class="d">DNS-01 through Porkbun</span></div>
+<div class="r"><span><span class="d">○</span> Certificate in place</span><span></span></div>
+</div>
+<div class="p" style="flex:1;margin-top:8px"><div class="pt">What happens now</div>
+<div>Let's Encrypt checks that you control shop.example.com. It usually takes under a minute.</div>
+<div class="d">Browsers show an error for the address until the certificate is in place.</div>
+<div style="height:16px"></div>
+<div class="d">When it fails, this panel turns red with the reason: which challenge failed, a rate limit,</div>
+<div class="d">DNS that points somewhere else, or a CAA record that forbids Let's Encrypt.</div>
+</div>
+<div class="r d"><span><span class="a">r</span> refresh  <span class="a">l</span> proxy log  <span class="a">d</span> domains and certificates  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 25, "24 design files plus the auto-update screen");
+    assert_eq!(ScreenId::ALL.len(), 27, "26 design files plus the auto-update screen");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -282,6 +282,19 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "Use IPv6 if your ISP provides it", "Only IPv6 visitors can reach you", "Connect your own relay tunnel",
             "Needs a server you control", "Your domain stays connected. Run this check again if your connection changes.",
             "↑↓ choose", "↵ continue", "r check again", "Esc back",
+        ],
+        ScreenId::WebDomain => &[
+            "Web › Domains", "✓ Certificates in place", "example.com", "Porkbun", "DNS-01 through Porkbun",
+            "No open ports needed.", "shop.example.com", "✓ Valid, 61 days left",
+            "Email for expiry notices", "me@example.com", "Use the staging server", "Untrusted certificates, for testing",
+            "site.local, with this device's own CA", "Browsers warn until you trust it", "Under your domain: site.home.example.com",
+            "Real certificates through DNS-01", "this device's LAN address, 192.168.1.60", "Press t to test this network.",
+            "shop.home.example.com", "Hidden by this network", "rebinding exceptions", "↵ save", "Esc back",
+        ],
+        ScreenId::WebCertificate => &[
+            "Web › shop › Certificate", "◆ Getting a certificate", "shop.example.com is configured on this device",
+            "Asking Let's Encrypt to prove control of the name", "DNS-01 through Porkbun", "Certificate in place",
+            "What happens now", "It usually takes under a minute.", "r refresh", "l proxy log", "Esc back",
         ],
         ScreenId::Setup => &["Set up this device", "Device passphrase", "There is no default passphrase"],
         ScreenId::Backup => &[

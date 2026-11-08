@@ -289,6 +289,10 @@ fn going_public_requires_typing_the_exact_address() {
     assert!(exposure_calls(&mock).is_empty(), "Enter in the field only moves on to the button");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
+    // Going public follows the certificate, and only says it is in place once Caddy has one.
+    assert_eq!(app.screen.id(), ScreenId::WebCertificate);
+    assert!(screen_text(&app).contains("✓ Certificate in place"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, KeyCode::Esc);
     assert_eq!(app.screen.id(), ScreenId::WebSites);
     assert!(!mock.public_access["shop"].require_password);
 }
@@ -401,6 +405,10 @@ fn providers_without_an_api_are_unsupported_with_no_guided_move() {
 fn a_supported_provider_can_be_tested_and_saved() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     key(&mut app, &mut mock, KeyCode::Char('d'));
+    assert_eq!(app.screen.id(), ScreenId::WebDomain);
+    // Off the email field, p opens the provider list.
+    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('p')]);
+    assert_eq!(app.screen.id(), ScreenId::WebProviders);
     key(&mut app, &mut mock, DOWN);
     key(&mut app, &mut mock, KeyCode::Char('t'));
     assert!(screen_text(&app).contains("✕ Enter the domain and both"));
@@ -414,6 +422,8 @@ fn a_supported_provider_can_be_tested_and_saved() {
     assert!(!screen.contains("api-value-123") && !screen.contains("secret-value-456"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(mock.stored_provider.as_ref().unwrap().provider, "Cloudflare");
+    assert_eq!(app.screen.id(), ScreenId::WebDomain);
+    key(&mut app, &mut mock, KeyCode::Esc);
     assert_eq!(app.screen.id(), ScreenId::WebSites);
     assert!(screen_text(&app).contains("Cloudflare"));
 }

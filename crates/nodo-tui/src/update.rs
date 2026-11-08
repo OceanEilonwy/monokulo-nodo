@@ -212,6 +212,8 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebCheck => web_check_key(app, key),
         ScreenId::WebConfirm => web_confirm_key(app, key),
         ScreenId::WebCgnat => cgnat_key(app, key),
+        ScreenId::WebDomain => domain_key(app, key),
+        ScreenId::WebCertificate => certificate_key(app, key),
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
     }
@@ -237,6 +239,13 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             ProviderFocus::SecretKey => Some(&mut state.secret_key),
         },
         Screen::WebConfirm(state) if state.focus == ConfirmFocus::Address => Some(&mut state.typed),
+        Screen::WebDomain(state) => match state.focus {
+            DomainFocus::Email => Some(&mut state.email),
+            DomainFocus::UnderDomain => Some(&mut state.local_domain),
+            DomainFocus::Dns01First => Some(&mut state.dns01_first),
+            DomainFocus::Dns01Second => Some(&mut state.dns01_second),
+            DomainFocus::Staging | DomainFocus::DotLocal => None,
+        },
         Screen::Setup(SetupState { step: SetupStep::Passphrase { first, second, confirming }, .. }) => {
             Some(if *confirming { second } else { first })
         }
@@ -349,6 +358,8 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
             .into_iter()
             .collect(),
         Screen::Home { .. } if app.ticks % (10 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
+        // Caddy works on the certificate in the background, so its progress is read again.
+        Screen::WebCertificate(_) if app.ticks % (2 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
         _ => Vec::new(),
     }
 }
@@ -1351,7 +1362,10 @@ fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 );
             }
         }
-        KeyCode::Char('d') => push(app, Screen::WebProviders(ProvidersState::new(&domain))),
+        KeyCode::Char('d') => {
+            let state = DomainState::new(&app.data.web.acme, &domain);
+            push(app, Screen::WebDomain(state));
+        }
         KeyCode::Char('t') => {
             if let Some(site) = current {
                 return vec![Effect::CheckReachability { site: site.package.clone(), going_public: false }];
@@ -1449,6 +1463,67 @@ fn exposure_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 fn provider_credentials(state: &ProvidersState) -> (String, Secret, Secret) {
     (state.domain.text().trim().to_owned(), state.api_key.secret_value(), state.secret_key.secret_value())
+}
+
+fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let acme = app.data.web.acme.clone();
+    let domain = app.data.web.domain.clone();
+    let order = DomainState::order(&acme);
+    let Screen::WebDomain(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    let at = order.iter().position(|f| *f == state.focus).unwrap_or(0);
+    match key.code {
+        KeyCode::Esc => {
+            pop(app);
+            return Vec::new();
+        }
+        KeyCode::Tab | KeyCode::Down => state.focus = order[(at + 1) % order.len()],
+        KeyCode::BackTab | KeyCode::Up => state.focus = order[(at + order.len() - 1) % order.len()],
+        KeyCode::Char(' ') if !state.focus.is_text() || state.focus == DomainFocus::UnderDomain => match state.focus {
+            DomainFocus::Staging => state.staging = !state.staging,
+            DomainFocus::DotLocal => state.under_domain = false,
+            _ => state.under_domain = true,
+        },
+        KeyCode::Char('p') if !state.focus.is_text() => {
+            push(app, Screen::WebProviders(ProvidersState::new(&domain)));
+        }
+        KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
+        KeyCode::Enter => {
+            let text = |input: &Input| Some(input.text().trim().to_owned()).filter(|t| !t.is_empty());
+            let settings = nodo_api::AcmeSettingsInput {
+                email: text(&state.email),
+                staging: state.staging,
+                local_domain: if state.under_domain { text(&state.local_domain) } else { None },
+            };
+            let dns01 = (!state.dns01_first.is_empty() && !state.dns01_second.is_empty())
+                .then(|| (state.dns01_first.take_secret(), state.dns01_second.take_secret()));
+            return vec![Effect::SaveAcme { settings, dns01 }];
+        }
+        _ => {
+            if state.focus == DomainFocus::UnderDomain {
+                state.under_domain = true;
+            }
+            if let Some(input) = focused_input(&mut app.screen) {
+                edit_input(input, key);
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn certificate_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => pop(app),
+        KeyCode::Char('r') => return vec![Effect::Refresh],
+        KeyCode::Char('l') => return open_logs(app, "System"),
+        KeyCode::Char('d') => {
+            let state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
+            push(app, Screen::WebDomain(state));
+        }
+        _ => {}
+    }
+    Vec::new()
 }
 
 fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1875,6 +1950,28 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         },
+        Event::AcmeSaved(result) => match result {
+            Ok(()) => {
+                if let Screen::WebDomain(state) = &mut app.screen {
+                    state.error = None;
+                    state.dns01_first.clear();
+                    state.dns01_second.clear();
+                }
+                notice(app, NoticeKind::Ok, "Certificate settings saved and applied.");
+            }
+            Err(text) => {
+                if let Screen::WebDomain(state) = &mut app.screen {
+                    state.error = Some(text);
+                } else {
+                    fail(app, text);
+                }
+            }
+        },
+        Event::LocalNamesChecked(result) => {
+            if let Screen::WebDomain(state) = &mut app.screen {
+                state.checks = Some(result);
+            }
+        }
         Event::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
         Event::Key(_) | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
     }
@@ -1996,9 +2093,17 @@ fn on_exposure_set(app: &mut App, after: ExposureAfter, result: Result<(), ApiEr
         }
         ExposureAfter::Stay => notice(app, NoticeKind::Ok, "Exposure updated."),
         ExposureAfter::WentPublic => {
+            let target = match &app.screen {
+                Screen::WebConfirm(state) => Some(CertificateState { site: state.site.clone(), host: state.plan.host.clone() }),
+                _ => None,
+            };
             app.stack.clear();
             app.screen = Screen::Web { selected: 0 };
             notice(app, NoticeKind::Ok, "The site is now public. Take it offline at any time from here.");
+            // Success is only claimed once a real certificate is in place, which this screen follows.
+            if let Some(target) = target {
+                push(app, Screen::WebCertificate(target));
+            }
         }
     }
     Vec::new()

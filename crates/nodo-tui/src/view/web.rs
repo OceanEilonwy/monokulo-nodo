@@ -41,8 +41,13 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
         } else {
             "Off".to_owned()
         };
+        let public_cert = site.public_host.as_deref().filter(|_| e.public).and_then(|host| web.cert(host));
         let status = if site.locked {
             t.a("◆ Device locked")
+        } else if public_cert.is_some_and(|c| matches!(c.state, nodo_api::CertState::Failed | nodo_api::CertState::Expired)) {
+            t.e("✕ No certificate")
+        } else if public_cert.is_some_and(|c| matches!(c.state, nodo_api::CertState::Obtaining | nodo_api::CertState::Waiting)) {
+            t.a("◆ Getting certificate")
         } else {
             match online_count(e) {
                 0 => t.d("Off"),
@@ -78,7 +83,7 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
         vec![
             pair("Domain", t.n(web.domain.clone())),
             pair("Provider", t.n(web.provider.clone())),
-            pair("Certificates", t.o(web.certificates.clone())),
+            pair("Certificates", super::certs::overview_line(t, web)),
         ],
     );
     let ddns = Panel::new(
@@ -101,6 +106,13 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
             Line::from(if web.reachable { t.o("✓ Reachable") } else { t.e("✕ Not reachable") }),
         )
     };
+    if let Some(bad) = web.certs.iter().find(|c| c.problem.is_some() && c.state != nodo_api::CertState::Valid) {
+        rows.push(Item::Blank);
+        rows.push(Item::Text(Line::from(vec![
+            t.e(format!("✕ {}: ", bad.host)),
+            t.n(bad.problem.clone().unwrap_or_default()),
+        ])));
+    }
     if let Some(problem) = &web.local_problem {
         rows.push(Item::Blank);
         rows.push(Item::Text(Line::from(vec![t.a("▲ Local sites are unavailable: "), t.n(problem.clone())])));
@@ -157,12 +169,22 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         (draft.public, t.a("▲"), "Public internet", host, saved.public, "Anyone, at your own domain"),
     ];
     let mut items = Vec::new();
+    let web = &app.data.web;
+    let cert_of = |index: usize| match index {
+        // Only a name under the owner's domain has a public certificate worth a line here.
+        0 => web.site_certs(&state.site).find(|c| c.kind == CertKind::LocalDomain),
+        2 => site.public_host.as_deref().filter(|_| saved.public).and_then(|host| web.cert(host)),
+        _ => None,
+    };
     for (index, (on, symbol, label, address, was_on, note)) in rows.into_iter().enumerate() {
         let selected = index == state.selected;
         let left = Line::from(vec![t.n(mark(selected, &format!(" {} ", checkbox(on)))), symbol, t.n(format!(" {label}"))]);
         let right = Line::from(vec![t.n(format!("{address}  ")), status(was_on, on)]);
         items.push(if selected { Item::Selected(left, right) } else { Item::Row(left, right) });
         items.push(Item::Text(Line::from(t.d(format!("       {note}")))));
+        if let Some(cert) = cert_of(index) {
+            items.push(Item::Text(super::certs::exposure_note(t, cert)));
+        }
         if index < 2 {
             items.push(Item::Blank);
         }

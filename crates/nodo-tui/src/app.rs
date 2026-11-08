@@ -72,6 +72,8 @@ pub enum ScreenId {
     WebConfirm,
     WebCgnat,
     AutoUpdate,
+    WebDomain,
+    WebCertificate,
     /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
     Setup,
     /// Backups and restore. It has no design file either, and follows the others' style.
@@ -79,7 +81,7 @@ pub enum ScreenId {
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 25] = [
+    pub const ALL: [ScreenId; 27] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -105,6 +107,8 @@ impl ScreenId {
         ScreenId::WebConfirm,
         ScreenId::WebCgnat,
         ScreenId::AutoUpdate,
+        ScreenId::WebDomain,
+        ScreenId::WebCertificate,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -135,6 +139,8 @@ impl ScreenId {
             ScreenId::WebConfirm => "webconfirm",
             ScreenId::WebCgnat => "webcgnat",
             ScreenId::AutoUpdate => "autoupdate",
+            ScreenId::WebDomain => "webdomain",
+            ScreenId::WebCertificate => "webcertificate",
             ScreenId::Setup => "setup",
             ScreenId::Backup => "backup",
         }
@@ -498,6 +504,69 @@ pub struct WebConfirmState {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainFocus {
+    Email,
+    Staging,
+    DotLocal,
+    UnderDomain,
+    Dns01First,
+    Dns01Second,
+}
+
+impl DomainFocus {
+    /// Fields that take typing rather than a toggle.
+    pub fn is_text(self) -> bool {
+        matches!(self, DomainFocus::Email | DomainFocus::UnderDomain | DomainFocus::Dns01First | DomainFocus::Dns01Second)
+    }
+}
+
+/// Domains and certificates: the ACME email, staging, local names and DNS-01 credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainState {
+    pub focus: DomainFocus,
+    pub email: Input,
+    pub staging: bool,
+    pub under_domain: bool,
+    pub local_domain: Input,
+    pub dns01_first: Input,
+    pub dns01_second: Input,
+    pub checks: Option<Result<Vec<nodo_api::LocalNameCheck>, String>>,
+    pub error: Option<String>,
+}
+
+impl DomainState {
+    pub fn new(acme: &AcmeView, domain: &str) -> Self {
+        let suggested = if domain.contains('.') { format!("home.{domain}") } else { String::new() };
+        Self {
+            focus: DomainFocus::Email,
+            email: Input::plain(acme.email.clone()),
+            staging: acme.staging,
+            under_domain: acme.local_domain.is_some(),
+            local_domain: Input::plain(acme.local_domain.clone().unwrap_or(suggested)),
+            dns01_first: Input::secret(),
+            dns01_second: Input::secret(),
+            checks: None,
+            error: None,
+        }
+    }
+
+    pub fn order(acme: &AcmeView) -> Vec<DomainFocus> {
+        let mut order = vec![DomainFocus::Email, DomainFocus::Staging, DomainFocus::DotLocal, DomainFocus::UnderDomain];
+        if !acme.dns01_fields.is_empty() {
+            order.extend([DomainFocus::Dns01First, DomainFocus::Dns01Second]);
+        }
+        order
+    }
+}
+
+/// A public or local host while Caddy gets its certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateState {
+    pub site: String,
+    pub host: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgnatState {
     pub site: String,
@@ -535,6 +604,8 @@ pub enum Screen {
     WebCheck(WebCheckState),
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
+    WebDomain(DomainState),
+    WebCertificate(CertificateState),
     Setup(SetupState),
     Backup(BackupState),
 }
@@ -567,6 +638,8 @@ impl Screen {
             Screen::WebCheck(_) => ScreenId::WebCheck,
             Screen::WebConfirm(_) => ScreenId::WebConfirm,
             Screen::WebCgnat(_) => ScreenId::WebCgnat,
+            Screen::WebDomain(_) => ScreenId::WebDomain,
+            Screen::WebCertificate(_) => ScreenId::WebCertificate,
             Screen::Setup(_) => ScreenId::Setup,
             Screen::Backup(_) => ScreenId::Backup,
         }
@@ -743,6 +816,9 @@ pub enum Effect {
     CheckReachability { site: String, going_public: bool },
     TestProvider { provider: String, domain: String, api_key: Secret, secret_key: Secret },
     SaveProvider { provider: String, domain: String, api_key: Secret, secret_key: Secret },
+    /// `dns01` holds the provider's separate certificate credentials, when it needs them.
+    SaveAcme { settings: nodo_api::AcmeSettingsInput, dns01: Option<(Secret, Secret)> },
+    CheckLocalNames,
     ShowDocument(DocKind),
     CopyReport(String),
     InitEncryption(Secret),
@@ -791,6 +867,8 @@ pub enum Event {
     Reachability { site: String, going_public: bool, result: Reachability },
     ProviderTested(Result<String, String>),
     ProviderSaved(Result<(), String>),
+    AcmeSaved(Result<(), String>),
+    LocalNamesChecked(Result<Vec<nodo_api::LocalNameCheck>, String>),
     DocumentLoaded(Document),
     SetupDone(Result<(), ApiError>),
     SshKeysLoaded(Result<Vec<nodo_api::SshKey>, String>),

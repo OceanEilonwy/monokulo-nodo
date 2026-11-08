@@ -1,6 +1,7 @@
 //! Rendering. Each screen builds a `Page` from the state, and `layout` fits it to the terminal.
 
 mod backup;
+mod certs;
 mod home;
 mod install;
 pub mod layout;
@@ -55,6 +56,8 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebCheck(state) => web::check(t, state),
         Screen::WebConfirm(state) => web::confirm(app, t, state),
         Screen::WebCgnat(state) => web::cgnat(t, state),
+        Screen::WebDomain(state) => certs::domain(app, t, state),
+        Screen::WebCertificate(state) => certs::certificate(app, t, state),
         Screen::Setup(state) => setup::setup(t, state),
         Screen::Backup(state) => backup::backup(t, state),
     };
