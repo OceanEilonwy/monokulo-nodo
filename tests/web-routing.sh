@@ -20,6 +20,19 @@ fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 expect() { name=$1; want=$2; got=$3; if [ "$got" = "$want" ]; then echo "PASS $name"; else echo "FAIL $name: want $want, got $got"; fail=1; fi; }
 
+# Services stay linked between runs and are only switched down, with a down file so a reboot keeps
+# them down. Removing a link makes runsv linger while its log runs, and a lingering one ignores the
+# next start.
+service_up() {
+	rm -f "/etc/sv/$1/down"
+	ln -sfn "/etc/sv/$1" "/etc/runit/runsvdir/default/$1"
+	i=0; until sv -w 5 up "$1" >/dev/null 2>&1 || [ "$i" -ge 10 ]; do i=$((i+1)); sleep 2; done
+}
+service_down() {
+	[ -d "/etc/sv/$1" ] || return 0
+	touch "/etc/sv/$1/down"
+	sv -w 15 down "$1" >/dev/null 2>&1
+}
 cleanup() {
 	pkill -u nobody -x nodo-caddy 2>/dev/null
 	for ns in weblan webinet; do
@@ -28,10 +41,9 @@ cleanup() {
 	done
 	ip link del weblan0 2>/dev/null
 	ip link del webinet0 2>/dev/null
-	for s in nodo-caddy nodo-mdns nodo-localnet; do sv -w 10 stop "$s" >/dev/null 2>&1; done
-	rm -f /etc/runit/runsvdir/default/nodo-mdns /etc/runit/runsvdir/default/nodo-localnet
+	for s in nodo-caddy nodo-mdns nodo-localnet; do service_down "$s"; done
 	rm -f /etc/sv/nodo-localnet/conf /var/lib/nodo-localnet/mdns-names
-	rm -f /etc/runit/runsvdir/default/nodo-caddy /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
+	rm -f /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
 	nft -f /etc/nftables.conf
 	rm -rf /tmp/up-shop /tmp/up-blog /tmp/body
 }
@@ -91,23 +103,18 @@ ip netns exec webinet ip route add 192.168.77.0/24 via "$wan"
 
 # The local address comes first, because Caddy binds its local listener to it.
 printf 'MODE=static\nPARENT=weblan0\nADDRESS=%s/24\n' "$local" > /etc/sv/nodo-localnet/conf
-start_service() {
-	ln -sfn "/etc/sv/$1" "/etc/runit/runsvdir/default/$1"
-	# runsvdir rescans every few seconds. A supervisor left from an earlier run remembers being stopped.
-	i=0; until sv -w 5 start "$1" >/dev/null 2>&1 || [ "$i" -ge 8 ]; do i=$((i+1)); sleep 2; done
-}
-start_service nodo-localnet
+service_up nodo-localnet
 i=0; until grep -q '^status=ready' /run/nodo-localnet/state 2>/dev/null || [ "$i" -ge 15 ]; do i=$((i+1)); sleep 1; done
 grep -qx "address=$local" /run/nodo-localnet/state && ip -4 addr show dev weblan0 | grep -q "inet $local/24"
 result "static local address is up and reported" "$?"
 install -m 644 "$fix/mdns-names" /var/lib/nodo-localnet/mdns-names
-start_service nodo-mdns
+service_up nodo-mdns
 
 install -m 640 -g _caddy "$fix/caddy.json" /var/lib/nodo-web/caddy.json
 install -m 644 "$fix/web.nft" /etc/nftables.d/nodo-web.nft
 nft -f /etc/nftables.conf
 result "generated nftables rules load" "$?"
-start_service nodo-caddy
+service_up nodo-caddy
 # 10444 is 28CC in /proc/net/tcp.
 i=0; until { [ -s "$root_crt" ] && grep -q ':28CC ' /proc/net/tcp; } || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
 sv status nodo-caddy | grep -q '^run:'

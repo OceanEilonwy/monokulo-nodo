@@ -6,19 +6,31 @@ set -u
 fail=0
 state=/run/nodo-localnet/state
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+# Services stay linked between runs and are only switched down, with a down file so a reboot keeps
+# them down. Removing a link makes runsv linger while its log runs, and a lingering one ignores the
+# next start.
+service_up() {
+	rm -f "/etc/sv/$1/down"
+	ln -sfn "/etc/sv/$1" "/etc/runit/runsvdir/default/$1"
+	i=0; until sv -w 5 up "$1" >/dev/null 2>&1 || [ "$i" -ge 10 ]; do i=$((i+1)); sleep 2; done
+}
+service_down() {
+	[ -d "/etc/sv/$1" ] || return 0
+	touch "/etc/sv/$1/down"
+	sv -w 15 down "$1" >/dev/null 2>&1
+}
 cleanup() {
-	sv -w 20 stop nodo-localnet >/dev/null 2>&1
-	rm -f /etc/runit/runsvdir/default/nodo-localnet /etc/sv/nodo-localnet/conf
+	service_down nodo-localnet
+	rm -f /etc/sv/nodo-localnet/conf
 	ip link del lnhost 2>/dev/null
 	ip netns del lnpeer 2>/dev/null
 }
 trap cleanup EXIT
 run_with() {
 	printf '%s\n' "$@" > /etc/sv/nodo-localnet/conf
-	sv -w 20 stop nodo-localnet >/dev/null 2>&1
+	sv -w 20 down nodo-localnet >/dev/null 2>&1
 	rm -f "$state"
-	ln -sfn /etc/sv/nodo-localnet /etc/runit/runsvdir/default/nodo-localnet
-	i=0; until sv -w 5 start nodo-localnet >/dev/null 2>&1 || [ "$i" -ge 8 ]; do i=$((i+1)); sleep 2; done
+	service_up nodo-localnet
 }
 wait_status() { i=0; until grep -q "^status=$1" "$state" 2>/dev/null || [ "$i" -ge "$2" ]; do i=$((i+1)); sleep 1; done; grep -q "^status=$1" "$state"; }
 
