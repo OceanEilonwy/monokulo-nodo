@@ -324,6 +324,8 @@ impl<S: System> Helper<S> {
             );
             Ok(())
         })?;
+        // A reinstall starts the record afresh, so the files of versions it replaced go.
+        self.prune_kept();
 
         if let Err(problem) = self.place_manifest(package, &app_dir, &manifest) {
             let report = progress.fail(3, problem);
@@ -427,6 +429,8 @@ impl<S: System> Helper<S> {
             state.approved.remove(package);
             Ok(())
         });
+        // No longer installed, so nothing can roll back to its kept files.
+        self.prune_kept();
         let note = match removed {
             Ok(()) => "The package files were removed again.".to_owned(),
             Err(e) => format!("Removing the package files failed too: {e}"),

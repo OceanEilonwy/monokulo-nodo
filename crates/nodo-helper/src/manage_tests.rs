@@ -237,7 +237,9 @@ impl PackageBackend for FakePackages {
     }
 
     fn remove_tree(&self, path: &Path) -> Result<(), String> {
-        self.0.lock().unwrap().log.push(format!("rmtree {}", path.display()));
+        let mut inner = self.0.lock().unwrap();
+        inner.log.push(format!("rmtree {}", path.display()));
+        inner.kept.retain(|k| !k.starts_with(path));
         Ok(())
     }
 
@@ -255,6 +257,20 @@ impl PackageBackend for FakePackages {
 
     fn remove_kept(&self, path: &Path) {
         self.0.lock().unwrap().kept.remove(path);
+    }
+
+    fn kept_entries(&self, dir: &Path) -> Vec<PathBuf> {
+        let inner = self.0.lock().unwrap();
+        let mut found: Vec<PathBuf> = inner
+            .kept
+            .iter()
+            .flat_map(|file| file.ancestors().skip(1).zip(file.ancestors()))
+            .filter(|(parent, _)| *parent == dir)
+            .map(|(_, child)| child.to_path_buf())
+            .collect();
+        found.sort();
+        found.dedup();
+        found
     }
 }
 
@@ -709,6 +725,67 @@ mod manual_rollback {
         assert_eq!(list[0].previous, "1.1_1");
     }
 
+    fn kept_files(packages: &FakePackages) -> Vec<String> {
+        packages.0.lock().unwrap().kept.iter().map(|p| p.display().to_string()).collect()
+    }
+
+    /// A kept file no record names, as an older helper or a lost write would leave one.
+    fn leave_stray(packages: &FakePackages, path: &str) {
+        packages.0.lock().unwrap().kept.insert(PathBuf::from(path));
+    }
+
+    #[test]
+    fn no_more_than_one_previous_version_is_kept_whatever_was_left_before() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        leave_stray(&packages, "/s/packages/demo/demo-0.9_1.x86_64.xbps");
+        packages.publish("1.2_1", &manifest(""));
+        update_to(&h, "1.2_1");
+        assert_eq!(
+            kept_files(&packages),
+            ["/s/packages/demo/demo-1.1_1.x86_64.xbps", "/s/packages/demo/demo-1.2_1.x86_64.xbps"],
+            "the installed version and the one previous version only"
+        );
+        let Ok(Response::UpdateResults(results)) = roll_back(&h, "1.1_1") else { panic!() };
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert_eq!(kept_files(&packages), ["/s/packages/demo/demo-1.1_1.x86_64.xbps"]);
+    }
+
+    #[test]
+    fn a_reinstall_removes_the_previous_version_it_no_longer_offers() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        assert_eq!(kept_files(&packages).len(), 2);
+        let Ok(Response::InstallReport(report)) = install(&h, approve(&review(&h))) else { panic!() };
+        assert_eq!(report.problem, None, "{report:?}");
+        assert!(rollbacks(&h).is_empty());
+        assert_eq!(kept_files(&packages), ["/s/packages/demo/demo-1.1_1.x86_64.xbps"]);
+    }
+
+    #[test]
+    fn the_kept_files_of_a_package_that_is_no_longer_installed_are_removed() {
+        let (h, packages) = installed();
+        leave_stray(&packages, "/s/packages/gone/gone-1.0_1.x86_64.xbps");
+        leave_stray(&packages, "/s/packages/gone/gone-0.9_1.x86_64.xbps");
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        assert!(!kept_files(&packages).iter().any(|k| k.starts_with("/s/packages/gone/")), "{:?}", kept_files(&packages));
+        assert!(packages.log().iter().any(|l| l == "rmtree /s/packages/gone"));
+    }
+
+    #[test]
+    fn a_failed_first_install_removes_the_file_it_kept() {
+        let (h, packages) = setup();
+        add_feed(&h);
+        let r = review(&h);
+        h.sys.fail("useradd");
+        let Ok(Response::InstallReport(report)) = install(&h, approve(&r)) else { panic!() };
+        assert!(report.problem.is_some(), "{report:?}");
+        assert!(kept_files(&packages).is_empty(), "{:?}", kept_files(&packages));
+    }
+
     #[test]
     fn rollbacks_wait_while_the_disk_is_low() {
         let (h, packages) = installed();
@@ -1057,6 +1134,27 @@ mod backups {
         assert_eq!(proxy.0.lock().unwrap().0, 1, "applied once, by the restore itself");
         assert!(report.restored.contains(&"site exposure applied to the proxy".to_owned()), "{report:?}");
         assert!(report.restored.contains(&"public host names".to_owned()), "{report:?}");
+    }
+
+    #[test]
+    fn the_node_onion_choice_is_backed_up_restored_and_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy = Proxy::default();
+        let on = "enabled = true\n";
+        fs::write(dir.path().join("node-onion.toml"), on).unwrap();
+        let h = with_proxy(&dir, &proxy);
+        let path = h.node_onion_path();
+        assert_eq!(path, dir.path().join("node-onion.toml"));
+        let Ok(Response::BackupCreated(created)) = create(&h, None) else { panic!() };
+        // Turned off after the backup: the restore must bring it back on.
+        h.sys.put(&path.display().to_string(), b"enabled = false\n");
+        let Ok(Response::Restored(report)) = restore(&h, &created.info.name, "backup passphrase 1", "restore") else {
+            panic!()
+        };
+        assert_eq!(h.sys.get(&path.display().to_string()).unwrap(), on.as_bytes());
+        assert!(h.sys.calls().contains(&format!("write {} mode=644 group=-", path.display())), "{:?}", h.sys.calls());
+        assert!(report.restored.contains(&"node onion address choice".to_owned()), "{report:?}");
+        assert_eq!(proxy.0.lock().unwrap().0, 1, "Tor's config is written again at once");
     }
 
     #[test]

@@ -916,6 +916,9 @@ impl<S: System> Helper<S> {
             let log = updater.logs.remove(&c.package).unwrap_or_default();
             results.push(result_of(&outcome, log));
         }
+        if !run.is_empty() {
+            self.prune_kept();
+        }
         {
             let _guard = lock(&self.manage.state);
             self.save_update_state(&updates)?;
@@ -1020,6 +1023,9 @@ impl<S: System> Helper<S> {
         let candidates: Vec<Candidate> = records.iter().map(CandidateRecord::candidate).collect();
         let mut updater = Updater::new(self, &records, None);
         let outcomes = auto::run(&policy, &mut updates, &candidates, &Live(self), &mut updater, now);
+        if !outcomes.is_empty() {
+            self.prune_kept();
+        }
         {
             let _guard = lock(&self.manage.state);
             self.save_update_state(&updates)?;

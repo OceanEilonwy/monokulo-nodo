@@ -52,7 +52,7 @@ const STATE_FILE: WriteOptions = WriteOptions {
 };
 
 impl<S: System> Helper<S> {
-    fn node_onion_path(&self) -> PathBuf {
+    pub(crate) fn node_onion_path(&self) -> PathBuf {
         self.paths.exposure_state.with_file_name("node-onion.toml")
     }
 

@@ -195,7 +195,12 @@ offers it, and `RollbackPackage` (the TUI's Home › Rollbacks) puts it back thr
 the data is copied, the kept file reinstalled, the old version health checked, and on failure the
 newer version and its data come back. The version left is then held. It refuses data already in a
 newer layout than the old version's, a kept file asking for permissions no longer approved, a locked
-device, low disk, and data on the data drive.
+device, low disk, and data on the data drive. After every update, rollback, install and USB
+restore the helper removes kept files nothing names: all of a package that is no longer installed
+(the helper has no uninstall request yet, so today that means a first install that failed, or files
+a restored device's records do not name), and for an installed package anything beyond its current
+version's file and the one previous version, so a reinstall or an interrupted earlier run never
+leaves a second older copy behind (`prune_kept`, unit tested in `manage_tests.rs`).
 
 **Encrypted packages across updates.** An update never touches the LUKS volume itself: the new
 version starts on the same volume with the same key. Two manifest fields describe what a version
@@ -335,7 +340,7 @@ The chain data stays on the NVMe drive and is not touched.
 ## 5. Backups and USB recovery
 
 `crates/nodo-backup`. A backup holds settings (`/var/lib/nodo/settings`, `exposure.toml`,
-`bindings.toml`, `/etc/apps/<id>`), secrets, Caddy's storage, the unwrapped device key, the
+`node-onion.toml`, `bindings.toml`, `/etc/apps/<id>`), secrets, Caddy's storage, the unwrapped device key, the
 contents of unlocked encrypted volumes and Tor onion keys, never chain data. It also holds
 `feeds.toml` (feeds, pinned keys and version floors, approvals, what each package was installed
 from), the auto-update policy and holds in `/var/lib/nodo/updates`, and the verified package files

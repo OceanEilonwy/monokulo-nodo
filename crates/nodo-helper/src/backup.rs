@@ -49,6 +49,15 @@ const UPDATES_SOURCE: &str = "updates";
 const PUBLIC_HOSTS_SOURCE: &str = "public-hosts";
 /// What a restore reports when it put the site choices back.
 const EXPOSURE_RESTORED: &str = "site exposure";
+/// Whether the node has its own onion address, `/var/lib/nodo/node-onion.toml`.
+const NODE_ONION_SOURCE: &str = "node-onion";
+/// What a restore reports when it put the node onion choice back.
+const NODE_ONION_RESTORED: &str = "node onion address choice";
+/// The node onion choice is world-readable, like the helper writes it.
+const NODE_ONION_FILE: WriteOptions = WriteOptions {
+    mode: 0o644,
+    group: None,
+};
 /// The verified package files kept for rollback, under the packages category.
 const KEPT_SOURCE: &str = "kept";
 /// The data layout a volume's data is in, at the top of the volume, root-owned.
@@ -260,6 +269,13 @@ impl<S: System> Helper<S> {
                 category: Category::Settings,
                 name: PUBLIC_HOSTS_SOURCE.into(),
                 path: self.paths.public_hosts.clone(),
+            },
+            // The node onion switch, so a restore brings the node's onion address back on with
+            // the onion keys that come with it.
+            Source {
+                category: Category::Settings,
+                name: NODE_ONION_SOURCE.into(),
+                path: self.node_onion_path(),
             },
             // Role bindings, approved grants and data drive choices.
             Source {
@@ -672,6 +688,16 @@ impl<S: System> Helper<S> {
                 .atomic_write(&self.paths.exposure_state, &bytes, KEY_FILE)?;
             report.restored.push(EXPOSURE_RESTORED.into());
         }
+        let node_onion = staged(&format!("settings/{NODE_ONION_SOURCE}"));
+        if node_onion.is_file() {
+            let bytes = fs::read(&node_onion).map_err(io)?;
+            let path = self.node_onion_path();
+            if let Some(dir) = path.parent() {
+                self.sys.ensure_dir(dir, 0o755, None)?;
+            }
+            self.sys.atomic_write(&path, &bytes, NODE_ONION_FILE)?;
+            report.restored.push(NODE_ONION_RESTORED.into());
+        }
         if staged("secrets/nodo").exists() {
             tree(&staged("secrets/nodo"), &p.secrets)?;
             report.restored.push("secrets".into());
@@ -889,6 +915,8 @@ impl<S: System> Helper<S> {
                 report.restarted.push(id.to_owned());
             }
         }
+        // Kept files the restored records no longer name, such as an older device's leftovers.
+        self.prune_kept();
         Ok(())
     }
 
@@ -896,7 +924,13 @@ impl<S: System> Helper<S> {
     /// rather than at the proxy's next reload. A failure leaves the restore standing and says
     /// so, since the files are in place and the next change or unlock applies them.
     fn apply_restored_exposure(&self, report: &mut RestoreReport) {
-        if !report.restored.iter().any(|r| r == EXPOSURE_RESTORED) {
+        // The node onion goes through the same plan as site exposure: Tor's config is written
+        // from both, so either one restored means applying it.
+        if !report
+            .restored
+            .iter()
+            .any(|r| r == EXPOSURE_RESTORED || r == NODE_ONION_RESTORED)
+        {
             return;
         }
         match self.apply_saved_exposure() {
