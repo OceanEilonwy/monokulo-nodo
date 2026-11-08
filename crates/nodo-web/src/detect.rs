@@ -43,15 +43,22 @@ impl IpSource {
 
 /// Plain-text echo services run by separate operators. Each hostname serves one address family, so the
 /// connection itself fixes which address is reported.
+///
+/// The operator is whoever could change the answer. Cloudflare runs icanhazip, and api.ipify.org is
+/// served through Cloudflare, so the two count as one vote for IPv4. api6.ipify.org is not behind
+/// Cloudflare. Checked on 2026-11-08: every IPv4 URL answered 200 with a bare address, and all agreed.
+/// The IPv6 hostnames have AAAA records only, but were not fetched, as the checking machine had no IPv6.
 pub fn default_sources() -> Vec<IpSource> {
     vec![
-        IpSource::new("ipify", "https://api.ipify.org", Family::V4),
-        IpSource::new("icanhazip", "https://ipv4.icanhazip.com", Family::V4),
+        IpSource::new("cloudflare", "https://api.ipify.org", Family::V4),
+        IpSource::new("cloudflare", "https://ipv4.icanhazip.com", Family::V4),
         IpSource::new("amazon", "https://checkip.amazonaws.com", Family::V4),
         IpSource::new("ident.me", "https://v4.ident.me", Family::V4),
+        IpSource::new("wtfismyip", "https://ipv4.wtfismyip.com/text", Family::V4),
         IpSource::new("ipify", "https://api6.ipify.org", Family::V6),
-        IpSource::new("icanhazip", "https://ipv6.icanhazip.com", Family::V6),
+        IpSource::new("cloudflare", "https://ipv6.icanhazip.com", Family::V6),
         IpSource::new("ident.me", "https://v6.ident.me", Family::V6),
+        IpSource::new("wtfismyip", "https://ipv6.wtfismyip.com/text", Family::V6),
     ]
 }
 
@@ -246,8 +253,9 @@ mod tests {
         for family in [Family::V4, Family::V6] {
             let mut operators: Vec<_> =
                 default_sources().into_iter().filter(|s| s.family == family).map(|s| s.operator).collect();
+            operators.sort();
             operators.dedup();
-            assert!(operators.len() >= 3, "{family:?}");
+            assert!(operators.len() >= 4, "{family:?}");
         }
     }
 }
