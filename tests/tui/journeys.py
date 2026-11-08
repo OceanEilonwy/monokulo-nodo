@@ -605,26 +605,16 @@ def restore_entry():
 
 
 def onion():
-    ctl("set", "cuprated", "restricted_rpc", "bool", "0")
-    with Journey("Onion: the node needs restricted RPC"), Session() as tui:
-        tui.send("tab", "tab")
-        tui.wait_for("Sites", timeout=20)
-        tui.send("n")
-        tui.expect("n opens the onion screen with the node and the site", "Web › Onion addresses", "cuprated",
-                   "tui-shop › shop", timeout=30)
-        tui.expect("the node says restricted RPC is off", "restricted RPC is off")
-        tui.send("space")
-        tui.expect("turning it on says where restricted RPC is", "Restricted RPC on the network")
-        check("nothing was stored", "enabled = true" not in sh("cat /var/lib/nodo/node-onion.toml 2>/dev/null || true"))
-        tui.quit()
-    ctl("set", "cuprated", "restricted_rpc", "bool", "1")
+    # cuprated always serves restricted RPC on 127.0.0.1:18081, so the node needs no setting first.
     tor = os.path.isdir("/etc/sv/tor")
     with Journey("Onion: node and site on and off"), Session() as tui:
         tui.send("tab", "tab")
         tui.wait_for("Sites", timeout=20)
         tui.send("n")
-        tui.expect("with restricted RPC on the node can go on Tor", "restricted RPC, port 18089", timeout=30,
-                   absent=("restricted RPC is off",))
+        tui.expect("n opens the onion screen with the node and the site", "Web › Onion addresses", "cuprated",
+                   "tui-shop › shop", timeout=30)
+        tui.expect("the node can go on Tor with no setting first", "restricted RPC, port 18081", timeout=30,
+                   absent=("no restricted RPC port",))
         tui.send("space")
         # The checkbox follows the stored choice, with or without Tor. Working… is the TUI busy.
         tui.expect("Space turns the node's onion address on", re.compile(r"\[x\] cuprated"), timeout=90,
@@ -635,9 +625,10 @@ def onion():
         check("the helper stored the choice", "enabled = true" in stored, stored)
         if tor:
             torrc = sh("cat /var/lib/nodo-web/torrc")
-            check("Tor forwards only to the restricted RPC", "HiddenServicePort 18089 127.0.0.1:18089" in torrc
-                  and "18081" not in torrc, torrc)
-            tui.expect("the node's onion address is shown", re.compile(r"[a-z2-7]{56}\.onion:18089"), timeout=90)
+            ports = [line for line in torrc.splitlines() if line.startswith("HiddenServicePort") and "18081" in line]
+            check("Tor forwards only to the restricted RPC on loopback",
+                  ports == ["HiddenServicePort 18081 127.0.0.1:18081"], torrc)
+            tui.expect("the node's onion address is shown", re.compile(r"[a-z2-7]{56}\.onion:18081"), timeout=90)
         else:
             say("SKIP Tor side: tor is not installed")
         tui.send("space")
@@ -657,7 +648,6 @@ def onion():
         tui.send("esc")
         tui.expect("Esc goes back to the sites", "Sites")
         tui.quit()
-    ctl("set", "cuprated", "restricted_rpc", "bool", "0")
 
 
 def rollbacks():

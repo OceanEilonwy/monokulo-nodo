@@ -70,6 +70,9 @@ ip link add "$iface" link "$PARENT" address "$(cat "$mac_file")" type macvlan mo
 for i in "$PARENT" "$iface"; do
 	sysctl -qw "net.ipv4.conf.$i.arp_ignore=1" "net.ipv4.conf.$i.arp_announce=2"
 done
+# The local address is IPv4 only. Without this the kernel would give the interface IPv6
+# addresses from router advertisements, which dhcpcd's ipv4only block does not stop.
+sysctl -qw "net.ipv6.conf.$iface.disable_ipv6=1"
 ip link set "$iface" up || unavailable failed "ip link set up"
 report waiting "interface=$iface"
 

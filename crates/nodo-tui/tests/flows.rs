@@ -1644,7 +1644,7 @@ fn n_on_web_opens_the_onion_screen_with_the_node_and_sites() {
     let (app, mock) = open_onion();
     let screen = screen_text(&app);
     assert!(screen.contains("Web › Onion addresses"), "{screen}");
-    assert!(screen.contains("nod…xyz.onion:18089"), "{screen}");
+    assert!(screen.contains("nod…xyz.onion:18081"), "{screen}");
     assert!(screen.contains("http://abc…xyz.onion"), "{screen}");
     assert!(mock.calls.iter().any(|c| matches!(c, Request::OnionStatus)));
 }
@@ -1658,23 +1658,33 @@ fn the_node_onion_turns_off_and_on_through_the_helper() {
     assert!(screen_text(&app).contains("[ ] cuprated"), "{}", screen_text(&app));
     key(&mut app, &mut mock, ENTER);
     assert!(mock.node_onion.enabled);
-    assert!(screen_text(&app).contains("nod…xyz.onion:18089"));
+    assert!(screen_text(&app).contains("nod…xyz.onion:18081"));
 }
 
 #[test]
-fn the_node_onion_needs_restricted_rpc_and_says_where_to_turn_it_on() {
+fn the_node_onion_is_offered_with_no_setting_to_turn_on_first() {
+    // cuprated always serves restricted RPC, so the node can go on Tor straight away.
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    assert!(!mock.node_onion.enabled);
+    mock.calls.clear();
+    key(&mut app, &mut mock, SPACE);
+    assert!(mock.calls.contains(&Request::SetNodeOnion { enabled: true }), "{:?}", mock.calls);
+    assert!(mock.node_onion.enabled);
+    assert!(!screen_text(&app).contains("settings first"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_node_without_a_restricted_rpc_port_is_never_put_on_tor() {
     let (mut app, mut mock) = open_onion();
     key(&mut app, &mut mock, SPACE);
     mock.node_onion.restricted_rpc = false;
     key(&mut app, &mut mock, KeyCode::Char('g'));
-    assert!(screen_text(&app).contains("restricted RPC is off"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("no restricted RPC port to serve"), "{}", screen_text(&app));
     mock.calls.clear();
     key(&mut app, &mut mock, SPACE);
-    assert!(screen_text(&app).contains("Restricted RPC on the network"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("does not say which port serves its restricted RPC"), "{}", screen_text(&app));
     assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetNodeOnion { .. })), "nothing was asked");
-    // s asks for the node's settings form, where restricted RPC is turned on.
-    let effects = update(&mut app, press(KeyCode::Char('s')));
-    assert_eq!(effects, vec![Effect::OpenSettings("cuprated".to_owned())]);
 }
 
 #[test]

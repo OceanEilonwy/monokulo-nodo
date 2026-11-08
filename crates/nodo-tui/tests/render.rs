@@ -315,8 +315,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "↑↓ move", "Tab device or USB", "n new backup", "u back up to USB", "r restore", "Esc back",
         ],
         ScreenId::Onion => &[
-            "Web › Onion addresses", "● Tor running", "▸[x] cuprated", "restricted RPC, port 18089",
-            "nod…xyz.onion:18089", "[x] shop", "also local, public", "http://abc…xyz.onion", "[ ] moneropay",
+            "Web › Onion addresses", "● Tor running", "▸[x] cuprated", "restricted RPC, port 18081",
+            "nod…xyz.onion:18081", "[x] shop", "also local, public", "http://abc…xyz.onion", "[ ] moneropay",
             "single address", "◆ locked", "About onion addresses",
             "● The node's address serves only its restricted RPC, which wallets use. Never the full RPC.",
             "↑↓ move", "Space turn on or off", "s node settings", "g look again", "Esc back",

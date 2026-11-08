@@ -1,10 +1,11 @@
 //! Tor exposure for the node and the sites, for the TUI's Onion screen.
 //!
 //! Sites use the saved exposure like every other address (`SetExposure`). The node is not a site:
-//! its onion service forwards straight to the node's restricted RPC, never to the full RPC, which
-//! can stop the node and change its settings. It is only configured while the node serves its
-//! restricted RPC (the provider's public `restricted-rpc` setting is true), so turning restricted
-//! RPC off also takes the onion service down at the next apply.
+//! its onion service forwards straight to the node's restricted RPC on loopback, never to a full
+//! RPC, which can stop the node and change its settings. cuprated serves only restricted RPC, on
+//! 127.0.0.1:18081, and exports that port as its public `restricted-rpc-port` setting. The onion
+//! forwards only to a port exported under that name, so a node that does not say which port is
+//! restricted is never put on Tor.
 
 use std::path::PathBuf;
 
@@ -15,8 +16,8 @@ use crate::catalog::Package;
 use crate::helper::{lock, Helper};
 use crate::system::{System, WriteOptions};
 
-/// Monero's conventional restricted RPC port, used when the node does not export its own.
-pub const RESTRICTED_RPC_PORT: u16 = 18089;
+/// cuprated's restricted RPC port, shown for a node that exports none.
+pub const RESTRICTED_RPC_PORT: u16 = 18081;
 /// Where the node's onion service lives under the helper's Tor directory. Site services are
 /// named `<package>.<site>`, always with a dot, so this name can never clash with one.
 pub const NODE_ONION_DIR: &str = "node-rpc";
@@ -50,10 +51,6 @@ const STATE_FILE: WriteOptions = WriteOptions {
     group: None,
 };
 
-fn truthy(value: Option<String>) -> bool {
-    matches!(value.as_deref(), Some("true" | "1" | "yes"))
-}
-
 impl<S: System> Helper<S> {
     fn node_onion_path(&self) -> PathBuf {
         self.paths.exposure_state.with_file_name("node-onion.toml")
@@ -70,34 +67,27 @@ impl<S: System> Helper<S> {
         Ok(file.enabled)
     }
 
-    /// Whether the node serves restricted RPC, and on which port.
-    fn restricted_rpc(&self, provider: &Package) -> (bool, u16) {
-        if provider.manifest.settings.is_none() {
-            return (false, RESTRICTED_RPC_PORT);
-        }
-        let Ok((packages, _)) = self.packages() else {
-            return (false, RESTRICTED_RPC_PORT);
-        };
-        let read = |name: &str| {
-            self.with_settings(&packages, |ctx| self.settings.public_value(ctx, provider, name))
-                .ok()
-                .flatten()
-        };
-        let port = read("restricted-rpc-port")
+    /// The node's restricted RPC port on loopback, from its public `restricted-rpc-port`
+    /// setting, which cuprated always exports. `None` for a node that does not, which therefore
+    /// never goes on Tor: the only port it exports might be a full RPC.
+    fn restricted_rpc_port(&self, provider: &Package) -> Option<u16> {
+        provider.manifest.settings.as_ref()?;
+        let (packages, _) = self.packages().ok()?;
+        self.with_settings(&packages, |ctx| self.settings.public_value(ctx, provider, "restricted-rpc-port"))
+            .ok()
+            .flatten()
             .and_then(|p| p.parse::<u16>().ok())
             .filter(|p| *p > 0)
-            .unwrap_or(RESTRICTED_RPC_PORT);
-        (truthy(read("restricted-rpc")), port)
     }
 
-    /// The node's onion target while it is wanted and the node serves restricted RPC.
+    /// The node's onion target while it is wanted.
     pub(crate) fn node_onion_target(&self) -> Option<NodeOnionTarget> {
         if !self.node_onion_wanted().unwrap_or(false) {
             return None;
         }
         let provider = self.node_provider().ok()?;
-        let (restricted, port) = self.restricted_rpc(&provider);
-        restricted.then(|| NodeOnionTarget { provider: provider.id().to_owned(), port })
+        let port = self.restricted_rpc_port(&provider)?;
+        Some(NodeOnionTarget { provider: provider.id().to_owned(), port })
     }
 
     pub(crate) fn onion_status(&self) -> Result<Response, ApiError> {
@@ -105,7 +95,9 @@ impl<S: System> Helper<S> {
         let found = self.exposure.onion_addresses(&input)?;
         let node = match self.node_provider() {
             Ok(provider) => {
-                let (restricted_rpc, port) = self.restricted_rpc(&provider);
+                let port = self.restricted_rpc_port(&provider);
+                let restricted_rpc = port.is_some();
+                let port = port.unwrap_or(RESTRICTED_RPC_PORT);
                 let enabled = self.node_onion_wanted()?;
                 Some(NodeOnion {
                     provider: provider.id().to_owned(),
@@ -151,15 +143,15 @@ impl<S: System> Helper<S> {
         }))
     }
 
-    /// Turning it on needs a node serving restricted RPC. Turning it off always works.
+    /// Turning it on needs a node that exports its restricted RPC port, which cuprated always
+    /// does. Turning it off always works.
     pub(crate) fn set_node_onion(&self, enabled: bool) -> Result<Response, ApiError> {
         if enabled {
             let provider = self.node_provider()?;
-            let (restricted, _) = self.restricted_rpc(&provider);
-            if !restricted {
+            if self.restricted_rpc_port(&provider).is_none() {
                 return Err(ApiError::Failed(format!(
-                    "turn on restricted RPC in {}'s settings first. The onion address only ever \
-                     serves the restricted RPC",
+                    "{} does not say which port serves its restricted RPC, and the onion address \
+                     only ever serves the restricted RPC",
                     provider.id()
                 )));
             }
@@ -229,12 +221,12 @@ scope = "local"
         }
     }
 
-    fn setup(restricted: bool) -> (Helper<FakeSystem>, Recorder) {
+    fn setup(exports_restricted_port: bool) -> (Helper<FakeSystem>, Recorder) {
         let sys = FakeSystem::default();
         sys.add_manifest(SHOP);
         sys.add_manifest(NODE);
-        if restricted {
-            sys.put("/s/public/node/restricted-rpc", b"true");
+        if exports_restricted_port {
+            sys.put("/s/public/node/restricted-rpc-port", b"18081");
         }
         let recorder = Recorder::default();
         let h = Helper::new(sys, AllowedUids::new([1000]), Box::new(TestPolicy), Box::new(recorder.clone()))
@@ -250,7 +242,7 @@ scope = "local"
     }
 
     #[test]
-    fn the_node_onion_needs_restricted_rpc() {
+    fn a_node_that_exports_no_restricted_port_never_goes_on_tor() {
         let (h, recorder) = setup(false);
         let err = h.handle(1000, Request::SetNodeOnion { enabled: true }).unwrap_err();
         assert!(err.to_string().contains("restricted RPC"), "{err}");
@@ -270,7 +262,7 @@ scope = "local"
         assert_eq!(applied, Some(NodeOnionTarget { provider: "node".into(), port: RESTRICTED_RPC_PORT }));
         let node = status(&h).node.unwrap();
         assert!(node.enabled && node.restricted_rpc);
-        assert_eq!(node.address.as_deref(), Some("nodeaddr.onion:18089"));
+        assert_eq!(node.address.as_deref(), Some("nodeaddr.onion:18081"));
 
         h.handle(1000, Request::SetNodeOnion { enabled: false }).unwrap();
         assert_eq!(recorder.0.lock().unwrap().last().cloned().unwrap(), None);
@@ -278,11 +270,11 @@ scope = "local"
     }
 
     #[test]
-    fn turning_restricted_rpc_off_withdraws_the_node_onion() {
+    fn a_node_that_stops_exporting_its_restricted_port_leaves_tor() {
         let (h, _) = setup(true);
         h.handle(1000, Request::SetNodeOnion { enabled: true }).unwrap();
         assert!(h.node_onion_target().is_some());
-        h.sys.remove("/s/public/node/restricted-rpc");
+        h.sys.remove("/s/public/node/restricted-rpc-port");
         assert_eq!(h.node_onion_target(), None, "the full RPC is never put on Tor");
     }
 
@@ -311,7 +303,7 @@ scope = "local"
         }
         let sys = FakeSystem::default();
         sys.add_manifest(NODE);
-        sys.put("/s/public/node/restricted-rpc", b"true");
+        sys.put("/s/public/node/restricted-rpc-port", b"18081");
         let h = Helper::new(sys, AllowedUids::new([1000]), Box::new(TestPolicy), Box::new(Failing))
             .with_paths(TEST_PATHS());
         assert!(h.handle(1000, Request::SetNodeOnion { enabled: true }).is_err());

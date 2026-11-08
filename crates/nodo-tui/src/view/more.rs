@@ -77,7 +77,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
                 let address = match (&node.address, node.enabled, node.restricted_rpc) {
                     (Some(address), true, _) => t.o(address.clone()),
                     (None, true, true) => t.a("waiting for Tor to make the address"),
-                    (_, _, false) => t.a("restricted RPC is off"),
+                    (_, _, false) => t.a("no restricted RPC port to serve"),
                     (_, false, true) => t.d("off"),
                 };
                 node_items.push(row(

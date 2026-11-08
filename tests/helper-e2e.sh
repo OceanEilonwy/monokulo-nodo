@@ -526,6 +526,17 @@ else
 	echo "SKIP onion: tor is not installed"
 	ctl expose e2e-app shop 1 0 0 >/dev/null
 fi
+# cuprated serves only restricted RPC, on 127.0.0.1:18081, so its onion address needs no setting.
+check "the node onion turns on with no setting first, for the restricted RPC port" sh -c '
+	ctl node-onion 1 && ctl onion-status | tr -d " \n" | tee /tmp/e2e.on | grep -q "restricted_rpc:true,port:18081" &&
+	grep -q "enabled = true" /var/lib/nodo/node-onion.toml'
+if [ -d /etc/sv/tor ]; then
+	check "Tor forwards the node onion only to the restricted RPC on loopback" sh -c '
+		[ "$(grep "^HiddenServicePort 18081" /var/lib/nodo-web/torrc)" = "HiddenServicePort 18081 127.0.0.1:18081" ] &&
+		! grep -q "^HiddenServicePort 18089" /var/lib/nodo-web/torrc'
+fi
+check "the node onion turns off again" sh -c 'ctl node-onion 0 && ! grep -q "node-rpc" /var/lib/nodo-web/torrc 2>/dev/null &&
+	grep -q "enabled = false" /var/lib/nodo/node-onion.toml'
 
 check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'
 # The device was unlocked above, so the credentials can be sealed.

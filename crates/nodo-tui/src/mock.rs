@@ -114,8 +114,8 @@ impl MockBackend {
                 provider: s("cuprated"),
                 enabled: true,
                 restricted_rpc: true,
-                port: 18089,
-                address: Some(s("nod…xyz.onion:18089")),
+                port: 18081,
+                address: Some(s("nod…xyz.onion:18081")),
             },
             rollbacks: vec![
                 nodo_api::RollbackOption {
@@ -294,10 +294,10 @@ impl Backend for MockBackend {
             Request::OnionStatus => Ok(Response::Onion(self.onion_status())),
             Request::SetNodeOnion { enabled } => {
                 if enabled && !self.node_onion.restricted_rpc {
-                    return Err(ApiError::Failed(s("turn on restricted RPC in cuprated's settings first")));
+                    return Err(ApiError::Failed(s("cuprated does not say which port serves its restricted RPC")));
                 }
                 self.node_onion.enabled = enabled;
-                self.node_onion.address = enabled.then(|| s("nod…xyz.onion:18089"));
+                self.node_onion.address = enabled.then(|| s("nod…xyz.onion:18081"));
                 Ok(Response::Ok)
             }
             Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),

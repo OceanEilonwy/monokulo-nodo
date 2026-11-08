@@ -1742,10 +1742,10 @@ settings = "settings.lua"
         assert!(!fragment(&h).contains("18081"));
     }
 
-    /// The shipped cuprated settings tell the helper whether restricted RPC is on, which is all
-    /// the node's onion address may ever serve.
+    /// The shipped cuprated settings export the restricted RPC port, the only port the node's
+    /// onion address may ever reach. RPC is always restricted, so there is no switch for it.
     #[test]
-    fn shipped_cuprated_exports_restricted_rpc() {
+    fn shipped_cuprated_exports_its_restricted_rpc_port() {
         let h = setup();
         h.sys.put(
             "/m/sys/cuprated.toml",
@@ -1761,7 +1761,8 @@ settings = "settings.lua"
             h.with_settings(&packages, |ctx| h.settings.public_value(ctx, cuprated, name))
                 .unwrap()
         };
-        assert_eq!(read("restricted-rpc").as_deref(), Some("false"));
+        assert_eq!(read("restricted-rpc").as_deref(), None);
+        assert_eq!(read("restricted-rpc-port").as_deref(), Some("18081"));
         assert_eq!(read("rpc-port").as_deref(), Some("18081"));
     }
 }

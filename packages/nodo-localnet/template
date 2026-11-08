@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock crates
 pkgname=nodo-localnet
 version=0.1.0
-revision=3
+revision=4
 archs="aarch64 x86_64"
 build_style=cargo
 make_build_args="-p nodo-web --bin nodo-mdns"

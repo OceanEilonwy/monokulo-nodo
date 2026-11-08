@@ -49,7 +49,7 @@ if [ -f /keys ]; then
 fi
 sv="$rootfs/etc/runit/runsvdir/default"
 mkdir -p "$sv"
-for s in sshd dhcpcd chronyd nftables cuprated monokulo-diag; do
+for s in sshd dhcpcd chronyd nftables cuprated monokulo-diag ${BOARD_SERVICES:-}; do
 	[ -d "$rootfs/etc/sv/$s" ] || { echo "missing service: $s" >&2; exit 1; }
 	ln -sfn "/etc/sv/$s" "$sv/$s"
 done
@@ -60,6 +60,8 @@ fi
 [ -z "${BOARD_FSTAB_EXTRA:-}" ] || printf '%s\n' "$BOARD_FSTAB_EXTRA" >> "$rootfs/etc/fstab"
 # base-files owns /etc/issue, so the console banner showing the IP is copied in here.
 cp "$rootfs/usr/share/monokulo/issue" "$rootfs/etc/issue"
+# dhcpcd owns /etc/dhcpcd.conf, so nodo-localnet's interface block is appended here too.
+cat "$rootfs/usr/share/monokulo/dhcpcd-nodo-local.conf" >> "$rootfs/etc/dhcpcd.conf"
 for d in ${BOARD_MKDIRS:-}; do mkdir -p "$rootfs$d"; done
 if [ -n "${BOARD_DECOMPRESS_FIRMWARE:-}" ]; then
 	find "$rootfs/usr/lib/firmware" -name '*.zst' -exec zstd -dqk {} +

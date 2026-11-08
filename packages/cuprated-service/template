@@ -1,9 +1,10 @@
 # Template file for 'cuprated-service'
 pkgname=cuprated-service
 version=0.1.0
-revision=3
+revision=4
 archs="aarch64 x86_64"
-depends="cuprated bubblewrap nftables procps-ng"
+# nodo-confine, which runs last in the sandbox, comes from nodo-tools.
+depends="cuprated nodo-tools bubblewrap nftables procps-ng"
 short_desc="Sandboxed runit service and default config for cuprated"
 maintainer="monokulo-nodo <noreply@localhost>"
 license="GPL-3.0-or-later"

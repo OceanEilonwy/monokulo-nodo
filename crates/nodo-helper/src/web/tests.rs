@@ -789,7 +789,7 @@ fn tor_web() -> NodoWeb<Fake> {
 }
 
 fn with_node(mut input: WebInput) -> WebInput {
-    input.node_onion = Some(crate::onion::NodeOnionTarget { provider: "cuprated".into(), port: 18089 });
+    input.node_onion = Some(crate::onion::NodeOnionTarget { provider: "cuprated".into(), port: 18081 });
     input
 }
 
@@ -801,8 +801,10 @@ fn the_node_onion_forwards_only_to_the_restricted_rpc() {
     web.apply(&node).unwrap();
     let torrc = web.io.get("/web/torrc").unwrap();
     assert!(torrc.contains("HiddenServiceDir /tor/node-rpc\n"), "{torrc}");
-    assert!(torrc.contains("HiddenServicePort 18089 127.0.0.1:18089\n"), "{torrc}");
-    assert!(!torrc.contains("18081"), "the full RPC is never on Tor: {torrc}");
+    // cuprated's only RPC is the restricted one, on loopback.
+    assert!(torrc.contains("HiddenServicePort 18081 127.0.0.1:18081\n"), "{torrc}");
+    let ports: Vec<&str> = torrc.lines().filter(|l| l.starts_with("HiddenServicePort")).collect();
+    assert_eq!(ports, ["HiddenServicePort 18081 127.0.0.1:18081"], "only that port, only on loopback: {torrc}");
     assert!(!web.io.get("/web/caddy.json").unwrap().contains(NODE_ONION), "Caddy has no part in it");
     let found = web.onion_addresses(&node).unwrap();
     assert!(found.tor_installed && found.tor_running);

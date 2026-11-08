@@ -2,6 +2,7 @@
 echo "PASS ssh login with key"
 
 check "boot diagnostics are saved" 'for n in $(seq 1 30); do [ -s /var/log/monokulo-diag/latest.txt ] && break; sleep 2; done; grep -q "== services" /var/log/monokulo-diag/latest.txt && grep -q "run: /var/service/cuprated:" /var/log/monokulo-diag/latest.txt'
+check "nodo-report lists abstract sockets through nodo-healthd" 'nodo-report 2>&1 | sed -n "/^== abstract Unix sockets$/,/^== /p" > /tmp/report-as; grep -q "Landlock ABI" /tmp/report-as && grep -q "^(nodo-healthd exit status [01])$" /tmp/report-as'
 check "console shows the IP address" 'grep -q "\\\\4" /etc/issue'
 check "loopback is up" "ip -o link show lo | grep -q LOWER_UP"
 check "password login disabled" 'sshd -T | grep -qix "passwordauthentication no"'
@@ -10,6 +11,13 @@ check "firewall default drop" 'nft list chain inet monokulo input | grep -q "pol
 check "cuprated service up" 'for n in $(seq 1 24); do sv status cuprated | grep -q "^run:" && exit 0; sleep 5; done; sv status cuprated; exit 1'
 check "cuprated runs as service user" 'ps -o user= -C cuprated | grep -qx _cuprated'
 check "cuprated is sandboxed" 'p=$(pgrep -x cuprated); [ -n "$p" ] && [ ! -e /proc/$p/root/root ] && [ ! -e /proc/$p/root/etc/shadow ] && [ "$(readlink /proc/$p/ns/pid)" != "$(readlink /proc/1/ns/pid)" ]'
+# nodo-confine became cuprated: a seccomp filter and no new privileges, in a user namespace of its
+# own that has no room for another. Kernels without Landlock scoping get a line in the log saying so.
+check "cuprated is confined" 'p=$(pgrep -x cuprated); [ -n "$p" ] && grep -q "^Seccomp:[[:space:]]*2" /proc/$p/status &&
+	grep -q "^NoNewPrivs:[[:space:]]*1" /proc/$p/status && [ "$(readlink /proc/$p/ns/user)" != "$(readlink /proc/1/ns/user)" ] &&
+	unshare -U true && ! nsenter -t "$p" -U -m unshare -U true 2>/dev/null &&
+	if nodo-confine --check | grep -q abstract_scope=yes; then ! grep -q "no Landlock scoping" /var/log/cuprated/current;
+	else grep -q "no Landlock scoping" /var/log/cuprated/current; fi'
 # The guest has no HTTP client and RPC only listens on localhost, so tunnel to it.
 ssh -q -N -L 18081:127.0.0.1:18081 -p 2222 -i /src/build/test-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 &
 tunnel=$!
@@ -20,7 +28,14 @@ while [ "$n" -lt 60 ]; do
 	n=$((n+1)); sleep 5
 done
 if [ "$rpc_ok" = 1 ]; then echo "PASS rpc answers get_info"; tr -d ' \n' < /tmp/get_info.json | cut -c1-300; echo; else echo "FAIL rpc answers get_info"; fail=1; fi
+if grep -q '"restricted": *true' /tmp/get_info.json; then echo "PASS rpc is restricted"; else echo "FAIL rpc is restricted"; fail=1; fi
+# Restricted RPC refuses to stop the node. If it ever stopped, the checks below would fail too.
+curl -s -m 5 -X POST http://127.0.0.1:18081/stop_daemon > /tmp/stop_daemon.out 2>&1
 kill "$tunnel" 2>/dev/null
+check "rpc refuses stop_daemon" 'sleep 3; pgrep -x cuprated >/dev/null && grep -q ":46A1 00000000:0000 0A" /proc/net/tcp'
+# 18081 is 0x46A1 and 18089 0x4699. Listening sockets are state 0A; RPC must listen on 127.0.0.1 only.
+check "rpc listens on loopback only" 'grep -q "^ *[0-9]*: 0100007F:46A1 00000000:0000 0A" /proc/net/tcp &&
+	! grep " 0A " /proc/net/tcp /proc/net/tcp6 | grep -v "0100007F:46A1" | grep -q ":46A1 \|:4699 "'
 check "log is not flooded" '! grep -q "Commands:" /var/log/cuprated/current && [ -z "$(ls /var/log/cuprated/*.s 2>/dev/null)" ]'
 check "refuses to start without its data drive" 'sv -w 120 stop cuprated >/dev/null; echo DATA_MOUNT=/nonexistent > /etc/sv/cuprated/conf; sv start cuprated; sleep 3; r=1; tail -n 5 /var/log/cuprated/current | grep -q "refusing to start" && ! pgrep -x cuprated >/dev/null && r=0; rm -f /etc/sv/cuprated/conf; sv -w 60 restart cuprated >/dev/null; for n in 1 2 3 4 5 6 7 8 9 10 11 12; do pgrep -x cuprated >/dev/null && break; sleep 5; done; exit $r'
 check "stdin prompt is disabled" 'grep -q "disabling STDIN commands" /var/log/cuprated/current'

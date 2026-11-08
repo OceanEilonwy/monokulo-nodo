@@ -29,7 +29,7 @@ pub(super) fn open_rollbacks(app: &mut App) -> Vec<Effect> {
 
 // Onion
 
-/// The node's onion address only ever serves the restricted RPC, so it needs that on. A site
+/// The node's onion address only ever serves the restricted RPC, which cuprated always has. A site
 /// that works from a single address cannot add an onion one beside another.
 pub(super) fn onion_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Onion(state) = &mut app.screen else {
@@ -62,10 +62,12 @@ pub(super) fn onion_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             match rows.get(state.selected) {
                 Some(OnionRow::Node) => {
                     let Some(node) = &status.node else { return Vec::new() };
+                    // cuprated always serves restricted RPC. Another node that does not say which
+                    // port is restricted cannot go on Tor, and no setting changes that.
                     if !node.enabled && !node.restricted_rpc {
                         state.error = Some(format!(
-                            "Turn on “Restricted RPC on the network” in {}'s settings first (press s). \
-                             The onion address only ever serves the restricted RPC.",
+                            "{} does not say which port serves its restricted RPC, so it cannot have \
+                             an onion address. The onion address only ever serves the restricted RPC.",
                             node.provider
                         ));
                         return Vec::new();
