@@ -1,9 +1,10 @@
 # Sourced by checks.sh in the dev VM container. Runs the web proxy tests when nodo-caddy has been built
-# for this board, so boards and tiers without it are unaffected.
+# for this board, so boards and tiers without it are unaffected. Both depend on nodo-tools, which the
+# image does not carry.
 . "/src/boards/$BOARD/board.env"
 ARCH=$BOARD_ARCH
 if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0-9]*.xbps >/dev/null 2>&1; then
-	if push_packages nodo-caddy nodo-localnet >/dev/null && push_mirror_packages curl; then
+	if push_packages nodo-tools nodo-caddy nodo-localnet >/dev/null && push_mirror_packages curl; then
 		echo "PASS web test packages installed"
 		ssh_vm 'rm -rf /tmp/web && mkdir -p /tmp/web'
 		tar -C /src/crates/nodo-web/tests/fixtures/vm -cf - . | ssh_vm 'tar -C /tmp/web -xf -'
