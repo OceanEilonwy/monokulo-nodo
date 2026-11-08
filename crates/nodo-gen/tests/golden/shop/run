@@ -44,6 +44,7 @@ exec chpst -u _shop:_shop bwrap \
 	--dev /dev \
 	--tmpfs /tmp \
 	--setenv HOME /var/lib/apps/shop \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/opt/nodo/apps/shop/bin/shop.server --listen /run/apps/shop/web.sock --name 'Henry'\''s shop'
+	/usr/bin/nodo-confine --unix -- /opt/nodo/apps/shop/bin/shop.server --listen /run/apps/shop/web.sock --name 'Henry'\''s shop'

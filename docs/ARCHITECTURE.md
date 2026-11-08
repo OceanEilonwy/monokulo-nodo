@@ -9,6 +9,19 @@ codebase, and signed xbps packages from user-added feeds.
   `monero-daemon`, never a specific implementation. Cuprate has no ZMQ, I2P or RPC login.
 - **Isolation:** Every service gets its own user, a bubblewrap sandbox and per-user nftables rules, all
   generated from its manifest. AppArmor is not used. Packages never write system configuration.
+- **Sandbox hardening:** Sandboxes keep the host network, so the per-user firewall rules apply, and
+  with it the abstract Unix socket namespace. `nodo-confine` (nodo-tools) runs last in every sandbox
+  and then becomes the service: it puts the service in its own Landlock domain scoped against
+  abstract sockets and signals (Linux 6.12, Landlock ABI 6), and loads a seccomp filter refusing
+  io_uring, foreign syscall ABIs and, for services granted no Unix socket, `socket(AF_UNIX)`. A
+  seccomp filter alone cannot do it, because it sees the address of `connect` and `bind` only as a
+  pointer. Per-service network namespaces would, but would replace the per-user firewall with
+  per-interface routing. On older kernels, such as the T6N's 6.1, services granted a Unix socket
+  (Caddy, apps with a socket upstream or dependency) can still reach abstract sockets, and their
+  log says so; services without one cannot create Unix sockets at all. Sandboxes also get
+  `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The frozen
+  cuprated run script has neither change yet and needs both when it is next updated; a copy with both,
+  tried by hand in the VM, started cuprated, served RPC and stopped cleanly.
 - **Service rules:** Run scripts must `exec </dev/null`, because a console stdin makes cuprated flood its
   log. bwrap does not forward signals and `--die-with-parent` would SIGKILL the child, so `control/t`
   signals the real process. `packages/cuprated-service/` is the reference implementation.
@@ -44,7 +57,14 @@ codebase, and signed xbps packages from user-added feeds.
 - **Feeds:** Users add feeds, so packages are untrusted. Signing keys are pinned, and key changes and
   downgrades need approval. Reject install scripts, setuid files, paths outside the app directory and
   base package names. Feeds stay out of the system repo config. Permissions are shown for approval, and
-  again when an update asks for more.
+  again when an update asks for more. Feeds may be `https://`, `http://` or a directory. Plain HTTP is
+  allowed because the index must name the pinned key and every package must match the index and carry
+  that key's signature, so nothing changed on the way installs. What HTTP leaves open, and the TUI says
+  so when such a feed is added: someone on the path can hold back updates, offer an older signed
+  version still above the installed one, and on first use show a key of their own, which only
+  comparing the fingerprint with the publisher catches. Downloads are bounded in size and time,
+  follow at most five redirects to any host (GitHub release downloads use two), and never from HTTPS
+  down to HTTP.
 - **Auto-update:** Off by default and chosen per package, within a scheduled window. It never installs
   an update that needs new permissions, has a changed feed key, fails install checks, is on hold or needs
   a system restart, and it waits while the device is locked or low on disk. A failed update rolls back

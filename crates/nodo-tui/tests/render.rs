@@ -420,3 +420,31 @@ fn terminal_control_characters_in_data_never_reach_the_screen() {
     let (buffer, _) = draw(&app, 100, 32);
     assert!(!text(&buffer).contains('\u{1b}'));
 }
+
+/// Plain HTTP feeds are allowed, because signatures protect every package, but the screens say
+/// what HTTP leaves open, and only for HTTP.
+#[test]
+fn plain_http_feeds_say_what_signatures_do_not_cover() {
+    use nodo_tui::app::{AddFeedState, Screen};
+    let (mut app, _) = fixture(ScreenId::AddFeed);
+    let (buffer, _) = draw(&app, 100, 32);
+    assert!(!text(&buffer).contains("Plain HTTP"));
+    if let Screen::AddFeed(AddFeedState::Confirm { probe, .. }) = &mut app.screen {
+        probe.address = "http://192.168.1.5:8000/feed".to_owned();
+    } else {
+        panic!("the AddFeed fixture is the confirm step");
+    }
+    let (buffer, report) = draw(&app, 100, 32);
+    let shown = text(&buffer);
+    assert!(report.fits(), "{report:?}\n{shown}");
+    for words in ["Plain HTTP", "nothing changed on the way can install", "hold back updates", "Prefer https://", "Trust this key"] {
+        assert!(shown.contains(words), "{words}\n{shown}");
+    }
+
+    let (mut app, _) = fixture(ScreenId::Feeds);
+    let (buffer, _) = draw(&app, 100, 32);
+    assert!(!text(&buffer).contains("plain HTTP"));
+    app.data.feeds[1].address = "http://192.168.1.5:8000/feed".to_owned();
+    let (buffer, _) = draw(&app, 100, 32);
+    assert!(text(&buffer).contains("plain HTTP: signed, but updates can be held back"), "{}", text(&buffer));
+}

@@ -3,11 +3,11 @@
 # caddy package has neither. Module versions are pinned by files/src/go.mod and go.sum.
 pkgname=nodo-caddy
 version=2.11.4
-revision=1
+revision=2
 archs="aarch64 x86_64"
 build_style=go
 go_import_path="monokulo.local/nodo-caddy"
-depends="bubblewrap nftables procps-ng"
+depends="bubblewrap nodo-tools nftables procps-ng"
 short_desc="Caddy web proxy for monokulo-nodo sites, with DNS provider modules"
 maintainer="monokulo-nodo <noreply@localhost>"
 license="Apache-2.0"

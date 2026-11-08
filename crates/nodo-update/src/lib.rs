@@ -7,11 +7,13 @@
 //!
 //! - [`manifest`]: the signed snapshot manifest and key rotation statements.
 //! - [`trust`]: the device's pinned keys and highest accepted serial.
+//! - [`client`]: the device side, which finds, checks and applies the newest snapshot.
 //! - [`auto`]: the per-package auto-update policy, schedule and engine.
 //! - [`slots`]: the A/B boot record read by the ramdisk and written by the running system.
 //! - [`store`]: persistence behind a trait, so everything here is testable without root.
 
 pub mod auto;
+pub mod client;
 pub mod manifest;
 pub mod slots;
 pub mod store;

@@ -8,46 +8,112 @@ implemented, what was proven in the KVM dev VM, and what is still unproven on th
 Void is a rolling distribution, so a device never follows `current` directly. A bad upstream
 update must stop at the publisher.
 
-**Publisher** (`scripts/publish-snapshot.sh`):
+**Publisher** (`scripts/publish-snapshot.sh`). The update server is plain static files under
+`$SNAPSHOT_ROOT` (default `out/`), served over HTTPS:
+
+```text
+snapshots/<name>/current[/aarch64]        Void's repository, exactly as Void signed it
+snapshots/<name>/nodo/<arch>              this project's packages, signed with the owner's xbps key
+snapshots/<name>/manifest.toml{,.sig}
+channels/<channel>/manifest.toml{,.sig}   the channel's newest snapshot
+channels/<channel>/keys.toml{,.sig}       an optional key rotation statement
+```
 
 1. `fetch <name> <arch>...` copies Void's `<arch>-repodata` exactly as Void signed it, plus every
-   package an image needs, into `out/snapshots/<name>/current/...`. Packages are fetched by
-   `xbps-install -D`, so each one is checked against Void's index and `.sig2` signature.
-2. `test <name> <board>` builds an image using only the snapshot as its Void repository, and for
+   package an image needs. Packages are fetched by `xbps-install -D`, so each one is checked
+   against Void's index and `.sig2` signature. `import <name> <arch> <file>` takes an index
+   fetched elsewhere, without packages, which suits tests and snapshots where no Void package
+   changes.
+2. `nodo <name> <arch> <xbps-key.pem> [dir]` adds this project's packages (default `out/feed/<arch>`)
+   as a second repository, indexed and signed with `xbps-rindex` in the builder container.
+3. `test <name> <board>` builds an image using only the snapshot's two repositories, and for
    `qemu-virt` boots it with the existing boot test. A stamp records the hash of every index tested.
-3. `sign <name> <channel> <serial> <key>` refuses unless each index still matches its test stamp,
-   then writes `manifest.toml` and signs it with `nodo-snapshot` (Ed25519). Signing belongs on an
-   offline machine.
+4. `sign <name> <channel> <serial> <key> [yes|no]` refuses unless each index still matches its
+   test stamp, then writes `manifest.toml` and signs it with `nodo-snapshot` (Ed25519). Every
+   package of the `nodo` repository is pinned by version. `--untested` skips the stamp, for
+   throwaway test keys only.
+5. `publish <name> <channel>` copies the signed manifest to `channels/<channel>/`. Upload
+   `snapshots/<name>` first and `channels/` last.
 
 The manifest (`crates/nodo-update/src/manifest.rs`) states the channel, a strictly increasing
 `serial`, the snapshot name, `published` and `expires` times, whether moving to it needs a restart
-(kernel, libc, init), and for each architecture the repository path and the SHA-256 of its
-`repodata`. Signatures are detached in `manifest.toml.sig`, cover `context || exact bytes`, and are
-checked with `verify_strict`. Unknown fields are refused.
+(kernel, libc, init), and for each architecture its repositories (`void`, and `nodo` for ours)
+with their paths and the SHA-256 of their `repodata`. Signatures are detached in
+`manifest.toml.sig`, cover `context || exact bytes`, and are checked with `verify_strict`.
+Unknown fields are refused.
 
-**Device** (`crates/nodo-update/src/trust.rs`):
+**Device trust** (`crates/nodo-update/src/trust.rs`):
 
-- Trust is seeded from `Pins` in the base image: keys, threshold and `min_serial`, the serial of the
-  snapshot the image was built from. Losing `/var/lib/nodo` therefore cannot allow replays older
-  than the image. A newer image raises the floor and never lowers it.
+- Trust is seeded from `Pins`: keys, threshold and `min_serial`, the serial of the snapshot the
+  image was built from. Losing `/var/lib/nodo` therefore cannot allow replays older than the
+  image. A newer image raises the floor and never lowers it.
 - A manifest is accepted only if enough trusted keys signed it, it is for the device's channel and
-  architecture, its serial is higher than the last accepted one, and, when the clock is
+  architecture, its serial is higher than the last applied one, and, when the clock is
   synchronised (from nodo-health), it has not expired. A second, different manifest with the same
   serial is refused as a conflict. Equal serial and identical bytes is "unchanged".
-- The device then downloads `repodata` from the manifest's path and checks its hash before xbps
-  sees it. xbps keeps verifying Void's own index and package signatures, so a snapshot can only
-  ever contain packages Void signed.
 - **Key rotation:** a `KeyStatement` lists new keys and a threshold, with an increasing sequence,
   and must be signed by enough of the current keys. A device that was offline through several
   rotations applies them in order. Older statements are refused, so a retired key cannot be
-  restored. A manifest signed only by unknown keys is reported as "feed signing key changed" and
+  restored. A manifest signed only by unknown keys is reported as "signed by an unknown key" and
   needs the user, who can approve one exact change (`KeyApproval` names the old and new keys).
 - **Withdrawing a bad snapshot** is a new manifest with a higher serial pointing at an older
   snapshot. That is not a downgrade of trust. Package versions that went backwards then need
-  `xbps-install -f`, which only the installer may run, and only for that withdrawal.
+  `xbps-install -f`, which the client does not do yet, so such a manifest is refused by its
+  version pins today.
 
-Unproven: there is no update server yet, and `publish-snapshot.sh fetch` and `test` have not been
-run against a live mirror. The `sign` path and every client check are covered by unit tests.
+**Device client** (`crates/nodo-update/src/client.rs`, run as root by `nodo-sysupdate check|apply`,
+shipped in nodo-tools). The server comes from `/etc/nodo/system-update.toml` (`server = "..."`) or
+`--server`, the pins from `/usr/share/nodo/snapshot-pins.toml`, and the record of the last applied
+snapshot is `/var/lib/nodo/update/system-trust.toml`. `apply`:
+
+1. applies the channel's key rotation statement, if there is a new one;
+2. downloads and checks the manifest as above;
+3. downloads each repository index the manifest names for this architecture and requires its
+   pinned hash. The index names the key its packages are signed with, so the owner's xbps key is
+   authenticated by the snapshot signature and need not ship in the image: the client writes it to
+   `/var/db/xbps/keys` itself;
+4. writes the verified indexes where xbps keeps its copy of each repository and runs
+   `xbps-install --ignore-conf-repos -R <void> -R <nodo> -yu` without `-S`, so xbps uses exactly
+   those indexes. xbps checks every package's hash and `.sig2` before unpacking it, Void's against
+   Void's key. `/etc/xbps.d` still applies its noextract and ignorepkg settings;
+5. requires every pinned package that is installed to be at its pinned version;
+6. restarts the enabled, running services of the packages that changed, unless the snapshot needs
+   a restart, and only then records the snapshot. A refused or failed update changes no record, so
+   it can be retried.
+
+The server may be `http://` as well as `https://`, for the same reason as feeds: the manifest is
+signed, and everything else is pinned by it. Someone on the network can still withhold updates,
+which `expires` bounds once the clock is synchronised.
+
+**Keys, and keeping them offline.** There are two, both made and used on a machine that is never
+online, such as a laptop with its network hardware removed, booted only for signing:
+
+- The snapshot key (Ed25519): `nodo-snapshot keygen <file>` writes the secret key with mode 600
+  and prints the public key, which goes into `snapshot-pins.toml` in the image. Keep two or
+  three, on separate encrypted USB sticks in separate places, and either list them all with
+  `threshold = 1` (any one can sign, losing one is harmless) or require two. Rotate with a key
+  statement signed by the current keys (`nodo-snapshot sign keys keys.toml <key>`), published
+  as `channels/<channel>/keys.toml`.
+- The xbps key (RSA, `openssl genrsa -out xbps.pem 4096`), used by the `nodo` step. Its public half
+  travels inside the signed index.
+
+The online machine fetches, builds and tests; the snapshot directory is carried to the offline
+machine for `nodo` (which needs the builder image there) and `sign`, and the signed files are
+carried back and uploaded. The tests use throwaway keys made in `build/snapshot-test` by
+`tests/snapshot-prepare.sh`; no real key exists in this repository.
+
+**Checked in the KVM VM** with `tests/snapshot-prepare.sh` and the steps of `tests/snapshot-update.sh`,
+run by hand (the script has not yet run as a whole), with Caddy as the server in a network namespace: a signed snapshot applies over plain HTTP and installs its
+xbps key; unsigned, tampered, foreign-key and expired manifests, a tampered index and a tampered
+package are refused with nothing changed; the next snapshot applies over HTTPS, updates a test
+service package, and the service comes back on the new version while the helper keeps running;
+the older snapshot and a conflicting one with the same serial are refused; and with the record
+deleted, an older snapshot above the image's floor still cannot move a package back.
+
+Not yet: the helper and TUI do not offer system updates and nothing runs `nodo-sysupdate` on a
+schedule; `fetch` and `test` have not been run against a live mirror; no real Void package was
+updated in a test (the test snapshots reuse the VM's own Void index); and a snapshot that needs a
+restart only says so.
 
 ## 2. Auto-update
 
@@ -398,7 +464,8 @@ Still open:
   a new device does not apply the restored site exposure to Caddy until the proxy next reloads.
 - **nodo-tui**: an update that grows encrypted storage is refused on the Updates screen with the
   reason; the passphrase step for it exists only as `nodo-tui --ctl apply-update-pass`.
-- **System snapshots**: there is no update server, so only feed packages update today.
+- **System snapshots**: the server side and the `nodo-sysupdate` client exist (section 1), but the
+  helper, the TUI and a timer do not use them yet, and withdrawing a snapshot needs `xbps-install -f`.
 - **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
   enable the `nodo-healthd` and `nodo-autoupdate` services from nodo-tools, and open the watchdog
   early.

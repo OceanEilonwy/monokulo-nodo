@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use harness::{run_stubbed, Scenario};
-use nodo_gen::{generate, Artifacts, Profile, ResolvedGrants};
+use nodo_gen::{generate, Artifacts, Profile, ResolvedGrants, CONFINE};
 use nodo_manifest::Manifest;
 
 fn reference(file: &str) -> String {
@@ -32,12 +32,31 @@ fn without_comments(text: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The sandbox hardening that the generator adds and the frozen reference does not have yet: a
+/// user namespace with no room for nested ones, and the program started through nodo-confine.
+/// `packages/cuprated-service` is frozen, so its script needs these two changes when it is next
+/// updated. Everything else must still match it exactly.
+fn without_hardening(run: &str) -> String {
+    let hardening = "\t--unshare-user --disable-userns \\\n";
+    assert!(run.contains(hardening), "{run}");
+    let confine = format!("{CONFINE} -- ");
+    assert!(run.contains(&confine), "{run}");
+    run.replace(hardening, "").replace(&confine, "")
+}
+
 #[test]
 fn run_script_matches_reference_line_for_line() {
     assert_eq!(
-        without_comments(&cuprated().run),
+        without_comments(&without_hardening(&cuprated().run)),
         without_comments(&reference("cuprated/run"))
     );
+}
+
+/// Fails once the frozen script gains the hardening, as a reminder to compare it whole again.
+#[test]
+fn frozen_reference_still_lacks_the_hardening() {
+    let original = reference("cuprated/run");
+    assert!(!original.contains("--disable-userns") && !original.contains(CONFINE));
 }
 
 #[test]
@@ -70,7 +89,7 @@ fn nft_matches_reference() {
 /// also execute both and compare every command they invoke.
 #[test]
 fn run_script_behaves_like_reference_in_every_scenario() {
-    let generated = cuprated().run;
+    let generated = without_hardening(&cuprated().run);
     let original = reference("cuprated/run");
     let scenarios = [
         (

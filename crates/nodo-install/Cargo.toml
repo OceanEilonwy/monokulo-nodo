@@ -14,6 +14,8 @@ serde.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
 toml.workspace = true
+# Feed downloads. The same client and TLS stack as nodo-ddns, with the system certificate bundle.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 nodo-settings = { path = "../nodo-settings" }

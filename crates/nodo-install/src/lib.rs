@@ -19,6 +19,7 @@
 //!    repository configuration are never touched.
 //! 8. Confirm the installed version, and only then raise the feed's version floor.
 
+pub mod http;
 mod permissions;
 mod system;
 

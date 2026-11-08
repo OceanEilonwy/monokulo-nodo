@@ -47,12 +47,18 @@ pub fn feeds(app: &App, t: &Theme, selected: usize) -> Page {
         page = page.panel(
             Panel::new(
                 feed.name.clone(),
-                vec![
-                    pair("Address", feed.address.clone()),
-                    pair("Key", feed.fingerprint.clone()),
-                    pair("Added", feed.added.clone()),
-                    pair("Installed from it", installed),
-                ],
+                {
+                    let mut rows = vec![pair("Address", feed.address.clone())];
+                    if is_plain_http(&feed.address) {
+                        rows.push(pair("Connection", "plain HTTP: signed, but updates can be held back".to_owned()));
+                    }
+                    rows.extend([
+                        pair("Key", feed.fingerprint.clone()),
+                        pair("Added", feed.added.clone()),
+                        pair("Installed from it", installed),
+                    ]);
+                    rows
+                },
             )
             .grow(),
         );
@@ -87,7 +93,11 @@ pub fn add_feed(t: &Theme, state: &AddFeedState) -> Page {
         AddFeedState::Confirm { probe, trust_focused } => {
             let signed = if probe.signed { "signed" } else { "NOT signed" };
             let found = format!("✓ Found feed \"{}\", {} packages, {signed}", probe.name, probe.packages);
-            header("Step 2 of 2")
+            let mut page = header("Step 2 of 2");
+            if is_plain_http(&probe.address) {
+                page = page.panel(Panel::error("Plain HTTP", plain_http_warning(t)));
+            }
+            page
                 .panel(Panel::new(
                     "Address",
                     vec![Item::Text(Line::from(t.n(probe.address.clone()))), Item::Text(Line::from(t.o(found)))],
@@ -120,6 +130,23 @@ pub fn add_feed(t: &Theme, state: &AddFeedState) -> Page {
                 ))
         }
     }
+}
+
+/// A feed reached over plain HTTP. Allowed, because every package must still carry a signature
+/// by the pinned key, but the person adding it should know what HTTP leaves open.
+pub fn is_plain_http(address: &str) -> bool {
+    address.starts_with("http://")
+}
+
+fn plain_http_warning(t: &Theme) -> Vec<Item> {
+    [
+        "Signatures still protect every package: nothing changed on the way can install.",
+        "Anyone on the network can hold back updates or offer an older signed version, and",
+        "this key arrives unprotected, so comparing it is your only check. Prefer https://.",
+    ]
+    .into_iter()
+    .map(|line| Item::Text(Line::from(t.n(line))))
+    .collect()
 }
 
 pub fn feed_key(t: &Theme, state: &FeedKeyState) -> Page {

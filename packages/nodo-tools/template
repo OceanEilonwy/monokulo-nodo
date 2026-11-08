@@ -4,10 +4,10 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=1
+revision=2
 archs="aarch64 x86_64"
 build_style=cargo
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update"
 hostmakedepends="pkg-config"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library.
 makedepends="libzstd-devel"
@@ -37,6 +37,10 @@ do_install() {
 	vbin target/${RUST_TARGET}/release/nodo-helper
 	vbin target/${RUST_TARGET}/release/nodo-tui
 	vbin target/${RUST_TARGET}/release/nodo-healthd
+	# Runs last inside every service sandbox, including those of nodo-caddy, nodo-ddns and nodo-mdns.
+	vbin target/${RUST_TARGET}/release/nodo-confine
+	# The system update client. nodo-snapshot, built alongside, is for publishers and stays out.
+	vbin target/${RUST_TARGET}/release/nodo-sysupdate
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate

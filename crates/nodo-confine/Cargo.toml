@@ -1,0 +1,15 @@
+[package]
+name = "nodo-confine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "The last step inside a service sandbox: keeps it away from other services' abstract Unix sockets"
+
+[[bin]]
+name = "nodo-confine"
+path = "src/bin/nodo-confine.rs"
+
+[dependencies]
+libc = "0.2"

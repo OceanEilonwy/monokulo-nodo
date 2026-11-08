@@ -12,6 +12,7 @@ if [ ! -r "$config" ]; then
 	exit 1
 fi
 
+# It needs no Unix socket, so nodo-confine refuses to create any, abstract ones included.
 exec chpst -u _nododdns:_nododdns bwrap \
 	--ro-bind /usr /usr \
 	--symlink usr/bin /bin \
@@ -27,6 +28,7 @@ exec chpst -u _nododdns:_nododdns bwrap \
 	--dev /dev \
 	--tmpfs /tmp \
 	--setenv HOME /var/lib/nodo-ddns \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/usr/bin/nodo-ddns --config "$config"
+	/usr/bin/nodo-confine -- /usr/bin/nodo-ddns --config "$config"
