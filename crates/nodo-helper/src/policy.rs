@@ -885,6 +885,8 @@ settings = "settings.lua"
         sys.put("/p/sys/cuprated/Cuprated.toml.in", TEMPLATE.as_bytes());
         sys.add_manifest(SHOP);
         sys.put("/opt/nodo/apps/shop/settings.lua", SHOP_LUA.as_bytes());
+        // Installed by the helper, so its settings follow cuprated and its service is generated.
+        sys.put("/s/installed/shop", b"");
         Helper::new(
             sys,
             AllowedUids::new([1000]),
@@ -1690,6 +1692,25 @@ settings = "settings.lua"
             1,
             "the grant stays"
         );
+    }
+
+    #[test]
+    fn a_placed_but_uninstalled_package_never_blocks_a_change() {
+        let h = unlocked();
+        // Its settings file is broken, which only matters once it is installed.
+        h.sys.add_manifest(
+            "api_version = 1\nid = \"ghost\"\nversion = \"1\"\nexec = [\"bin/g\"]\nsettings = \"s.lua\"\n",
+        );
+        h.sys.put("/opt/nodo/apps/ghost/s.lua", b"return nil");
+        apply(&h, "cuprated", vec![change("outbound_peers", int(9))]).unwrap();
+        h.handle(
+            1000,
+            Request::Unlock {
+                passphrase: Secret::new(PASS),
+            },
+        )
+        .unwrap();
+        assert!(!h.sys.calls().iter().any(|c| c.contains("ghost")));
     }
 
     #[test]

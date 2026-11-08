@@ -153,7 +153,10 @@ impl<S: System> Helper<S> {
             Err(e) => problems.push(format!("sealing stored secrets: {e}")),
         }
         for package in &packages {
-            if package.manifest.settings.is_none() || matches!(self.is_locked(package), Ok(true)) {
+            if package.manifest.settings.is_none()
+                || !self.is_installed(package)
+                || matches!(self.is_locked(package), Ok(true))
+            {
                 continue;
             }
             let plan =

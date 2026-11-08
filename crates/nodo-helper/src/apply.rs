@@ -120,6 +120,13 @@ struct Transaction {
 impl<S: System> Helper<S> {
     /// The service files a package's settings imply. Only for apps this helper installed: base
     /// system services ship their own, and an app that is not installed has none to replace.
+    /// Base system packages always are. An app is once this helper claimed its id, so a
+    /// manifest the package manager placed but never installed is left alone.
+    pub(crate) fn is_installed(&self, package: &Package) -> bool {
+        package.profile == Profile::System
+            || self.sys.exists(&self.paths.installed.join(package.id()))
+    }
+
     pub(crate) fn service_artifacts(
         &self,
         package: &Package,
@@ -204,7 +211,10 @@ impl<S: System> Helper<S> {
         let (all, _) = self.packages()?;
         let mut units = Vec::new();
         for package in packages {
-            if package.manifest.settings.is_none() || self.is_locked(package)? {
+            if package.manifest.settings.is_none()
+                || !self.is_installed(package)
+                || self.is_locked(package)?
+            {
                 continue;
             }
             let plan = match self.with_settings(&all, |ctx| self.settings.plan(ctx, package, &[])) {
