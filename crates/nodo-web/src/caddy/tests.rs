@@ -32,8 +32,14 @@ fn all_exposures() -> Exposure {
     Exposure { local: true, onion: true, public: true }
 }
 
+const LOCAL_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(192, 168, 1, 60);
+
 fn settings() -> DomainSettings {
-    DomainSettings { domain: Some("example.com".to_owned()), ..DomainSettings::default() }
+    DomainSettings {
+        domain: Some("example.com".to_owned()),
+        local_address: LocalAddress::Ready { address: LOCAL_IP },
+        ..DomainSettings::default()
+    }
 }
 
 /// What a request ends in. A small model of Caddy's routing, so isolation is asserted as behaviour.
@@ -148,7 +154,7 @@ fn one_site_can_be_local_onion_and_public_at_once() {
         kinds,
         vec![
             (AddressKind::Public, "https://shop.example.com"),
-            (AddressKind::Local, "https://shop.local:8443"),
+            (AddressKind::Local, "https://shop.local"),
             (AddressKind::Onion, &*format!("http://{ONION}")),
         ]
     );
@@ -251,7 +257,7 @@ fn the_local_listener_serves_only_local_hosts_to_lan_clients() {
     assert_eq!(request(&plan, "local", "shop.example.com", "/", LAN_CLIENT), Outcome::Dropped);
     assert_eq!(request(&plan, "local", ONION, "/", LAN_CLIENT), Outcome::Dropped);
     let local = &plan.caddy.apps.http.servers["local"];
-    assert_eq!(local.listen, vec![":8443"]);
+    assert_eq!(local.listen, vec!["192.168.1.60:10444"], "bound to the local address only");
     assert_eq!(local.tls_connection_policies[0].matcher.sni, vec!["shop.local"]);
 }
 
@@ -311,8 +317,10 @@ fn ports_80_and_443_open_only_with_a_public_site() {
 
     let local = generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings()).unwrap();
     assert!(local.firewall.public_tcp.is_empty() && local.firewall.redirects.is_empty());
-    assert_eq!(local.firewall.lan_tcp, vec![8443]);
-    assert_eq!(local.firewall.lan_ranges, settings().lan_ranges);
+    let fw = local.firewall.local.as_ref().unwrap();
+    assert_eq!((fw.address, fw.caddy_port), (LOCAL_IP, 10444));
+    assert!(fw.lan_ranges.iter().all(|r| !r.contains(':')));
+    assert_eq!(local.local.mdns_names, vec!["a.local"]);
     assert!(local.caddy.apps.http.servers["local"].automatic_https.disable_redirects);
 
     let onion = generate(&[site("a", "a", 8001, Exposure { onion: true, ..Exposure::default() })], &settings()).unwrap();
@@ -328,37 +336,88 @@ fn ports_80_and_443_open_only_with_a_public_site() {
     .unwrap();
     assert_eq!(public.firewall.public_tcp, vec![80, 443]);
     assert_eq!(public.firewall.redirects, vec![(80, 10080), (443, 10443)]);
-    assert_eq!(public.firewall.lan_tcp, vec![8443]);
+    assert!(public.firewall.local.is_some());
     assert!(!public.caddy.apps.http.servers["public"].automatic_https.disable_redirects);
     assert!(public.caddy.apps.http.servers["local"].automatic_https.disable_redirects);
 }
 
 #[test]
-fn nft_rules_redirect_public_ports_and_limit_the_local_port_to_the_lan() {
+fn nft_rules_keep_the_local_address_apart_from_the_redirects() {
     let plan = generate(
         &[site("a", "a", 8001, Exposure { local: true, public: true, ..Exposure::default() })],
         &settings(),
     )
     .unwrap();
     let rules = render_nft(&plan.firewall);
-    assert!(rules.contains("type nat hook prerouting priority dstnat"));
-    assert!(rules.contains("tcp dport 443 redirect to :10443"));
+    let lan = "{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }";
+    let local_dnat = format!("ip daddr 192.168.1.60 ip saddr {lan} tcp dport 443 dnat ip to 192.168.1.60:10444");
+    let leave = "ip daddr 192.168.1.60 return";
+    let redirect = "tcp dport 443 redirect to :10443";
+    let position = |needle: &str| rules.find(needle).unwrap_or_else(|| panic!("missing: {needle}\n{rules}"));
+    assert!(position(&local_dnat) < position(leave) && position(leave) < position(redirect),
+        "the local address must leave the chain before the public redirects");
     assert!(rules.contains("tcp dport 80 redirect to :10080"));
     assert!(rules.contains("tcp dport 10443 ct status dnat accept"));
-    assert!(rules.contains("ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport { 8443 } accept"));
-    assert!(rules.contains("ip6 saddr { ::1/128, fc00::/7, fe80::/10 } tcp dport { 8443 } accept"));
+    assert!(rules.contains(&format!("ip daddr 192.168.1.60 ip saddr {lan} tcp dport 10444 ct status dnat accept")));
+    assert!(rules.contains(&format!("ip daddr 224.0.0.251 ip saddr {lan} udp dport 5353 accept")));
     assert!(!rules.contains("dport 443 accept"), "the public port itself is never opened");
 
     let local_only = render_nft(
         &generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings()).unwrap().firewall,
     );
-    assert!(!local_only.contains("redirect") && !local_only.contains("prerouting"));
+    assert!(!local_only.contains("redirect to"));
+    assert!(local_only.contains("dnat ip to 192.168.1.60:10444"));
     assert_eq!(render_nft(&FirewallPlan::default()).matches("accept").count(), 0);
 }
 
 #[test]
+fn without_a_local_address_local_sites_wait_and_nothing_falls_back() {
+    let no_address = DomainSettings {
+        local_address: LocalAddress::Unavailable { reason: LocalUnavailable::WirelessParent },
+        ..settings()
+    };
+    let mut shop = site("shop", "shop", 8080, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    let plan = generate(&[shop], &no_address).unwrap();
+
+    assert!(!plan.caddy.apps.http.servers.contains_key("local"));
+    assert!(plan.addresses.iter().all(|a| a.kind != AddressKind::Local));
+    assert_eq!(plan.local.waiting, vec![SiteRef { package: "shop".into(), site: "shop".into() }]);
+    assert_eq!(local_problem(&plan), Some(&LocalUnavailable::WirelessParent));
+    assert!(plan.local.remedy.unwrap().contains("static local address"));
+    let value = serde_json::to_value(&plan.local).unwrap();
+    assert_eq!(value["address"]["reason"]["kind"], "wireless_parent");
+    assert!(plan.firewall.local.is_none());
+    assert!(plan.local.mdns_names.is_empty());
+    // The public and onion addresses keep working, and never pick up the local host.
+    for client in [LAN_CLIENT, INTERNET_CLIENT] {
+        assert_eq!(request(&plan, "public", "shop.local", "/", client), Outcome::Dropped);
+    }
+    assert_eq!(request(&plan, "public", "shop.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    let text = json(&plan).to_string();
+    assert!(!text.contains("shop.local") && !text.contains("10444"));
+
+    let quiet = generate(&[site("a", "a", 8001, Exposure { public: true, ..Exposure::default() })], &no_address).unwrap();
+    assert_eq!(local_problem(&quiet), None, "no local site, nothing to report");
+}
+
+#[test]
+fn the_local_address_must_be_private_and_in_the_lan() {
+    for bad in [[8, 8, 8, 8], [100, 64, 0, 9]] {
+        let settings = DomainSettings {
+            local_address: LocalAddress::Ready { address: std::net::Ipv4Addr::from(bad) },
+            ..settings()
+        };
+        let result = generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings);
+        assert!(matches!(result, Err(WebConfigError::UnsuitableLocalAddress(_))), "{bad:?}");
+    }
+    let narrow = DomainSettings { lan_ranges: vec!["10.0.0.0/8".to_owned()], ..settings() };
+    assert!(generate(&[], &narrow).is_err());
+}
+
+#[test]
 fn upstreams_cannot_use_the_proxy_ports() {
-    for port in [80, 443, 8443, 10080, 10443] {
+    for port in [80, 443, 10080, 10443, 10444] {
         let error = generate(&[site("a", "a", port, Exposure { local: true, ..Exposure::default() })], &settings());
         assert!(matches!(error, Err(WebConfigError::ReservedPort { .. })), "{port}");
     }
@@ -692,7 +751,12 @@ fn vm_fixture_matches_the_generator() {
     vault.state = ServiceState::Locked;
     let mut blog = site("blog", "blog", 3004, Exposure { public: true, ..Exposure::default() });
     blog.rate_limit = true;
-    let settings = DomainSettings { rate_limit: Some(RateLimit { max_events: 5, window_secs: 60 }), ..settings() };
+    // The VM test gives the device 192.168.77.2 as its main address and 192.168.77.3 as the local one.
+    let settings = DomainSettings {
+        rate_limit: Some(RateLimit { max_events: 5, window_secs: 60 }),
+        local_address: LocalAddress::Ready { address: std::net::Ipv4Addr::new(192, 168, 77, 3) },
+        ..settings()
+    };
 
     let mut plan = generate(&[shop, pay, vault, blog], &settings).unwrap();
     for policy in &mut plan.caddy.apps.tls.as_mut().unwrap().automation.policies {
@@ -700,15 +764,18 @@ fn vm_fixture_matches_the_generator() {
     }
     let caddy = serde_json::to_string_pretty(&plan.caddy).unwrap() + "\n";
     let nft = render_nft(&plan.firewall);
+    let names = plan.local.mdns_names.join("\n") + "\n";
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vm");
     if std::env::var_os("UPDATE_FIXTURES").is_some() {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("caddy.json"), &caddy).unwrap();
         std::fs::write(dir.join("web.nft"), &nft).unwrap();
+        std::fs::write(dir.join("mdns-names"), &names).unwrap();
     }
     assert_eq!(std::fs::read_to_string(dir.join("caddy.json")).unwrap(), caddy, "run with UPDATE_FIXTURES=1");
     assert_eq!(std::fs::read_to_string(dir.join("web.nft")).unwrap(), nft, "run with UPDATE_FIXTURES=1");
+    assert_eq!(std::fs::read_to_string(dir.join("mdns-names")).unwrap(), names, "run with UPDATE_FIXTURES=1");
 
     // Each DNS provider module must accept the generated fields. The VM runs `caddy validate` on these.
     for (name, challenge) in every_dns_challenge() {

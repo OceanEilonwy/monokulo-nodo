@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "nodo-ddns"
 path = "src/bin/nodo-ddns.rs"
 
+[[bin]]
+name = "nodo-mdns"
+path = "src/bin/nodo-mdns.rs"
+
 [dependencies]
 nodo-api = { path = "../nodo-api" }
 nodo-manifest = { path = "../nodo-manifest" }
@@ -28,3 +32,5 @@ hmac = "0.12"
 sha2 = "0.10"
 # Used only by the binary's HttpClient. The library takes an injected client, so tests cannot reach the network.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Multicast socket options that std lacks: address reuse, the sending interface, and per-socket group filtering.
+socket2 = { version = "0.6", features = ["all"] }
