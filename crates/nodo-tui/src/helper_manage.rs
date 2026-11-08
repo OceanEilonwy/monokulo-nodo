@@ -33,9 +33,9 @@ fn now() -> u64 {
 pub fn ago(at: u64) -> String {
     match now().saturating_sub(at) {
         s if s < 60 => "just now".to_owned(),
-        s if s < 3600 => format!("{} minutes ago", s / 60),
-        s if s < 2 * 86400 => format!("{} hours ago", s / 3600),
-        s => format!("{} days ago", s / 86400),
+        s if s < 3600 => format!("{} ago", counted(s / 60, "minute")),
+        s if s < 2 * 86400 => format!("{} ago", counted(s / 3600, "hour")),
+        s => format!("{} ago", counted(s / 86400, "day")),
     }
 }
 
@@ -741,6 +741,14 @@ pub fn restore_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ago_reads_as_plain_english() {
+        assert_eq!(ago(now()), "just now");
+        assert_eq!(ago(now() - 90), "1 minute ago");
+        assert_eq!(ago(now() - 3700), "1 hour ago");
+        assert_eq!(ago(now() - 3 * 86_400), "3 days ago");
+    }
 
     fn review(first_install: bool) -> InstallReview {
         InstallReview {

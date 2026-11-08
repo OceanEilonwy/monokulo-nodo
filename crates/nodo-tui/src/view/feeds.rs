@@ -39,29 +39,25 @@ pub fn feeds(app: &App, t: &Theme, selected: usize) -> Page {
         rows.push(if is_selected { Item::Selected(line, Line::default()) } else { Item::Row(line, Line::default()) });
     }
 
+    if app.data.feeds.is_empty() {
+        rows.push(Item::Text(Line::from(t.d(" No feeds yet. Press a to add one."))));
+    }
     let mut page = Page::new(tab_bar(app, t, Tab::Feeds), Line::from(t.d("monokulo-nodo")))
         .panel(Panel::new("Your feeds", rows));
     if let Some(feed) = app.data.feeds.get(selected) {
         let installed = if feed.installed_from.is_empty() { "Nothing".to_owned() } else { feed.installed_from.join(", ") };
         let pair = |label: &str, value: String| Item::Row(Line::from(t.d(label.to_owned())), Line::from(t.n(value)));
-        page = page.panel(
-            Panel::new(
-                feed.name.clone(),
-                {
-                    let mut rows = vec![pair("Address", feed.address.clone())];
-                    if is_plain_http(&feed.address) {
-                        rows.push(pair("Connection", "plain HTTP: signed, but updates can be held back".to_owned()));
-                    }
-                    rows.extend([
-                        pair("Key", feed.fingerprint.clone()),
-                        pair("Added", feed.added.clone()),
-                        pair("Installed from it", installed),
-                    ]);
-                    rows
-                },
-            )
-            .grow(),
-        );
+        let mut facts = vec![pair("Address", feed.address.clone())];
+        if is_plain_http(&feed.address) {
+            facts.push(pair("Connection", "plain HTTP: signed, but updates can be held back".to_owned()));
+        }
+        facts.push(pair("Key", feed.fingerprint.clone()));
+        // The helper does not record when a feed was added, so the row only appears when known.
+        if !feed.added.is_empty() {
+            facts.push(pair("Added", feed.added.clone()));
+        }
+        facts.push(pair("Installed from it", installed));
+        page = page.panel(Panel::new(feed.name.clone(), facts).grow());
     }
     let disabled = app.data.feeds.get(selected).is_some_and(|feed| feed.status == FeedStatus::Disabled);
     let toggle = if disabled { "enable" } else { "disable" };
@@ -92,7 +88,8 @@ pub fn add_feed(t: &Theme, state: &AddFeedState) -> Page {
         }
         AddFeedState::Confirm { probe, trust_focused } => {
             let signed = if probe.signed { "signed" } else { "NOT signed" };
-            let found = format!("✓ Found feed \"{}\", {} packages, {signed}", probe.name, probe.packages);
+            let found =
+                format!("✓ Found feed \"{}\", {}, {signed}", probe.name, counted(u64::from(probe.packages), "package"));
             let mut page = header("Step 2 of 2");
             if is_plain_http(&probe.address) {
                 page = page.panel(Panel::error("Plain HTTP", plain_http_warning(t)));

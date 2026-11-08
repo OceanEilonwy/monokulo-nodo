@@ -7,6 +7,7 @@ cd /src || exit 1
 scripts=$(find scripts tests boards packages -type f | while read -r f; do head -n 1 "$f" | grep -q '^#!/bin/sh' && echo "$f"; done)
 step "shell syntax" sh -c 'for f in "$@"; do sh -n "$f" || exit 1; done' sh $scripts
 step "shellcheck" shellcheck -S warning -x -e SC1090,SC1091,SC2086,SC2154 $scripts
+step "python syntax" sh -c 'for f in tests/tui/*.py tests/acme/*.py; do python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])" "$f" || exit 1; done'
 step "recipe syntax" sh -c 'for t in packages/*/template; do bash -n "$t" || exit 1; done'
 step "toml config" python3 -I -c 'import sys,tomllib,glob
 for f in glob.glob("packages/*/files/*.toml"): tomllib.load(open(f,"rb"))'

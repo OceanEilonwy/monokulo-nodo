@@ -634,6 +634,19 @@ fn other_unlock_errors_are_shown_too() {
 }
 
 #[test]
+fn the_last_second_of_the_delay_reads_as_one_second() {
+    let (mut app, mut mock) = at_unlock();
+    type_text(&mut app, &mut mock, "bad");
+    key(&mut app, &mut mock, ENTER);
+    for _ in 0..TICKS_PER_SECOND {
+        dispatch(&mut app, &mut mock, Event::Tick);
+    }
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Please wait 1 second before trying again."), "{}", screen_text(&app));
+}
+
+#[test]
 fn attempts_are_delayed_after_each_failure_and_the_delay_grows() {
     let (mut app, mut mock) = at_unlock();
     type_text(&mut app, &mut mock, "bad");

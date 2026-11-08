@@ -43,9 +43,10 @@ fn gib(bytes: u64) -> String {
 
 fn duration(secs: u64) -> String {
     match secs {
-        s if s < 3600 => format!("{} minutes", s / 60),
-        s if s < 2 * 86400 => format!("{} hours", s / 3600),
-        s => format!("{} days", s / 86400),
+        s if s < 60 => "less than a minute".to_owned(),
+        s if s < 3600 => counted(s / 60, "minute"),
+        s if s < 2 * 86400 => counted(s / 3600, "hour"),
+        s => counted(s / 86400, "day"),
     }
 }
 
@@ -1014,6 +1015,15 @@ mod tests {
         assert_eq!(node_rows(&status).0, "1 (synced)");
         assert_eq!(grouped(999), "999");
         assert_eq!(grouped(1_000), "1,000");
+    }
+
+    #[test]
+    fn uptime_reads_as_plain_english() {
+        assert_eq!(duration(30), "less than a minute");
+        assert_eq!(duration(60), "1 minute");
+        assert_eq!(duration(150), "2 minutes");
+        assert_eq!(duration(3600), "1 hour");
+        assert_eq!(duration(2 * 86_400), "2 days");
     }
 
     #[test]

@@ -413,6 +413,69 @@ fn dangerous_screens_keep_their_buttons_visible_when_small() {
     }
 }
 
+/// Real packages have labels longer than the design's, such as cuprated's "Restricted RPC on
+/// the network". The value must still stand apart from its label.
+#[test]
+fn long_setting_labels_keep_a_gap_before_the_value() {
+    let (mut app, _) = fixture(ScreenId::Settings);
+    if let nodo_tui::app::Screen::Settings(state) = &mut app.screen {
+        state.form.fields[1].label = "Restricted RPC on the network".to_owned();
+    }
+    let screen = text(&draw(&app, 100, 32).0);
+    let row = screen.lines().find(|line| line.contains("Restricted RPC on the network")).expect("label shown");
+    let after = row.split("Restricted RPC on the network").nth(1).unwrap_or_default();
+    assert!(after.starts_with("  "), "no gap after the label:\n{screen}");
+}
+
+/// A long log shows its newest lines, which is where a failure is, and what "Following live" promises.
+#[test]
+fn a_long_log_shows_its_newest_lines() {
+    let (mut app, _) = fixture(ScreenId::Logs);
+    if let nodo_tui::app::Screen::Logs(state) = &mut app.screen {
+        state.view.lines = (1..=200)
+            .map(|n| nodo_tui::model::LogLine { kind: nodo_tui::model::LogKind::Info, text: format!("line number {n}") })
+            .collect();
+        state.view.suggestion.clear();
+    }
+    let screen = text(&draw(&app, 100, 32).0);
+    assert!(screen.contains("line number 200"), "the newest line is hidden:\n{screen}");
+    assert!(!screen.contains("line number 1 "), "the oldest line is shown instead:\n{screen}");
+}
+
+/// Packages from the helper often have no size or license. Their detail must not show empty
+/// separators, and a feed package not downloaded yet is not a failed signature: the helper checks
+/// it against the pinned key when it downloads it.
+#[test]
+fn a_feed_package_detail_reads_cleanly_before_download() {
+    let (mut app, _) = fixture(ScreenId::Detail);
+    if let nodo_tui::app::Screen::Detail(detail) = &mut app.screen {
+        detail.installed = false;
+        detail.signature_verified = false;
+        detail.version = "1.0_1".to_owned();
+        detail.size = String::new();
+        detail.license = String::new();
+    }
+    let screen = text(&draw(&app, 100, 32).0);
+    let row = screen.lines().find(|line| line.contains("Version 1.0_1")).expect("version shown");
+    assert!(!row.contains('·'), "empty parts left separators: {row}");
+    assert!(!screen.contains("signature not verified"), "{screen}");
+    assert!(screen.contains("signature checked when it downloads"), "{screen}");
+}
+
+/// A fresh device has no feeds, and the helper does not record when a feed was added.
+#[test]
+fn feeds_read_cleanly_with_none_and_with_helper_data() {
+    let (mut app, _) = fixture(ScreenId::Feeds);
+    for feed in &mut app.data.feeds {
+        feed.added = String::new();
+    }
+    let screen = text(&draw(&app, 100, 32).0);
+    assert!(!screen.lines().any(|line| line.trim_matches(|c| c == '│' || c == ' ') == "Added"), "{screen}");
+    app.data.feeds.clear();
+    let screen = text(&draw(&app, 100, 32).0);
+    assert!(screen.contains("No feeds yet. Press a to add one."), "{screen}");
+}
+
 #[test]
 fn terminal_control_characters_in_data_never_reach_the_screen() {
     let (mut app, _) = fixture(ScreenId::Search);

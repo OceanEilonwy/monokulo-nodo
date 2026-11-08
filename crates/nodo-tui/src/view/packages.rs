@@ -90,12 +90,22 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
 }
 
 pub fn detail(t: &Theme, detail: &PackageDetail) -> Page {
-    let about = vec![
-        Item::Text(Line::from(t.n(detail.about.clone()))),
-        Item::Text(Line::from(t.d(format!("Version {} · {} · {}", detail.version, detail.size, detail.license)))),
-    ];
-    let signature =
-        if detail.signature_verified { t.o("✓ signature verified") } else { t.e("✕ signature not verified") };
+    let facts: Vec<String> = [format!("Version {}", detail.version), detail.size.clone(), detail.license.clone()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect();
+    let mut about = Vec::new();
+    if !detail.about.is_empty() {
+        about.push(Item::Text(Line::from(t.n(detail.about.clone()))));
+    }
+    about.push(Item::Text(Line::from(t.d(facts.join(" · ")))));
+    // A package not yet downloaded has nothing to verify. The helper checks it against the feed's
+    // pinned key when it downloads it, and refuses it if that fails.
+    let signature = match (detail.signature_verified, detail.installed) {
+        (true, _) => t.o("✓ signature verified"),
+        (false, false) => t.d("signature checked when it downloads"),
+        (false, true) => t.e("✕ signature not verified"),
+    };
 
     let mut settings: Vec<Item> =
         detail.public_settings.iter().map(|path| Item::Text(Line::from(t.n(path.clone())))).collect();

@@ -8,6 +8,15 @@ use nodo_api::{Exposure, SettingInput, SettingLiteral, SiteId};
 
 use crate::secret::Secret;
 
+/// A count with its noun, singular for one: "1 package", "3 packages". Nouns here are regular.
+pub fn counted(n: u64, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 /// Two feeds can publish the same name, so a package is only identified by the pair.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageId {
