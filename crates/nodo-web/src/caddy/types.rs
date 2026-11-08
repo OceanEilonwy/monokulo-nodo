@@ -1,5 +1,6 @@
 //! The subset of Caddy's JSON config this crate emits. Field names follow
-//! <https://caddyserver.com/docs/json/>. Every module used here ships with standard Caddy.
+//! <https://caddyserver.com/docs/json/>. Every module used here ships with standard Caddy, except
+//! `rate_limit`, which comes from `github.com/mholt/caddy-ratelimit` in the `nodo-caddy` build.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -32,6 +33,9 @@ pub struct Apps {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HttpApp {
+    /// The ports Caddy itself binds for plain HTTP and HTTPS. nftables redirects 80 and 443 here.
+    pub http_port: u16,
+    pub https_port: u16,
     pub servers: BTreeMap<String, Server>,
 }
 
@@ -40,9 +44,24 @@ pub struct Server {
     pub listen: Vec<String>,
     pub routes: Vec<Route>,
     pub errors: ErrorRoutes,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tls_connection_policies: Vec<TlsConnectionPolicy>,
     pub automatic_https: AutomaticHttps,
     pub protocols: Vec<String>,
     pub strict_sni_host: bool,
+}
+
+/// A handshake whose SNI matches no policy is refused, so one listener never presents another
+/// listener's certificate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TlsConnectionPolicy {
+    #[serde(rename = "match")]
+    pub matcher: SniMatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SniMatch {
+    pub sni: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -62,7 +81,7 @@ pub struct AutomaticHttps {
 pub struct Route {
     #[serde(rename = "match", skip_serializing_if = "Vec::is_empty")]
     pub matchers: Vec<Matcher>,
-    pub handle: Vec<Handle>,
+    pub handle: Vec<Handler>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
 }
@@ -75,20 +94,20 @@ pub struct Matcher {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_regexp: Option<PathRegexp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_ip: Option<RemoteIp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PathRegexp {
+    pub name: String,
+    pub pattern: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RemoteIp {
     pub ranges: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Handle {
-    Known(Handler),
-    /// See [`super::PublicHandlerHook`].
-    Hook(serde_json::Value),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -110,6 +129,18 @@ pub enum Handler {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         abort: bool,
     },
+    RateLimit {
+        rate_limits: BTreeMap<String, RateLimitZone>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RateLimitZone {
+    pub key: String,
+    pub window: String,
+    pub max_events: u32,
+    /// Groups an IPv6 client's whole /64, since one home connection can use any address in it.
+    pub ipv6_prefix: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

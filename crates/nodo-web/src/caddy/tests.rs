@@ -56,7 +56,16 @@ fn matches(matcher: &Matcher, host: &str, path: &str, client: &str) -> bool {
         // These tests only use the two client addresses above.
         client == LAN_CLIENT && remote.ranges.iter().any(|r| r == "192.168.0.0/16")
     });
-    host_ok && path_ok && ip_ok
+    let regexp_ok = matcher.path_regexp.as_ref().is_none_or(|re| {
+        let inner = re.pattern.strip_prefix("(?i)^(?:").and_then(|p| p.strip_suffix(")(?:[^a-z0-9_~-]|$)")).unwrap();
+        let lower = path.to_lowercase();
+        inner.split('|').any(|alt| {
+            lower.strip_prefix(&alt.replace("\\.", ".").to_lowercase()).is_some_and(|rest| {
+                rest.chars().next().is_none_or(|c| !(c.is_ascii_alphanumeric() || "_~-".contains(c)))
+            })
+        })
+    });
+    host_ok && path_ok && regexp_ok && ip_ok
 }
 
 fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
@@ -66,15 +75,11 @@ fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
         }
         for handle in &route.handle {
             match handle {
-                Handle::Hook(_) => {}
-                Handle::Known(Handler::Subroute { routes }) => return walk(routes, host, path, client),
-                Handle::Known(Handler::ReverseProxy { upstreams }) => {
-                    return Outcome::Proxy(upstreams[0].dial.clone())
-                }
-                Handle::Known(Handler::StaticResponse { abort: true, .. }) => return Outcome::Dropped,
-                Handle::Known(Handler::StaticResponse { status_code, .. }) => {
-                    return Outcome::Status(status_code.clone().unwrap())
-                }
+                Handler::RateLimit { .. } => {}
+                Handler::Subroute { routes } => return walk(routes, host, path, client),
+                Handler::ReverseProxy { upstreams } => return Outcome::Proxy(upstreams[0].dial.clone()),
+                Handler::StaticResponse { abort: true, .. } => return Outcome::Dropped,
+                Handler::StaticResponse { status_code, .. } => return Outcome::Status(status_code.clone().unwrap()),
             }
         }
     }
@@ -99,15 +104,19 @@ fn caddy_json_has_the_documented_shape() {
     let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
     shop.state = ServiceState::Running;
     let value = json(&generate(&[shop], &settings()).unwrap());
-    let server = &value["apps"]["http"]["servers"]["web"];
+    let server = &value["apps"]["http"]["servers"]["public"];
 
-    assert_eq!(server["listen"], serde_json::json!([":443"]));
+    assert_eq!(server["listen"], serde_json::json!([":10443"]));
+    assert_eq!(value["apps"]["http"]["http_port"], 10080);
+    assert_eq!(value["apps"]["http"]["https_port"], 10443);
+    assert_eq!(server["tls_connection_policies"][0]["match"]["sni"], serde_json::json!(["shop.example.com"]));
     let route = &server["routes"][0];
     assert_eq!(route["match"][0]["host"][0], "shop.example.com");
     assert_eq!(route["terminal"], true);
     assert_eq!(route["handle"][0]["handler"], "subroute");
     let inner = &route["handle"][0]["routes"];
     assert_eq!(inner[0]["match"][0]["path"][0], "/admin");
+    assert_eq!(inner[0]["match"][1]["path_regexp"]["pattern"], "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)");
     assert_eq!(inner[0]["handle"][0]["handler"], "static_response");
     assert_eq!(inner[0]["handle"][0]["status_code"], "404");
     assert_eq!(inner[1]["handle"][0]["handler"], "reverse_proxy");
@@ -139,12 +148,12 @@ fn one_site_can_be_local_onion_and_public_at_once() {
         kinds,
         vec![
             (AddressKind::Public, "https://shop.example.com"),
-            (AddressKind::Local, "https://shop.local"),
+            (AddressKind::Local, "https://shop.local:8443"),
             (AddressKind::Onion, &*format!("http://{ONION}")),
         ]
     );
-    assert_eq!(request(&plan, "web", "shop.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
-    assert_eq!(request(&plan, "web", "shop.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "public", "shop.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "local", "shop.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
     let onion = onion_server_for(&plan, ONION);
     assert_eq!(request(&plan, onion, ONION, "/", "127.0.0.1"), Outcome::Proxy("127.0.0.1:8080".into()));
 }
@@ -157,22 +166,25 @@ fn admin_paths_are_blocked_on_public_and_onion_only() {
     let onion = onion_server_for(&plan, ONION);
     let blocked = Outcome::Status("404".into());
 
-    for path in ["/admin", "/ADMIN", "/admin/", "/admin/users", "/admin;x=1"] {
-        assert_eq!(request(&plan, "web", "shop.example.com", path, INTERNET_CLIENT), blocked, "{path}");
+    for path in ["/admin", "/ADMIN", "/admin/", "/admin/users", "/admin;x=1", "/admin.", "/admin ", "/admin\0", "/Admin.json"] {
+        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), blocked, "{path}");
         assert_eq!(request(&plan, onion, ONION, path, "127.0.0.1"), blocked, "{path}");
         assert_eq!(
-            request(&plan, "web", "shop.local", path, LAN_CLIENT),
+            request(&plan, "local", "shop.local", path, LAN_CLIENT),
             Outcome::Proxy("127.0.0.1:8080".into()),
             "{path}"
         );
     }
     // A LAN client using the public name gets the public rules.
-    assert_eq!(request(&plan, "web", "shop.example.com", "/admin", LAN_CLIENT), blocked);
-    // Neighbouring paths stay served.
-    assert_eq!(
-        request(&plan, "web", "shop.example.com", "/administrator", INTERNET_CLIENT),
-        Outcome::Proxy("127.0.0.1:8080".into())
-    );
+    assert_eq!(request(&plan, "public", "shop.example.com", "/admin", LAN_CLIENT), blocked);
+    // Neighbouring names stay served.
+    for path in ["/administrator", "/admin-panel", "/admin_x", "/admins"] {
+        assert_eq!(
+            request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT),
+            Outcome::Proxy("127.0.0.1:8080".into()),
+            "{path}"
+        );
+    }
 }
 
 #[test]
@@ -180,7 +192,7 @@ fn admin_paths_stay_blocked_while_the_upstream_is_down() {
     let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
     shop.state = ServiceState::Locked;
     let plan = generate(&[shop], &settings()).unwrap();
-    assert_eq!(request(&plan, "web", "shop.example.com", "/admin", INTERNET_CLIENT), Outcome::Status("404".into()));
+    assert_eq!(request(&plan, "public", "shop.example.com", "/admin", INTERNET_CLIENT), Outcome::Status("404".into()));
 }
 
 #[test]
@@ -188,7 +200,7 @@ fn root_admin_path_blocks_the_whole_host() {
     let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
     shop.service.admin_paths = vec!["/".to_owned()];
     let plan = generate(&[shop], &settings()).unwrap();
-    assert_eq!(request(&plan, "web", "shop.example.com", "/any", INTERNET_CLIENT), Outcome::Status("404".into()));
+    assert_eq!(request(&plan, "public", "shop.example.com", "/any", INTERNET_CLIENT), Outcome::Status("404".into()));
 }
 
 #[test]
@@ -199,10 +211,10 @@ fn a_host_only_ever_reaches_its_own_upstream() {
     b.onion_host = Some(ONION_B.to_owned());
     let plan = generate(&[a, b], &settings()).unwrap();
 
-    assert_eq!(request(&plan, "web", "a.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
-    assert_eq!(request(&plan, "web", "b.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
-    assert_eq!(request(&plan, "web", "a.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
-    assert_eq!(request(&plan, "web", "b.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
+    assert_eq!(request(&plan, "public", "a.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
+    assert_eq!(request(&plan, "public", "b.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
+    assert_eq!(request(&plan, "local", "a.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
+    assert_eq!(request(&plan, "local", "b.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
     assert_eq!(request(&plan, onion_server_for(&plan, ONION), ONION, "/", "127.0.0.1"), Outcome::Proxy("127.0.0.1:8001".into()));
     assert_eq!(
         request(&plan, onion_server_for(&plan, ONION_B), ONION_B, "/", "127.0.0.1"),
@@ -216,10 +228,31 @@ fn internet_clients_cannot_reach_local_or_onion_hosts_through_the_public_listene
     shop.onion_host = Some(ONION.to_owned());
     let plan = generate(&[shop], &settings()).unwrap();
 
-    assert_eq!(request(&plan, "web", "shop.local", "/", INTERNET_CLIENT), Outcome::Dropped);
-    assert_eq!(request(&plan, "web", "shop.local", "/admin", INTERNET_CLIENT), Outcome::Dropped);
-    assert_eq!(request(&plan, "web", ONION, "/", INTERNET_CLIENT), Outcome::Dropped);
-    assert_eq!(request(&plan, "web", "unknown.example.com", "/", INTERNET_CLIENT), Outcome::Dropped);
+    // A masquerading router makes internet clients look local, so the LAN address must not help either.
+    for client in [INTERNET_CLIENT, LAN_CLIENT] {
+        assert_eq!(request(&plan, "public", "shop.local", "/", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "public", "shop.local", "/admin", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "public", ONION, "/", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "public", "unknown.example.com", "/", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "public", "shop.example.com", "/admin", client), Outcome::Status("404".into()));
+    }
+    let public = &plan.caddy.apps.http.servers["public"];
+    assert_eq!(public.tls_connection_policies[0].matcher.sni, vec!["shop.example.com"]);
+}
+
+#[test]
+fn the_local_listener_serves_only_local_hosts_to_lan_clients() {
+    let mut shop = site("shop", "shop", 8080, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    let plan = generate(&[shop], &settings()).unwrap();
+
+    assert_eq!(request(&plan, "local", "shop.local", "/admin", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "local", "shop.local", "/", INTERNET_CLIENT), Outcome::Dropped);
+    assert_eq!(request(&plan, "local", "shop.example.com", "/", LAN_CLIENT), Outcome::Dropped);
+    assert_eq!(request(&plan, "local", ONION, "/", LAN_CLIENT), Outcome::Dropped);
+    let local = &plan.caddy.apps.http.servers["local"];
+    assert_eq!(local.listen, vec![":8443"]);
+    assert_eq!(local.tls_connection_policies[0].matcher.sni, vec!["shop.local"]);
 }
 
 #[test]
@@ -242,7 +275,7 @@ fn onion_servers_are_plain_http_on_loopback_with_their_own_listener() {
     let plan = generate(&[a, b], &settings()).unwrap();
 
     let servers = &plan.caddy.apps.http.servers;
-    assert!(!servers.contains_key("web"));
+    assert!(!servers.contains_key("public") && !servers.contains_key("local"));
     assert_eq!(servers["onion-0"].listen, vec!["127.0.0.1:19000"]);
     assert_eq!(servers["onion-1"].listen, vec!["127.0.0.1:19001"]);
     for server in servers.values() {
@@ -264,8 +297,10 @@ fn tls_issuers_match_each_exposure() {
     assert_eq!(policies[1].subjects, vec!["shop.example.com"]);
     assert_eq!(policies[1].issuers, vec![Issuer::Acme { email: Some("me@example.com".to_owned()) }]);
     assert!(!plan.caddy.apps.pki.as_ref().unwrap().certificate_authorities["local"].install_trust);
-    assert!(!plan.caddy.apps.http.servers["web"].automatic_https.disable);
-    assert!(!plan.caddy.apps.http.servers["web"].protocols.iter().any(|p| p == "h3"));
+    for name in ["public", "local"] {
+        assert!(!plan.caddy.apps.http.servers[name].automatic_https.disable);
+        assert!(!plan.caddy.apps.http.servers[name].protocols.iter().any(|p| p == "h3"));
+    }
 }
 
 #[test]
@@ -275,8 +310,10 @@ fn ports_80_and_443_open_only_with_a_public_site() {
     assert!(none.caddy.apps.http.servers.is_empty());
 
     let local = generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings()).unwrap();
-    assert_eq!(local.firewall, FirewallPlan { public_tcp: vec![], lan_tcp: vec![443] });
-    assert!(local.caddy.apps.http.servers["web"].automatic_https.disable_redirects);
+    assert!(local.firewall.public_tcp.is_empty() && local.firewall.redirects.is_empty());
+    assert_eq!(local.firewall.lan_tcp, vec![8443]);
+    assert_eq!(local.firewall.lan_ranges, settings().lan_ranges);
+    assert!(local.caddy.apps.http.servers["local"].automatic_https.disable_redirects);
 
     let onion = generate(&[site("a", "a", 8001, Exposure { onion: true, ..Exposure::default() })], &settings()).unwrap();
     assert_eq!(onion.firewall, FirewallPlan::default());
@@ -289,8 +326,42 @@ fn ports_80_and_443_open_only_with_a_public_site() {
         &settings(),
     )
     .unwrap();
-    assert_eq!(public.firewall, FirewallPlan { public_tcp: vec![80, 443], lan_tcp: vec![443] });
-    assert!(!public.caddy.apps.http.servers["web"].automatic_https.disable_redirects);
+    assert_eq!(public.firewall.public_tcp, vec![80, 443]);
+    assert_eq!(public.firewall.redirects, vec![(80, 10080), (443, 10443)]);
+    assert_eq!(public.firewall.lan_tcp, vec![8443]);
+    assert!(!public.caddy.apps.http.servers["public"].automatic_https.disable_redirects);
+    assert!(public.caddy.apps.http.servers["local"].automatic_https.disable_redirects);
+}
+
+#[test]
+fn nft_rules_redirect_public_ports_and_limit_the_local_port_to_the_lan() {
+    let plan = generate(
+        &[site("a", "a", 8001, Exposure { local: true, public: true, ..Exposure::default() })],
+        &settings(),
+    )
+    .unwrap();
+    let rules = render_nft(&plan.firewall);
+    assert!(rules.contains("type nat hook prerouting priority dstnat"));
+    assert!(rules.contains("tcp dport 443 redirect to :10443"));
+    assert!(rules.contains("tcp dport 80 redirect to :10080"));
+    assert!(rules.contains("tcp dport 10443 ct status dnat accept"));
+    assert!(rules.contains("ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport { 8443 } accept"));
+    assert!(rules.contains("ip6 saddr { ::1/128, fc00::/7, fe80::/10 } tcp dport { 8443 } accept"));
+    assert!(!rules.contains("dport 443 accept"), "the public port itself is never opened");
+
+    let local_only = render_nft(
+        &generate(&[site("a", "a", 8001, Exposure { local: true, ..Exposure::default() })], &settings()).unwrap().firewall,
+    );
+    assert!(!local_only.contains("redirect") && !local_only.contains("prerouting"));
+    assert_eq!(render_nft(&FirewallPlan::default()).matches("accept").count(), 0);
+}
+
+#[test]
+fn upstreams_cannot_use_the_proxy_ports() {
+    for port in [80, 443, 8443, 10080, 10443] {
+        let error = generate(&[site("a", "a", port, Exposure { local: true, ..Exposure::default() })], &settings());
+        assert!(matches!(error, Err(WebConfigError::ReservedPort { .. })), "{port}");
+    }
 }
 
 #[test]
@@ -299,7 +370,7 @@ fn stopped_or_locked_sites_show_the_unavailable_page() {
         let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
         shop.state = state;
         let plan = generate(&[shop], &settings()).unwrap();
-        assert_eq!(request(&plan, "web", "shop.example.com", "/", INTERNET_CLIENT), Outcome::Status("503".into()));
+        assert_eq!(request(&plan, "public", "shop.example.com", "/", INTERNET_CLIENT), Outcome::Status("503".into()));
         let text = json(&plan).to_string();
         assert!(text.contains("This site is unavailable"));
         assert!(!text.contains("reverse_proxy"), "no proxy route for a site that is down");
@@ -311,7 +382,7 @@ fn stopped_or_locked_sites_show_the_unavailable_page() {
 fn proxy_errors_fall_back_to_the_unavailable_page() {
     let plan =
         generate(&[site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() })], &settings()).unwrap();
-    let errors = serde_json::to_value(&plan.caddy.apps.http.servers["web"].errors).unwrap();
+    let errors = serde_json::to_value(&plan.caddy.apps.http.servers["public"].errors).unwrap();
     assert_eq!(errors["routes"][0]["handle"][0]["status_code"], "{http.error.status_code}");
     assert!(errors["routes"][0]["handle"][0]["body"].as_str().unwrap().contains("unavailable"));
 }
@@ -344,28 +415,34 @@ fn unix_upstreams_become_caddy_dial_addresses() {
     let mut shop = site("shop", "web", 1, Exposure { local: true, ..Exposure::default() });
     shop.service.upstream = "unix:/run/apps/shop/web.sock".to_owned();
     let plan = generate(&[shop], &settings()).unwrap();
-    assert_eq!(request(&plan, "web", "web.local", "/", LAN_CLIENT), Outcome::Proxy("unix//run/apps/shop/web.sock".into()));
+    assert_eq!(request(&plan, "local", "web.local", "/", LAN_CLIENT), Outcome::Proxy("unix//run/apps/shop/web.sock".into()));
 }
 
 #[test]
-fn rate_limit_hook_runs_only_on_public_routes_that_asked() {
+fn rate_limit_runs_only_on_public_routes_that_asked() {
     let mut shop = site("shop", "shop", 8080, Exposure { local: true, public: true, ..Exposure::default() });
     shop.rate_limit = true;
 
-    let unhooked = generate(std::slice::from_ref(&shop), &settings()).unwrap();
-    assert_eq!(unhooked.rate_limit_unenforced, vec![SiteRef { package: "shop".into(), site: "shop".into() }]);
+    let without_module = generate(std::slice::from_ref(&shop), &DomainSettings { rate_limit: None, ..settings() }).unwrap();
+    assert_eq!(without_module.rate_limit_unenforced, vec![SiteRef { package: "shop".into(), site: "shop".into() }]);
+    assert!(!json(&without_module).to_string().contains("rate_limit"));
 
-    let hook = PublicHandlerHook::new(serde_json::json!({"handler": "rate_limit"})).unwrap();
-    let hooked = generate(&[shop], &DomainSettings { public_hook: Some(hook), ..settings() }).unwrap();
-    assert!(hooked.rate_limit_unenforced.is_empty());
-
-    let routes = &json(&hooked)["apps"]["http"]["servers"]["web"]["routes"];
-    let public = routes[0]["handle"][0]["routes"].as_array().unwrap();
-    let local = routes[1]["handle"][0]["routes"].as_array().unwrap();
+    let limited = generate(std::slice::from_ref(&shop), &settings()).unwrap();
+    assert!(limited.rate_limit_unenforced.is_empty());
+    let value = json(&limited);
+    let public = value["apps"]["http"]["servers"]["public"]["routes"][0]["handle"][0]["routes"].as_array().unwrap();
+    let local = value["apps"]["http"]["servers"]["local"]["routes"][0]["handle"][0]["routes"].as_array().unwrap();
+    assert_eq!(public[0]["handle"][0]["handler"], "static_response", "admin paths are refused before counting");
     assert_eq!(public[1]["handle"][0]["handler"], "rate_limit");
+    let zone = &public[1]["handle"][0]["rate_limits"]["shop.shop"];
+    assert_eq!(zone["key"], "{http.request.remote.host}");
+    assert_eq!(zone["window"], "60s");
+    assert_eq!(zone["max_events"], 600);
     assert_eq!(public[2]["handle"][0]["handler"], "reverse_proxy");
     assert!(local.iter().all(|r| r["handle"][0]["handler"] != "rate_limit"));
-    assert!(PublicHandlerHook::new(serde_json::json!({"nope": 1})).is_none());
+
+    shop.rate_limit = false;
+    assert!(!json(&generate(&[shop], &settings()).unwrap()).to_string().contains("rate_limit"));
 }
 
 const HOSTILE: &[&str] = &[
@@ -551,4 +628,43 @@ fn sites_with_no_exposure_produce_nothing() {
     assert!(plan.caddy.apps.http.servers.is_empty());
     assert!(plan.tor_lines.is_empty());
     assert_eq!(plan.firewall, FirewallPlan::default());
+}
+
+/// The config the VM tier loads into real Caddy (`tests/web-routing.sh`). Public hosts use the internal
+/// CA there, because the VM is offline and cannot reach an ACME server. Run with `UPDATE_FIXTURES=1` to
+/// rewrite the files after a deliberate change.
+#[test]
+fn vm_fixture_matches_the_generator() {
+    let mut shop = site("shop", "shop", 3001, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    let mut pay = site("pay", "pay", 3002, Exposure { local: true, public: true, ..Exposure::default() });
+    pay.state = ServiceState::Stopped;
+    let mut vault = site("vault", "vault", 3003, Exposure { public: true, ..Exposure::default() });
+    vault.state = ServiceState::Locked;
+    let mut blog = site("blog", "blog", 3004, Exposure { public: true, ..Exposure::default() });
+    blog.rate_limit = true;
+    let settings = DomainSettings { rate_limit: Some(RateLimit { max_events: 5, window_secs: 60 }), ..settings() };
+
+    let mut plan = generate(&[shop, pay, vault, blog], &settings).unwrap();
+    for policy in &mut plan.caddy.apps.tls.as_mut().unwrap().automation.policies {
+        policy.issuers = vec![Issuer::Internal];
+    }
+    let caddy = serde_json::to_string_pretty(&plan.caddy).unwrap() + "\n";
+    let nft = render_nft(&plan.firewall);
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vm");
+    if std::env::var_os("UPDATE_FIXTURES").is_some() {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("caddy.json"), &caddy).unwrap();
+        std::fs::write(dir.join("web.nft"), &nft).unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(dir.join("caddy.json")).unwrap(), caddy, "run with UPDATE_FIXTURES=1");
+    assert_eq!(std::fs::read_to_string(dir.join("web.nft")).unwrap(), nft, "run with UPDATE_FIXTURES=1");
+}
+
+#[test]
+fn admin_regexp_escapes_dots_and_joins_paths() {
+    let paths = vec!["/wp-admin/".to_owned(), "/v1.0/admin".to_owned(), "/".to_owned()];
+    assert_eq!(admin_path_regexp(&paths).unwrap(), "(?i)^(?:/wp-admin|/v1\\.0/admin)(?:[^a-z0-9_~-]|$)");
+    assert_eq!(admin_path_regexp(&[]), None);
 }
