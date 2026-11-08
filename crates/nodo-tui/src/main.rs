@@ -45,7 +45,21 @@ fn run_ctl(socket: &Path, args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match client.call(request) {
+    let mut result = client.call(request);
+    if let Ok(first) = &result {
+        match ctl::follow_up(args, first) {
+            Ok(Some(next)) => {
+                println!("{first:#?}");
+                result = client.call(next);
+            }
+            Ok(None) => {}
+            Err(text) => {
+                eprintln!("{text}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match result {
         Ok(response) => {
             println!("{response:#?}");
             ExitCode::SUCCESS

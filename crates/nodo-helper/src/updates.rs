@@ -233,6 +233,8 @@ struct Updater<'a, S: System> {
     previous: BTreeMap<String, PathBuf>,
     /// The last log lines of a failed package, for the report.
     logs: BTreeMap<String, Vec<String>>,
+    /// The new version's kept file, which a rollback removes again.
+    fresh: BTreeMap<String, PathBuf>,
 }
 
 fn fail(e: impl std::fmt::Display) -> Failure {
@@ -358,6 +360,9 @@ impl<S: System> Installer for Updater<'_, S> {
             }
             Err(e) => return Err(fail(e)),
         };
+        if let Some(path) = &kept {
+            self.fresh.insert(id.to_owned(), path.clone());
+        }
         let version = c.to.clone();
         h.with_feeds(|state| {
             state.pins = pins.clone();
@@ -414,6 +419,9 @@ impl<S: System> Installer for Updater<'_, S> {
         })
         .map_err(fail)?;
         h.install_by_id(id, None).map_err(fail)?;
+        if let Some(fresh) = self.fresh.remove(id).filter(|f| *f != previous) {
+            h.manage.packages.remove_kept(&fresh);
+        }
         let _ = self.stop(id, manifest.stop_timeout_secs);
         let (data, copy, skip) = self.data_copy(id, manifest.storage.encrypted)?;
         if h.sys.exists(&copy) || h.manage.packages.tree_size(&copy) > 0 {
@@ -690,6 +698,7 @@ impl<S: System> Helper<S> {
             approvals: BTreeMap::new(),
             previous: BTreeMap::new(),
             logs: BTreeMap::new(),
+            fresh: BTreeMap::new(),
         };
         let disk_low = self.installs_refused()?;
         let mut run = Vec::new();
@@ -836,6 +845,7 @@ impl<S: System> Helper<S> {
             approvals: BTreeMap::new(),
             previous: BTreeMap::new(),
             logs: BTreeMap::new(),
+            fresh: BTreeMap::new(),
         };
         let outcomes = auto::run(&policy, &mut updates, &candidates, &Live(self), &mut updater, now);
         {
