@@ -10,6 +10,7 @@ license.workspace = true
 nodo-api = { path = "../nodo-api" }
 nodo-gen = { path = "../nodo-gen" }
 nodo-manifest = { path = "../nodo-manifest" }
+nodo-web = { path = "../nodo-web" }
 nodo-settings = { path = "../nodo-settings" }
 serde.workspace = true
 thiserror.workspace = true

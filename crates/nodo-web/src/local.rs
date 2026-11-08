@@ -45,6 +45,20 @@ pub enum LocalUnavailable {
 }
 
 impl LocalUnavailable {
+    /// One line for the screens, saying why local sites are not available.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::NotStarted => "The local address has not started yet.".to_owned(),
+            Self::Disabled => "Local sites are switched off.".to_owned(),
+            Self::WaitingForLease => "Waiting for the router to give the local address.".to_owned(),
+            Self::NoLease => "The router gave no second address for local sites.".to_owned(),
+            Self::WirelessParent => "This device is on Wi-Fi, which refuses a second hardware address.".to_owned(),
+            Self::NoParent => "This device is not connected to a network.".to_owned(),
+            Self::SetupFailed(detail) => format!("The local address could not be set up: {detail}"),
+            Self::UnsuitableAddress(ip) => format!("{ip} is not a private address on this network."),
+        }
+    }
+
     /// What the screens tell the user to do. A static address works where DHCP or a second MAC does not.
     pub fn remedy(&self) -> &'static str {
         match self {

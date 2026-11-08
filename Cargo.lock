@@ -805,6 +805,7 @@ dependencies = [
  "nodo-gen",
  "nodo-manifest",
  "nodo-settings",
+ "nodo-web",
  "postcard",
  "rustix 1.1.6",
  "serde",

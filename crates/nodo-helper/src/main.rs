@@ -15,8 +15,9 @@ use std::sync::Arc;
 
 use nodo_api::DEFAULT_SOCKET;
 use nodo_helper::real::RealSystem;
+use nodo_helper::web::{NodoWeb, RealWebIo, WebPaths};
 use nodo_helper::{
-    server, worker, AllowedUids, DriveConfig, Helper, NoCaddyYet, NodoSettings, Paths,
+    server, worker, AllowedUids, DriveConfig, Helper, NodoSettings, Paths,
 };
 use rustix::mm::{mlockall, MlockAllFlags};
 use rustix::process::{set_dumpable_behavior, DumpableBehavior};
@@ -137,7 +138,7 @@ fn main() -> ExitCode {
         RealSystem,
         AllowedUids::new(options.allowed),
         Box::new(NodoSettings),
-        Box::new(NoCaddyYet),
+        Box::new(NodoWeb::new(WebPaths::default(), RealWebIo::default())),
     )
     .with_paths(paths);
     if let Err(e) = server::serve(listener, Arc::new(helper)) {

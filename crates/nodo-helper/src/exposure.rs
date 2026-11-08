@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use nodo_api::{ApiError, Exposure, PublicConfirmation, Response, SiteId, SiteInfo};
+use nodo_api::{
+    ApiError, DnsProviderDetail, Exposure, ProviderInfo, PublicConfirmation, ReachabilityCheck,
+    ReachabilityDetail, ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo,
+    WebStatus,
+};
 use nodo_manifest::WebService;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -15,17 +19,62 @@ pub type ExposureState = BTreeMap<String, BTreeMap<String, Exposure>>;
 /// The host name the user brought for each site, keyed like [`ExposureState`].
 pub type PublicHosts = BTreeMap<String, BTreeMap<String, String>>;
 
-/// Puts exposure state into effect. The Caddy crate implements this.
-pub trait ExposureApplier: Send + Sync {
-    fn apply(&self, state: &ExposureState) -> Result<(), String>;
+/// One site as the web proxy needs it: what its package declares, plus the user's choices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WebSite {
+    pub package: String,
+    pub service: WebService,
+    pub exposure: Exposure,
+    pub public_host: Option<String>,
+    pub locked: bool,
 }
 
-/// Persists state and changes nothing else, until the Caddy implementation exists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WebInput {
+    pub sites: Vec<WebSite>,
+}
+
+fn not_connected() -> ApiError {
+    ApiError::NotImplemented("web hosting is not connected".to_owned())
+}
+
+/// Puts exposure state into effect and answers the Web screens. `crate::web::NodoWeb` implements
+/// it with Caddy, nftables, Tor and dynamic DNS.
+pub trait ExposureApplier: Send + Sync {
+    fn apply(&self, input: &WebInput) -> Result<(), String>;
+
+    fn status(&self, _input: &WebInput) -> Result<WebStatus, ApiError> {
+        Err(not_connected())
+    }
+    fn providers(&self) -> Result<Vec<DnsProviderDetail>, ApiError> {
+        Err(not_connected())
+    }
+    fn set_provider(
+        &self,
+        _domain: &str,
+        _provider: &str,
+        _fields: &[(String, Secret)],
+        _input: &WebInput,
+    ) -> Result<(), ApiError> {
+        Err(not_connected())
+    }
+    fn test_provider(&self) -> Result<String, ApiError> {
+        Err(not_connected())
+    }
+    fn retire_stale(&self) -> Result<Vec<String>, ApiError> {
+        Err(not_connected())
+    }
+    fn reachability(&self, _input: &WebInput, _site: &SiteId) -> Result<ReachabilityDetail, ApiError> {
+        Err(not_connected())
+    }
+}
+
+/// Persists state and changes nothing else. Used by tests.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoCaddyYet;
 
 impl ExposureApplier for NoCaddyYet {
-    fn apply(&self, _state: &ExposureState) -> Result<(), String> {
+    fn apply(&self, _input: &WebInput) -> Result<(), String> {
         Ok(())
     }
 }
@@ -102,6 +151,85 @@ impl<S: System> Helper<S> {
             .cloned())
     }
 
+    /// Every site of every package, with its saved exposure and host.
+    pub(crate) fn web_input(&self, state: &ExposureState) -> Result<WebInput, ApiError> {
+        let (packages, _) = self.packages()?;
+        let (hosts, _): (PublicHosts, _) = self.load_toml(&self.paths.public_hosts)?;
+        let mut sites = Vec::new();
+        for package in &packages {
+            let locked = self.is_locked(package).unwrap_or(false);
+            for web in &package.manifest.web {
+                let get = |id: &str| (package.id().to_owned(), id.to_owned());
+                let (pkg, name) = get(&web.name);
+                sites.push(WebSite {
+                    exposure: state.get(&pkg).and_then(|s| s.get(&name)).copied().unwrap_or_default(),
+                    public_host: hosts.get(&pkg).and_then(|s| s.get(&name)).cloned(),
+                    package: pkg,
+                    service: web.clone(),
+                    locked,
+                });
+            }
+        }
+        Ok(WebInput { sites })
+    }
+
+    fn current_web_input(&self) -> Result<WebInput, ApiError> {
+        let (state, _): (ExposureState, _) = self.load_toml(&self.paths.exposure_state)?;
+        self.web_input(&state)
+    }
+
+    /// The web requests other than exposure changes, all answered by the applier.
+    pub(crate) fn web_request(&self, request: Request) -> Result<Response, ApiError> {
+        match request {
+            Request::WebStatus => Ok(Response::WebStatus(self.exposure.status(&self.current_web_input()?)?)),
+            Request::ListDnsProviders => Ok(Response::DnsProviders(self.exposure.providers()?)),
+            Request::ListProviders => Ok(Response::Providers(
+                self.exposure
+                    .providers()?
+                    .into_iter()
+                    .map(|p| ProviderInfo { name: p.name, dynamic_dns: p.dynamic_dns, configured: p.configured })
+                    .collect(),
+            )),
+            Request::SetDnsProvider { domain, provider, fields } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                self.exposure.set_provider(&domain, &provider, &fields, &input).map(|()| Response::Ok)
+            }
+            Request::TestDnsProvider => Ok(Response::ProviderTest(self.exposure.test_provider()?)),
+            Request::RetireStaleRecords => {
+                let _guard = lock(&self.service_lock);
+                Ok(Response::RetiredRecords(self.exposure.retire_stale()?))
+            }
+            Request::CheckReachabilityDetail { site } => {
+                let input = self.current_web_input()?;
+                Ok(Response::ReachabilityDetail(self.exposure.reachability(&input, &site)?))
+            }
+            Request::CheckReachability { site } => {
+                let input = self.current_web_input()?;
+                let detail = self.exposure.reachability(&input, &site)?;
+                Ok(Response::Reachability(match (detail.verdict.as_str(), &detail.router_wan) {
+                    ("blocked_by_cgnat", Some(wan)) => ReachabilityReport::Cgnat {
+                        wan_address: wan.clone(),
+                        internet_address: detail.public_ip.clone().unwrap_or_default(),
+                    },
+                    // This older form has only pass and fail, so anything not passed fails.
+                    _ => ReachabilityReport::Checked {
+                        checks: detail
+                            .checks
+                            .iter()
+                            .map(|c| ReachabilityCheck {
+                                passed: c.status == nodo_api::CheckStatus::Passed,
+                                text: c.id.clone(),
+                                note: c.detail.clone(),
+                            })
+                            .collect(),
+                    },
+                }))
+            }
+            _ => Err(ApiError::Failed("not a web request".to_owned())),
+        }
+    }
+
     pub(crate) fn set_exposure(
         &self,
         site: &SiteId,
@@ -144,7 +272,11 @@ impl<S: System> Helper<S> {
             .insert(site.site.clone(), exposure);
         self.save_toml(path, &state)?;
 
-        if let Err(reason) = self.exposure.apply(&state) {
+        let applied = self
+            .web_input(&state)
+            .map_err(|e| e.to_string())
+            .and_then(|input| self.exposure.apply(&input));
+        if let Err(reason) = applied {
             // Saved state must not claim an exposure that never took effect.
             let restored = match &previous {
                 Some(bytes) => self.sys.atomic_write(path, bytes, STATE_FILE),
@@ -429,7 +561,7 @@ mod tests {
 
     struct FailingCaddy;
     impl ExposureApplier for FailingCaddy {
-        fn apply(&self, _: &ExposureState) -> Result<(), String> {
+        fn apply(&self, _: &WebInput) -> Result<(), String> {
             Err("caddy refused".to_owned())
         }
     }

@@ -223,11 +223,14 @@ impl<S: System> Helper<S> {
             Request::GetAutoUpdate | Request::SetAutoUpdate(_) => Err(ApiError::NotImplemented(
                 "automatic updates are not connected yet".to_owned(),
             )),
-            Request::CheckReachability { .. } | Request::ListProviders => {
-                Err(ApiError::NotImplemented(
-                    "reachability checks and DNS providers are not connected yet".to_owned(),
-                ))
-            }
+            request @ (Request::CheckReachability { .. }
+            | Request::ListProviders
+            | Request::WebStatus
+            | Request::ListDnsProviders
+            | Request::SetDnsProvider { .. }
+            | Request::TestDnsProvider
+            | Request::RetireStaleRecords
+            | Request::CheckReachabilityDetail { .. }) => self.web_request(request),
         }
     }
 }
