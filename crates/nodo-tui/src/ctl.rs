@@ -15,6 +15,7 @@ nodo-tui --ctl COMMAND [ARGS]
   services | overview | packages | sites | sources | keys | drive
   detail ID | form PACKAGE | log SOURCE LINES
   start ID | stop ID | restart ID | install ID
+  install-encrypted ID             (passphrase on stdin)
   init | unlock                    (passphrase on stdin)
   change-passphrase                (current, then new, on stdin)
   set PACKAGE NAME text|int|bool VALUE
@@ -63,7 +64,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["start", x] => Request::StartService { id: id(x) },
         ["stop", x] => Request::StopService { id: id(x) },
         ["restart", x] => Request::RestartService { id: id(x) },
-        ["install", x] => Request::InstallService { id: id(x) },
+        ["install", x] => Request::InstallService { id: id(x), passphrase: None },
+        ["install-encrypted", x] => Request::InstallService { id: id(x), passphrase: Some(secret_line()?) },
         ["init"] => Request::InitEncryption { passphrase: secret_line()? },
         ["unlock"] => Request::Unlock { passphrase: secret_line()? },
         ["change-passphrase"] => Request::ChangePassphrase { current: secret_line()?, new: secret_line()? },

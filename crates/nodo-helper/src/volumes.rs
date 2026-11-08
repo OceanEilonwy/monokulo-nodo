@@ -203,12 +203,12 @@ impl<S: System> Helper<S> {
         let name = mapper_name(id).map_err(gen_failed)?;
         let mount = volume_mount(id).map_err(gen_failed)?;
         let mount = Path::new(&mount);
-        let device_key: DeviceKey =
-            keys::unwrap_device_key(passphrase.expose().as_bytes(), &self.read_keystore()?)
-                .map_err(|e| match e {
-                    KeyError::WrongPassphrase => ApiError::BadPassphrase,
-                    other => ApiError::Failed(other.to_string()),
-                })?;
+        // Reachable from a client through installs, so it shares the unlock delay.
+        let device_key: DeviceKey = {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            self.verify_passphrase(&mut failures, passphrase, &file)?
+        };
         let key = keys::volume_key(&device_key, id);
         let file = self.volume_file(id);
         self.sys.ensure_dir(&self.paths.volumes, 0o700, None)?;

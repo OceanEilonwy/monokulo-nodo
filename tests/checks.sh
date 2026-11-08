@@ -23,13 +23,13 @@ check "log is not flooded" '! grep -q "Commands:" /var/log/cuprated/current && [
 check "refuses to start without its data drive" 'sv -w 120 stop cuprated >/dev/null; echo DATA_MOUNT=/nonexistent > /etc/sv/cuprated/conf; sv start cuprated; sleep 3; r=1; tail -n 5 /var/log/cuprated/current | grep -q "refusing to start" && ! pgrep -x cuprated >/dev/null && r=0; rm -f /etc/sv/cuprated/conf; sv -w 60 restart cuprated >/dev/null; for n in 1 2 3 4 5 6 7 8 9 10 11 12; do pgrep -x cuprated >/dev/null && break; sleep 5; done; exit $r'
 check "stdin prompt is disabled" 'grep -q "disabling STDIN commands" /var/log/cuprated/current'
 # The shutdown handler starts with the node, so wait for RPC before testing it.
-check "clean stop under TERM" 'for n in $(seq 1 60); do grep -q ":46F1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done; sv -w 120 stop cuprated | grep -q "^ok: down" && tail -n 40 /var/log/cuprated/current | grep -q "Shutdown complete"'
+check "clean stop under TERM" 'for n in $(seq 1 60); do grep -q ":46A1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done; sv -w 120 stop cuprated | grep -q "^ok: down" && tail -n 40 /var/log/cuprated/current | grep -q "Shutdown complete"'
 # The script goes in a file so nothing it runs can consume its own text from stdin.
 ssh_vm 'cat > /tmp/fw.sh' < /src/tests/firewall-traffic.sh
 ssh_vm 'sh /tmp/fw.sh </dev/null' || fail=1
 check "service restarts" 'sv -w 60 start cuprated | grep -q "^ok: run"'
 if [ "${SKIP_REBOOT:-}" != 1 ]; then
-ssh_vm 'for n in $(seq 1 60); do grep -q ":46F1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'
+ssh_vm 'for n in $(seq 1 60); do grep -q ":46A1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'
 boot1=$(ssh_vm 'cat /proc/sys/kernel/random/boot_id')
 reboot_started=$(date +%s)
 ssh_vm 'shutdown -r now' || true

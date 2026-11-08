@@ -202,7 +202,10 @@ mod tests {
             },
             Request::CheckReachability { site: site() },
             Request::ListProviders,
-            Request::InstallService { id: "a".into() },
+            Request::InstallService {
+                id: "a".into(),
+                passphrase: Some(Secret::new("p")),
+            },
             Request::ListSshKeys,
             Request::AddSshKey {
                 line: "ssh-ed25519 AAAA x".into(),

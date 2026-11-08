@@ -208,7 +208,9 @@ impl<S: System> Helper<S> {
             Request::CheckDrive => self.check_drive(),
             Request::RepairDrive(confirmation) => self.repair_drive(confirmation),
             Request::MountDrive => self.mount_drive(),
-            Request::InstallService { id } => self.install_by_id(&id),
+            Request::InstallService { id, passphrase } => {
+                self.install_by_id(&id, passphrase.as_ref())
+            }
             Request::ListSshKeys => self.list_ssh_keys(),
             Request::AddSshKey { line } => self.add_ssh_key(&line),
             Request::RemoveSshKey { fingerprint } => self.remove_ssh_key(&fingerprint),
@@ -299,7 +301,10 @@ mod tests {
                 site,
                 host: "a.example".into(),
             },
-            Request::InstallService { id: "shop".into() },
+            Request::InstallService {
+                id: "shop".into(),
+                passphrase: None,
+            },
             Request::ListSshKeys,
             Request::AddSshKey { line: "x".into() },
             Request::RemoveSshKey {

@@ -12,8 +12,9 @@ short_desc="Root helper service and terminal interface for monokulo-nodo"
 maintainer="monokulo-nodo <noreply@localhost>"
 license="GPL-3.0-or-later"
 homepage="https://github.com/OceanEilonwy/monokulo-nodo"
-# Package settings code runs as this account, never as root.
-system_accounts="_nodo-settings"
+# Package settings code runs as this account, never as root. xbps turns the name into a
+# shell variable, so it cannot contain a dash.
+system_accounts="_nodo_settings"
 _nodo_settings_homedir="/var/empty"
 # Members of this group may use the helper. Root always may.
 system_groups="nodo"

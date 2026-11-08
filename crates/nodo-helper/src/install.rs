@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use nodo_api::{ApiError, Response};
+use nodo_api::{ApiError, Response, Secret};
 use nodo_gen::{generate, service_user, Artifacts, Profile, ResolvedGrants};
 use nodo_manifest::Manifest;
 
@@ -21,6 +21,8 @@ const CONFIG: WriteOptions = WriteOptions {
     mode: 0o644,
     group: None,
 };
+/// Manifests cannot ask for a size yet, so every encrypted volume gets this much.
+const DEFAULT_VOLUME_SIZE: u64 = 256 * 1024 * 1024;
 const CLAIM: WriteOptions = WriteOptions {
     mode: 0o600,
     group: None,
@@ -48,7 +50,11 @@ impl<S: System> Helper<S> {
     /// An id is refused when its user, service directory or enabled link already exists and the
     /// helper did not create them, so a package can never take over an existing account or
     /// service such as `sshd`.
-    pub(crate) fn install_by_id(&self, id: &str) -> Result<Response, ApiError> {
+    pub(crate) fn install_by_id(
+        &self,
+        id: &str,
+        passphrase: Option<&Secret>,
+    ) -> Result<Response, ApiError> {
         let package = self.package(id)?;
         if package.profile == Profile::System {
             return Err(ApiError::Failed(format!(
@@ -65,6 +71,13 @@ impl<S: System> Helper<S> {
         .map_err(|e| ApiError::Failed(e.to_string()))?;
         let user = service_user(id).map_err(|e| ApiError::Failed(e.to_string()))?;
         let layout = package.layout()?;
+        let needs_volume =
+            package.manifest.storage.encrypted && !self.sys.exists(&self.volume_file(id));
+        if needs_volume && passphrase.is_none() {
+            return Err(ApiError::Failed(format!(
+                "{id} keeps encrypted storage, so installing it needs the device passphrase"
+            )));
+        }
         let marker = self.paths.installed.join(id);
         let service = self.paths.sv_dir.join(id);
         let enabled = self.paths.service_dir.join(id);
@@ -92,6 +105,9 @@ impl<S: System> Helper<S> {
         }
         if !self.sys.user_exists(&user) {
             self.sys.create_user(&user, Path::new(&layout.data_dir))?;
+        }
+        if let (true, Some(passphrase)) = (needs_volume, passphrase) {
+            self.create_volume(id, passphrase, DEFAULT_VOLUME_SIZE)?;
         }
         self.write_service(id, &artifacts)?;
         match self.sys.read_link(&enabled) {
@@ -216,7 +232,10 @@ mod tests {
     fn by_id(h: &Helper<FakeSystem>) -> Result<Response, ApiError> {
         h.handle(
             1000,
-            nodo_api::Request::InstallService { id: "shop".into() },
+            nodo_api::Request::InstallService {
+                id: "shop".into(),
+                passphrase: None,
+            },
         )
     }
 
@@ -289,11 +308,56 @@ mod tests {
         assert!(matches!(
             h.handle(
                 1000,
-                nodo_api::Request::InstallService { id: "sshd".into() }
+                nodo_api::Request::InstallService {
+                    id: "sshd".into(),
+                    passphrase: None,
+                }
             ),
             Err(ApiError::NotFound(_))
         ));
         assert!(!h.sys.calls().iter().any(|c| c.starts_with("useradd")));
+    }
+
+    fn encrypted_install(pass: Option<&str>) -> (Helper<FakeSystem>, Result<Response, ApiError>) {
+        let sys = FakeSystem::default();
+        sys.add_manifest(crate::fake::ENCRYPTED);
+        let h = helper(sys);
+        h.init_device(&Secret::new("correct horse battery"))
+            .unwrap();
+        let result = h.handle(
+            1000,
+            nodo_api::Request::InstallService {
+                id: "vault".into(),
+                passphrase: pass.map(Secret::new),
+            },
+        );
+        (h, result)
+    }
+
+    #[test]
+    fn encrypted_package_gets_its_volume_at_install() {
+        let (h, result) = encrypted_install(Some("correct horse battery"));
+        assert_eq!(result, Ok(Response::Ok));
+        assert!(h.sys.mounted("/run/nodo/volumes/vault"));
+        let calls = h.sys.calls();
+        let at = |needle: &str| calls.iter().position(|c| c.starts_with(needle)).unwrap();
+        assert!(at("useradd _vault") < at("luks format"));
+        assert!(at("chown /run/nodo/volumes/vault _vault") < at("write /sv/vault/run"));
+    }
+
+    #[test]
+    fn encrypted_install_needs_the_right_passphrase_and_counts_failures() {
+        let (h, result) = encrypted_install(None);
+        assert!(matches!(result, Err(ApiError::Failed(_))));
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("useradd")));
+        let (h, result) = encrypted_install(Some("wrong horse battery"));
+        assert_eq!(result, Err(ApiError::BadPassphrase));
+        assert_eq!(
+            h.sys.sleeps().len(),
+            1,
+            "guesses through install are delayed too"
+        );
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("luks")));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::system::{Probe, SvAction, SysError, SysResult, System, WriteOptions};
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_ERROR_LEN: usize = 512;
 /// The account settings code runs as. Created by the package that installs the helper.
-pub const SETTINGS_USER: &str = "_nodo-settings";
+pub const SETTINGS_USER: &str = "_nodo_settings";
 const WORKER_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TOOL_OUTPUT: u64 = 64 * 1024;
 

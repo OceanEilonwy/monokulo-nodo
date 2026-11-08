@@ -393,9 +393,11 @@ pub enum Request {
     },
     ListProviders,
     /// Creates the service user, writes the generated service and enables it. The manifest must
-    /// already be in a root-owned manifest directory.
+    /// already be in a root-owned manifest directory. A package with encrypted storage needs the
+    /// device passphrase the first time, to create its volume.
     InstallService {
         id: String,
+        passphrase: Option<Secret>,
     },
     ListSshKeys,
     AddSshKey {
@@ -512,6 +514,10 @@ mod tests {
             Request::ChangePassphrase {
                 current: Secret::new("hunter2"),
                 new: Secret::new("hunter3"),
+            },
+            Request::InstallService {
+                id: "a".into(),
+                passphrase: Some(Secret::new("hunter2")),
             },
             Request::ApplySettings {
                 package: "a".into(),
