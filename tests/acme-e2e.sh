@@ -75,7 +75,8 @@ chmod 755 /tmp/e2e-bin/cert_state /tmp/e2e-bin/cert_block /tmp/e2e-bin/stored_fp
 acme_down() {
 	web_down
 	ip netns exec e2einet true 2>/dev/null && ip netns pids e2einet | xargs -r kill 2>/dev/null
-	rm -f /etc/resolv.conf.head
+	# Dynamic DNS state from the fake provider would make later tests think records are current.
+	rm -f /etc/resolv.conf.head /var/lib/nodo-ddns/state.json
 	[ -f "$acme/resolv.conf.saved" ] && cat "$acme/resolv.conf.saved" > /etc/resolv.conf
 	sed -i '/# nodo-acme-test$/d' /etc/hosts
 	rm -f /usr/local/share/ca-certificates/nodo-acme-test.crt
