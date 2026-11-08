@@ -66,6 +66,11 @@ pub struct MockBackend {
     pub auto_update: AutoUpdatePrefs,
     /// Makes applying a site's protections fail, to exercise that failure path.
     pub fail_public_access: bool,
+    /// First boot: no device passphrase yet.
+    pub setup_needed: bool,
+    pub ssh_keys: Vec<nodo_api::SshKey>,
+    /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
+    pub delay: Option<std::time::Duration>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
 }
@@ -91,6 +96,13 @@ impl MockBackend {
             stored_provider: Some(StoredProvider { provider: s("Porkbun"), domain: s("example.com") }),
             auto_update: sample_auto_update(),
             fail_public_access: false,
+            setup_needed: false,
+            delay: None,
+            ssh_keys: vec![nodo_api::SshKey {
+                algorithm: s("ssh-ed25519"),
+                fingerprint: s("SHA256:mockmockmockmockmockmockmockmockmockmockmo"),
+                comment: s("laptop"),
+            }],
             reach_attempts: HashMap::new(),
             job: None,
         }
@@ -126,6 +138,9 @@ impl MockBackend {
 
 impl Backend for MockBackend {
     fn call(&mut self, request: Request) -> Result<Response, ApiError> {
+        if let Some(delay) = self.delay {
+            std::thread::sleep(delay);
+        }
         self.calls.push(request.clone());
         match request {
             Request::ListServices => Ok(Response::Services(self.services.clone())),
@@ -212,6 +227,16 @@ impl Backend for MockBackend {
                 entry.exposure = exposure;
                 Ok(Response::Ok)
             }
+            Request::InitEncryption { passphrase } => {
+                if !self.setup_needed {
+                    return Err(ApiError::Failed(s("this device is already set up")));
+                }
+                if passphrase.char_count() < 8 {
+                    return Err(ApiError::Failed(s("the passphrase must have at least 8 characters")));
+                }
+                self.setup_needed = false;
+                Ok(Response::Ok)
+            }
             other => Err(ApiError::NotImplemented(format!("{} in the mock", nodo_api::action_name(&other)))),
         }
     }
@@ -254,6 +279,7 @@ impl ScreenData for MockBackend {
                 Vec::new()
             },
             updates_checked: s("Last checked 2 hours ago"),
+            setup_needed: self.setup_needed,
         }
     }
 
@@ -770,6 +796,34 @@ impl ScreenData for MockBackend {
             return Err(s("Could not apply the site's protections."));
         }
         self.public_access.insert(s(site), access.clone());
+        Ok(())
+    }
+
+    fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String> {
+        Ok(self.ssh_keys.clone())
+    }
+
+    fn add_ssh_key(&mut self, line: &str) -> Result<(), String> {
+        let mut fields = line.split_whitespace();
+        let (Some(algorithm), Some(data)) = (fields.next(), fields.next()) else {
+            return Err(s("that is not a single public key line"));
+        };
+        if !algorithm.starts_with("ssh-") && !algorithm.starts_with("ecdsa-") {
+            return Err(s("the line must start with a key type such as ssh-ed25519"));
+        }
+        self.ssh_keys.push(nodo_api::SshKey {
+            algorithm: algorithm.to_owned(),
+            fingerprint: format!("SHA256:{}", data.chars().rev().take(43).collect::<String>()),
+            comment: fields.collect::<Vec<_>>().join(" "),
+        });
+        Ok(())
+    }
+
+    fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String> {
+        if self.ssh_keys.len() <= 1 {
+            return Err(s("this is the only key that can log in. Add another before removing it"));
+        }
+        self.ssh_keys.retain(|key| key.fingerprint != fingerprint);
         Ok(())
     }
 

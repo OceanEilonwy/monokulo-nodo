@@ -5,6 +5,7 @@ mod install;
 pub mod layout;
 mod packages;
 mod settings;
+mod setup;
 mod feeds;
 mod updates;
 mod web;
@@ -15,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::app::{App, Modal, NoticeKind, Overlay, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
+use crate::model::Area;
 use crate::theme::Theme;
 use layout::{draw_boxed, draw_page, FitReport, Item};
 
@@ -52,6 +54,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebCheck(state) => web::check(t, state),
         Screen::WebConfirm(state) => web::confirm(t, state),
         Screen::WebCgnat(state) => web::cgnat(t, state),
+        Screen::Setup(state) => setup::setup(t, state),
     };
     if let Some(notice) = &app.notice {
         let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {
@@ -60,6 +63,21 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
             NoticeKind::Error => ("✕", |t, text| t.e(text)),
         };
         page.footer.insert(0, Item::Text(Line::from(span(t, format!("{symbol} {}", notice.text)))));
+    }
+    if app.working {
+        page.footer.insert(0, Item::Text(Line::from(t.d("⧗ Working…"))));
+    }
+    let area_shown = match &app.screen {
+        Screen::Search(_) => Some(Area::Catalog),
+        Screen::Feeds { .. } | Screen::AddFeed(_) => Some(Area::Feeds),
+        Screen::Updates(_) => Some(Area::Updates),
+        Screen::AutoUpdate(_) => Some(Area::AutoUpdate),
+        Screen::WebProviders(_) => Some(Area::Providers),
+        Screen::WebCheck(_) => Some(Area::Reachability),
+        _ => None,
+    };
+    if let Some(reason) = area_shown.and_then(|area| app.data.unavailable(area)) {
+        page.footer.insert(0, Item::Text(Line::from(t.e(format!("▲ Not available yet: {reason}")))));
     }
     let report = draw_page(frame, area, t, page);
     if let Some(overlay) = &app.overlay {

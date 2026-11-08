@@ -1,0 +1,679 @@
+//! The real device: every call goes to the root helper over its socket.
+//!
+//! Where the helper answers `NotImplemented`, screens get empty data and the area is recorded in
+//! `unavailable`, so they say so instead of showing anything made up.
+
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
+
+use nodo_api::client::HelperClient;
+use nodo_api::{
+    ApiError, Backend, DeviceOverview, EncryptionState, Origin, Request, Response, ServiceState,
+    SettingCurrent, SettingField, SettingKind, SettingLiteral, SiteId,
+};
+
+use crate::model::*;
+use crate::secret::Secret;
+
+const LOG_LINES: u32 = 300;
+
+pub struct HelperBackend {
+    client: RefCell<HelperClient>,
+    /// Screens name a site by one string. This maps it back to the helper's id.
+    sites: RefCell<BTreeMap<String, SiteId>>,
+    unavailable: RefCell<Vec<(Area, String)>>,
+    /// The most recent read-only drive check, which a repair must quote.
+    drive_check: Cell<Option<u64>>,
+}
+
+fn origin_label(origin: &Origin) -> String {
+    match origin {
+        Origin::System => "system".to_owned(),
+        Origin::Feed(Some(feed)) => feed.clone(),
+        Origin::Feed(None) => "app".to_owned(),
+    }
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / 1e9)
+}
+
+fn duration(secs: u64) -> String {
+    match secs {
+        s if s < 3600 => format!("{} minutes", s / 60),
+        s if s < 2 * 86400 => format!("{} hours", s / 3600),
+        s => format!("{} days", s / 86400),
+    }
+}
+
+fn state_label(state: ServiceState) -> &'static str {
+    match state {
+        ServiceState::Running => "running",
+        ServiceState::Stopped => "stopped",
+        ServiceState::Failed => "failed",
+        ServiceState::Locked => "locked",
+        ServiceState::Waiting => "waiting",
+    }
+}
+
+fn reference_path(text: &str) -> Option<&str> {
+    text.strip_prefix("$(")?.strip_suffix(')')
+}
+
+/// Maps the helper's form field to the TUI's. Secrets only ever arrive as set or unset.
+pub fn field(f: SettingField) -> Field {
+    let kind = match f.kind {
+        SettingKind::Text => FieldKind::Text,
+        SettingKind::Int { min, max } => FieldKind::Number { min, max },
+        SettingKind::Bool => FieldKind::Toggle,
+        SettingKind::Choice(choices) => FieldKind::Choice(choices),
+        SettingKind::MoneroAddress => FieldKind::MoneroAddress,
+        SettingKind::Url => FieldKind::Url,
+        SettingKind::Secret => FieldKind::Secret,
+    };
+    let toggle = kind == FieldKind::Toggle;
+    let value = match f.current {
+        SettingCurrent::SecretSet => FieldValue::SecretSet,
+        SettingCurrent::SecretUnset => FieldValue::SecretUnset,
+        SettingCurrent::Literal(SettingLiteral::Bool(b)) => FieldValue::Bool(b),
+        SettingCurrent::Literal(SettingLiteral::Int(n)) => FieldValue::Text(n.to_string()),
+        SettingCurrent::Literal(SettingLiteral::Text(text)) if toggle => FieldValue::Bool(text == "true"),
+        SettingCurrent::Literal(SettingLiteral::Text(text)) => FieldValue::Text(text),
+        SettingCurrent::Reference { target, setting, resolved } => FieldValue::Reference {
+            path: format!("{target}.{setting}"),
+            resolved: resolved.unwrap_or_else(|| "does not resolve".to_owned()),
+        },
+        SettingCurrent::Default => match f.default.as_deref() {
+            Some(text) => match reference_path(text) {
+                Some(path) => FieldValue::Reference { path: path.to_owned(), resolved: String::new() },
+                None if toggle => FieldValue::Bool(text == "true"),
+                None => FieldValue::Text(text.to_owned()),
+            },
+            None if kind == FieldKind::Secret => FieldValue::SecretUnset,
+            None if toggle => FieldValue::Bool(false),
+            None => FieldValue::Text(String::new()),
+        },
+    };
+    let requirement = match (&f.required, &f.default) {
+        (true, _) => "Required".to_owned(),
+        (false, Some(default)) => format!("Default {default}"),
+        (false, None) => "Optional".to_owned(),
+    };
+    Field { key: f.name, label: f.label, help: f.help, requirement, kind, value }
+}
+
+impl HelperBackend {
+    pub fn connect(path: &Path) -> io::Result<Self> {
+        Ok(Self {
+            client: RefCell::new(HelperClient::connect(path)?),
+            sites: RefCell::new(BTreeMap::new()),
+            unavailable: RefCell::new(Vec::new()),
+            drive_check: Cell::new(None),
+        })
+    }
+
+    fn ask(&self, request: Request) -> Result<Response, ApiError> {
+        self.client.borrow_mut().call(request)
+    }
+
+    /// Records an area as unavailable when the helper says it is, and passes other errors on.
+    fn missing(&self, area: Area, error: &ApiError) {
+        if let ApiError::NotImplemented(reason) = error {
+            let mut list = self.unavailable.borrow_mut();
+            if !list.iter().any(|(a, _)| *a == area) {
+                list.push((area, reason.clone()));
+            }
+        }
+    }
+
+    fn services(&self) -> Vec<nodo_api::ServiceStatus> {
+        match self.ask(Request::ListServices) {
+            Ok(Response::Services(list)) => list,
+            _ => Vec::new(),
+        }
+    }
+
+    fn packages(&self) -> Vec<nodo_api::PackageInfo> {
+        match self.ask(Request::ListPackages) {
+            Ok(Response::Packages(list)) => list,
+            _ => Vec::new(),
+        }
+    }
+
+    fn device_rows(o: &DeviceOverview) -> Vec<(String, String)> {
+        let mut rows = vec![
+            ("Host".to_owned(), o.hostname.clone()),
+            ("System disk".to_owned(), format!("{} free of {}", gib(o.disk_free_bytes), gib(o.disk_total_bytes))),
+            (
+                "Memory".to_owned(),
+                format!("{} available of {}", gib(o.memory_available_kib * 1024), gib(o.memory_total_kib * 1024)),
+            ),
+            ("Uptime".to_owned(), duration(o.uptime_secs)),
+            ("Kernel".to_owned(), o.kernel.clone()),
+        ];
+        if let Some(drive) = o.drive.as_ref().filter(|d| d.mounted) {
+            rows.insert(1, ("Data drive".to_owned(), format!("{} free of {}", gib(drive.free_bytes), gib(drive.total_bytes))));
+        }
+        rows
+    }
+}
+
+impl Backend for HelperBackend {
+    fn call(&mut self, request: Request) -> Result<Response, ApiError> {
+        self.ask(request)
+    }
+}
+
+impl ScreenData for HelperBackend {
+    fn overview(&self) -> Overview {
+        // A snapshot starts here, so earlier reasons are dropped and gathered again.
+        self.unavailable.borrow_mut().clear();
+        let o = match self.ask(Request::DeviceOverview) {
+            Ok(Response::Overview(o)) => o,
+            Ok(other) => return failed_overview(format!("unexpected reply: {other:?}")),
+            Err(e) => return failed_overview(e.to_string()),
+        };
+        let services = self.services();
+        let node = services
+            .iter()
+            .find(|s| s.roles.iter().any(|r| r == "monero-daemon"))
+            .map(|s| NodeInfo {
+                role: "monero-daemon".to_owned(),
+                provider: s.id.clone(),
+                state: state_label(s.state).to_owned(),
+                height: "not available yet".to_owned(),
+                peers: "not available yet".to_owned(),
+            })
+            .unwrap_or_default();
+        let service_origins = services
+            .iter()
+            .map(|s| (s.id.clone(), s.roles.first().cloned().unwrap_or_else(|| origin_label(&s.origin))))
+            .collect();
+        let drive = o.drive.as_ref().filter(|d| !d.present || !d.mounted).map(|d| {
+            let waiting: Vec<String> =
+                services.iter().filter(|s| s.state == ServiceState::Waiting).map(|s| s.id.clone()).collect();
+            DriveFailure {
+                message: if d.present {
+                    format!("The data drive is connected but not mounted at {}.", d.mount_point)
+                } else {
+                    "The data drive is not connected.".to_owned()
+                },
+                checks: vec![
+                    Check {
+                        state: if d.present { CheckState::Passed } else { CheckState::Failed },
+                        text: "Drive connected".to_owned(),
+                        note: d.label.clone(),
+                    },
+                    Check {
+                        state: if d.mounted { CheckState::Passed } else { CheckState::Failed },
+                        text: format!("Mounted at {}", d.mount_point),
+                        note: d.filesystem.clone().unwrap_or_else(|| "no filesystem found".to_owned()),
+                    },
+                ],
+                waiting: if waiting.is_empty() { String::new() } else { format!("Waiting: {}", waiting.join(", ")) },
+            }
+        });
+        let unlock_targets = if o.encryption == EncryptionState::Locked {
+            self.packages()
+                .into_iter()
+                .filter(|p| p.encrypted_storage)
+                .map(|p| UnlockTarget { name: p.id, encrypted: true, note: "Encrypted storage".to_owned() })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Overview {
+            node,
+            device: Self::device_rows(&o),
+            service_origins,
+            drive,
+            restarted: format!("Up for {}", duration(o.uptime_secs)),
+            unlock_targets,
+            updates_checked: "Updates are not connected yet".to_owned(),
+            setup_needed: o.encryption == EncryptionState::NotSetUp,
+        }
+    }
+
+    fn catalog(&self) -> Vec<PackageSummary> {
+        self.missing(
+            Area::Catalog,
+            &ApiError::NotImplemented("only installed packages are listed until feeds are connected".to_owned()),
+        );
+        self.packages()
+            .into_iter()
+            .map(|p| PackageSummary {
+                id: PackageId::new(&origin_label(&p.origin), &p.id),
+                status: PackageStatus::Installed,
+                version: p.version,
+                size: String::new(),
+                tagline: if p.roles.is_empty() { String::new() } else { format!("Provides {}", p.roles.join(", ")) },
+                description: Vec::new(),
+                needs: p.needs.into_iter().map(|name| Need { name, met: true, source: None }).collect(),
+            })
+            .collect()
+    }
+
+    fn package_detail(&self, id: &PackageId) -> Option<PackageDetail> {
+        let Ok(Response::PackageDetail(d)) = self.ask(Request::PackageDetail { id: id.name.clone() }) else {
+            return None;
+        };
+        let mut asks: Vec<(String, String)> = d.inbound.iter().map(|rule| ("Inbound".to_owned(), rule.clone())).collect();
+        if d.outbound_internet {
+            asks.push(("Outbound".to_owned(), "internet".to_owned()));
+        }
+        Some(PackageDetail {
+            id: id.clone(),
+            installed: true,
+            signature_verified: d.info.origin == Origin::System,
+            about: if d.info.roles.is_empty() { String::new() } else { format!("Provides {}", d.info.roles.join(", ")) },
+            version: d.info.version,
+            size: String::new(),
+            license: String::new(),
+            needs: d.info.needs.into_iter().map(|name| Need { name, met: true, source: None }).collect(),
+            public_settings: d.public_settings,
+            asks,
+            encrypted_storage: d.info.encrypted_storage,
+        })
+    }
+
+    fn install_gate(&self, id: &PackageId) -> InstallGate {
+        InstallGate::Rejected(RejectionData {
+            id: id.clone(),
+            version: String::new(),
+            violations: vec![Violation {
+                passed: false,
+                rule: "Installing from feeds is not connected yet".to_owned(),
+                evidence: "Nothing was downloaded or changed.".to_owned(),
+            }],
+        })
+    }
+
+    fn start_install(&mut self, _id: &PackageId) -> Result<InstallSnapshot, String> {
+        Err("Installing from feeds is not connected yet.".to_owned())
+    }
+
+    fn poll_install(&mut self) -> Option<InstallSnapshot> {
+        None
+    }
+
+    fn cancel_install(&mut self) -> Option<InstallSnapshot> {
+        None
+    }
+
+    fn feeds(&self) -> Vec<Feed> {
+        match self.ask(Request::ListFeeds) {
+            Ok(Response::Feeds(list)) => list
+                .into_iter()
+                .map(|f| Feed {
+                    name: f.name,
+                    packages: f.packages,
+                    key_state: if f.key_changed { KeyState::Changed } else { KeyState::Pinned },
+                    checked: f.last_checked.unwrap_or_default(),
+                    status: match (f.enabled, f.problem) {
+                        (false, _) => FeedStatus::Disabled,
+                        (true, Some(problem)) => FeedStatus::Unreachable(problem),
+                        (true, None) => FeedStatus::Healthy,
+                    },
+                    address: f.address,
+                    fingerprint: f.fingerprint,
+                    added: String::new(),
+                    installed_from: Vec::new(),
+                })
+                .collect(),
+            Err(e) => {
+                self.missing(Area::Feeds, &e);
+                Vec::new()
+            }
+            Ok(_) => Vec::new(),
+        }
+    }
+
+    fn probe_feed(&self, _address: &str) -> Result<FeedProbe, String> {
+        Err("Adding feeds is not connected yet.".to_owned())
+    }
+
+    fn trust_feed(&mut self, _probe: &FeedProbe) -> Result<(), String> {
+        Err("Adding feeds is not connected yet.".to_owned())
+    }
+
+    fn refresh_feeds(&mut self) {}
+
+    fn toggle_feed(&mut self, _name: &str) {}
+
+    fn remove_feed(&mut self, _name: &str) {}
+
+    fn key_change(&self, _feed: &str) -> Option<KeyChange> {
+        None
+    }
+
+    fn trust_new_key(&mut self, _feed: &str) -> Result<(), String> {
+        Err("Feeds are not connected yet.".to_owned())
+    }
+
+    fn settings_form(&self, package: &str) -> Option<SettingsForm> {
+        let Ok(Response::SettingsForm(form)) = self.ask(Request::SettingsForm { package: package.to_owned() }) else {
+            return None;
+        };
+        let public_settings = form.fields.iter().filter_map(|f| f.public_name.clone()).collect();
+        Some(SettingsForm {
+            package: form.package,
+            fields: form.fields.into_iter().map(field).collect(),
+            public_settings,
+        })
+    }
+
+    /// Public settings of every other package with settings, by package id and by each role it
+    /// provides. Secrets are never public, so none appear.
+    fn references(&self, package: &str, _field: &str) -> ReferenceList {
+        let mut options = Vec::new();
+        for p in self.packages().into_iter().filter(|p| p.has_settings && p.id != package) {
+            let Ok(Response::SettingsForm(form)) = self.ask(Request::SettingsForm { package: p.id.clone() }) else {
+                continue;
+            };
+            for f in form.fields {
+                let Some(public) = f.public_name.clone() else { continue };
+                let value = match &field(f).value {
+                    FieldValue::Text(text) => text.clone(),
+                    FieldValue::Bool(b) => b.to_string(),
+                    FieldValue::Reference { resolved, .. } => resolved.clone(),
+                    _ => String::new(),
+                };
+                for role in &p.roles {
+                    options.push(ReferenceOption {
+                        path: format!("{role}.{public}"),
+                        value: value.clone(),
+                        role_note: Some((role.clone(), p.id.clone())),
+                        consequences: vec![format!("{package} will depend on whichever package provides {role}.")],
+                    });
+                }
+                options.push(ReferenceOption {
+                    path: format!("{}.{public}", p.id),
+                    value,
+                    role_note: None,
+                    consequences: vec![format!("{package} will depend on {}.", p.id)],
+                });
+            }
+        }
+        ReferenceList { expects: String::new(), options, hidden_wrong_type: 0, hidden_secrets: 0 }
+    }
+
+    fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
+        RollbackExplanation {
+            steps: vec![
+                (true, "New settings checked and saved".to_owned()),
+                (false, format!("{package} did not come back healthy")),
+                (true, "Old settings restored".to_owned()),
+            ],
+            headline: format!("{package} failed with the new settings, so the old ones were put back."),
+            hint: reason.to_owned(),
+            blamed_field: None,
+        }
+    }
+
+    fn updates(&self) -> Vec<UpdateItem> {
+        if let Err(e) = self.ask(Request::ListUpdates) {
+            self.missing(Area::Updates, &e);
+        }
+        Vec::new()
+    }
+
+    fn check_updates(&mut self) {}
+
+    fn update_review(&self, _name: &str) -> Option<ReviewData> {
+        None
+    }
+
+    fn apply_updates(&mut self, _names: &[String]) -> UpdateReport {
+        UpdateReport { results: Vec::new(), failure: None }
+    }
+
+    fn set_held(&mut self, _name: &str, _held: bool) {}
+
+    fn auto_update(&self) -> AutoUpdatePrefs {
+        match self.ask(Request::GetAutoUpdate) {
+            Ok(Response::AutoUpdate(prefs)) => AutoUpdatePrefs {
+                frequency: prefs.frequency,
+                frequencies: Vec::new(),
+                window_start: prefs.window_start,
+                window_end: prefs.window_end,
+                next_run: String::new(),
+                packages: Vec::new(),
+            },
+            Err(e) => {
+                self.missing(Area::AutoUpdate, &e);
+                AutoUpdatePrefs::default()
+            }
+            Ok(_) => AutoUpdatePrefs::default(),
+        }
+    }
+
+    fn save_auto_update(&mut self, _prefs: &AutoUpdatePrefs) -> Result<(), String> {
+        Err("Automatic updates are not connected yet.".to_owned())
+    }
+
+    fn copy_report(&mut self, _subject: &str) -> Result<String, String> {
+        Err("Copying reports is not available yet.".to_owned())
+    }
+
+    fn logs(&self, source: &str) -> LogView {
+        match self.ask(Request::ReadLog { source: source.to_owned(), max_lines: LOG_LINES }) {
+            Ok(Response::Log(chunk)) => LogView {
+                lines: chunk
+                    .lines
+                    .into_iter()
+                    .map(|text| {
+                        let lower = text.to_ascii_lowercase();
+                        let kind = if lower.contains("error") || lower.contains("panic") { LogKind::Error } else { LogKind::Info };
+                        LogLine { kind, text }
+                    })
+                    .collect(),
+                suggestion: Vec::new(),
+            },
+            Ok(_) => LogView::default(),
+            Err(e) => LogView { lines: vec![LogLine { kind: LogKind::Error, text: e.to_string() }], suggestion: Vec::new() },
+        }
+    }
+
+    fn log_sources(&self) -> Vec<String> {
+        match self.ask(Request::LogSources) {
+            Ok(Response::LogSources(list)) => list,
+            _ => Vec::new(),
+        }
+    }
+
+    fn drive_action(&mut self, action: DriveAction) -> Result<Document, String> {
+        let doc = |title: &str, lines: Vec<String>| Document { title: title.to_owned(), lines };
+        match action {
+            DriveAction::Retry => match self.ask(Request::MountDrive) {
+                Ok(_) => Ok(doc("Data drive", vec!["The data drive is mounted.".to_owned()])),
+                Err(e) => Err(e.to_string()),
+            },
+            DriveAction::ReadOnlyCheck => match self.ask(Request::CheckDrive) {
+                Ok(Response::DriveReport(report)) => {
+                    self.drive_check.set(Some(report.check_id));
+                    let verdict = if report.clean {
+                        "No problems found."
+                    } else {
+                        "Problems found. Repair can fix them, and may lose some data."
+                    };
+                    let mut lines = vec![verdict.to_owned(), String::new()];
+                    lines.extend(report.output);
+                    Ok(doc("Read-only check", lines))
+                }
+                Ok(_) => Err("unexpected reply".to_owned()),
+                Err(e) => Err(e.to_string()),
+            },
+            DriveAction::Repair => {
+                // The modal already asked. The helper still refuses without a recent failed check.
+                let check_id = self.drive_check.get().ok_or("Run the read-only check first.")?;
+                let confirmation = nodo_api::RepairConfirmation { check_id, accept_data_loss_risk: true };
+                match self.ask(Request::RepairDrive(confirmation)) {
+                    Ok(Response::DriveReport(report)) => {
+                        self.drive_check.set(None);
+                        let mut lines = vec![if report.clean { "Repaired." } else { "The repair could not fix everything." }.to_owned()];
+                        lines.extend(report.output);
+                        Ok(doc("Repair", lines))
+                    }
+                    Ok(_) => Err("unexpected reply".to_owned()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            DriveAction::Diagnostics => match self.ask(Request::DriveStatus) {
+                Ok(Response::Drive(Some(d))) => Ok(doc(
+                    "Data drive",
+                    vec![
+                        format!("Device: {}", d.label),
+                        format!("Connected: {}", if d.present { "yes" } else { "no" }),
+                        format!("Mounted at {}: {}", d.mount_point, if d.mounted { "yes" } else { "no" }),
+                        format!("Filesystem: {}", d.filesystem.unwrap_or_else(|| "unknown".to_owned())),
+                    ],
+                )),
+                Ok(_) => Err("This device has no data drive.".to_owned()),
+                Err(e) => Err(e.to_string()),
+            },
+        }
+    }
+
+    fn web(&self) -> WebOverview {
+        let Ok(Response::Sites(list)) = self.ask(Request::ListSites) else {
+            return WebOverview::default();
+        };
+        let mut per_package: BTreeMap<String, usize> = BTreeMap::new();
+        for site in &list {
+            *per_package.entry(site.id.package.clone()).or_default() += 1;
+        }
+        let mut map = BTreeMap::new();
+        let sites = list
+            .into_iter()
+            .map(|site| {
+                let key = if per_package[&site.id.package] == 1 {
+                    site.id.package.clone()
+                } else {
+                    format!("{}/{}", site.id.package, site.id.site)
+                };
+                map.insert(key.clone(), site.id.clone());
+                Site {
+                    package: key,
+                    exposure: site.exposure,
+                    local_url: String::new(),
+                    onion_url: String::new(),
+                    public_host: site.public_host,
+                    locked: site.locked,
+                }
+            })
+            .collect();
+        *self.sites.borrow_mut() = map;
+        WebOverview { sites, ..WebOverview::default() }
+    }
+
+    fn providers(&self) -> Vec<Provider> {
+        if let Err(e) = self.ask(Request::ListProviders) {
+            self.missing(Area::Providers, &e);
+        }
+        Vec::new()
+    }
+
+    fn test_provider(&mut self, _: &str, _: &str, _: &Secret, _: &Secret) -> Result<String, String> {
+        Err("DNS providers are not connected yet.".to_owned())
+    }
+
+    fn save_provider(&mut self, _: &str, _: &str, _: &Secret, _: &Secret) -> Result<(), String> {
+        Err("DNS providers are not connected yet.".to_owned())
+    }
+
+    fn reachability(&mut self, site: &str) -> Reachability {
+        let note = match self.ask(Request::CheckReachability { site: self.site_id(site) }) {
+            Err(e) => e.to_string(),
+            Ok(_) => "unexpected reply".to_owned(),
+        };
+        Reachability::Checked {
+            checks: vec![Check { state: CheckState::Failed, text: "Reachability checks are not available yet".to_owned(), note }],
+            router: None,
+            plan: None,
+        }
+    }
+
+    fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
+        let request = Request::SetPublicHost { site: self.site_id(site), host: host.to_owned() };
+        self.ask(request).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn set_public_access(&mut self, _site: &str, _access: &PublicAccess) -> Result<(), String> {
+        Err("Protections for public sites are not available yet, so going public is blocked.".to_owned())
+    }
+
+    fn document(&self, kind: &DocKind) -> Document {
+        Document { title: format!("{kind:?}"), lines: vec!["Not available yet.".to_owned()] }
+    }
+
+    fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String> {
+        match self.ask(Request::ListSshKeys) {
+            Ok(Response::SshKeys(keys)) => Ok(keys),
+            Ok(_) => Err("unexpected reply".to_owned()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn add_ssh_key(&mut self, line: &str) -> Result<(), String> {
+        self.ask(Request::AddSshKey { line: line.to_owned() }).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String> {
+        self.ask(Request::RemoveSshKey { fingerprint: fingerprint.to_owned() }).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn unavailable(&self) -> Vec<(Area, String)> {
+        self.unavailable.borrow().clone()
+    }
+
+    fn site_id(&self, key: &str) -> SiteId {
+        if let Some(id) = self.sites.borrow().get(key) {
+            return id.clone();
+        }
+        match key.split_once('/') {
+            Some((package, site)) => SiteId { package: package.to_owned(), site: site.to_owned() },
+            None => SiteId { package: key.to_owned(), site: key.to_owned() },
+        }
+    }
+}
+
+fn failed_overview(reason: String) -> Overview {
+    Overview { device: vec![("Helper".to_owned(), format!("could not read the device: {reason}"))], ..Overview::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form_field(kind: SettingKind, current: SettingCurrent, default: Option<&str>) -> SettingField {
+        SettingField {
+            name: "n".into(),
+            label: "N".into(),
+            help: String::new(),
+            required: false,
+            kind,
+            current,
+            default: default.map(str::to_owned),
+            public_name: None,
+        }
+    }
+
+    #[test]
+    fn fields_map_without_ever_holding_a_secret() {
+        let f = field(form_field(SettingKind::Secret, SettingCurrent::SecretSet, None));
+        assert_eq!((f.kind, f.value), (FieldKind::Secret, FieldValue::SecretSet));
+        let f = field(form_field(SettingKind::Bool, SettingCurrent::Default, Some("true")));
+        assert_eq!(f.value, FieldValue::Bool(true));
+        let f = field(form_field(SettingKind::Int { min: Some(1), max: None }, SettingCurrent::Default, Some("$(a.b)")));
+        assert_eq!(f.value, FieldValue::Reference { path: "a.b".into(), resolved: String::new() });
+        assert_eq!(f.requirement, "Default $(a.b)");
+        let f = field(form_field(
+            SettingKind::Text,
+            SettingCurrent::Literal(SettingLiteral::Text("$(x.y)".into())),
+            None,
+        ));
+        assert_eq!(f.value, FieldValue::Text("$(x.y)".into()), "a stored literal stays literal");
+    }
+}

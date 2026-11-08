@@ -203,6 +203,8 @@ pub struct KeyChange {
 pub enum FieldKind {
     Url,
     Port,
+    Text,
+    Number { min: Option<i64>, max: Option<i64> },
     Choice(Vec<String>),
     MoneroAddress,
     Secret,
@@ -444,6 +446,8 @@ pub struct Overview {
     pub restarted: String,
     pub unlock_targets: Vec<UnlockTarget>,
     pub updates_checked: String,
+    /// First boot: no device passphrase exists yet, so setup comes before anything else.
+    pub setup_needed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +560,25 @@ pub struct Snapshot {
     pub providers: Vec<Provider>,
     pub log_sources: Vec<String>,
     pub auto_update: AutoUpdatePrefs,
+    /// Areas whose backing system does not exist yet, with the reason. Their screens say so
+    /// instead of showing sample data.
+    pub unavailable: Vec<(Area, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Area {
+    Catalog,
+    Feeds,
+    Updates,
+    AutoUpdate,
+    Providers,
+    Reachability,
+}
+
+impl Snapshot {
+    pub fn unavailable(&self, area: Area) -> Option<&str> {
+        self.unavailable.iter().find(|(a, _)| *a == area).map(|(_, reason)| reason.as_str())
+    }
 }
 
 /// Screen data outside `nodo_api`. Errors are text because they are only ever shown.
@@ -621,4 +644,12 @@ pub trait ScreenData {
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
 
     fn document(&self, kind: &DocKind) -> Document;
+
+    fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String>;
+    fn add_ssh_key(&mut self, line: &str) -> Result<(), String>;
+    fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String>;
+    /// See [`Snapshot::unavailable`]. Read after the other snapshot calls.
+    fn unavailable(&self) -> Vec<(Area, String)> {
+        Vec::new()
+    }
 }

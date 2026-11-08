@@ -283,6 +283,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "Needs a server you control", "Your domain stays connected. Run this check again if your connection changes.",
             "↑↓ choose", "↵ continue", "r check again", "Esc back",
         ],
+        ScreenId::Setup => &["Set up this device", "Device passphrase", "There is no default passphrase"],
     }
 }
 

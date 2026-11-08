@@ -53,6 +53,7 @@ fn settings_design_state(mock: &MockBackend) -> SettingsState {
 fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
     match id {
         ScreenId::Main => Screen::Home { selected: 0 },
+        ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
         ScreenId::NoDrive => Screen::NoDrive { choice: 0 },
         ScreenId::Search => {
             let mut state = search_state(false);
