@@ -101,6 +101,13 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
             Line::from(if web.reachable { t.o("✓ Reachable") } else { t.e("✕ Not reachable") }),
         )
     };
+    if let Some(problem) = &web.local_problem {
+        rows.push(Item::Blank);
+        rows.push(Item::Text(Line::from(vec![t.a("▲ Local sites are unavailable: "), t.n(problem.clone())])));
+        if let Some(remedy) = &web.local_remedy {
+            rows.push(Item::Text(Line::from(t.d(format!("  {remedy}")))));
+        }
+    }
     Page::new(tab_bar(app, t, Tab::Web), Line::from(t.d("monokulo-nodo")))
         .panel(Panel::new("Sites", rows).grow())
         .columns(vec![(1, vec![domain]), (1, vec![ddns])])
@@ -140,8 +147,12 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         }
     };
     let host = site.public_host.as_deref().map_or_else(|| "no address yet".to_owned(), |host| format!("https://{host}"));
+    let local_note = match (&app.data.web.local_problem, site.local_waiting || site.local_url.is_empty()) {
+        (Some(problem), true) => format!("Unavailable: {problem}"),
+        _ => "Devices on your Wi-Fi or LAN".to_owned(),
+    };
     let rows = [
-        (draft.local, t.o("●"), "Local network", site.local_url.clone(), saved.local, "Devices on your Wi-Fi or LAN"),
+        (draft.local, t.o("●"), "Local network", site.local_url.clone(), saved.local, local_note.as_str()),
         (draft.onion, t.i("◉"), "Tor onion", site.onion_url.clone(), saved.onion, "Anyone with the address, using Tor Browser"),
         (draft.public, t.a("▲"), "Public internet", host, saved.public, "Anyone, at your own domain"),
     ];
@@ -215,6 +226,19 @@ fn capability_span(t: &Theme, capability: Capability) -> Span<'static> {
     }
 }
 
+fn field_label(field: &str) -> String {
+    match field {
+        "api_key" => "API key".to_owned(),
+        "secret_key" => "Secret key".to_owned(),
+        "api_token" => "API token".to_owned(),
+        "personal_access_token" => "Personal access token".to_owned(),
+        "username" => "Username".to_owned(),
+        "access_key_id" => "AccessKey ID".to_owned(),
+        "access_key_secret" => "AccessKey secret".to_owned(),
+        other => other.replace('_', " "),
+    }
+}
+
 fn credential(t: &Theme, label: &str, input: &Input, focused: bool, stored: bool, mask: &str) -> Vec<Item> {
     let mut value = vec![if input.is_empty() && stored { t.n(mask.to_owned()) } else { t.n(input.display()) }];
     if focused {
@@ -250,15 +274,23 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             detail.push(Item::Blank);
             let long_mask = format!("{STORED_MASK}••••");
             detail.extend(credential(t, "Domain", &state.domain, state.focus == ProviderFocus::Domain, false, ""));
-            detail.extend(credential(t, "API key", &state.api_key, state.focus == ProviderFocus::ApiKey, stored, &long_mask));
-            detail.extend(credential(
-                t,
-                "Secret key",
-                &state.secret_key,
-                state.focus == ProviderFocus::SecretKey,
-                stored,
-                &long_mask,
-            ));
+            let label = |index: usize, fallback: &str| {
+                provider.fields.get(index).map_or_else(|| fallback.to_owned(), |f| field_label(f))
+            };
+            detail.extend(credential(t, &label(0, "API key"), &state.api_key, state.focus == ProviderFocus::ApiKey, stored, &long_mask));
+            if provider.fields.len() != 1 {
+                detail.extend(credential(
+                    t,
+                    &label(1, "Secret key"),
+                    &state.secret_key,
+                    state.focus == ProviderFocus::SecretKey,
+                    stored,
+                    &long_mask,
+                ));
+            }
+            if let Some(note) = &provider.dns01_note {
+                detail.push(Item::Text(Line::from(t.a(format!("▲ Certificates without open ports: {note}")))));
+            }
             detail.push(Item::Blank);
             match &state.test {
                 Some(Ok(text)) => detail.push(Item::Text(Line::from(t.o(format!("✓ {text}"))))),
@@ -304,13 +336,24 @@ fn check_rows(t: &Theme, checks: &[Check]) -> Vec<Item> {
                 Line::from(vec![t.e("✕ "), t.b(check.text.clone())]),
                 Line::from(t.e(check.note.clone())),
             ),
+            CheckState::Unknown => Item::Row(
+                Line::from(vec![t.a("▲ "), t.n(check.text.clone())]),
+                Line::from(t.a(check.note.clone())),
+            ),
         })
         .collect()
 }
 
 pub fn check(t: &Theme, state: &WebCheckState) -> Page {
     let failed = state.checks.iter().any(|check| check.state == CheckState::Failed);
-    let right = if failed { t.a("▲ One step needs you") } else { t.o("✓ All checks passed") };
+    let unknown = state.checks.iter().any(|check| check.state == CheckState::Unknown);
+    let right = if failed {
+        t.a("▲ One step needs you")
+    } else if unknown {
+        t.a("▲ Some checks could not be verified")
+    } else {
+        t.o("✓ All checks passed")
+    };
     let mut page = Page::new(crumbs(t, &state.site, "Reachability check"), Line::from(right))
         .panel(Panel::new("Checks", check_rows(t, &state.checks)));
     if let Some(router) = &state.router {
@@ -330,13 +373,22 @@ pub fn check(t: &Theme, state: &WebCheckState) -> Page {
             ],
         ));
     }
+    if !state.manual.is_empty() {
+        let steps = state.manual.iter().map(|step| Item::Text(Line::from(t.n(format!(" • {step}"))))).collect();
+        page = page.panel(Panel::new("Check the ports yourself, from outside", steps));
+    }
     if failed {
         page = page.plain(vec![Item::Text(Line::from(t.n(format!(
             " {} is not public yet. Its local and onion addresses keep working during this check.",
             state.site
         ))))]);
     }
-    page.footer(Item::Text(hints(t, &[("r", "check again"), ("?", "router guides"), ("o", "turn on Tor onion"), ("Esc", "back")])))
+    let keys: &[(&str, &str)] = if state.going_public && state.plan.is_some() && !failed {
+        &[("c", "continue to confirm"), ("r", "check again"), ("?", "router guides"), ("Esc", "back")]
+    } else {
+        &[("r", "check again"), ("?", "router guides"), ("o", "turn on Tor onion"), ("Esc", "back")]
+    };
+    page.footer(Item::Text(hints(t, keys)))
 }
 
 fn rate_limit_row(t: &Theme, app: &App, site: &str) -> Item {

@@ -1342,6 +1342,7 @@ fn sample_web() -> WebOverview {
         public_host: host.map(s),
         locked,
         rate_limit_unenforced: false,
+        local_waiting: false,
     };
     WebOverview {
         sites: vec![
@@ -1375,6 +1376,8 @@ fn sample_web() -> WebOverview {
         dns_matches: true,
         dns_changed: s("3 days ago"),
         reachable: true,
+        local_problem: None,
+        local_remedy: None,
     }
 }
 
@@ -1385,6 +1388,8 @@ fn sample_providers() -> Vec<Provider> {
         dynamic_dns: ddns,
         https_without_ports: https,
         instructions,
+        fields: vec![s("api_key"), s("secret_key")],
+        dns01_note: None,
     };
     let keys = |name: &str| format!("Create an API key in your {name} account, then enable API access for this domain.");
     let account = |name: &str| {
@@ -1454,6 +1459,7 @@ pub fn reachability_checks(host: &str, ports_open: bool) -> Reachability {
             dns_record: format!("{host}  A  203.0.113.42"),
             firewall: s("Opens 80 and 443"),
         }),
+        manual: Vec::new(),
     }
 }
 

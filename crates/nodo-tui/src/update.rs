@@ -1512,8 +1512,25 @@ fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     let site = state.site.clone();
     let going_public = state.going_public;
+    let continue_with = state.plan.clone().filter(|_| going_public && !state.checks.iter().any(|c| c.state == CheckState::Failed));
     match key.code {
         KeyCode::Char('r') => vec![Effect::CheckReachability { site, going_public }],
+        // Nothing failed, but something could not be verified. The user decides, having seen it.
+        KeyCode::Char('c') if continue_with.is_some() => {
+            let plan = continue_with.unwrap_or_else(|| unreachable!());
+            push(
+                app,
+                Screen::WebConfirm(WebConfirmState {
+                    site,
+                    plan,
+                    access: PublicAccess { require_password: false },
+                    focus: ConfirmFocus::Address,
+                    typed: Input::plain(""),
+                    error: None,
+                }),
+            );
+            Vec::new()
+        }
         KeyCode::Char('?') => vec![Effect::ShowDocument(DocKind::RouterGuides)],
         KeyCode::Char('o') => with_onion(app, &site).into_iter().collect(),
         KeyCode::Esc => {
@@ -1964,7 +1981,11 @@ fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reac
                 going_public,
             }),
         ),
-        Reachability::Checked { plan: Some(plan), .. } if going_public => push(
+        // Unknown results, such as untested ports, are shown before confirming, never skipped.
+        Reachability::Checked { plan: Some(plan), checks, .. }
+            if going_public && checks.iter().all(|c| c.state == CheckState::Passed) =>
+        {
+            push(
             app,
             Screen::WebConfirm(WebConfirmState {
                 site,
@@ -1974,9 +1995,10 @@ fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reac
                 typed: Input::plain(""),
                 error: None,
             }),
-        ),
-        Reachability::Checked { checks, router, plan } => {
-            push(app, Screen::WebCheck(WebCheckState { site, checks, router, plan, going_public }));
+            );
+        }
+        Reachability::Checked { checks, router, plan, manual } => {
+            push(app, Screen::WebCheck(WebCheckState { site, checks, router, plan, going_public, manual }));
         }
     }
 }

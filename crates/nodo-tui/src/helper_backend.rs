@@ -104,7 +104,49 @@ pub fn field(f: SettingField) -> Field {
     Field { key: f.name, label: f.label, help: f.help, requirement, kind, value }
 }
 
+/// How long ago a Unix time was, in the largest whole unit.
+fn ago(at: u64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let secs = now.saturating_sub(at);
+    let (n, unit) = match secs {
+        0..=119 => return "Just now".to_owned(),
+        120..=7199 => (secs / 60, "minutes"),
+        7200..=172_799 => (secs / 3600, "hours"),
+        _ => (secs / 86_400, "days"),
+    };
+    format!("{n} {unit} ago")
+}
+
+fn check_label(id: &str, status: nodo_api::CheckStatus) -> &'static str {
+    use nodo_api::CheckStatus::{Failed, Passed};
+    match (id, status) {
+        ("domain_and_credentials", Passed) => "Domain and API key work",
+        ("domain_and_credentials", _) => "Domain or API key did not work",
+        ("public_ip", Passed) => "Public IP found",
+        ("public_ip", _) => "Public IP could not be confirmed",
+        ("router_address", Passed) => "Router has a real public IP",
+        ("router_address", Failed) => "Router does not have the public IP",
+        ("router_address", _) => "Router could not be asked for its address",
+        ("temporary_record", Passed) => "Temporary DNS record works",
+        ("temporary_record", _) => "Temporary DNS record failed",
+        ("port_80", Passed) => "Port 80 is reachable from outside",
+        ("port_80", Failed) => "Port 80 is not reachable from outside",
+        ("port_80", _) => "Port 80 is unverified",
+        ("port_443", Passed) => "Port 443 is reachable from outside",
+        ("port_443", Failed) => "Port 443 is not reachable from outside",
+        ("port_443", _) => "Port 443 is unverified",
+        _ => "Check",
+    }
+}
+
 impl HelperBackend {
+    fn dns_providers(&self) -> Vec<nodo_api::DnsProviderDetail> {
+        match self.ask(Request::ListDnsProviders) {
+            Ok(Response::DnsProviders(list)) => list,
+            _ => Vec::new(),
+        }
+    }
+
     pub fn connect(path: &Path) -> io::Result<Self> {
         Ok(Self {
             client: RefCell::new(HelperClient::connect(path)?),
@@ -540,6 +582,10 @@ impl ScreenData for HelperBackend {
         let Ok(Response::Sites(list)) = self.ask(Request::ListSites) else {
             return WebOverview::default();
         };
+        let status = match self.ask(Request::WebStatus) {
+            Ok(Response::WebStatus(status)) => Some(status),
+            _ => None,
+        };
         let mut per_package: BTreeMap<String, usize> = BTreeMap::new();
         for site in &list {
             *per_package.entry(site.id.package.clone()).or_default() += 1;
@@ -554,47 +600,154 @@ impl ScreenData for HelperBackend {
                     format!("{}/{}", site.id.package, site.id.site)
                 };
                 map.insert(key.clone(), site.id.clone());
+                let live = status.as_ref().and_then(|st| st.sites.iter().find(|s| s.id == site.id));
                 Site {
                     package: key,
                     exposure: site.exposure,
-                    local_url: String::new(),
-                    onion_url: String::new(),
+                    local_url: live.and_then(|l| l.local_url.clone()).unwrap_or_default(),
+                    onion_url: live.and_then(|l| l.onion_url.clone()).unwrap_or_default(),
                     public_host: site.public_host,
                     locked: site.locked,
-                    // Rate limiting is the proxy's to report, which the helper does not relay yet.
-                    rate_limit_unenforced: false,
+                    rate_limit_unenforced: live.is_some_and(|l| l.rate_limit_unenforced),
+                    local_waiting: live.is_some_and(|l| l.local_waiting),
                 }
             })
             .collect();
         *self.sites.borrow_mut() = map;
-        WebOverview { sites, ..WebOverview::default() }
+        let Some(status) = status else {
+            return WebOverview { sites, ..WebOverview::default() };
+        };
+        let provider = status.provider.as_deref().map(|id| {
+            self.dns_providers().into_iter().find(|p| p.id == id).map_or_else(|| id.to_owned(), |p| p.name)
+        });
+        WebOverview {
+            sites,
+            domain: status.domain.unwrap_or_else(|| "Not connected".to_owned()),
+            provider: provider.unwrap_or_default(),
+            certificates: String::new(),
+            public_ip: status.public_ip.unwrap_or_else(|| "Not checked".to_owned()),
+            dns_matches: status.ddns_running && status.stale_records.is_empty(),
+            dns_changed: status.dns_changed_at.map_or_else(|| "Never".to_owned(), ago),
+            // Nothing outside has tested the ports, so they are never shown as reachable.
+            reachable: false,
+            local_problem: status.local_unavailable,
+            local_remedy: status.local_remedy,
+        }
     }
 
     fn providers(&self) -> Vec<Provider> {
-        if let Err(e) = self.ask(Request::ListProviders) {
-            self.missing(Area::Providers, &e);
+        let list = self.dns_providers();
+        if list.is_empty() {
+            if let Err(e) = self.ask(Request::ListDnsProviders) {
+                self.missing(Area::Providers, &e);
+            }
         }
-        Vec::new()
+        list.into_iter()
+            .map(|p| {
+                let ddns = if !p.dynamic_dns {
+                    Capability::NoApi
+                } else if p.caveat.is_some() {
+                    Capability::Account
+                } else {
+                    Capability::Yes
+                };
+                let (https, dns01_note) = match p.dns01 {
+                    nodo_api::Dns01Support::Bundled => (Capability::Yes, None),
+                    nodo_api::Dns01Support::BundledSeparateCredentials(note) => (Capability::Account, Some(note)),
+                    nodo_api::Dns01Support::Unavailable => (Capability::PortsNeeded, None),
+                };
+                let instructions = match (&p.unavailable_reason, &p.caveat) {
+                    (Some(reason), _) => reason.clone(),
+                    (None, Some(caveat)) => format!("Create an API key in your {} account. {caveat}", p.name),
+                    (None, None) => format!("Create an API key in your {} account.", p.name),
+                };
+                Provider { name: p.name, dynamic_dns: ddns, https_without_ports: https, instructions, fields: p.fields, dns01_note }
+            })
+            .collect()
     }
 
-    fn test_provider(&mut self, _: &str, _: &str, _: &Secret, _: &Secret) -> Result<String, String> {
-        Err("DNS providers are not connected yet.".to_owned())
+    fn test_provider(&mut self, provider: &str, domain: &str, api_key: &Secret, secret_key: &Secret) -> Result<String, String> {
+        self.save_provider(provider, domain, api_key, secret_key)?;
+        match self.ask(Request::TestDnsProvider) {
+            Ok(Response::ProviderTest(text)) => Ok(text),
+            Ok(_) => Err("unexpected reply".to_owned()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
-    fn save_provider(&mut self, _: &str, _: &str, _: &Secret, _: &Secret) -> Result<(), String> {
-        Err("DNS providers are not connected yet.".to_owned())
+    fn save_provider(&mut self, provider: &str, domain: &str, api_key: &Secret, secret_key: &Secret) -> Result<(), String> {
+        let detail = self
+            .dns_providers()
+            .into_iter()
+            .find(|p| p.name == provider)
+            .ok_or_else(|| format!("{provider} is not a known provider"))?;
+        let fields = detail
+            .fields
+            .iter()
+            .zip([api_key, secret_key])
+            .map(|(name, value)| (name.clone(), nodo_api::Secret::new(value.expose())))
+            .collect();
+        let request = Request::SetDnsProvider { domain: domain.to_owned(), provider: detail.id, fields };
+        self.ask(request).map(|_| ()).map_err(|e| e.to_string())
     }
 
     fn reachability(&mut self, site: &str) -> Reachability {
-        let note = match self.ask(Request::CheckReachability { site: self.site_id(site) }) {
-            Err(e) => e.to_string(),
-            Ok(_) => "unexpected reply".to_owned(),
+        let host = self.web().sites.into_iter().find(|s| s.package == site).and_then(|s| s.public_host);
+        let detail = match self.ask(Request::CheckReachabilityDetail { site: self.site_id(site) }) {
+            Ok(Response::ReachabilityDetail(detail)) => detail,
+            other => {
+                let note = match other {
+                    Err(e) => e.to_string(),
+                    Ok(_) => "unexpected reply".to_owned(),
+                };
+                return Reachability::Checked {
+                    checks: vec![Check { state: CheckState::Failed, text: "The reachability check could not run".to_owned(), note }],
+                    router: None,
+                    plan: None,
+                    manual: Vec::new(),
+                };
+            }
         };
-        Reachability::Checked {
-            checks: vec![Check { state: CheckState::Failed, text: "Reachability checks are not available yet".to_owned(), note }],
-            router: None,
-            plan: None,
+        if detail.verdict == "blocked_by_cgnat" {
+            return Reachability::Cgnat {
+                wan_address: detail.router_wan.clone().unwrap_or_default(),
+                wan_range: "100.64.0.0/10".to_owned(),
+                internet_address: detail.public_ip.clone().unwrap_or_default(),
+            };
         }
+        let checks = detail
+            .checks
+            .iter()
+            .filter(|c| c.status != nodo_api::CheckStatus::Skipped)
+            .map(|c| Check {
+                state: match c.status {
+                    nodo_api::CheckStatus::Passed => CheckState::Passed,
+                    nodo_api::CheckStatus::Failed => CheckState::Failed,
+                    _ => CheckState::Unknown,
+                },
+                text: check_label(&c.id, c.status).to_owned(),
+                note: c.detail.clone(),
+            })
+            .collect();
+        let router = match (&detail.device_ip, &detail.gateway) {
+            (Some(device), Some(gateway)) if detail.verdict != "ready" => Some(RouterHelp {
+                admin_page: format!("http://{gateway}"),
+                forward_http: format!("to {device}:80"),
+                forward_https: format!("to {device}:443"),
+                device_ip: device.clone(),
+            }),
+            _ => None,
+        };
+        let plan = match (detail.verdict.as_str(), host) {
+            ("ready" | "ports_unverified", Some(host)) => Some(PublicPlan {
+                url: format!("https://{host}"),
+                dns_record: format!("{host}  A  {}", detail.public_ip.clone().unwrap_or_default()),
+                host,
+                firewall: "Opens 80 and 443".to_owned(),
+            }),
+            _ => None,
+        };
+        Reachability::Checked { checks, router, plan, manual: detail.manual_check }
     }
 
     fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
@@ -602,8 +755,13 @@ impl ScreenData for HelperBackend {
         self.ask(request).map(|_| ()).map_err(|e| e.to_string())
     }
 
-    fn set_public_access(&mut self, _site: &str, _access: &PublicAccess) -> Result<(), String> {
-        Err("Protections for public sites are not available yet, so going public is blocked.".to_owned())
+    fn set_public_access(&mut self, _site: &str, access: &PublicAccess) -> Result<(), String> {
+        // Admin paths and rate limiting are always on. A password in front of a site is not built.
+        if access.require_password {
+            Err("A password in front of a site is not available yet. Turn it off to go public.".to_owned())
+        } else {
+            Ok(())
+        }
     }
 
     fn document(&self, kind: &DocKind) -> Document {

@@ -27,7 +27,9 @@ nodo-tui --ctl COMMAND [ARGS]
   host PACKAGE SITE HOST
   expose PACKAGE SITE LOCAL ONION PUBLIC [TYPED_HOST]   (each flag 0 or 1)
   add-key LINE | remove-key FINGERPRINT
-  drive-check | drive-repair CHECK_ID | drive-mount";
+  drive-check | drive-repair CHECK_ID | drive-mount
+  web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
+  set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)";
 
 /// One line from stdin. On a terminal the line is typed without echo, so it never shows.
 fn secret_line() -> Result<Secret, String> {
@@ -130,6 +132,16 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             accept_data_loss_risk: true,
         }),
         ["drive-mount"] => Request::MountDrive,
+        ["web-status"] => Request::WebStatus,
+        ["dns-providers"] => Request::ListDnsProviders,
+        ["test-dns"] => Request::TestDnsProvider,
+        ["retire-stale"] => Request::RetireStaleRecords,
+        ["reach", package, s] => Request::CheckReachabilityDetail { site: site(package, s) },
+        ["set-dns", domain, provider, fields @ ..] if !fields.is_empty() => Request::SetDnsProvider {
+            domain: id(domain),
+            provider: id(provider),
+            fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
+        },
         _ => return Err(USAGE.to_owned()),
     })
 }

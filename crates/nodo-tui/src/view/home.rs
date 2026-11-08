@@ -115,6 +115,7 @@ pub fn no_drive(app: &App, t: &Theme, choice: usize) -> Page {
             let (symbol, note) = match check.state {
                 CheckState::Passed => (t.o("✓"), t.d(check.note.clone())),
                 CheckState::Failed => (t.e("✕"), t.e(check.note.clone())),
+                CheckState::Unknown => (t.a("▲"), t.a(check.note.clone())),
             };
             Item::Row(Line::from(vec![symbol, t.n(format!(" {}", check.text))]), Line::from(note))
         })
