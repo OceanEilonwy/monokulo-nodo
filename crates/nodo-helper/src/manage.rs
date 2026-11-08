@@ -31,6 +31,8 @@ pub struct ManagePaths {
     pub restore_staging: PathBuf,
     pub secrets: PathBuf,
     pub onion: PathBuf,
+    /// Caddy's storage: certificates and their keys, ACME accounts and the local CA.
+    pub caddy_data: PathBuf,
     /// Rendered settings of apps, one directory per id.
     pub app_config: PathBuf,
     pub volume_root: PathBuf,
@@ -50,6 +52,7 @@ impl Default for ManagePaths {
             restore_staging: "/var/lib/nodo".into(),
             secrets: "/var/lib/nodo/secrets".into(),
             onion: "/var/lib/tor".into(),
+            caddy_data: "/var/lib/caddy/data/caddy".into(),
             app_config: "/etc/apps".into(),
             volume_root: nodo_gen::VOLUME_ROOT.into(),
         }

@@ -201,6 +201,13 @@ impl DnsChallenge {
             .map(|provider| DnsChallenge::Kept(KeptProvider(serde_json::Value::Object(provider))))
     }
 
+    /// Whether these credentials can go into a config: no placeholders, and in a form the module
+    /// accepts without logging them.
+    pub fn usable(&self) -> bool {
+        let safe = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_graphic() && b != b'{' && b != b'}');
+        self.values().into_iter().all(safe) && self.module_accepts()
+    }
+
     /// The caddy-dns module name, for the screens.
     pub fn module(&self) -> String {
         self.provider_json()["name"].as_str().unwrap_or_default().to_owned()
@@ -743,8 +750,7 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
     }
     // Some modules expand `{...}` placeholders in their fields, which could pull in environment values.
     if let Some(challenge) = &settings.dns_challenge {
-        let safe = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_graphic() && b != b'{' && b != b'}');
-        if !challenge.values().into_iter().all(safe) || !challenge.module_accepts() {
+        if !challenge.usable() {
             return Err(WebConfigError::InvalidSetting { field: "dns_challenge", value: "(credential not shown)".to_owned() });
         }
     }
@@ -924,7 +930,8 @@ fn admin_path_patterns(path: &str) -> Option<Vec<String>> {
     Some(vec![trimmed.to_owned(), format!("{trimmed}/*"), format!("{trimmed};*")])
 }
 
-fn is_email(value: &str) -> bool {
+/// An address Let's Encrypt accepts for its account, in the conservative form the config allows.
+pub fn is_email(value: &str) -> bool {
     let Some((user, domain)) = value.split_once('@') else {
         return false;
     };

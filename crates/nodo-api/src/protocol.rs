@@ -243,6 +243,17 @@ mod tests {
             Request::TestDnsProvider,
             Request::RetireStaleRecords,
             Request::CheckReachabilityDetail { site: site() },
+            Request::AcmeSettings,
+            Request::SetAcmeSettings(AcmeSettingsInput {
+                email: Some("me@example.com".into()),
+                staging: true,
+                local_domain: Some("home.example.com".into()),
+            }),
+            Request::SetDns01Credentials {
+                fields: vec![("api_key".into(), Secret::new("k")), ("api_secret".into(), Secret::new("s"))],
+            },
+            Request::CertificateStatus,
+            Request::CheckLocalNames,
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -430,6 +441,47 @@ mod tests {
                 setting: "s".into(),
             }])),
             Err(ApiError::Locked("unlock first".into())),
+            Ok(Response::AcmeSettings(AcmeSettingsInfo {
+                email: None,
+                staging: false,
+                directory: "https://acme-v02.api.letsencrypt.org/directory".into(),
+                test_server: false,
+                challenge: ChallengeChoice::PortsNeeded { reason: "no provider".into() },
+                dns01_fields: vec!["api_key".into()],
+                dns01_stored: false,
+                local_domain: None,
+                local_address: Some("192.168.1.60".into()),
+            })),
+            Ok(Response::Certificates(CertificateReport {
+                hosts: vec![HostCertificate {
+                    site: site(),
+                    host: "shop.example.com".into(),
+                    kind: HostKind::Public,
+                    state: CertState::Failed,
+                    issuer: Some("Let's Encrypt (R11)".into()),
+                    not_after: Some(5),
+                    last_renewal: None,
+                    challenge: Some("http-01".into()),
+                    last_error: Some(CertProblem {
+                        at: 4,
+                        kind: CertProblemKind::ChallengeFailed { challenges: vec!["http-01".into()] },
+                        summary: "s".into(),
+                        detail: "d".into(),
+                    }),
+                }],
+                challenge: ChallengeChoice::Dns01 { provider: "Cloudflare".into() },
+                staging: false,
+                test_server: true,
+                local_ca_fingerprint: None,
+            })),
+            Ok(Response::LocalNames(vec![LocalNameCheck {
+                host: "shop.home.example.com".into(),
+                address: "192.168.1.60".into(),
+                published: vec!["192.168.1.60".into()],
+                resolves_to: vec![],
+                verdict: LocalNameVerdict::Blocked,
+                explanation: "e".into(),
+            }])),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

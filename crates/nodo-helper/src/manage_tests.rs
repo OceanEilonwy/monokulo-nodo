@@ -255,6 +255,7 @@ fn test_paths() -> ManagePaths {
         health_config: "/etc/nodo/health.toml".into(),
         health_report: "/run/nodo/health.json".into(),
         boot_fallback: "/run/nodo/boot-fallback".into(),
+        caddy_data: "/s/caddy/data/caddy".into(),
         ..ManagePaths::default()
     }
 }
@@ -655,6 +656,7 @@ mod backups {
             restore_staging: root.to_path_buf(),
             secrets: root.join("secrets"),
             onion: root.join("tor"),
+            caddy_data: root.join("caddy/data/caddy"),
             app_config: root.join("apps"),
             volume_root: root.join("volumes"),
             ..test_paths()
@@ -730,6 +732,22 @@ mod backups {
             .file_name()
             .to_string_lossy()
             .starts_with(".restore")));
+    }
+
+    #[test]
+    fn certificates_and_acme_accounts_are_backed_up_and_restored() {
+        let (h, dir) = with_dir();
+        let cert = dir.path().join("caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/shop.example.com");
+        fs::create_dir_all(&cert).unwrap();
+        fs::write(cert.join("shop.example.com.key"), b"private key").unwrap();
+        let Ok(Response::BackupCreated(created)) = create(&h, None) else { panic!() };
+        fs::remove_dir_all(dir.path().join("caddy/data")).unwrap();
+        let Ok(Response::Restored(report)) = restore(&h, &created.info.name, "backup passphrase 1", "restore") else {
+            panic!()
+        };
+        assert!(report.restored.contains(&"certificates".to_owned()), "{report:?}");
+        let backup = fs::read(dir.path().join("backups").join(&created.info.name)).unwrap();
+        assert!(!backup.windows(11).any(|w| w == b"private key"), "encrypted like every other secret");
     }
 
     #[test]

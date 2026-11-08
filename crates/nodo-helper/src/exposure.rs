@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use nodo_api::{
-    ApiError, DnsProviderDetail, Exposure, ProviderInfo, PublicConfirmation, ReachabilityCheck,
-    ReachabilityDetail, ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo,
-    WebStatus,
+    AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, DnsProviderDetail, Exposure,
+    LocalNameCheck, ProviderInfo, PublicConfirmation, ReachabilityCheck, ReachabilityDetail,
+    ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo, WebStatus,
 };
 use nodo_manifest::WebService;
 use serde::{de::DeserializeOwned, Serialize};
@@ -74,6 +74,21 @@ pub trait ExposureApplier: Send + Sync {
         Err(not_connected())
     }
     fn reachability(&self, _input: &WebInput, _site: &SiteId) -> Result<ReachabilityDetail, ApiError> {
+        Err(not_connected())
+    }
+    fn acme_settings(&self, _input: &WebInput) -> Result<AcmeSettingsInfo, ApiError> {
+        Err(not_connected())
+    }
+    fn set_acme_settings(&self, _settings: &AcmeSettingsInput, _input: &WebInput) -> Result<(), ApiError> {
+        Err(not_connected())
+    }
+    fn set_dns01(&self, _fields: &[(String, Secret)], _input: &WebInput) -> Result<(), ApiError> {
+        Err(not_connected())
+    }
+    fn certificates(&self, _input: &WebInput) -> Result<CertificateReport, ApiError> {
+        Err(not_connected())
+    }
+    fn check_local_names(&self, _input: &WebInput) -> Result<Vec<LocalNameCheck>, ApiError> {
         Err(not_connected())
     }
 }
@@ -221,6 +236,25 @@ impl<S: System> Helper<S> {
             Request::CheckReachabilityDetail { site } => {
                 let input = self.current_web_input()?;
                 Ok(Response::ReachabilityDetail(self.exposure.reachability(&input, &site)?))
+            }
+            Request::AcmeSettings => {
+                Ok(Response::AcmeSettings(self.exposure.acme_settings(&self.current_web_input()?)?))
+            }
+            Request::SetAcmeSettings(settings) => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                self.exposure.set_acme_settings(&settings, &input).map(|()| Response::Ok)
+            }
+            Request::SetDns01Credentials { fields } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                self.exposure.set_dns01(&fields, &input).map(|()| Response::Ok)
+            }
+            Request::CertificateStatus => {
+                Ok(Response::Certificates(self.exposure.certificates(&self.current_web_input()?)?))
+            }
+            Request::CheckLocalNames => {
+                Ok(Response::LocalNames(self.exposure.check_local_names(&self.current_web_input()?)?))
             }
             Request::CheckReachability { site } => {
                 let input = self.current_web_input()?;

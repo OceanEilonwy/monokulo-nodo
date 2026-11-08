@@ -240,7 +240,12 @@ impl<S: System> Helper<S> {
             | Request::SetDnsProvider { .. }
             | Request::TestDnsProvider
             | Request::RetireStaleRecords
-            | Request::CheckReachabilityDetail { .. }) => self.web_request(request),
+            | Request::CheckReachabilityDetail { .. }
+            | Request::AcmeSettings
+            | Request::SetAcmeSettings(_)
+            | Request::SetDns01Credentials { .. }
+            | Request::CertificateStatus
+            | Request::CheckLocalNames) => self.web_request(request),
             other => self.handle_managed(uid, other),
         }
     }

@@ -47,7 +47,10 @@ nodo-tui --ctl COMMAND [ARGS]
   inspect-backup NAME              (backup passphrase on stdin)
   restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)
   web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
-  set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)";
+  set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)
+  acme | certs | local-names
+  acme-set EMAIL|- 0|1 [LOCAL_DOMAIN]   (1 is Let's Encrypt staging)
+  dns01 [FIELD...]                 (one value per field on stdin, none removes them)";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -263,6 +266,19 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["set-dns", domain, provider, fields @ ..] if !fields.is_empty() => Request::SetDnsProvider {
             domain: id(domain),
             provider: id(provider),
+            fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
+        },
+        ["acme"] => Request::AcmeSettings,
+        ["certs"] => Request::CertificateStatus,
+        ["local-names"] => Request::CheckLocalNames,
+        ["acme-set", email, staging @ ("0" | "1"), rest @ ..] if rest.len() <= 1 => {
+            Request::SetAcmeSettings(nodo_api::AcmeSettingsInput {
+                email: (*email != "-").then(|| id(email)),
+                staging: *staging == "1",
+                local_domain: rest.first().map(|d| id(d)),
+            })
+        }
+        ["dns01", fields @ ..] => Request::SetDns01Credentials {
             fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
         },
         _ => return Err(USAGE.to_owned()),

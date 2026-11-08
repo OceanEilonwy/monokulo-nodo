@@ -7,6 +7,12 @@
 //! DNS provider credentials are sealed under the device key (see `crate::secrets`) in a root-only
 //! file, so they cannot be read while the device is locked. nodo-ddns gets them in a config under
 //! `/run/nodo/secrets`, which is memory only, so after a reboot it waits until the device is unlocked.
+//!
+//! Certificates come from Let's Encrypt through Caddy. The helper picks the challenge: DNS-01 when
+//! the provider has a certificate module and its credentials are stored, otherwise HTTP-01 and
+//! TLS-ALPN-01, which need ports 80 and 443 forwarded. The DNS-01 credentials are opened from the
+//! sealed store into the Caddy config, which only root and Caddy can read. See `certs` for the
+//! certificate status and the local names under the owner's domain.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -17,8 +23,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use nodo_api::{
-    ApiError, CheckStatus, Dns01Support, DnsProviderDetail, ReachabilityDetail, ReachabilityItem,
-    Secret, ServiceState, SiteId, WebSiteStatus, WebStatus,
+    AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, CheckStatus, Dns01Support,
+    DnsProviderDetail, LocalNameCheck, ReachabilityDetail, ReachabilityItem, Secret, ServiceState,
+    SiteId, WebSiteStatus, WebStatus,
 };
 use nodo_web::caddy::{self, AddressKind, DomainSettings, Site, WebPlan};
 use nodo_web::dns::catalog::{self, Dns01, ProviderStatus};
@@ -48,6 +55,15 @@ pub struct WebPaths {
     pub torrc: PathBuf,
     pub tor_sv_conf: PathBuf,
     pub tor_dir: PathBuf,
+    /// The owner's certificate choices. Root only.
+    pub acme_settings: PathBuf,
+    /// Points the helper at a test ACME server instead of Let's Encrypt. Only tests create it.
+    pub acme_test: PathBuf,
+    /// Caddy's certificate storage: certificates, ACME accounts and the local CA.
+    pub caddy_storage: PathBuf,
+    pub tls_events: PathBuf,
+    /// The local names this helper published at the DNS provider, so stale ones can be removed.
+    pub local_records: PathBuf,
 }
 
 impl Default for WebPaths {
@@ -66,6 +82,12 @@ impl Default for WebPaths {
             torrc: "/var/lib/nodo-web/torrc".into(),
             tor_sv_conf: "/etc/sv/tor/conf".into(),
             tor_dir: "/var/lib/tor/nodo".into(),
+            // Beside the DNS credentials, so backups carry it.
+            acme_settings: "/var/lib/nodo/secrets/web-acme.toml".into(),
+            acme_test: "/etc/nodo/acme-test.toml".into(),
+            caddy_storage: "/var/lib/caddy/data/caddy".into(),
+            tls_events: caddy::TLS_EVENTS_LOG.into(),
+            local_records: "/var/lib/nodo-web/local-records.json".into(),
         }
     }
 }
@@ -92,6 +114,16 @@ pub trait WebIo: Send + Sync {
     fn http(&self) -> SharedHttp;
     fn sleep(&self, duration: Duration);
     fn random(&self, out: &mut [u8]) -> Result<(), String>;
+    /// File names in a directory, empty when it cannot be read.
+    fn list_dir(&self, path: &Path) -> Vec<String>;
+    fn remove_dir_all(&self, path: &Path) -> Result<(), String>;
+    /// Looks a name up through this device's resolver. `None` when the lookup failed.
+    fn resolve(&self, host: &str) -> Option<Vec<IpAddr>>;
+    /// Unix seconds.
+    fn now(&self) -> u64;
+    /// A GET on Caddy's admin API. `None` when Caddy is not running or answers with an error.
+    fn caddy_get(&self, socket: &Path, path: &str) -> Option<Vec<u8>>;
+    fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String>;
 }
 
 /// The stored domain and credentials, in the same shape as nodo-ddns's `[dns]` table. Every value
@@ -100,6 +132,9 @@ pub trait WebIo: Send + Sync {
 struct Credentials {
     domain: String,
     dns: BTreeMap<String, String>,
+    /// DNS-01 credentials for a provider whose certificate module needs its own, sealed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    dns01: BTreeMap<String, String>,
 }
 
 /// nodo-ddns's config file.
@@ -130,6 +165,7 @@ const ROOT_ONLY: Owner = (0o600, "root", "root");
 const PUBLIC_FILE: Owner = (0o644, "root", "root");
 /// Sealed values are bound to this name and the field, so they open nowhere else.
 const SEAL_PACKAGE: &str = "nodo-ddns";
+const SEAL_DNS01: &str = "nodo-caddy";
 const SECRETS_DIR: Owner = (0o711, "root", "root");
 /// How long to wait for a new local address or a new onion address before generating without it.
 const SETTLE_SECS: u64 = 20;
@@ -196,11 +232,16 @@ impl<I: WebIo> NodoWeb<I> {
         hostname_ok(&host).then_some(host)
     }
 
-    fn settings(&self) -> DomainSettings {
+    fn settings(&self, key: Option<&SecretsKey>) -> DomainSettings {
+        let stored = self.acme_stored();
         DomainSettings {
             domain: self.credentials().map(|c| c.domain),
             local_address: self.local_address(),
             tor_dir: self.paths.tor_dir.to_string_lossy().into_owned(),
+            acme_email: stored.email.clone(),
+            dns_challenge: self.dns_challenge(key).0,
+            acme: self.acme_config(&stored),
+            local_domain: stored.local_domain,
             ..DomainSettings::default()
         }
     }
@@ -223,7 +264,7 @@ impl<I: WebIo> NodoWeb<I> {
                 rate_limit: true,
             })
             .collect();
-        caddy::generate(&sites, &self.settings()).map_err(|e| e.to_string())
+        caddy::generate(&sites, &self.settings(input.secrets.as_deref())).map_err(|e| e.to_string())
     }
 
     /// The DNS record names for public hosts under the stored domain.
@@ -408,7 +449,7 @@ impl<I: WebIo> NodoWeb<I> {
             .collect();
         let changed = state.published.values().filter_map(|r| r.get("changed_at")?.as_u64()).max();
         let (local_address, local_unavailable) = match &plan.local.address {
-            LocalAddress::Ready { address } => (Some(address.to_string()), None),
+            LocalAddress::Ready { address } => (Some(address.to_string()), plan.local.names_problem.map(str::to_owned)),
             LocalAddress::Unavailable { reason } => {
                 (None, caddy::local_problem(plan).map(|_| reason.summary()))
             }
@@ -435,7 +476,7 @@ impl<I: WebIo> NodoWeb<I> {
         let text = toml::to_string(&dns).map_err(|e| ApiError::Failed(e.to_string()))?;
         let config: ProviderConfig =
             toml::from_str(&text).map_err(|_| ApiError::Failed("the stored provider settings are not valid".to_owned()))?;
-        config.build(self.io.http(), &credentials.domain).map_err(|e| ApiError::Failed(e.to_string()))
+        self.io.dns_provider(config, &credentials.domain).map_err(ApiError::Failed)
     }
 }
 
@@ -475,11 +516,18 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         }
         self.apply_files(&plan)?;
         self.apply_mdns(&plan)?;
+        self.apply_local_names(&plan, input.secrets.as_deref());
         self.apply_ddns(&plan, input.secrets.as_deref())
     }
 
     fn unlocked(&self, input: &WebInput) -> Result<(), String> {
         let plan = self.plan(input)?;
+        // The config written while locked may lack DNS-01, which only now can be opened.
+        let json = serde_json::to_vec_pretty(&plan.caddy).map_err(|e| e.to_string())?;
+        if self.io.read(&self.paths.caddy_config).as_deref() != Some(json.as_slice()) {
+            self.apply_files(&plan)?;
+        }
+        self.apply_local_names(&plan, input.secrets.as_deref());
         self.apply_ddns(&plan, input.secrets.as_deref())
     }
 
@@ -551,14 +599,20 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
             };
             sealed.insert(name.clone(), stored);
         }
-        let credentials = Credentials { domain: domain.to_owned(), dns: sealed };
+        // DNS-01 credentials belong to the provider, so they survive only a change of domain.
+        let dns01 = self
+            .credentials()
+            .filter(|old| old.dns.get("provider").map(String::as_str) == Some(info.id))
+            .map(|old| old.dns01)
+            .unwrap_or_default();
+        let credentials = Credentials { domain: domain.to_owned(), dns: sealed, dns01 };
         let stored = toml::to_string(&credentials).map_err(|e| ApiError::Failed(e.to_string()))?;
         if let Some(dir) = self.paths.dns_credentials.parent() {
             self.io.ensure_dir(dir, (0o700, "root", "root")).map_err(ApiError::Failed)?;
         }
         self.io.write(&self.paths.dns_credentials, stored.as_bytes(), ROOT_ONLY).map_err(ApiError::Failed)?;
-        let plan = self.plan(input).map_err(ApiError::Failed)?;
-        self.apply_ddns(&plan, Some(key)).map_err(ApiError::Failed)
+        // The challenge may change with the provider, so the proxy is applied in full.
+        ExposureApplier::apply(self, input).map_err(ApiError::Failed)
     }
 
     fn test_provider(&self, input: &WebInput) -> Result<String, ApiError> {
@@ -681,6 +735,28 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
             manual_check: report.manual_check.map(|m| m.steps).unwrap_or_default(),
             warnings: report.warnings,
         })
+    }
+
+    fn acme_settings(&self, input: &WebInput) -> Result<AcmeSettingsInfo, ApiError> {
+        Ok(self.acme_info(input.secrets.as_deref()))
+    }
+
+    fn set_acme_settings(&self, settings: &AcmeSettingsInput, input: &WebInput) -> Result<(), ApiError> {
+        self.store_acme_settings(settings, input)
+    }
+
+    fn set_dns01(&self, fields: &[(String, Secret)], input: &WebInput) -> Result<(), ApiError> {
+        self.store_dns01(fields, input)
+    }
+
+    fn certificates(&self, input: &WebInput) -> Result<CertificateReport, ApiError> {
+        let plan = self.plan(input).map_err(ApiError::Failed)?;
+        Ok(self.certificate_report(&plan, input))
+    }
+
+    fn check_local_names(&self, input: &WebInput) -> Result<Vec<LocalNameCheck>, ApiError> {
+        let plan = self.plan(input).map_err(ApiError::Failed)?;
+        self.local_name_checks(&plan, input.secrets.as_deref())
     }
 }
 
@@ -847,7 +923,54 @@ impl WebIo for RealWebIo {
     fn random(&self, out: &mut [u8]) -> Result<(), String> {
         getrandom::fill(out).map_err(|e| format!("no secure randomness: {e}"))
     }
+
+    fn list_dir(&self, path: &Path) -> Vec<String> {
+        std::fs::read_dir(path)
+            .map(|entries| entries.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect())
+            .unwrap_or_default()
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> Result<(), String> {
+        match std::fs::remove_dir_all(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("{}: {e}", path.display())),
+            _ => Ok(()),
+        }
+    }
+
+    fn resolve(&self, host: &str) -> Option<Vec<IpAddr>> {
+        use std::net::ToSocketAddrs;
+        match (host, 0).to_socket_addrs() {
+            Ok(addresses) => {
+                let mut ips: Vec<IpAddr> = addresses.map(|a| a.ip()).collect();
+                ips.sort();
+                ips.dedup();
+                Some(ips)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn now(&self) -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    }
+
+    fn caddy_get(&self, socket: &Path, path: &str) -> Option<Vec<u8>> {
+        let mut stream = UnixStream::connect(socket).ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(10))).ok()?;
+        let head = format!("GET {path} HTTP/1.1\r\nHost: \r\nConnection: close\r\n\r\n");
+        stream.write_all(head.as_bytes()).ok()?;
+        let mut reply = Vec::new();
+        stream.take(256 * 1024).read_to_end(&mut reply).ok()?;
+        let split = reply.windows(4).position(|w| w == b"\r\n\r\n")?;
+        reply.starts_with(b"HTTP/1.1 200").then(|| reply[split + 4..].to_vec())
+    }
+
+    fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String> {
+        config.build(self.http(), domain).map_err(|e| e.to_string())
+    }
 }
+
+mod certs;
 
 #[cfg(test)]
 mod tests;

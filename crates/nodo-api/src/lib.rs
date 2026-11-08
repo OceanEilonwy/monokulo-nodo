@@ -440,6 +440,133 @@ pub struct ReachabilityDetail {
     pub warnings: Vec<String>,
 }
 
+/// What the owner chooses about certificates. Everything else is chosen by the helper.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcmeSettingsInput {
+    /// Where Let's Encrypt sends expiry notices. Optional, but without it nobody hears of a
+    /// renewal that keeps failing.
+    pub email: Option<String>,
+    /// Let's Encrypt's staging server, whose certificates browsers do not trust.
+    pub staging: bool,
+    /// Names local sites `<site>.<local_domain>` with a real certificate, instead of `.local`.
+    pub local_domain: Option<String>,
+}
+
+/// How public certificates are validated. The helper picks it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChallengeChoice {
+    /// A TXT record through the DNS provider's API. No inbound port is needed.
+    Dns01 { provider: String },
+    /// HTTP-01 or TLS-ALPN-01, which need ports 80 and 443 forwarded. `reason` says why DNS-01
+    /// is not used.
+    PortsNeeded { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcmeSettingsInfo {
+    pub email: Option<String>,
+    pub staging: bool,
+    /// The ACME directory in use.
+    pub directory: String,
+    /// A test ACME server replaces Let's Encrypt on this device.
+    pub test_server: bool,
+    pub challenge: ChallengeChoice,
+    /// The fields `SetDns01Credentials` takes for the connected provider. Empty when its
+    /// certificate module uses the dynamic DNS credentials.
+    pub dns01_fields: Vec<String>,
+    pub dns01_stored: bool,
+    pub local_domain: Option<String>,
+    /// The second LAN address that local names point at.
+    pub local_address: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CertState {
+    /// Nothing has been tried yet.
+    Waiting,
+    Obtaining,
+    /// A certificate from the configured issuer is in place and covers the host.
+    Valid,
+    Failed,
+    Expired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CertProblemKind {
+    ChallengeFailed { challenges: Vec<String> },
+    RateLimited,
+    DnsNotPointingHere,
+    CaaBlocked,
+    DnsProvider,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertProblem {
+    /// Unix seconds.
+    pub at: u64,
+    pub kind: CertProblemKind,
+    pub summary: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostKind {
+    Public,
+    /// A local site named under the owner's domain, with a public certificate.
+    LocalDomain,
+    /// A `.local` name with this device's own CA.
+    LocalInternal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostCertificate {
+    pub site: SiteId,
+    pub host: String,
+    pub kind: HostKind,
+    pub state: CertState,
+    pub issuer: Option<String>,
+    /// Unix seconds.
+    pub not_after: Option<u64>,
+    pub last_renewal: Option<u64>,
+    /// `http-01`, `tls-alpn-01` or `dns-01`, as last tried.
+    pub challenge: Option<String>,
+    pub last_error: Option<CertProblem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertificateReport {
+    pub hosts: Vec<HostCertificate>,
+    pub challenge: ChallengeChoice,
+    pub staging: bool,
+    pub test_server: bool,
+    /// SHA-256 of the local CA's root, for checking it when installing it on a computer.
+    pub local_ca_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalNameVerdict {
+    Resolves,
+    NotPublished,
+    /// The provider has the record, but this network's resolver hides it. Usually a router's DNS
+    /// rebinding protection, which drops private addresses from public answers.
+    Blocked,
+    WrongAddress,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalNameCheck {
+    pub host: String,
+    /// The local address the record should hold.
+    pub address: String,
+    /// The addresses the provider has for the name.
+    pub published: Vec<String>,
+    /// What this device's resolver answered.
+    pub resolves_to: Vec<String>,
+    pub verdict: LocalNameVerdict,
+    pub explanation: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     ListServices,
@@ -650,6 +777,19 @@ pub enum Request {
     CheckReachabilityDetail {
         site: SiteId,
     },
+    /// The certificate settings, the challenge the helper chose and why, and the local names.
+    AcmeSettings,
+    /// Stores the owner's certificate choices and applies them to the proxy at once.
+    SetAcmeSettings(AcmeSettingsInput),
+    /// DNS-01 credentials for a provider whose certificate module needs different ones from
+    /// dynamic DNS, such as GoDaddy's API key and secret. Stored sealed. Empty removes them.
+    SetDns01Credentials {
+        fields: Vec<(String, Secret)>,
+    },
+    /// Every served host's certificate: issuer, expiry, last renewal and the last error.
+    CertificateStatus,
+    /// Whether local names under the owner's domain are published and resolve on this network.
+    CheckLocalNames,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -706,6 +846,9 @@ pub enum Response {
     ProviderTest(String),
     RetiredRecords(Vec<String>),
     ReachabilityDetail(ReachabilityDetail),
+    AcmeSettings(AcmeSettingsInfo),
+    Certificates(CertificateReport),
+    LocalNames(Vec<LocalNameCheck>),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -808,6 +951,11 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::TestDnsProvider => "test-dns-provider",
         Request::RetireStaleRecords => "retire-stale-records",
         Request::CheckReachabilityDetail { .. } => "check-reachability-detail",
+        Request::AcmeSettings => "acme-settings",
+        Request::SetAcmeSettings(_) => "set-acme-settings",
+        Request::SetDns01Credentials { .. } => "set-dns01-credentials",
+        Request::CertificateStatus => "certificate-status",
+        Request::CheckLocalNames => "check-local-names",
     }
 }
 
@@ -854,6 +1002,9 @@ mod tests {
                 passphrase: Secret::new("hunter2"),
                 new_device_passphrase: Some(Secret::new("hunter3")),
                 typed: "restore".into(),
+            },
+            Request::SetDns01Credentials {
+                fields: vec![("api_secret".into(), Secret::new("hunter2"))],
             },
             Request::ApplySettings {
                 package: "a".into(),

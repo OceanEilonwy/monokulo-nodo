@@ -30,6 +30,9 @@ use crate::system::{SvAction, System, WriteOptions};
 
 const SUFFIX: &str = ".nodobak";
 const TOR: &str = "tor";
+const CADDY: &str = "nodo-caddy";
+/// The archive name of Caddy's storage, under the secrets category since it holds private keys.
+const CADDY_SOURCE: &str = "caddy";
 const KEY_FILE: WriteOptions = WriteOptions {
     mode: 0o600,
     group: None,
@@ -58,6 +61,7 @@ struct Contents {
     settings: Vec<String>,
     storage: Vec<String>,
     onion: bool,
+    certificates: bool,
     device_key: bool,
 }
 
@@ -78,6 +82,10 @@ fn contents(summary: &Summary) -> Contents {
             ["storage", id, ..] => Some((&mut c.storage, (*id).to_owned())),
             ["onion", ..] => {
                 c.onion = true;
+                None
+            }
+            ["secrets", CADDY_SOURCE, ..] => {
+                c.certificates = true;
                 None
             }
             _ => None,
@@ -205,6 +213,13 @@ impl<S: System> Helper<S> {
                 name: TOR.into(),
                 path: p.onion.clone(),
             },
+            // Certificates survive a restore without asking Let's Encrypt again, which has rate
+            // limits, and devices that trust the local CA keep trusting it.
+            Source {
+                category: Category::Secrets,
+                name: CADDY_SOURCE.into(),
+                path: p.caddy_data.clone(),
+            },
         ];
         let mut locked = Vec::new();
         let (packages, _) = self.packages()?;
@@ -322,6 +337,9 @@ impl<S: System> Helper<S> {
             .collect();
         if c.onion && self.sys.exists(&self.paths.sv_dir.join(TOR)) {
             out.push(TOR.to_owned());
+        }
+        if c.certificates && self.sys.exists(&self.paths.sv_dir.join(CADDY)) {
+            out.push(CADDY.to_owned());
         }
         Ok(out)
     }
@@ -484,6 +502,20 @@ impl<S: System> Helper<S> {
                 chown_tree(&p.onion, uid, gid).map_err(io)?;
             }
             report.restored.push("Tor onion keys".into());
+        }
+        let caddy_staged = staged(&format!("secrets/{CADDY_SOURCE}"));
+        if caddy_staged.exists() {
+            // Caddy's home decides the owner, since the data directory may not exist yet.
+            let home = p.caddy_data.ancestors().nth(2).unwrap_or(&p.caddy_data);
+            let owner = fs::metadata(home).ok().map(|m| (m.uid(), m.gid()));
+            tree(&caddy_staged, &p.caddy_data)?;
+            if let Some((uid, gid)) = owner {
+                for dir in p.caddy_data.ancestors().take(2) {
+                    std::os::unix::fs::lchown(dir, Some(uid), Some(gid)).map_err(io)?;
+                }
+                chown_tree(&p.caddy_data, uid, gid).map_err(io)?;
+            }
+            report.restored.push("certificates".into());
         }
         for id in &c.storage {
             let mount = p.volume_root.join(id);
