@@ -1,0 +1,8 @@
+#!/bin/sh
+# A timer for automatic updates. The helper keeps the schedule: whether a check is due, the
+# install window, and every rule about what may install unattended. So this only asks it to run
+# once, then sleeps, and runit starts it again when the sleep ends.
+exec 2>&1
+exec </dev/null
+/usr/bin/nodo-tui --ctl auto-run
+exec sleep 600

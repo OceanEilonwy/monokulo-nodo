@@ -62,6 +62,8 @@ pub enum InstallError {
     Command { command: String, detail: String },
     #[error("after installing, xbps reports {found:?} instead of {expected}")]
     NotInstalled { expected: String, found: Option<String> },
+    #[error("the feed now offers {found}, not the {expected} that was reviewed")]
+    VersionChanged { expected: String, found: String },
     #[error("the version floor could not be raised: {0}")]
     Pins(#[from] nodo_feed::ApprovalError),
 }
@@ -82,6 +84,25 @@ pub enum Outcome {
     /// beyond the previous approval, or everything on a first install.
     NeedsApproval { pkgver: String, permissions: Permissions, added: Vec<Permission> },
     Installed { pkgver: String, permissions: Permissions },
+}
+
+/// What [`Installer::review`] found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reviewed {
+    Blocked(Vec<BlockReason>),
+    Ready { pkgver: String, permissions: Permissions, added: Vec<Permission>, manifest: Box<nodo_manifest::Manifest> },
+}
+
+/// A package downloaded, verified and inspected, waiting for approval.
+struct Prepared {
+    arch: String,
+    entry: RepoEntry,
+    file_name: String,
+    bytes: Vec<u8>,
+    pkgver: String,
+    permissions: Permissions,
+    added: Vec<Permission>,
+    manifest: nodo_manifest::Manifest,
 }
 
 pub struct Request<'a> {
@@ -130,7 +151,8 @@ impl<S: System> Installer<'_, S> {
         Ok((out.success && !text.is_empty()).then_some(text))
     }
 
-    pub fn install(&mut self, request: &Request) -> Result<Outcome, InstallError> {
+    /// Steps 1 to 5: everything up to the approval, with nothing written or run.
+    fn prepare(&mut self, request: &Request) -> Result<Result<Prepared, Vec<BlockReason>>, InstallError> {
         let arch = self.sys.device_arch().map_err(io("read the device architecture"))?;
         let index = self
             .sys
@@ -147,7 +169,7 @@ impl<S: System> Installer<'_, S> {
             });
         }
         if let Decision::Blocked(reasons) = self.pins.check_package(request.feed, &key.fingerprint, &entry.name, &entry.version) {
-            return Ok(Outcome::Blocked(reasons));
+            return Ok(Err(reasons));
         }
 
         let file_name = entry.file_name();
@@ -175,20 +197,114 @@ impl<S: System> Installer<'_, S> {
             Some(approved) => permissions.added_since(approved),
             None => permissions.granted.iter().cloned().collect(),
         };
+        Ok(Ok(Prepared { arch, entry: entry.clone(), file_name, bytes, pkgver, permissions, added, manifest: manifest.clone() }))
+    }
+
+    pub fn install(&mut self, request: &Request) -> Result<Outcome, InstallError> {
+        self.install_checked(request, None, None).map(|(outcome, _)| outcome)
+    }
+
+    /// Steps 1 to 5 only. Nothing is written, run or recorded, whatever was approved before, so
+    /// this is how the user sees what a package or an update asks for. `added` is relative to
+    /// `request.approved`, and may be empty.
+    pub fn review(&mut self, request: &Request) -> Result<Reviewed, InstallError> {
+        Ok(match self.prepare(request)? {
+            Err(reasons) => Reviewed::Blocked(reasons),
+            Ok(p) => Reviewed::Ready { pkgver: p.pkgver, permissions: p.permissions, added: p.added, manifest: Box::new(p.manifest) },
+        })
+    }
+
+    /// Installs like [`Installer::install`], with two additions for a caller that showed the user
+    /// a review first. `expect_pkgver` refuses any other version before xbps runs, so a feed that
+    /// changed between the review and the install cannot slip a different version in. `keep`
+    /// is a directory that receives a copy of the verified package file, which is what a later
+    /// rollback reinstalls. The returned path is that copy.
+    pub fn install_checked(
+        &mut self,
+        request: &Request,
+        expect_pkgver: Option<&str>,
+        keep: Option<&Path>,
+    ) -> Result<(Outcome, Option<PathBuf>), InstallError> {
+        let prepared = match self.prepare(request)? {
+            Err(reasons) => return Ok((Outcome::Blocked(reasons), None)),
+            Ok(prepared) => prepared,
+        };
+        let Prepared { arch, entry, file_name, bytes, pkgver, permissions, added, .. } = prepared;
+        if let Some(expected) = expect_pkgver {
+            if expected != pkgver {
+                return Err(InstallError::VersionChanged { expected: expected.to_string(), found: pkgver });
+            }
+        }
         if request.approved.is_none() || !added.is_empty() {
-            return Ok(Outcome::NeedsApproval { pkgver, permissions, added });
+            return Ok((Outcome::NeedsApproval { pkgver, permissions, added }, None));
         }
 
-        self.install_bytes(&arch, entry, &file_name, &bytes)?;
+        self.install_bytes(&arch, &entry, &file_name, &bytes, false)?;
         let found = self.installed_pkgver(&entry.name)?;
         if found.as_deref() != Some(pkgver.as_str()) {
             return Err(InstallError::NotInstalled { expected: pkgver, found });
         }
         self.pins.record_installed(request.feed, &entry.name, &entry.version)?;
-        Ok(Outcome::Installed { pkgver, permissions })
+        let kept = match keep {
+            Some(dir) => {
+                let path = dir.join(&file_name);
+                // A copy kept from an earlier install of this same version is the same file.
+                if self.sys.read(&path, MAX_PACKAGE_BYTES).ok().as_deref() != Some(bytes.as_slice()) {
+                    let _ = self.sys.remove_file(&path);
+                    self.sys.write_new(&path, &bytes).map_err(io("keep a copy of the package"))?;
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        Ok((Outcome::Installed { pkgver, permissions }, kept))
     }
 
-    fn install_bytes(&self, arch: &str, entry: &RepoEntry, file_name: &str, bytes: &[u8]) -> Result<(), InstallError> {
+    /// Reinstalls a package file kept by [`Installer::install_checked`], to roll an update back.
+    /// The file is inspected again, since it left the installer's hands, and xbps installs it
+    /// with `--force` because going back is a downgrade. The feed's version floor is not lowered:
+    /// the failed version stays the floor, and the user holds or retries it.
+    pub fn reinstall_kept(&self, path: &Path) -> Result<String, InstallError> {
+        let arch = self.sys.device_arch().map_err(io("read the device architecture"))?;
+        let bytes = self.sys.read(path, MAX_PACKAGE_BYTES).map_err(io("read the kept package"))?;
+        let inspection = inspect_package(bytes.as_slice(), &self.policy);
+        if !inspection.is_clean() {
+            return Err(InstallError::Rejected(inspection.violations));
+        }
+        let info = inspection
+            .package
+            .ok_or_else(|| InstallError::IndexMismatch("the kept package has no metadata".to_string()))?;
+        use sha2::Digest;
+        let entry = RepoEntry {
+            name: info.name.clone(),
+            version: info.version.clone(),
+            architecture: info.architecture.clone(),
+            sha256: sha2::Sha256::digest(&bytes).into(),
+            size: bytes.len() as u64,
+        };
+        let pkgver = format!("{}-{}", entry.name, entry.version);
+        self.install_bytes(&arch, &entry, &entry.file_name(), &bytes, true)?;
+        let found = self.installed_pkgver(&entry.name)?;
+        if found.as_deref() != Some(pkgver.as_str()) {
+            return Err(InstallError::NotInstalled { expected: pkgver, found });
+        }
+        Ok(pkgver)
+    }
+
+    /// Removes an installed feed package with xbps, using the same private configuration.
+    pub fn remove(&self, name: &str) -> Result<(), InstallError> {
+        if self.installed_pkgver(name)?.is_none() {
+            return Ok(());
+        }
+        let stage = Stage { sys: self.sys, path: self.sys.private_dir().map_err(io("create a staging directory"))? };
+        let conf_dir = stage.path.join("xbps.d");
+        self.sys.create_dir(&conf_dir).map_err(io("create the private xbps configuration"))?;
+        let args: Vec<OsString> = vec!["-C".into(), conf_dir.into(), "--yes".into(), name.into()];
+        self.run("xbps-remove", &args, &[])?;
+        Ok(())
+    }
+
+    fn install_bytes(&self, arch: &str, entry: &RepoEntry, file_name: &str, bytes: &[u8], force: bool) -> Result<(), InstallError> {
         let stage = Stage { sys: self.sys, path: self.sys.private_dir().map_err(io("create a staging directory"))? };
         let repo_dir = stage.path.join("repo");
         let conf_dir = stage.path.join("xbps.d");
@@ -227,7 +343,7 @@ impl<S: System> Installer<'_, S> {
                 // `-u` only moves forward. Reinstalling the same version, or an approved
                 // downgrade, needs `-f`.
                 match compare_versions(&entry.version, current) {
-                    Some(Ordering::Greater) => args.push("--update".into()),
+                    Some(Ordering::Greater) if !force => args.push("--update".into()),
                     _ => args.push("--force".into()),
                 }
             }

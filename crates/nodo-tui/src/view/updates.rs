@@ -38,6 +38,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             UpdateNote::RestartNeeded => t.d("Restart needed"),
             UpdateNote::NewPermission(_) => t.a("▲ Asks for new permission"),
             UpdateNote::Skipped => t.d("You skipped this version"),
+            UpdateNote::Blocked(reason) => t.a(format!("▲ {reason}")),
         };
         items.push(if selected {
             Item::Selected(left, Line::from(note))

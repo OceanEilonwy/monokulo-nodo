@@ -74,6 +74,8 @@ pub enum ScreenId {
     AutoUpdate,
     /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
     Setup,
+    /// Backups and restore. It has no design file either, and follows the others' style.
+    Backup,
 }
 
 impl ScreenId {
@@ -134,11 +136,12 @@ impl ScreenId {
             ScreenId::WebCgnat => "webcgnat",
             ScreenId::AutoUpdate => "autoupdate",
             ScreenId::Setup => "setup",
+            ScreenId::Backup => "backup",
         }
     }
 
     pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|id| id.slug() == slug)
+        Self::ALL.into_iter().chain([ScreenId::Backup]).find(|id| id.slug() == slug)
     }
 }
 
@@ -157,12 +160,21 @@ pub struct ReviewState {
     /// False until the user moves to it, so a stray Enter cancels.
     pub confirm_focused: bool,
     pub purpose: ReviewPurpose,
+    /// Shown after confirming a package whose new encrypted storage needs the device passphrase.
+    pub passphrase: Option<Input>,
+}
+
+impl ReviewState {
+    pub fn new(data: ReviewData, purpose: ReviewPurpose) -> Self {
+        Self { data, confirm_focused: false, purpose, passphrase: None }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewPurpose {
     Install,
-    Update { batch: Vec<String>, pending_reviews: Vec<String> },
+    /// `approvals` gathers each confirmed review, which the helper requires for those updates.
+    Update { batch: Vec<String>, pending_reviews: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +219,38 @@ impl SetupState {
 
 /// The helper enforces this too. Checking here saves a round trip and a KDF run.
 pub const MIN_PASSPHRASE_CHARS: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupStep {
+    List,
+    /// The device passphrase, when the device has one, then the backup passphrase twice.
+    Create { device: Input, first: Input, second: Input, field: usize },
+    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    Unlock { name: String, passphrase: Input },
+    /// What a restore replaces, the typed word, and a new device passphrase when it holds a key.
+    Confirm { name: String, passphrase: Secret, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
+    Restored(nodo_api::RestoreReport),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupState {
+    pub list: Vec<nodo_api::BackupInfo>,
+    pub selected: usize,
+    pub step: BackupStep,
+    pub error: Option<String>,
+    pub busy: bool,
+    /// The device key exists, so a backup asks for the device passphrase to include it.
+    pub device_set_up: bool,
+}
+
+impl BackupState {
+    pub fn new(device_set_up: bool) -> Self {
+        Self { list: Vec::new(), selected: 0, step: BackupStep::List, error: None, busy: true, device_set_up }
+    }
+}
+
+/// The helper also requires this word, so the check here only saves a round trip.
+pub const RESTORE_WORD: &str = nodo_api::RESTORE_WORD;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
@@ -492,6 +536,7 @@ pub enum Screen {
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
     Setup(SetupState),
+    Backup(BackupState),
 }
 
 impl Screen {
@@ -523,6 +568,7 @@ impl Screen {
             Screen::WebConfirm(_) => ScreenId::WebConfirm,
             Screen::WebCgnat(_) => ScreenId::WebCgnat,
             Screen::Setup(_) => ScreenId::Setup,
+            Screen::Backup(_) => ScreenId::Backup,
         }
     }
 
@@ -664,7 +710,7 @@ pub enum Effect {
     OpenService(String),
     LoadDetail(PackageId),
     CheckInstall(PackageId),
-    StartInstall(PackageId),
+    StartInstall { id: PackageId, approval: Option<nodo_api::PermissionApproval>, passphrase: Option<Secret> },
     PollInstall,
     CancelInstall,
     ProbeFeed(String),
@@ -673,13 +719,18 @@ pub enum Effect {
     ToggleFeed(String),
     RemoveFeed(String),
     LoadKeyChange(String),
-    TrustNewKey(String),
+    TrustNewKey { change: KeyChange, typed: String },
     OpenSettings(String),
     LoadReferences { package: String, field_index: usize, field_key: String, field_label: String },
     ApplySettings { package: String, values: Vec<(String, FieldValue)> },
     CheckUpdates,
-    ReviewUpdate { name: String, batch: Vec<String>, pending_reviews: Vec<String> },
-    ApplyUpdates(Vec<String>),
+    ReviewUpdate {
+        name: String,
+        batch: Vec<String>,
+        pending_reviews: Vec<String>,
+        approvals: Vec<(String, nodo_api::PermissionApproval)>,
+    },
+    ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
     SetHeld { name: String, held: bool },
     SaveAutoUpdate(AutoUpdatePrefs),
     LoadLogs(String),
@@ -698,6 +749,10 @@ pub enum Effect {
     LoadSshKeys,
     AddSshKey(String),
     RemoveSshKey(String),
+    LoadBackups,
+    CreateBackup { device_passphrase: Option<Secret>, backup_passphrase: Secret },
+    InspectBackup { name: String, passphrase: Secret },
+    RestoreBackup { name: String, passphrase: Secret, new_device_passphrase: Option<Secret>, typed: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -721,7 +776,12 @@ pub enum Event {
     ReferencesLoaded { package: String, field_index: usize, field_label: String, list: ReferenceList },
     SettingsApplied(Result<(), ApiError>),
     SettingsRolledBack { package: String, explanation: RollbackExplanation },
-    UpdateReviewLoaded { review: Option<ReviewData>, batch: Vec<String>, pending_reviews: Vec<String> },
+    UpdateReviewLoaded {
+        review: Option<ReviewData>,
+        batch: Vec<String>,
+        pending_reviews: Vec<String>,
+        approvals: Vec<(String, nodo_api::PermissionApproval)>,
+    },
     UpdatesApplied(UpdateReport),
     AutoUpdateSaved(Result<(), String>),
     LogsLoaded { source: String, view: LogView },
@@ -735,4 +795,8 @@ pub enum Event {
     SetupDone(Result<(), ApiError>),
     SshKeysLoaded(Result<Vec<nodo_api::SshKey>, String>),
     SshKeyChanged(Result<(), String>),
+    BackupsLoaded(Result<Vec<nodo_api::BackupInfo>, String>),
+    BackupCreated(Result<nodo_api::BackupCreated, String>),
+    BackupInspected(Result<nodo_api::BackupContents, String>),
+    BackupRestored(Result<nodo_api::RestoreReport, String>),
 }

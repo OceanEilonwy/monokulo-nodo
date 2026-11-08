@@ -8,6 +8,7 @@ pub mod app;
 pub mod ctl;
 pub mod fixtures;
 pub mod helper_backend;
+pub mod helper_manage;
 pub mod mock;
 pub mod model;
 pub mod runtime;

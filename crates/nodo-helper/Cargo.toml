@@ -8,10 +8,15 @@ license.workspace = true
 
 [dependencies]
 nodo-api = { path = "../nodo-api" }
+nodo-backup = { path = "../nodo-backup" }
+nodo-feed = { path = "../nodo-feed" }
 nodo-gen = { path = "../nodo-gen" }
+nodo-health = { path = "../nodo-health" }
+nodo-install = { path = "../nodo-install" }
 nodo-manifest = { path = "../nodo-manifest" }
 nodo-web = { path = "../nodo-web" }
 nodo-settings = { path = "../nodo-settings" }
+nodo-update = { path = "../nodo-update" }
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true

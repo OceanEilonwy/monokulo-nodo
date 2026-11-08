@@ -4,6 +4,9 @@
 # (users, volumes, cuprated settings), so run it on a disposable VM. The web part also needs the web
 # packages, curl, and tor for onion addresses:
 #   scripts/dev-vm.sh push nodo-tools nodo-caddy nodo-localnet nodo-ddns
+#   scripts/build-packages.sh x86_64 monokulo     (optional: Monokulo installs from the test feed)
+#   scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.xbps' < out/feed/x86_64/monokulo-<version>.x86_64.xbps
+#   echo monokulo-<version>.x86_64.xbps | scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.name'
 #   scripts/dev-vm.sh ssh 'cat > /tmp/e2e.sh' < tests/helper-e2e.sh
 #   scripts/dev-vm.sh ssh 'sh /tmp/e2e.sh </dev/null'
 set -u
@@ -562,6 +565,249 @@ umount /media/e2e
 check "without the drive, unlock waits for it rather than looking elsewhere" \
 	refused "waiting for the data drive at /media/e2e" sh -c 'printf "%s\n" "$0" | nodo-tui --ctl unlock' "$PASS2"
 check "nothing was created underneath the empty mount point" sh -c '[ ! -e /media/e2e/.nodo-volumes ]'
+
+# Feeds and installs: a feed signed in the VM with a real RSA key, published with xbps-rindex
+
+# The data drive comes back, so every volume is open again for what follows.
+mount /media/e2e
+printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
+
+FEED=/srv/e2e-feed
+APPROOT=/tmp/e2e-pkgs
+rm -rf "$FEED" "$APPROOT" /root/e2e-feed-key.pem /root/e2e-feed-key2.pem
+mkdir -p "$FEED" "$APPROOT"
+openssl genrsa -out /root/e2e-feed-key.pem 2048 2>/dev/null
+openssl genrsa -out /root/e2e-feed-key2.pem 2048 2>/dev/null
+# Builds e2e-pay at a version with xbps-create. Mode "good" stays up, "crash" damages its data and
+# exits, which is how an update fails its health check.
+mkpkg() {
+	ver=$1 mode=$2 extra=${3:-}
+	d=$APPROOT/e2e-pay-$ver
+	rm -rf "$d"
+	mkdir -p "$d/opt/nodo/apps/e2e-pay/bin"
+	chmod 755 "$d" "$d/opt" "$d/opt/nodo" "$d/opt/nodo/apps" "$d/opt/nodo/apps/e2e-pay" "$d/opt/nodo/apps/e2e-pay/bin"
+	printf 'api_version = 1\nid = "e2e-pay"\nversion = "%s"\nexec = ["bin/run"]\nstop_timeout_secs = 5\n%s' "$ver" "$extra" \
+		> "$d/opt/nodo/apps/e2e-pay/manifest.toml"
+	if [ "$mode" = good ]; then
+		printf '#!/bin/sh\necho "e2e-pay %s running"\nwhile :; do sleep 1; done\n' "$ver" > "$d/opt/nodo/apps/e2e-pay/bin/run"
+	else
+		printf '#!/bin/sh\necho broken > /var/lib/apps/e2e-pay/marker\necho "migration 14: table invoices already exists" >&2\nexit 1\n' \
+			> "$d/opt/nodo/apps/e2e-pay/bin/run"
+	fi
+	chmod 644 "$d/opt/nodo/apps/e2e-pay/manifest.toml"
+	chmod 755 "$d/opt/nodo/apps/e2e-pay/bin/run"
+	(cd "$APPROOT" && xbps-create -A x86_64 -n "e2e-pay-${ver}_1" -s "e2e feed app" "$d" >/dev/null)
+	publish "$APPROOT/e2e-pay-${ver}_1.x86_64.xbps"
+}
+publish() {
+	key=${KEY:-/root/e2e-feed-key.pem}
+	cp "$1" "$FEED/" && xbps-rindex -f -a "$FEED/$(basename "$1")" >/dev/null &&
+		xbps-rindex --signedby e2e --privkey "$key" -s "$FEED" >/dev/null &&
+		xbps-rindex --privkey "$key" -S "$FEED/$(basename "$1")" >/dev/null
+}
+field() { sed -n "s/.*$1: \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p" | head -n 1; }
+mkpkg 1.0 good
+check "the signed test feed is published" sh -c "ls $FEED/e2e-pay-1.0_1.x86_64.xbps.sig2 && xbps-query -vL --repository=$FEED 2>&1 | tee /dev/stderr | grep -q 'Signed-by: e2e'"
+ctl probe-feed "$FEED" > /tmp/e2e.probe
+fp=$(field fingerprint < /tmp/e2e.probe)
+check "probing a feed reports its key and changes nothing" sh -c '
+	cat /tmp/e2e.probe; [ -n "$0" ] && grep -q "name: \"e2e-feed\"" /tmp/e2e.probe && ! ctl feeds | grep -q e2e-feed' "$fp"
+check "a feed is refused when its key is not the one confirmed" refused "NeedsConfirmation" ctl add-feed "$FEED" "00112233445566778899aabbccddeeff"
+check "a feed is added with the confirmed key" sh -c 'ctl add-feed "$1" "$0" && ctl feeds | grep -q "fingerprint: \"$0\""' "$fp" "$FEED"
+check "the feed's packages are in the catalog" sh -c 'ctl catalog | grep -A3 "name: \"e2e-pay\"" | grep -q "version: \"1.0_1\""'
+check "a review shows the permissions and installs nothing" sh -c '
+	ctl review e2e-feed e2e-pay | tee /tmp/e2e.rev | grep -q "keeps its data unencrypted" && ! xbps-query e2e-pay >/dev/null'
+check "an install without approval is refused" refused "NeedsConfirmation" ctl install-pkg e2e-feed e2e-pay e2e-pay-1.0_1
+check "an approval for other permissions is refused" refused "NeedsConfirmation" ctl install-pkg e2e-feed e2e-pay e2e-pay-1.0_1 "connects to the internet"
+check "the refused installs left nothing behind" sh -c '
+	! xbps-query e2e-pay && [ ! -e /opt/nodo/apps/e2e-pay ] && [ ! -e /var/lib/nodo/manifests/e2e-pay.toml ] && ! id _e2e-pay'
+check "an approved install goes through every step" sh -c '
+	ctl approve-install e2e-feed e2e-pay | tee /tmp/e2e.inst; grep -q "problem: None" /tmp/e2e.inst'
+check "xbps has the verified version in the app directory" sh -c '
+	[ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.0_1 ] && [ -x /opt/nodo/apps/e2e-pay/bin/run ] &&
+	[ "$(stat -c "%a %U" /var/lib/nodo/manifests/e2e-pay.toml)" = "644 root" ]'
+check "the system xbps configuration was not touched" sh -c '! grep -rq e2e-feed /etc/xbps.d /usr/share/xbps.d'
+check "the installed app runs as its own user" running_for e2e-pay 3
+check "a copy of the verified package is kept for rollback" sh -c 'ls /var/lib/nodo/packages/e2e-pay/e2e-pay-1.0_1.x86_64.xbps'
+check "the pins and approval are stored root only" sh -c '
+	[ "$(stat -c "%a %U" /var/lib/nodo/feeds.toml)" = "600 root" ] && grep -q "keeps its data unencrypted\|unencrypted-storage" /var/lib/nodo/feeds.toml'
+
+# A package breaking the install rules is rejected, with no override.
+bad=$APPROOT/e2e-bad
+mkdir -p "$bad/opt/nodo/apps/e2e-bad" "$bad/etc/cron.d"
+chmod 755 "$bad" "$bad/opt" "$bad/opt/nodo" "$bad/opt/nodo/apps" "$bad/opt/nodo/apps/e2e-bad"
+printf 'api_version = 1\nid = "e2e-bad"\nversion = "1.0"\nexec = ["bin/run"]\n' > "$bad/opt/nodo/apps/e2e-bad/manifest.toml"
+echo '* * * * * root sh' > "$bad/etc/cron.d/e2e-bad"
+printf '#!/bin/sh\nexit 0\n' > "$bad/INSTALL"
+chmod 755 "$bad/INSTALL"
+(cd "$APPROOT" && xbps-create -A x86_64 -n e2e-bad-1.0_1 -s "breaks the rules" "$bad" >/dev/null)
+publish "$APPROOT/e2e-bad-1.0_1.x86_64.xbps"
+ctl refresh-feeds >/dev/null
+check "a package with a root script and files outside its folder is rejected" sh -c '
+	ctl review e2e-feed e2e-bad | tee /tmp/e2e.bad; grep -q InstallRejected /tmp/e2e.bad && grep -q "install scripts" /tmp/e2e.bad &&
+	grep -q "outside the package" /tmp/e2e.bad'
+check "a rejected package cannot be installed by quoting its review" sh -c '! ctl approve-install e2e-feed e2e-bad | grep -q InstallReport'
+check "the rejected package left nothing" sh -c '! xbps-query e2e-bad && [ ! -e /etc/cron.d/e2e-bad ]'
+
+# Updates: more permissions wait for the user, a failed health check rolls back and is held
+
+echo original > /var/lib/apps/e2e-pay/marker
+mkpkg 1.1 good '[network]
+outbound = "internet"
+'
+check "auto-update is off until a package is chosen" sh -c 'ctl auto-get | grep -q "enabled: \[\]"'
+check "auto-update can be turned on for one package with a window" ctl auto-set daily 00:00 23:59 e2e-pay
+check "a check finds the update and the permission it adds" sh -c '
+	ctl check-updates | tee /tmp/e2e.up; grep -q "connects to the internet" /tmp/e2e.up && grep -q "waits for you: asks for new permissions" /tmp/e2e.up'
+check "auto-update holds an update that asks for more" sh -c '
+	ctl auto-run | tee /tmp/e2e.ar; grep -q UpdateResults /tmp/e2e.ar && ! grep -q "package:" /tmp/e2e.ar && [ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.0_1 ]'
+check "selecting it without approval is refused" sh -c '
+	ctl apply-update e2e-pay 1.1_1 | tee /tmp/e2e.ap; grep -q Refused /tmp/e2e.ap && [ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.0_1 ]'
+mkpkg 1.2 crash
+check "an update that fails its health check is found" sh -c 'ctl check-updates | grep -q "to: \"1.2_1\""'
+check "auto-update rolls it back" sh -c '
+	ctl auto-run | tee /tmp/e2e.rb2; grep -q RolledBack /tmp/e2e.rb2 && grep -q "recovered: true" /tmp/e2e.rb2'
+check "the previous version is installed again" sh -c '[ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.0_1 ] && grep -q "\"1.0\"" /var/lib/nodo/manifests/e2e-pay.toml'
+check "its data came back" sh -c '[ "$(cat /var/lib/apps/e2e-pay/marker)" = original ]'
+check "the previous version runs" running_for e2e-pay 3
+check "the failed version is held and shown for Home" sh -c '
+	ctl update-status | tee /tmp/e2e.us; grep -q "held: true" /tmp/e2e.us && grep -A6 "attention:" /tmp/e2e.us | grep -q RolledBack'
+check "a held version is not tried again" sh -c '
+	ctl auto-run | tee /tmp/e2e.ar2; grep -q UpdateResults /tmp/e2e.ar2 && ! grep -q "package:" /tmp/e2e.ar2 && [ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.0_1 ]'
+mkpkg 1.3 good
+check "a healthy update installs automatically" sh -c '
+	ctl check-updates >/dev/null && ctl auto-run | tee /tmp/e2e.ok; grep -q Updated /tmp/e2e.ok &&
+	[ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.3_1 ]'
+check "the updated app runs" running_for e2e-pay 3
+check "only the current version's copy is kept" sh -c '[ "$(ls /var/lib/nodo/packages/e2e-pay)" = e2e-pay-1.3_1.x86_64.xbps ]'
+check "the auto-update timer service asks the helper" sh -c '
+	[ -L /var/service/nodo-autoupdate ] || ln -s /etc/sv/nodo-autoupdate /var/service/
+	for _ in $(seq 1 20); do grep -q UpdateResults /var/log/nodo-autoupdate/current 2>/dev/null && exit 0; sleep 1; done; exit 1'
+rm -f /var/service/nodo-autoupdate
+
+# A changed feed key blocks the feed until the user types its name
+KEY=/root/e2e-feed-key2.pem publish "$APPROOT/e2e-pay-1.3_1.x86_64.xbps"
+check "a re-signed feed shows as key changed" sh -c 'ctl refresh-feeds | grep -q "key_changed: true"'
+check "nothing installs from it" sh -c 'ctl review e2e-feed e2e-pay | tee /tmp/e2e.kc; grep -q "key_changed: true" /tmp/e2e.kc'
+ctl feed-key e2e-feed > /tmp/e2e.key
+old=$(field pinned < /tmp/e2e.key)
+new=$(field offered < /tmp/e2e.key)
+check "trusting the new key without the typed name is refused" refused "NeedsConfirmation" ctl trust-key e2e-feed "$old" "$new" e2e
+check "trusting the new key with the typed name works" sh -c 'ctl trust-key e2e-feed "$0" "$1" e2e-feed | grep -q "key_changed: false"' "$old" "$new"
+
+# Monokulo itself, from the same feed: encrypted storage, needs the node, outbound internet
+if [ -f /tmp/monokulo.xbps ]; then
+	cp /tmp/monokulo.xbps "$APPROOT/$(cat /tmp/monokulo.name)"
+	KEY=/root/e2e-feed-key2.pem publish "$APPROOT/$(cat /tmp/monokulo.name)"
+	ctl refresh-feeds >/dev/null
+	check "Monokulo's review lists what it asks for" sh -c '
+		ctl review e2e-feed monokulo | tee /tmp/e2e.mk; grep -q "uses monero-daemon" /tmp/e2e.mk &&
+		grep -q "connects to the internet" /tmp/e2e.mk && grep -q "needs_passphrase: true" /tmp/e2e.mk'
+	check "Monokulo needs the device passphrase for its storage" refused "NeedsConfirmation" ctl approve-install e2e-feed monokulo
+	check "Monokulo installs with approval into encrypted storage" sh -c '
+		printf "%s\n" "$0" | nodo-tui --ctl approve-install-encrypted e2e-feed monokulo > /tmp/e2e.mki
+		sed -n "/InstallReport/,\$p" /tmp/e2e.mki | grep -E "name:|state:|problem|\"" | tee /dev/stderr |
+			grep -A2 "\"Configure settings\"" | grep -q "state: Done" && xbps-query monokulo >/dev/null &&
+		cryptsetup isLuks /var/lib/nodo/volumes/monokulo.luks && mountpoint -q /run/nodo/volumes/monokulo &&
+		[ -L /var/service/monokulo ] && grep -q "encryption_key" /var/lib/nodo/settings/monokulo.toml && ! grep -q "encryption_key = \"[0-9a-f]" /var/lib/nodo/settings/monokulo.toml' "$PASS2"
+	# The VM is offline and its node has no chain, so Monokulo may not pass its health check here.
+	# Either way the install must report the result rather than claim success.
+	check "Monokulo's health check result is reported, not hidden" sh -c '
+		grep -q "problem: None" /tmp/e2e.mki || grep -q "did not pass its health check" /tmp/e2e.mki'
+	sv down monokulo
+fi
+
+# Backups and restore with the device key
+
+mkdir -p /var/lib/nodo/secrets && echo keep-me > /var/lib/nodo/secrets/e2e
+echo vault-data > /run/nodo/volumes/e2e-vault/data/e2e-file
+chown _e2e-vault: /run/nodo/volumes/e2e-vault/data/e2e-file
+ctl set e2e-app greeting text before >/dev/null
+BACKUP_PASS='backup horse battery staple'
+check "a backup without the device passphrase is refused" refused "NeedsConfirmation" sh -c 'printf "\n%s\n" "$0" | nodo-tui --ctl backup' "$BACKUP_PASS"
+check "a backup with a wrong device passphrase is refused" refused "BadPassphrase" sh -c 'printf "%s\n%s\n" wrong-passphrase "$0" | nodo-tui --ctl backup' "$BACKUP_PASS"
+check "a backup holds the device key and storage" sh -c '
+	printf "%s\n%s\n" "$0" "$1" | nodo-tui --ctl backup | tee /tmp/e2e.bk; grep -q "has_device_key: true" /tmp/e2e.bk' "$PASS2" "$BACKUP_PASS"
+bk=$(field name < /tmp/e2e.bk)
+check "the backup file is root only and encrypted" sh -c '
+	f=/var/lib/nodo/backups/$0; [ "$(stat -c "%a %U" "$f")" = "600 root" ] && head -c 8 "$f" | grep -q NODOBAK1 &&
+	! grep -q "keep-me\|vault-data\|before" "$f"' "$bk"
+check "inspecting with a wrong passphrase is refused" refused "passphrase did not open" sh -c 'printf "wrong backup passphrase\n" | nodo-tui --ctl inspect-backup "$0"' "$bk"
+check "inspecting lists what a restore replaces" sh -c '
+	printf "%s\n" "$1" | nodo-tui --ctl inspect-backup "$0" | tee /tmp/e2e.bi; grep -q e2e-vault /tmp/e2e.bi && grep -q "e2e-app" /tmp/e2e.bi' "$bk" "$BACKUP_PASS"
+cp "/var/lib/nodo/backups/$bk" /var/lib/nodo/backups/nodo-tampered.nodobak
+size=$(stat -c %s /var/lib/nodo/backups/nodo-tampered.nodobak)
+printf 'X' | dd of=/var/lib/nodo/backups/nodo-tampered.nodobak bs=1 seek=$((size - 100)) conv=notrunc 2>/dev/null
+ctl set e2e-app greeting text after >/dev/null
+rm -f /var/lib/nodo/secrets/e2e /run/nodo/volumes/e2e-vault/data/e2e-file
+check "a tampered backup is refused and changes nothing" refused "altered\\|damaged" sh -c '
+	printf "%s\n%s\n" "$0" "new device pass" | nodo-tui --ctl restore nodo-tampered.nodobak restore' "$BACKUP_PASS"
+check "a wrong passphrase restores nothing" refused "passphrase did not open" sh -c '
+	printf "wrong backup passphrase\n%s\n" "new device pass" | nodo-tui --ctl restore "$0" restore' "$bk"
+check "a restore without the typed word is refused" refused "NeedsConfirmation" sh -c '
+	printf "%s\n%s\n" "$1" "new device pass" | nodo-tui --ctl restore "$0" yes' "$bk" "$BACKUP_PASS"
+check "the refused restores changed nothing" sh -c '
+	[ ! -e /var/lib/nodo/secrets/e2e ] && grep -qx "greeting = \"after\"" /run/nodo/secrets/e2e-app/config/settings.toml && ! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
+check "a restore stops the services it replaces, restores and starts them" sh -c '
+	printf "%s\n%s\n" "$1" "new device pass" | nodo-tui --ctl restore "$0" restore | tee /tmp/e2e.rs
+	sed -n "/stopped:/,/\]/p" /tmp/e2e.rs | grep -q "\"e2e-vault\"" && sed -n "/restarted:/,/\]/p" /tmp/e2e.rs | grep -q "\"e2e-vault\""' "$bk" "$BACKUP_PASS"
+check "settings, secrets and storage are back" sh -c '
+	grep -qx "greeting = \"before\"" /run/nodo/secrets/e2e-app/config/settings.toml && [ "$(cat /var/lib/nodo/secrets/e2e)" = keep-me ] &&
+	[ "$(cat /run/nodo/volumes/e2e-vault/data/e2e-file)" = vault-data ] && [ "$(stat -c %U /run/nodo/volumes/e2e-vault/data/e2e-file)" = _e2e-vault ]'
+check "the device key used by this device's volumes was kept" sh -c '
+	grep -q "uses its own key" /tmp/e2e.rs && printf "%s\n" "$0" | nodo-tui --ctl unlock' "$PASS2"
+check "the restored services run" running_for e2e-vault 3
+check "no staging copy is left behind" sh -c '! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
+
+# The real TUI against the real helper: feeds, packages, updates, Home's attention and backups
+
+rm -f /tmp/e2e-tui.out
+(
+	sleep 4; printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
+	printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
+	printf 'b'; sleep 3; printf '\033'; sleep 2; printf 'q'; sleep 1
+) | script -qfec 'stty rows 32 cols 100; TERM=xterm-256color nodo-tui' /tmp/e2e-tui.out >/dev/null 2>&1
+# Unchanged cells are skipped with cursor moves, so spaces are removed before comparing.
+sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Z0-9]//g' /tmp/e2e-tui.out | tr -d ' ' > /tmp/e2e-tui.txt
+for want in "Your feeds" "e2e-feed" "e2e-pay" "Backups on this device" "$bk" "is back and the update is on hold"; do
+	check "the TUI showed: $want" grep -q "$(printf %s "$want" | tr -d ' ')" /tmp/e2e-tui.txt
+done
+check "the TUI no longer says feeds or updates are not available" sh -c '! grep -q "Not available yet: feeds\|Not available yet: automatic" /tmp/e2e-tui.txt'
+check "the TUI never showed a passphrase" sh -c '! grep -q "horse" /tmp/e2e-tui.txt'
+
+# Health: the daemon's configuration from manifests, and a low disk on a small loop filesystem
+
+cp /etc/sv/nodo-helper/conf /tmp/e2e-helper.conf
+hloop=$(losetup -j /var/tmp/e2e-health.img | cut -d: -f1)
+if [ -z "$hloop" ]; then
+	rm -f /var/tmp/e2e-health.img
+	# Sparse: a 6 GB filesystem is below the data drive's 20 GB warning but above its stop level.
+	truncate -s 6G /var/tmp/e2e-health.img
+	hloop=$(losetup -f --show /var/tmp/e2e-health.img)
+fi
+mkfs.xfs -q -f "$hloop"
+mkdir -p /media/e2e-health
+mount "$hloop" /media/e2e-health
+printf 'DRIVE=%s\nDRIVE_MOUNT=/media/e2e-health\n' "$hloop" > /etc/sv/nodo-helper/conf
+restart_helper
+check "the helper writes the health configuration from installed manifests" sh -c '
+	cat /etc/nodo/health.toml; grep -q "e2e-pay" /etc/nodo/health.toml && grep -q "/media/e2e-health" /etc/nodo/health.toml'
+[ -L /var/service/nodo-healthd ] || ln -s /etc/sv/nodo-healthd /var/service/
+check "nodo-healthd runs under runit and reports" sh -c '
+	for _ in $(seq 1 30); do [ -s /run/nodo/health.json ] && ctl health | grep -q "reporting: true" && exit 0; sleep 1; done; ctl health; exit 1'
+check "Home sees the low data disk" sh -c '
+	ctl health | tee /tmp/e2e.h; grep -A6 "path: \"/media/e2e-health\"" /tmp/e2e.h | grep -q "level: \"Low\"" &&
+	grep -q "data disk is low on space" /tmp/e2e.h'
+check "a low data disk stops nothing" sh -c 'sv status cuprated | grep -q "^run:"'
+echo "trial boots of the new system ran out, so the previous one was started" > /run/nodo/boot-fallback
+check "the boot fallback notice reaches Home" sh -c 'ctl health | grep -q "boot_fallback: Some"'
+rm -f /run/nodo/boot-fallback /var/service/nodo-healthd
+sleep 2
+umount /media/e2e-health
+cp /tmp/e2e-helper.conf /etc/sv/nodo-helper/conf
+restart_helper
+# A helper restart forgets the key that opens sealed secrets, as a reboot would.
+printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
 
 # Settings rollback, last because it waits for the crash loop to be noticed
 

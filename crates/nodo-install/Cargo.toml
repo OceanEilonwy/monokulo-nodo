@@ -11,6 +11,7 @@ libc = "0.2"
 nodo-feed = { path = "../nodo-feed" }
 nodo-manifest = { path = "../nodo-manifest" }
 serde.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
 toml.workspace = true
 

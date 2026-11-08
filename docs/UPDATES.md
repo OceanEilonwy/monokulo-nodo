@@ -66,6 +66,20 @@ install or health check is rolled back, that version is held, and the outcome (`
 `RollbackFailed` when the old version did not come back) stays in `attention` for Home until
 dismissed. Nothing retries a held version until the user releases it.
 
+**Connected** (`crates/nodo-helper/src/updates.rs`). The helper keeps the policy, holds, history
+and the last check's candidates in `/var/lib/nodo/updates`. A check refreshes the feeds and
+reviews every newer version with nodo-install, so the permission delta, a changed key and failed
+checks are known before anyone selects it. Each update keeps the previous version's verified
+package file in `/var/lib/nodo/packages/<id>` and a copy of the package's data (inside the volume
+for encrypted packages), and a rollback reinstalls that file with `xbps-install -f` and puts the
+data back. Updates the user selects follow the same rules, and one that asks for more needs the
+reviewed permission lines quoted back. The `nodo-autoupdate` runit service is the timer: every ten
+minutes it asks the helper for one run (`RunAutoUpdate`, root only), and the helper decides whether
+a check is due and whether the window is open. Proven in the KVM VM by `tests/helper-e2e.sh` with
+a feed signed in the VM: an update asking for internet access is held, one failing its health
+check is rolled back with its data and held, a held version is not retried, and a healthy one
+installs.
+
 ## 3. A/B system rollback on the NanoPC-T6N
 
 ### What the FriendlyElec boot chain does
@@ -181,6 +195,17 @@ truncation, appended data, reordered chunks or a header with a lowered KDF cost 
 behind. Paths inside are validated even though they are authenticated, setuid bits are dropped,
 and symlinks are never followed when backing up. All of this is unit tested.
 
+**Connected** (`crates/nodo-helper/src/backup.rs`). Backups are written into the root-only
+`/var/lib/nodo/backups` under generated names, so no request names a path. Including the device
+key needs the device passphrase, checked like an unlock. A restore needs the typed word
+`restore`, verifies the whole file into a staging directory, stops the services whose settings or
+storage it replaces, moves everything into place, renders settings again with this device's
+owners, starts what was running and deletes the staging copy. A device whose volumes already use
+their own key keeps it, since replacing it would lock them for good. Proven in the KVM VM: a
+wrong passphrase, a flipped byte and a missing typed word restore nothing, and a real restore
+brings back settings, secrets and a file inside an encrypted volume. Not yet: copying a backup to
+or from a USB stick, and restoring onto a fresh install where the packages are not installed yet.
+
 USB recovery plan, in order of what exists today:
 
 1. **Restore onto a fresh install.** Flash the SD image, boot, choose "restore from backup", pick
@@ -225,6 +250,14 @@ panic or corruption message. The same run shows cuprated placed in a cgroup with
 svlogd limits written, and the time status matching chrony. An idle, offline node writes too
 little to fill a disk by itself, so the control uses a first start, where the database must be
 created; a syncing node on a real drive was not tested.
+
+**Connected.** The helper writes `/etc/nodo/health.toml` from installed manifests at start and
+after installs and updates: apps on the system disk, the node on the data drive when the board has
+one. The `nodo-healthd` runit service in nodo-tools runs the daemon, and the helper restarts it
+when the configuration changes. Home reads the report, the boot fallback notice and failed updates
+through the helper (`Request::Health`, `UpdateStatus.attention`). Proven in the KVM VM with a 6 GB
+sparse loop filesystem as the data drive: the report marks it low and Home's note says so, without
+stopping anything. Manifests cannot ask for memory limits yet, so no limits are written.
 
 ## 7. Encrypted packages leak to the unencrypted disk
 
@@ -273,17 +306,17 @@ live on the small eMMC. Proposed change, for the owners of nodo-gen and nodo-hel
   `/var/log/apps/<id>` into the opened volume, then delete the originals and run `fstrim`. Be
   honest in the TUI: plaintext already written to flash cannot be reliably erased.
 
-## 8. What other crates need
+## 8. What is still missing
 
-- **nodo-api**: requests for update status and actions (check now, install selected, hold,
-  release, auto-update policy), `UpdateState.attention` and the health report for Home, backup
-  and restore requests, and a "locked" error for settings of locked encrypted packages.
-- **nodo-helper**: write `/etc/nodo/health.toml` from installed manifests (which services write to
-  which filesystem, memory limits), keep `/run/nodo/health.json` readable by the TUI, implement
-  backup and restore with the unwrapped device key, and the changes in section 7.
-- **nodo-tui**: read `/run/nodo/health.json` for Device and Needs attention, show update outcomes
-  from `UpdateState`, the Auto-update screen from `AutoPolicy`, and the boot-fallback notice.
-- **nodo-install**: implement `nodo_update::auto::Installer`, and provide the `Candidate` facts
-  (new permissions from the feed gate, key change from `PinStore`, check results).
-- **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC, a
-  runit service for `nodo-healthd`, and open the watchdog early.
+The API, helper, TUI and installer parts listed here before are connected (sections 2, 5 and 6).
+Still open:
+
+- **nodo-manifest**: a way to ask for a memory limit, so `health.toml` can set one.
+- **nodo-helper**: copying a backup to and from a USB stick, restoring onto a fresh install before
+  its packages are installed, and copying the data of a package kept on the data drive before an
+  update (such an update is refused for now). A backup restored onto a device whose volumes keep
+  their own key keeps that key, so sealed secrets from the other device cannot be opened there.
+- **System snapshots**: there is no update server, so only feed packages update today.
+- **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
+  enable the `nodo-healthd` and `nodo-autoupdate` services from nodo-tools, and open the watchdog
+  early.

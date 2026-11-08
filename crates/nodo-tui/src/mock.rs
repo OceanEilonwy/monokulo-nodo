@@ -243,6 +243,58 @@ impl Backend for MockBackend {
 }
 
 impl ScreenData for MockBackend {
+    fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
+        Ok(vec![
+            nodo_api::BackupInfo { name: s("nodo-1762560000.nodobak"), size_bytes: 4_812_300, created: 1_762_560_000 },
+            nodo_api::BackupInfo { name: s("nodo-1761955200.nodobak"), size_bytes: 4_501_100, created: 1_761_955_200 },
+        ])
+    }
+
+    fn create_backup(
+        &mut self,
+        _device_passphrase: Option<&Secret>,
+        backup_passphrase: &Secret,
+    ) -> Result<nodo_api::BackupCreated, String> {
+        if backup_passphrase.expose().chars().count() < 12 {
+            return Err(s("a backup passphrase needs at least 12 characters"));
+        }
+        let info = nodo_api::BackupInfo { name: s("nodo-1762646400.nodobak"), size_bytes: 4_900_000, created: 1_762_646_400 };
+        Ok(nodo_api::BackupCreated { info, entries: 42, has_device_key: true, missing: Vec::new(), locked: Vec::new() })
+    }
+
+    fn inspect_backup(&mut self, name: &str, passphrase: &Secret) -> Result<nodo_api::BackupContents, String> {
+        if passphrase.expose() != MOCK_PASSPHRASE {
+            return Err(s("the passphrase did not open this backup, or its start is damaged"));
+        }
+        Ok(nodo_api::BackupContents {
+            name: name.to_owned(),
+            entries: 42,
+            has_device_key: true,
+            settings: vec![s("cuprated"), s("moneropay")],
+            storage: vec![s("wallet-relay")],
+            onion_keys: true,
+            services_to_stop: vec![s("moneropay"), s("wallet-relay"), s("tor")],
+        })
+    }
+
+    fn restore_backup(
+        &mut self,
+        _name: &str,
+        _passphrase: &Secret,
+        _new_device_passphrase: Option<&Secret>,
+        typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        if typed != nodo_api::RESTORE_WORD {
+            return Err(s("type restore to confirm"));
+        }
+        Ok(nodo_api::RestoreReport {
+            restored: vec![s("settings"), s("moneropay settings"), s("wallet-relay storage"), s("Tor onion keys")],
+            skipped: vec![s("device key: this device's encrypted storage uses its own key, which was kept")],
+            stopped: vec![s("moneropay"), s("wallet-relay"), s("tor")],
+            restarted: vec![s("moneropay"), s("wallet-relay"), s("tor")],
+        })
+    }
+
     fn overview(&self) -> Overview {
         Overview {
             node: NodeInfo {
@@ -268,6 +320,7 @@ impl ScreenData for MockBackend {
                 (s("monerod"), s("official")),
             ],
             drive: self.drive.clone(),
+            attention: Vec::new(),
             restarted: s("Restarted 4 minutes ago"),
             unlock_targets: if self.is_locked() {
                 vec![
@@ -365,7 +418,12 @@ impl ScreenData for MockBackend {
         }
     }
 
-    fn start_install(&mut self, id: &PackageId) -> Result<InstallSnapshot, String> {
+    fn start_install(
+        &mut self,
+        id: &PackageId,
+        _approval: Option<&nodo_api::PermissionApproval>,
+        _passphrase: Option<&Secret>,
+    ) -> Result<InstallSnapshot, String> {
         let version = self
             .catalog
             .iter()
@@ -503,7 +561,11 @@ impl ScreenData for MockBackend {
         })
     }
 
-    fn trust_new_key(&mut self, feed: &str) -> Result<(), String> {
+    fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String> {
+        let feed = change.feed.as_str();
+        if typed != feed {
+            return Err(format!("Type {feed} exactly to trust its new key."));
+        }
         let change = self.key_change(feed).ok_or_else(|| format!("{feed} has no pending key change"))?;
         if let Some(entry) = self.feeds.iter_mut().find(|entry| entry.name == feed) {
             entry.fingerprint = change.now_signing;
@@ -560,7 +622,7 @@ impl ScreenData for MockBackend {
         Some(review)
     }
 
-    fn apply_updates(&mut self, names: &[String]) -> UpdateReport {
+    fn apply_updates(&mut self, names: &[String], _approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport {
         let mut results = Vec::new();
         let mut failure = None;
         for name in names {
@@ -1020,6 +1082,8 @@ fn sample_review(id: &PackageId, version: &str) -> ReviewData {
             s("Cannot read other packages' data or secrets"),
             s("Cannot run setup scripts as root or replace system packages"),
         ],
+        approval: None,
+        needs_passphrase: false,
     }
 }
 

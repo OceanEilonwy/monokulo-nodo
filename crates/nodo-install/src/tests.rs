@@ -112,12 +112,21 @@ impl System for Fake {
                 }
                 None => Ok(Output { success: false, stdout: Vec::new(), stderr: b"ERROR: unresolvable shlib\n".to_vec() }),
             },
+            "xbps-remove" => {
+                *self.installed.borrow_mut() = None;
+                ok("")
+            }
             other => panic!("unexpected program {other}"),
         }
     }
 
     fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
         self.removed.borrow_mut().push(path.to_path_buf());
+        Ok(())
+    }
+
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.files.borrow_mut().remove(path);
         Ok(())
     }
 }
@@ -316,4 +325,78 @@ fn the_installed_version_is_confirmed() {
     let error = install(&sys, &mut pins, Some(&summary)).unwrap_err();
     assert!(matches!(error, InstallError::NotInstalled { found: Some(found), .. } if found == "demo-1.0_1"));
     assert!(pins.feeds[FEED].highest.is_empty());
+}
+
+#[test]
+fn a_review_never_installs_even_when_already_approved() {
+    let sys = Fake::new();
+    let mut pins = pins();
+    let summary = first_summary(&sys, &mut pins);
+    let mut installer = Installer { sys: &sys, pins: &mut pins, policy: Policy::default() };
+    let reviewed = installer.review(&Request { feed: FEED, package: "demo", approved: Some(&summary) }).unwrap();
+    let Reviewed::Ready { pkgver, added, manifest, .. } = reviewed else { panic!("{reviewed:?}") };
+    assert_eq!(pkgver, "demo-1.1_1");
+    assert!(added.is_empty());
+    assert_eq!(manifest.id, "demo");
+    assert!(sys.runs.borrow().is_empty());
+}
+
+#[test]
+fn a_version_other_than_the_reviewed_one_is_refused_before_xbps_runs() {
+    let sys = Fake::new();
+    let mut pins = pins();
+    let summary = first_summary(&sys, &mut pins);
+    let mut installer = Installer { sys: &sys, pins: &mut pins, policy: Policy::default() };
+    let request = Request { feed: FEED, package: "demo", approved: Some(&summary) };
+    let error = installer.install_checked(&request, Some("demo-1.0_1"), None).unwrap_err();
+    assert!(matches!(error, InstallError::VersionChanged { .. }), "{error}");
+    assert!(sys.runs.borrow().is_empty());
+}
+
+#[test]
+fn a_kept_copy_is_the_verified_file_and_reinstalls_with_force() {
+    let sys = Fake::new();
+    let mut pins = pins();
+    let summary = first_summary(&sys, &mut pins);
+    let mut installer = Installer { sys: &sys, pins: &mut pins, policy: Policy::default() };
+    let request = Request { feed: FEED, package: "demo", approved: Some(&summary) };
+    let keep = Path::new("/keep");
+    let (outcome, kept) = installer.install_checked(&request, Some("demo-1.1_1"), Some(keep)).unwrap();
+    assert!(matches!(outcome, Outcome::Installed { .. }));
+    let kept = kept.unwrap();
+    assert_eq!(kept, Path::new("/keep/demo-1.1_1.x86_64.xbps"));
+    assert_eq!(sys.files.borrow()[&kept], fixture("demo-1.1_1.x86_64.xbps"));
+
+    // A later, broken version is installed, then the kept one comes back.
+    *sys.installed.borrow_mut() = Some("demo-1.2_1".into());
+    assert_eq!(installer.reinstall_kept(&kept).unwrap(), "demo-1.1_1");
+    let args = sys.ran("xbps-install").pop().unwrap();
+    assert_eq!(&args[args.len() - 2..], ["--force", "demo"]);
+    assert_eq!(installer.pins.feeds[FEED].highest["demo"], "1.1_1");
+}
+
+#[test]
+fn a_damaged_kept_copy_is_not_reinstalled() {
+    let sys = Fake::new();
+    let mut bad = fixture("demo-1.1_1.x86_64.xbps");
+    bad.truncate(bad.len() / 2);
+    sys.files.borrow_mut().insert("/keep/demo.xbps".into(), bad);
+    let mut pins = pins();
+    let installer = Installer { sys: &sys, pins: &mut pins, policy: Policy::default() };
+    assert!(installer.reinstall_kept(Path::new("/keep/demo.xbps")).is_err());
+    assert!(sys.ran("xbps-install").is_empty());
+}
+
+#[test]
+fn remove_uses_the_private_configuration_and_skips_what_is_not_installed() {
+    let sys = Fake::new();
+    let mut pins = pins();
+    let installer = Installer { sys: &sys, pins: &mut pins, policy: Policy::default() };
+    installer.remove("demo").unwrap();
+    assert!(sys.ran("xbps-remove").is_empty());
+    *sys.installed.borrow_mut() = Some("demo-1.1_1".into());
+    installer.remove("demo").unwrap();
+    let args = sys.ran("xbps-remove").pop().unwrap();
+    assert_eq!(args[0], "-C");
+    assert_eq!(&args[2..], ["--yes", "demo"]);
 }

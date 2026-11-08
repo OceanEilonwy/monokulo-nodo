@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use super::layout::{Item, Page, Panel};
 use super::{hints, keyed, mark, pad, service_symbol, tab_bar};
 use crate::app::{App, Tab};
-use crate::model::CheckState;
+use crate::model::{AttentionLevel, CheckState};
 use crate::theme::Theme;
 
 fn pair(t: &Theme, label: &str, value: &str) -> Item {
@@ -75,6 +75,17 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
             false,
             &format!("{} keeps failing. Press `l` to read its log.", service.id),
         )));
+    }
+    for note in &overview.attention {
+        let symbol = match note.level {
+            AttentionLevel::Critical => t.e("✕"),
+            AttentionLevel::Warning => t.a("▲"),
+            AttentionLevel::Info => t.i("▸"),
+        };
+        let mut line = keyed(t, &note.text);
+        line.spans.insert(0, t.n(" "));
+        line.spans.insert(0, symbol);
+        attention.push(Item::Text(line));
     }
 
     let mut page = Page::new(tab_bar(app, t, Tab::Home), Line::from(t.d("monokulo-nodo")))

@@ -9,12 +9,14 @@
 #![forbid(unsafe_code)]
 
 pub mod client;
+mod manage;
 pub mod protocol;
 mod secret;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use manage::*;
 pub use secret::Secret;
 
 /// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
@@ -543,6 +545,92 @@ pub enum Request {
         package: String,
         enabled: bool,
     },
+    /// Reads a feed's index and reports its signing key. Trusts nothing and stores nothing.
+    ProbeFeed {
+        address: String,
+    },
+    /// Pins the feed's key. `fingerprint` is the key the user saw and compared, and the helper
+    /// refuses if the feed is now signed by another.
+    AddFeed {
+        address: String,
+        fingerprint: String,
+    },
+    RefreshFeeds,
+    SetFeedEnabled {
+        name: String,
+        enabled: bool,
+    },
+    /// Installed packages stay, without updates.
+    RemoveFeed {
+        name: String,
+    },
+    FeedKeyChange {
+        name: String,
+    },
+    TrustFeedKey {
+        name: String,
+        confirmation: KeyChangeConfirmation,
+    },
+    /// Every package the enabled feeds offer.
+    Catalog,
+    /// Downloads, verifies and inspects a package, and reports what it asks for. Installs nothing.
+    ReviewInstall {
+        feed: String,
+        package: String,
+    },
+    /// Installs exactly the reviewed version, only if it asks for exactly the approved
+    /// permissions. A package with encrypted storage needs the device passphrase the first time.
+    InstallPackage {
+        feed: String,
+        package: String,
+        approval: PermissionApproval,
+        passphrase: Option<Secret>,
+    },
+    UpdateStatus,
+    /// Refreshes the feeds and inspects every newer version, so permission changes are known.
+    CheckUpdates,
+    /// What an update asks for beyond what was approved.
+    ReviewUpdate {
+        package: String,
+    },
+    ApplyUpdates {
+        updates: Vec<UpdateApproval>,
+    },
+    SetHold {
+        package: String,
+        version: String,
+        held: bool,
+    },
+    /// Clears a failed update from Home.
+    DismissUpdate {
+        package: String,
+    },
+    /// One scheduled run of automatic updates. Only root, which is the scheduler, may ask.
+    RunAutoUpdate,
+    Health,
+    ListBackups,
+    /// Writes an encrypted backup into the helper's backup directory. The device passphrase is
+    /// needed to include the device key, without which encrypted storage cannot be restored.
+    CreateBackup {
+        device_passphrase: Option<Secret>,
+        backup_passphrase: Secret,
+    },
+    /// Verifies a backup completely and lists what it holds. Writes nothing.
+    InspectBackup {
+        name: String,
+        passphrase: Secret,
+    },
+    /// `typed` must be [`RESTORE_WORD`]. Services that would be overwritten are stopped first.
+    /// A backup holding the device key needs a new device passphrase to wrap it with.
+    RestoreBackup {
+        name: String,
+        passphrase: Secret,
+        new_device_passphrase: Option<Secret>,
+        typed: String,
+    },
+    DeleteBackup {
+        name: String,
+    },
     /// Addresses, the local address, the domain and dynamic DNS, as the proxy has them now.
     WebStatus,
     /// The provider catalog with each provider's dynamic DNS and DNS-01 support.
@@ -588,6 +676,30 @@ pub enum Response {
     NodeStatus(NodeStatus),
     RoleBindings(Vec<RoleBinding>),
     Grants(Vec<SettingGrant>),
+    FeedProbe(FeedProbe),
+    FeedKeyChange(FeedKeyChange),
+    Catalog(Vec<CatalogEntry>),
+    InstallReview(InstallReview),
+    /// The feed's pins refuse this version or key. Nothing was downloaded beyond the index.
+    InstallBlocked {
+        package: String,
+        reasons: Vec<String>,
+        key_changed: bool,
+    },
+    /// The package breaks the install rules. There is no override.
+    InstallRejected {
+        package: String,
+        version: String,
+        reasons: Vec<String>,
+    },
+    InstallReport(InstallReport),
+    UpdateStatus(UpdateStatus),
+    UpdateResults(Vec<UpdateResult>),
+    Health(HealthSummary),
+    Backups(Vec<BackupInfo>),
+    BackupCreated(BackupCreated),
+    BackupContents(BackupContents),
+    Restored(RestoreReport),
     WebStatus(WebStatus),
     DnsProviders(Vec<DnsProviderDetail>),
     /// What a provider test did, for the screen.
@@ -667,6 +779,29 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::ListGrants => "list-grants",
         Request::SetGrant { .. } => "set-grant",
         Request::UseDataDrive { .. } => "use-data-drive",
+        Request::ProbeFeed { .. } => "probe-feed",
+        Request::AddFeed { .. } => "add-feed",
+        Request::RefreshFeeds => "refresh-feeds",
+        Request::SetFeedEnabled { .. } => "set-feed-enabled",
+        Request::RemoveFeed { .. } => "remove-feed",
+        Request::FeedKeyChange { .. } => "feed-key-change",
+        Request::TrustFeedKey { .. } => "trust-feed-key",
+        Request::Catalog => "catalog",
+        Request::ReviewInstall { .. } => "review-install",
+        Request::InstallPackage { .. } => "install-package",
+        Request::UpdateStatus => "update-status",
+        Request::CheckUpdates => "check-updates",
+        Request::ReviewUpdate { .. } => "review-update",
+        Request::ApplyUpdates { .. } => "apply-updates",
+        Request::SetHold { .. } => "set-hold",
+        Request::DismissUpdate { .. } => "dismiss-update",
+        Request::RunAutoUpdate => "run-auto-update",
+        Request::Health => "health",
+        Request::ListBackups => "list-backups",
+        Request::CreateBackup { .. } => "create-backup",
+        Request::InspectBackup { .. } => "inspect-backup",
+        Request::RestoreBackup { .. } => "restore-backup",
+        Request::DeleteBackup { .. } => "delete-backup",
         Request::WebStatus => "web-status",
         Request::ListDnsProviders => "list-dns-providers",
         Request::SetDnsProvider { .. } => "set-dns-provider",
@@ -696,6 +831,29 @@ mod tests {
             Request::InstallService {
                 id: "a".into(),
                 passphrase: Some(Secret::new("hunter2")),
+            },
+            Request::InstallPackage {
+                feed: "f".into(),
+                package: "a".into(),
+                approval: PermissionApproval {
+                    pkgver: "a-1_1".into(),
+                    permissions: vec![],
+                },
+                passphrase: Some(Secret::new("hunter2")),
+            },
+            Request::CreateBackup {
+                device_passphrase: Some(Secret::new("hunter2")),
+                backup_passphrase: Secret::new("hunter3 long enough"),
+            },
+            Request::InspectBackup {
+                name: "b".into(),
+                passphrase: Secret::new("hunter2"),
+            },
+            Request::RestoreBackup {
+                name: "b".into(),
+                passphrase: Secret::new("hunter2"),
+                new_device_passphrase: Some(Secret::new("hunter3")),
+                typed: "restore".into(),
             },
             Request::ApplySettings {
                 package: "a".into(),

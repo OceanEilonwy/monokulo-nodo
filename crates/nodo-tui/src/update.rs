@@ -134,6 +134,7 @@ fn help_document() -> Document {
             "/                search packages",
             "u                unlock this device",
             "k                SSH keys that may log in",
+            "b                backups and restore, from Home",
             "q                quit, from a tab",
             "Ctrl-C           quit, from anywhere",
             "",
@@ -212,6 +213,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebConfirm => web_confirm_key(app, key),
         ScreenId::WebCgnat => cgnat_key(app, key),
         ScreenId::Setup => setup_key(app, key),
+        ScreenId::Backup => backup_key(app, key),
     }
 }
 
@@ -239,6 +241,8 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             Some(if *confirming { second } else { first })
         }
         Screen::Setup(SetupState { step: SetupStep::Keys { adding, .. }, .. }) => adding.as_mut(),
+        Screen::Review(state) => state.passphrase.as_mut(),
+        Screen::Backup(state) => backup_input(&mut state.step),
         _ => None,
     }
 }
@@ -399,6 +403,11 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('k') => {
             push(app, Screen::Setup(SetupState::keys()));
             return vec![Effect::LoadSshKeys];
+        }
+        KeyCode::Char('b') => {
+            let device_set_up = !app.data.overview.setup_needed;
+            push(app, Screen::Backup(BackupState::new(device_set_up)));
+            return vec![Effect::LoadBackups];
         }
         _ => {}
     }
@@ -634,6 +643,24 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Review(state) = &mut app.screen else {
         return Vec::new();
     };
+    if let Some(input) = state.passphrase.as_mut() {
+        match key.code {
+            KeyCode::Esc => state.passphrase = None,
+            KeyCode::Enter if input.is_empty() => {
+                notice(app, NoticeKind::Info, "Enter the device passphrase to create its encrypted storage.");
+            }
+            KeyCode::Enter => {
+                let passphrase = Some(input.take_secret());
+                state.passphrase = None;
+                let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
+                return vec![Effect::StartInstall { id, approval, passphrase }];
+            }
+            _ => {
+                edit_input(input, key);
+            }
+        }
+        return Vec::new();
+    }
     match key.code {
         KeyCode::Left | KeyCode::Right => state.confirm_focused = !state.confirm_focused,
         KeyCode::Char('d') => {
@@ -646,17 +673,23 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 return Vec::new();
             }
             match state.purpose.clone() {
-                ReviewPurpose::Install => {
-                    let id = state.data.id.clone();
-                    return vec![Effect::StartInstall(id)];
+                ReviewPurpose::Install if state.data.needs_passphrase => {
+                    state.passphrase = Some(Input::secret());
                 }
-                ReviewPurpose::Update { batch, mut pending_reviews } => {
+                ReviewPurpose::Install => {
+                    let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
+                    return vec![Effect::StartInstall { id, approval, passphrase: None }];
+                }
+                ReviewPurpose::Update { batch, mut pending_reviews, mut approvals } => {
+                    if let Some(approval) = state.data.approval.clone() {
+                        approvals.push((state.data.id.name.clone(), approval));
+                    }
                     if pending_reviews.is_empty() {
-                        return vec![Effect::ApplyUpdates(batch)];
+                        return vec![Effect::ApplyUpdates { names: batch, approvals }];
                     }
                     let name = pending_reviews.remove(0);
                     pop(app);
-                    return vec![Effect::ReviewUpdate { name, batch, pending_reviews }];
+                    return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals }];
                 }
             }
         }
@@ -809,7 +842,8 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
             KeyCode::Enter => {
                 if input.text() == state.change.feed {
-                    return vec![Effect::TrustNewKey(state.change.feed.clone())];
+                    let typed = input.text().to_owned();
+                    return vec![Effect::TrustNewKey { change: state.change.clone(), typed }];
                 }
                 state.error = Some(format!("That is not the feed name. Type {} exactly.", state.change.feed));
             }
@@ -1066,10 +1100,10 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 .map(|item| item.name.clone())
                 .collect();
             if pending_reviews.is_empty() {
-                return vec![Effect::ApplyUpdates(batch)];
+                return vec![Effect::ApplyUpdates { names: batch, approvals: Vec::new() }];
             }
             let name = pending_reviews.remove(0);
-            return vec![Effect::ReviewUpdate { name, batch, pending_reviews }];
+            return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals: Vec::new() }];
         }
         KeyCode::Char('c') => {
             if let Some(item) = current {
@@ -1186,7 +1220,13 @@ fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     pop(app);
                     return vec![Effect::SetHeld { name, held: true }];
                 }
-                1 => return vec![Effect::ApplyUpdates(vec![name])],
+                // A failed version is held, and the helper only retries it once released.
+                1 => {
+                    return vec![
+                        Effect::SetHeld { name: name.clone(), held: false },
+                        Effect::ApplyUpdates { names: vec![name], approvals: Vec::new() },
+                    ]
+                }
                 2 => return vec![Effect::CopyReport(format!("{name} update"))],
                 _ => return open_logs(app, &name),
             }
@@ -1693,13 +1733,14 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 state.error = result.err();
             }
         }
+        Event::BackupsLoaded(_)
+        | Event::BackupCreated(_)
+        | Event::BackupInspected(_)
+        | Event::BackupRestored(_) => return on_backup_result(app, event),
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {
-            InstallGate::Review(data) => push(
-                app,
-                Screen::Review(ReviewState { data, confirm_focused: false, purpose: ReviewPurpose::Install }),
-            ),
+            InstallGate::Review(data) => push(app, Screen::Review(ReviewState::new(data, ReviewPurpose::Install))),
             InstallGate::Rejected(data) => push(app, Screen::Rejected(data)),
             InstallGate::MissingCapability(data) => {
                 push(app, Screen::Capability(CapabilityState { data, choice: 0 }));
@@ -1767,14 +1808,10 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         Event::SettingsRolledBack { package, explanation } => {
             on_settings_rolled_back(app, package, explanation);
         }
-        Event::UpdateReviewLoaded { review, batch, pending_reviews } => match review {
+        Event::UpdateReviewLoaded { review, batch, pending_reviews, approvals } => match review {
             Some(data) => push(
                 app,
-                Screen::Review(ReviewState {
-                    data,
-                    confirm_focused: false,
-                    purpose: ReviewPurpose::Update { batch, pending_reviews },
-                }),
+                Screen::Review(ReviewState::new(data, ReviewPurpose::Update { batch, pending_reviews, approvals })),
             ),
             None => fail(app, "That update could not be reviewed, so nothing was applied."),
         },
@@ -2001,6 +2038,183 @@ fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reac
             push(app, Screen::WebCheck(WebCheckState { site, checks, router, plan, going_public, manual }));
         }
     }
+}
+
+fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
+    match step {
+        BackupStep::Create { device, first, second, field } => Some(match field {
+            0 => device,
+            1 => first,
+            _ => second,
+        }),
+        BackupStep::Unlock { passphrase, .. } => Some(passphrase),
+        BackupStep::Confirm { typed, device, field, .. } => Some(if *field == 0 { typed } else { device }),
+        BackupStep::List | BackupStep::Restored(_) => None,
+    }
+}
+
+/// Backups and restore. A restore asks for the backup passphrase, shows what the verified backup
+/// holds and which services stop, then needs the typed word. The helper checks the word again.
+fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::Backup(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    if state.busy {
+        return Vec::new();
+    }
+    let device_set_up = state.device_set_up;
+    let mut effects = Vec::new();
+    let mut leave = false;
+    let mut next = None;
+    match &mut state.step {
+        BackupStep::List => match key.code {
+            KeyCode::Down | KeyCode::Up => step(&mut state.selected, state.list.len(), key.code == KeyCode::Down),
+            KeyCode::Char('n') => {
+                let field = if device_set_up { 0 } else { 1 };
+                next = Some(BackupStep::Create { device: Input::secret(), first: Input::secret(), second: Input::secret(), field });
+            }
+            KeyCode::Char('r') | KeyCode::Enter => {
+                if let Some(chosen) = state.list.get(state.selected) {
+                    next = Some(BackupStep::Unlock { name: chosen.name.clone(), passphrase: Input::secret() });
+                }
+            }
+            KeyCode::Esc => leave = true,
+            _ => {}
+        },
+        BackupStep::Create { device, first, second, field } => match key.code {
+            KeyCode::Esc => next = Some(BackupStep::List),
+            KeyCode::Tab | KeyCode::Down => *field = if *field >= 2 { if device_set_up { 0 } else { 1 } } else { *field + 1 },
+            KeyCode::Enter if *field < 2 => *field += 1,
+            KeyCode::Enter => {
+                let backup = first.secret_value();
+                if backup.expose().chars().count() < MIN_BACKUP_PASSPHRASE_CHARS {
+                    state.error = Some(format!("A backup passphrase needs at least {MIN_BACKUP_PASSPHRASE_CHARS} characters."));
+                } else if backup != second.secret_value() {
+                    state.error = Some("The two backup passphrases differ. Type them again.".to_owned());
+                    first.clear();
+                    second.clear();
+                    *field = 1;
+                } else if device_set_up && device.is_empty() {
+                    state.error = Some("Enter the device passphrase, so the backup includes the device key.".to_owned());
+                    *field = 0;
+                } else {
+                    state.error = None;
+                    state.busy = true;
+                    let device_passphrase = device_set_up.then(|| device.take_secret());
+                    second.clear();
+                    effects.push(Effect::CreateBackup { device_passphrase, backup_passphrase: first.take_secret() });
+                }
+            }
+            _ => {
+                let input = match field {
+                    0 => device,
+                    1 => first,
+                    _ => second,
+                };
+                edit_input(input, key);
+            }
+        },
+        BackupStep::Unlock { name, passphrase } => match key.code {
+            KeyCode::Esc => next = Some(BackupStep::List),
+            KeyCode::Enter if !passphrase.is_empty() => {
+                state.busy = true;
+                state.error = None;
+                effects.push(Effect::InspectBackup { name: name.clone(), passphrase: passphrase.secret_value() });
+            }
+            _ => {
+                edit_input(passphrase, key);
+            }
+        },
+        BackupStep::Confirm { name, passphrase, contents, typed, device, field } => match key.code {
+            KeyCode::Esc => next = Some(BackupStep::List),
+            KeyCode::Tab if contents.has_device_key => *field = 1 - *field,
+            KeyCode::Enter => {
+                if typed.text() != RESTORE_WORD {
+                    state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
+                    *field = 0;
+                } else if contents.has_device_key && device.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
+                    state.error = Some(format!(
+                        "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters for the backup's key."
+                    ));
+                    *field = 1;
+                } else {
+                    state.error = None;
+                    state.busy = true;
+                    let new_device_passphrase = contents.has_device_key.then(|| device.take_secret());
+                    effects.push(Effect::RestoreBackup {
+                        name: name.clone(),
+                        passphrase: passphrase.clone(),
+                        new_device_passphrase,
+                        typed: typed.text().to_owned(),
+                    });
+                }
+            }
+            _ => {
+                edit_input(if *field == 0 { typed } else { device }, key);
+            }
+        },
+        BackupStep::Restored(_) => {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+                next = Some(BackupStep::List);
+                state.busy = true;
+                effects.push(Effect::LoadBackups);
+            }
+        }
+    }
+    if let Some(step) = next {
+        state.error = None;
+        state.step = step;
+    }
+    if leave {
+        pop(app);
+        effects.push(Effect::Refresh);
+    }
+    effects
+}
+
+/// The helper enforces the same minimum. Checking here saves a round trip and a KDF run.
+const MIN_BACKUP_PASSPHRASE_CHARS: usize = 12;
+
+fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
+    let Screen::Backup(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    state.busy = false;
+    match event {
+        Event::BackupsLoaded(Ok(list)) => {
+            state.selected = state.selected.min(list.len().saturating_sub(1));
+            state.list = list;
+        }
+        Event::BackupCreated(Ok(created)) => {
+            state.step = BackupStep::List;
+            state.busy = true;
+            let mut text = format!("Backup {} written.", created.info.name);
+            if !created.locked.is_empty() {
+                text.push_str(&format!(" Locked storage was left out: {}.", created.locked.join(", ")));
+            }
+            notice(app, NoticeKind::Ok, text);
+            return vec![Effect::LoadBackups];
+        }
+        Event::BackupInspected(Ok(contents)) => {
+            if let BackupStep::Unlock { name, passphrase } = &mut state.step {
+                state.step = BackupStep::Confirm {
+                    name: name.clone(),
+                    passphrase: passphrase.take_secret(),
+                    contents,
+                    typed: Input::plain(""),
+                    device: Input::secret(),
+                    field: 0,
+                };
+            }
+        }
+        Event::BackupRestored(Ok(report)) => state.step = BackupStep::Restored(report),
+        Event::BackupsLoaded(Err(e))
+        | Event::BackupCreated(Err(e))
+        | Event::BackupInspected(Err(e))
+        | Event::BackupRestored(Err(e)) => state.error = Some(e),
+        _ => {}
+    }
+    Vec::new()
 }
 
 #[cfg(test)]

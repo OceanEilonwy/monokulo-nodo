@@ -83,6 +83,11 @@ pub struct ReviewData {
     pub third_party: bool,
     pub asks: Vec<Ask>,
     pub guarantees: Vec<String>,
+    /// What confirming approves, quoted back to the helper, which installs only if the package
+    /// still asks for exactly this.
+    pub approval: Option<nodo_api::PermissionApproval>,
+    /// Its encrypted storage is new, so confirming asks for the device passphrase.
+    pub needs_passphrase: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +294,8 @@ pub enum UpdateNote {
     RestartNeeded,
     NewPermission(String),
     Skipped,
+    /// Always waits for the user, for the reason given: a changed key or failed checks.
+    Blocked(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,6 +445,20 @@ pub struct UnlockTarget {
     pub note: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttentionLevel {
+    Info,
+    Warning,
+    Critical,
+}
+
+/// A line for Home's "Needs attention", from the health monitor or a failed update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attention {
+    pub level: AttentionLevel,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Overview {
     pub node: NodeInfo,
@@ -450,6 +471,7 @@ pub struct Overview {
     pub updates_checked: String,
     /// First boot: no device passphrase exists yet, so setup comes before anything else.
     pub setup_needed: bool,
+    pub attention: Vec<Attention>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -600,7 +622,12 @@ pub trait ScreenData {
     fn catalog(&self) -> Vec<PackageSummary>;
     fn package_detail(&self, id: &PackageId) -> Option<PackageDetail>;
     fn install_gate(&self, id: &PackageId) -> InstallGate;
-    fn start_install(&mut self, id: &PackageId) -> Result<InstallSnapshot, String>;
+    fn start_install(
+        &mut self,
+        id: &PackageId,
+        approval: Option<&nodo_api::PermissionApproval>,
+        passphrase: Option<&Secret>,
+    ) -> Result<InstallSnapshot, String>;
     fn poll_install(&mut self) -> Option<InstallSnapshot>;
     fn cancel_install(&mut self) -> Option<InstallSnapshot>;
 
@@ -611,7 +638,8 @@ pub trait ScreenData {
     fn toggle_feed(&mut self, name: &str);
     fn remove_feed(&mut self, name: &str);
     fn key_change(&self, feed: &str) -> Option<KeyChange>;
-    fn trust_new_key(&mut self, feed: &str) -> Result<(), String>;
+    /// `typed` is the feed name as the user typed it. The helper checks it, and both keys.
+    fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String>;
 
     fn settings_form(&self, package: &str) -> Option<SettingsForm>;
     fn references(&self, package: &str, field: &str) -> ReferenceList;
@@ -625,7 +653,8 @@ pub trait ScreenData {
     fn updates(&self) -> Vec<UpdateItem>;
     fn check_updates(&mut self);
     fn update_review(&self, name: &str) -> Option<ReviewData>;
-    fn apply_updates(&mut self, names: &[String]) -> UpdateReport;
+    /// `approvals` are the reviews the user confirmed, for updates that ask for more.
+    fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport;
     fn set_held(&mut self, name: &str, held: bool);
     fn auto_update(&self) -> AutoUpdatePrefs;
     fn save_auto_update(&mut self, prefs: &AutoUpdatePrefs) -> Result<(), String>;
@@ -664,5 +693,28 @@ pub trait ScreenData {
     /// See [`Snapshot::unavailable`]. Read after the other snapshot calls.
     fn unavailable(&self) -> Vec<(Area, String)> {
         Vec::new()
+    }
+
+    fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
+        Err("Backups are not available here.".to_owned())
+    }
+    fn create_backup(
+        &mut self,
+        _device_passphrase: Option<&Secret>,
+        _backup_passphrase: &Secret,
+    ) -> Result<nodo_api::BackupCreated, String> {
+        Err("Backups are not available here.".to_owned())
+    }
+    fn inspect_backup(&mut self, _name: &str, _passphrase: &Secret) -> Result<nodo_api::BackupContents, String> {
+        Err("Backups are not available here.".to_owned())
+    }
+    fn restore_backup(
+        &mut self,
+        _name: &str,
+        _passphrase: &Secret,
+        _new_device_passphrase: Option<&Secret>,
+        _typed: &str,
+    ) -> Result<nodo_api::RestoreReport, String> {
+        Err("Backups are not available here.".to_owned())
     }
 }

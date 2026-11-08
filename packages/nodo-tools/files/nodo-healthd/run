@@ -1,0 +1,6 @@
+#!/bin/sh
+# Disk, log, memory and time protection. The helper writes the configuration from installed
+# manifests and restarts this service when it changes.
+exec 2>&1
+exec </dev/null
+exec /usr/bin/nodo-healthd --config /etc/nodo/health.toml
