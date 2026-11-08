@@ -883,11 +883,14 @@ impl WebIo for RealWebIo {
         let down = dir.join("down");
         if up {
             self.remove(&down)?;
-            if !link.exists() {
+            let new_link = !link.exists();
+            if new_link {
                 std::os::unix::fs::symlink(&dir, &link).map_err(|e| e.to_string())?;
             }
             let path = link.to_string_lossy();
-            let action = if restart { "restart" } else { "up" };
+            // runsvdir starts a newly linked service itself, with the current config. Restarting
+            // it as well would stop that first start part way and leave it briefly down.
+            let action = if restart && !new_link { "restart" } else { "up" };
             let mut last = String::new();
             // runsvdir notices a new link within five seconds.
             for _ in 0..10 {

@@ -154,7 +154,8 @@ JSON
 	# The helper uses Pebble instead of Let's Encrypt. Caddy reads the system CAs when it starts.
 	printf 'directory = "https://203.0.113.1/dir"\nrenew_interval_secs = 10\n' > /etc/nodo/acme-test.toml
 	cp /var/lib/nodo/secrets/web-dns.toml "$acme/web-dns.saved" 2>/dev/null
-	rm -f /var/lib/nodo/secrets/web-dns.toml /var/lib/nodo/secrets/web-acme.toml "$tls_log"
+	# A backoff left by the web section's unreachable provider would delay dynamic DNS here.
+	rm -f /var/lib/nodo/secrets/web-dns.toml /var/lib/nodo/secrets/web-acme.toml "$tls_log" /var/lib/nodo-ddns/state.json
 	rm -rf "$issuer_dir" "$caddy_store/acme/203.0.113.1-dir"
 	[ -L /var/service/nodo-caddy ] && sv -w 15 restart nodo-caddy >/dev/null 2>&1
 
