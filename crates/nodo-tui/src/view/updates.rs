@@ -300,7 +300,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
         })
         .collect();
     let title = app.data.log_sources.get(state.selected).cloned().unwrap_or_else(|| "Log".to_owned());
-    let mut right_column = vec![Panel::new(title, lines).grow()];
+    let mut right_column = vec![Panel::new(title, lines).grow().tail()];
     if !state.view.suggestion.is_empty() {
         right_column.push(Panel::accent(
             "Suggestion",

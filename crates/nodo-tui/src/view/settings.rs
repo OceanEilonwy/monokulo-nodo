@@ -35,10 +35,17 @@ fn value_spans(t: &Theme, field: &Field, value: &FieldValue) -> Vec<Span<'static
 }
 
 pub fn settings(t: &Theme, state: &SettingsState) -> Page {
+    // Labels come from each package's schema, so the column fits the longest one with a gap.
+    let label_width = state
+        .form
+        .fields
+        .iter()
+        .map(|field| unicode_width::UnicodeWidthStr::width(field.label.as_str()) + 2)
+        .fold(LABEL_WIDTH, usize::max);
     let mut items = Vec::new();
     for (index, field) in state.form.fields.iter().enumerate() {
         let selected = index == state.selected;
-        let label = pad(&field.label, LABEL_WIDTH);
+        let label = pad(&field.label, label_width);
         let label_span = if selected { t.b(mark(true, &format!(" {label}"))) } else { t.d(format!(" {label}")) };
         let mut spans = vec![label_span];
         match (selected, &state.editing) {
@@ -49,7 +56,7 @@ pub fn settings(t: &Theme, state: &SettingsState) -> Page {
             _ => spans.extend(value_spans(t, field, &state.draft[index])),
         }
         items.push(Item::Text(Line::from(spans)));
-        let indent = " ".repeat(LABEL_WIDTH + 1);
+        let indent = " ".repeat(label_width + 1);
         if let FieldValue::Reference { resolved, .. } = &state.draft[index] {
             items.push(Item::Text(Line::from(t.d(format!("{indent}Resolves to {resolved}")))));
         }

@@ -59,11 +59,18 @@ pub struct Panel {
     pub tone: Tone,
     pub items: Vec<Item>,
     pub grow: bool,
+    /// When the items do not fit, the last ones stay visible instead of the first, as in a log.
+    pub tail: bool,
 }
 
 impl Panel {
     pub fn new(title: impl Into<String>, items: Vec<Item>) -> Self {
-        Self { title: title.into(), tone: Tone::Normal, items, grow: false }
+        Self { title: title.into(), tone: Tone::Normal, items, grow: false, tail: false }
+    }
+
+    pub fn tail(mut self) -> Self {
+        self.tail = true;
+        self
     }
 
     pub fn accent(title: impl Into<String>, items: Vec<Item>) -> Self {
@@ -332,6 +339,7 @@ fn draw_panel(frame: &mut Frame, area: Rect, t: &Theme, panel: &Panel, report: &
     Block::new().borders(Borders::ALL).border_style(border).title(title).render(area, frame.buffer_mut());
     let inner = Rect::new(area.x + 2, area.y + 1, area.width - 4, area.height - 2);
     let (lines, focus) = physical_lines(&panel.items, inner.width as usize, report);
+    let focus = if panel.tail { focus.or(lines.len().checked_sub(1)) } else { focus };
     draw_lines(frame, inner, t, &lines, focus, report);
 }
 
@@ -491,7 +499,7 @@ pub fn draw_boxed(frame: &mut Frame, area: Rect, t: &Theme, title: &str, accent:
     );
     Clear.render(rect, frame.buffer_mut());
     frame.buffer_mut().set_style(rect, t.base());
-    let panel = Panel { title: title.to_owned(), tone: if accent { Tone::Accent } else { Tone::Normal }, items, grow: false };
+    let panel = Panel { tone: if accent { Tone::Accent } else { Tone::Normal }, ..Panel::new(title, items) };
     draw_panel(frame, rect, t, &panel, &mut report);
 }
 
