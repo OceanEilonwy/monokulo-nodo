@@ -884,11 +884,14 @@ dependencies = [
 name = "nodo-update"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hex",
  "nodo-feed",
+ "nodo-install",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",

@@ -1,25 +1,46 @@
 #!/bin/sh
-# Freezes Void's repository for devices, in three explicit steps. Nothing is signed until the
-# snapshot has been built and tested.
+# Builds the static files of the system update server, in explicit steps. Nothing is signed until
+# the snapshot has been built and tested.
 #
-#   scripts/publish-snapshot.sh fetch <name> <arch>...   copy repodata and the packages the image needs
-#   scripts/publish-snapshot.sh test  <name> <board>     build an image from only the snapshot
-#   scripts/publish-snapshot.sh sign  <name> <channel> <serial> <secret-key> [needs-restart]
+#   scripts/publish-snapshot.sh fetch  <name> <arch>...          copy Void's repodata and the packages images need
+#   scripts/publish-snapshot.sh import <name> <arch> <repodata>  use a Void index fetched elsewhere, without packages
+#   scripts/publish-snapshot.sh nodo   <name> <arch> <xbps-key.pem> [package-dir]
+#                                                                 add this project's packages, signed for xbps
+#   scripts/publish-snapshot.sh test   <name> <board>            build an image from only the snapshot
+#   scripts/publish-snapshot.sh sign   <name> <channel> <serial> <secret-key> [yes|no] [--untested]
+#   scripts/publish-snapshot.sh publish <name> <channel>         make it the channel's newest snapshot
 #
-# The snapshot lands in out/snapshots/<name>/current/<arch>, laid out like a Void mirror, so the
-# image builder can use it as VOID_MIRROR. Upload out/snapshots/<name> and manifest.toml{,.sig}
-# to the update server afterwards. The secret key should live offline; sign on that machine.
+# The server's files land under $SNAPSHOT_ROOT (default out/):
+#
+#   snapshots/<name>/current[/aarch64]   Void's repository, exactly as Void signed it
+#   snapshots/<name>/nodo/<arch>         this project's packages, signed with the owner's xbps key
+#   snapshots/<name>/manifest.toml{,.sig}
+#   channels/<channel>/manifest.toml{,.sig}   copied there by publish
+#
+# Serve that directory as static files over HTTPS. Devices read channels/<channel>/manifest.toml
+# and everything else by the paths it names. See docs/UPDATES.md for the keys: the snapshot key
+# (Ed25519, nodo-snapshot keygen) and the xbps key (RSA) both belong on an offline machine, and
+# sign and nodo are the steps that need them.
+#
+# import is for tests and for snapshots in which no Void package changes: the index is served,
+# but a device that needed a Void package from it would find none. --untested is only for
+# throwaway test keys; it skips the rule that a snapshot is signed only as it was tested.
 set -eu
 . "$(dirname "$0")/lib.sh"
-cmd=${1:?usage: publish-snapshot.sh fetch|test|sign <name> ...}
+cmd=${1:?usage: publish-snapshot.sh fetch|import|nodo|test|sign|publish <name> ...}
 name=${2:?snapshot name, for example 2026.12}
 case $name in *[!A-Za-z0-9._-]* | .* | -*) echo "bad snapshot name: $name" >&2; exit 2 ;; esac
 [ $# -ge 2 ] && shift 2
-snap=$root/out/snapshots/$name
+out=${SNAPSHOT_ROOT:-$root/out}
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+snap=$out/snapshots/$name
 stamp=$snap/tested
 
 repodir() { case $1 in aarch64) echo "$snap/current/aarch64" ;; *) echo "$snap/current" ;; esac; }
+nododir() { echo "$snap/nodo/$1"; }
 upstream() { case $1 in aarch64) echo "$VOID_MIRROR/current/aarch64" ;; *) echo "$VOID_MIRROR/current" ;; esac; }
+plain() { case $1 in *[!A-Za-z0-9._-]* | .* | -* | '') echo "bad $2: $1" >&2; exit 2 ;; esac; }
 
 case $cmd in
 fetch)
@@ -43,9 +64,44 @@ fetch)
 					-R /src/out/feed/$ARCH -R /snap $PKGS >/dev/null || true
 				XBPS_TARGET_ARCH=$ARCH xbps-install -S -D -y -c /tmp/cache -r /tmp/r -R "$UP" $PKGS >/dev/null
 				cp /tmp/cache/*.xbps /tmp/cache/*.sig2 /snap/ 2>/dev/null || true'
-		sha256sum "$dir/$arch-repodata" | cut -d" " -f1 > "$dir/repodata.sha256"
 		echo "fetched $arch: $(find "$dir" -name '*.xbps' | wc -l) packages"
 	done
+	rm -f "$stamp"
+	;;
+import)
+	arch=${1:?architecture}
+	file=${2:?a Void <arch>-repodata file}
+	plain "$arch" architecture
+	dir=$(repodir "$arch")
+	mkdir -p "$dir"
+	cp "$file" "$dir/$arch-repodata"
+	echo "imported the Void index for $arch, without packages"
+	rm -f "$stamp"
+	;;
+nodo)
+	arch=${1:?architecture}
+	key=${2:?the xbps signing key, an RSA private key in PEM form}
+	pkgdir=${3:-$root/out/feed/$arch}
+	plain "$arch" architecture
+	found=
+	for f in "$pkgdir"/*."$arch".xbps "$pkgdir"/*.noarch.xbps; do [ -f "$f" ] && found=1; done
+	[ -n "$found" ] || { echo "no $arch packages in $pkgdir" >&2; exit 1; }
+	ensure_builder
+	dir=$(nododir "$arch")
+	rm -rf "$dir"
+	mkdir -p "$dir"
+	for f in "$pkgdir"/*."$arch".xbps "$pkgdir"/*.noarch.xbps; do
+		[ -f "$f" ] && cp "$f" "$dir/"
+	done
+	# Only the newest version of each package stays, as xbps-rindex -c would keep it.
+	docker run --rm --name "nodo-snapshot-nodo-$name-$arch" -e "ARCH=$arch" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+		-v "$dir:/repo" -v "$(realpath "$key"):/key.pem:ro" "$BUILDER" sh -euc '
+			trap "chown -R $HOST_UID:$HOST_GID /repo" EXIT
+			XBPS_TARGET_ARCH=$ARCH xbps-rindex -a /repo/*.xbps >/dev/null
+			XBPS_TARGET_ARCH=$ARCH xbps-rindex -r /repo >/dev/null
+			XBPS_TARGET_ARCH=$ARCH xbps-rindex --signedby monokulo-nodo --privkey /key.pem -s /repo >/dev/null
+			XBPS_TARGET_ARCH=$ARCH xbps-rindex --privkey /key.pem -S /repo/*.xbps >/dev/null'
+	echo "added $(find "$dir" -name '*.xbps' | wc -l) packages for $arch, signed"
 	rm -f "$stamp"
 	;;
 test)
@@ -55,14 +111,21 @@ test)
 	ensure_builder
 	set --
 	[ "${BOARD_NEEDS_KVM:-}" = 1 ] && set -- --device /dev/kvm
-	# The same build as scripts/build-image.sh, with the snapshot as the only Void repository.
+	nodo=$(nododir "$BOARD_ARCH")
+	case $snap in "$root"/*) ;; *) echo "test needs SNAPSHOT_ROOT inside the repository" >&2; exit 1 ;; esac
+	rel=${snap#"$root/"}
+	feed=/src/out/feed/$BOARD_ARCH
+	[ -s "$nodo/$BOARD_ARCH-repodata" ] && feed=/src/$rel/nodo/$BOARD_ARCH
+	# The same build as scripts/build-image.sh, with the snapshot as the only repositories.
 	docker run --rm --name "nodo-snapshot-test-$name-$board" \
-		-e "BOARD=$board" -e "VOID_MIRROR=/src/out/snapshots/$name" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+		-e "BOARD=$board" -e "VOID_MIRROR=/src/$rel" -e "NODO_REPO=$feed" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 		-v "$root:/src" "$@" "$BUILDER" /src/scripts/_build-image-inner.sh
 	if [ "$board" = qemu-virt ]; then
 		"$root/tests/qemu-boot-test.sh" qemu-virt
 	fi
-	sha256sum "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata" | cut -d" " -f1 >> "$stamp"
+	for index in "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata" "$nodo/$BOARD_ARCH-repodata"; do
+		[ -s "$index" ] && sha256sum "$index" | cut -d" " -f1 >> "$stamp"
+	done
 	echo "snapshot $name passed on $board"
 	;;
 sign)
@@ -70,17 +133,32 @@ sign)
 	serial=${2:?serial, higher than any published before}
 	key=${3:?secret key file}
 	restart=${4:-no}
-	[ -s "$stamp" ] || { echo "snapshot $name has not passed a test run" >&2; exit 1; }
+	untested=${5:-}
+	plain "$channel" channel
+	if [ "$untested" = --untested ]; then
+		echo "warning: signing $name without a test run, which is only for throwaway test keys" >&2
+	else
+		[ -s "$stamp" ] || { echo "snapshot $name has not passed a test run" >&2; exit 1; }
+	fi
 	set --
-	for dir in "$snap/current" "$snap/current/aarch64"; do
-		for index in "$dir"/*-repodata; do
-			[ -f "$index" ] || continue
-			arch=${index##*/}; arch=${arch%-repodata}
-			# Refuse to sign an index that changed after its test run.
-			grep -qx "$(sha256sum "$index" | cut -d" " -f1)" "$stamp" || { echo "$arch was not tested as it is now" >&2; exit 1; }
-			rel=${dir#"$root/out/"}
-			set -- "$@" "$arch=$rel=$index"
-		done
+	for index in "$snap"/current/*-repodata "$snap"/current/aarch64/*-repodata "$snap"/nodo/*/*-repodata; do
+		[ -f "$index" ] || continue
+		arch=${index##*/}; arch=${arch%-repodata}
+		dir=${index%/*}
+		# Refuse to sign an index that changed after its test run.
+		if [ "$untested" != --untested ]; then
+			grep -qx "$(sha256sum "$index" | cut -d" " -f1)" "$stamp" || { echo "$dir was not tested as it is now" >&2; exit 1; }
+		fi
+		repo=$arch
+		case $dir in "$snap"/nodo/*)
+			repo=$arch/nodo
+			# Devices check that every one of these that they have installed is at this version.
+			for f in "$dir"/*.xbps; do
+				pv=${f##*/}; pv=${pv%.*.xbps}
+				set -- "$@" "pkg:${pv%-*}=${pv##*-}"
+			done ;;
+		esac
+		set -- "$@" "$repo=${dir#"$out/"}=$index"
 	done
 	[ $# -gt 0 ] || { echo "nothing to sign" >&2; exit 1; }
 	cd "$root"
@@ -88,6 +166,19 @@ sign)
 	rm -f "$snap/manifest.toml.sig"
 	cargo run -q --release -p nodo-update --bin nodo-snapshot -- sign manifest "$snap/manifest.toml" "$key"
 	echo "signed $snap/manifest.toml"
+	;;
+publish)
+	channel=${1:?channel}
+	plain "$channel" channel
+	[ -s "$snap/manifest.toml.sig" ] || { echo "sign $name first" >&2; exit 1; }
+	mkdir -p "$out/channels/$channel"
+	# Each file is replaced whole. A device reading between the two renames finds a signature that
+	# does not match and is refused, and tries again later; it never accepts a mixed pair.
+	cp "$snap/manifest.toml.sig" "$out/channels/$channel/.manifest.toml.sig.new"
+	cp "$snap/manifest.toml" "$out/channels/$channel/.manifest.toml.new"
+	mv "$out/channels/$channel/.manifest.toml.sig.new" "$out/channels/$channel/manifest.toml.sig"
+	mv "$out/channels/$channel/.manifest.toml.new" "$out/channels/$channel/manifest.toml"
+	echo "channel $channel now offers $name"
 	;;
 *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac

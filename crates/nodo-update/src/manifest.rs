@@ -197,15 +197,26 @@ fn signed_message(context: &[u8], body: &[u8]) -> Vec<u8> {
     message
 }
 
-/// One architecture's repository inside a snapshot.
+/// One repository of one architecture inside a snapshot. An architecture has Void's copy,
+/// named `void`, and usually this project's own packages, named `nodo`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepoEntry {
     pub arch: String,
+    /// Which repository of this architecture. Manifests from before names default to `void`.
+    #[serde(default = "void_repo")]
+    pub name: String,
     /// Relative to the update server's base URL, for example `snapshots/2026.12/aarch64`.
     pub path: String,
     /// SHA-256 of `<arch>-repodata` exactly as tested. xbps verifies packages against it.
     pub repodata_sha256: String,
+}
+
+pub const VOID_REPO: &str = "void";
+pub const NODO_REPO: &str = "nodo";
+
+fn void_repo() -> String {
+    VOID_REPO.to_owned()
 }
 
 /// A package version shown to the user, for example the base system's version.
@@ -278,10 +289,10 @@ impl SnapshotManifest {
         if self.repo.is_empty() {
             return Err(invalid("no repositories"));
         }
-        let mut arches = BTreeSet::new();
+        let mut repos = BTreeSet::new();
         for repo in &self.repo {
-            if !name_ok(&repo.arch) || !arches.insert(repo.arch.as_str()) {
-                return Err(invalid("architectures must be plain and listed once"));
+            if !name_ok(&repo.arch) || !name_ok(&repo.name) || !repos.insert((repo.arch.as_str(), repo.name.as_str())) {
+                return Err(invalid("each repository must have a plain architecture and name, listed once"));
             }
             if !repo_path_ok(&repo.path) {
                 return Err(invalid(format!("unsafe repository path {:?}", repo.path)));
@@ -298,8 +309,11 @@ impl SnapshotManifest {
         Ok(())
     }
 
-    pub fn repo_for(&self, arch: &str) -> Option<&RepoEntry> {
-        self.repo.iter().find(|r| r.arch == arch)
+    /// Every repository of one architecture, Void's first.
+    pub fn repos_for(&self, arch: &str) -> Vec<&RepoEntry> {
+        let mut repos: Vec<&RepoEntry> = self.repo.iter().filter(|r| r.arch == arch).collect();
+        repos.sort_by_key(|r| r.name != VOID_REPO);
+        repos
     }
 
     pub fn to_toml(&self) -> String {
@@ -381,6 +395,7 @@ mod tests {
             needs_restart: false,
             repo: vec![RepoEntry {
                 arch: "aarch64".into(),
+                name: VOID_REPO.into(),
                 path: "snapshots/2026.12/aarch64".into(),
                 repodata_sha256: hex::encode(Sha256::digest(b"index")),
             }],
@@ -469,6 +484,28 @@ mod tests {
             case(&mut m);
             assert!(SnapshotManifest::parse(m.to_toml().as_bytes()).is_err(), "case {i}");
         }
+    }
+
+    #[test]
+    fn an_architecture_can_have_a_void_and_a_nodo_repository() {
+        let mut m = sample();
+        let mut nodo = m.repo[0].clone();
+        nodo.name = NODO_REPO.into();
+        nodo.path = "snapshots/2026.12/nodo/aarch64".into();
+        m.repo.insert(0, nodo);
+        let parsed = SnapshotManifest::parse(m.to_toml().as_bytes()).unwrap();
+        let names: Vec<&str> = parsed.repos_for("aarch64").iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["void", "nodo"]);
+        assert!(parsed.repos_for("x86_64").is_empty());
+        m.repo[0].name = "no thing".into();
+        assert!(SnapshotManifest::parse(m.to_toml().as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_manifest_without_repository_names_means_void() {
+        let body = sample().to_toml().replace("name = \"void\"\n", "");
+        assert!(!body.contains("name = \"void\""), "{body}");
+        assert_eq!(SnapshotManifest::parse(body.as_bytes()).unwrap().repo[0].name, "void");
     }
 
     #[test]

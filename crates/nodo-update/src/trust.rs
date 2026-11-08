@@ -128,7 +128,7 @@ impl TrustState {
                 return Err(TrustError::Expired { expires: manifest.expires });
             }
         }
-        if manifest.repo_for(arch).is_none() {
+        if manifest.repos_for(arch).is_empty() {
             return Err(TrustError::NoRepository(arch.to_owned()));
         }
         let hash = body_hash(body);
@@ -225,6 +225,7 @@ mod tests {
             needs_restart: false,
             repo: vec![RepoEntry {
                 arch: "aarch64".into(),
+                name: "void".into(),
                 path: format!("snapshots/{serial}/aarch64"),
                 repodata_sha256: "00".repeat(32),
             }],

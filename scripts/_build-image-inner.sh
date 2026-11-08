@@ -28,7 +28,7 @@ set +f
 cp "$keys"/* "$rootfs$keys/"
 cp "$keys"/* "/work/stage1$keys/"
 
-XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "/src/out/feed/$BOARD_ARCH" -R "$repo" \
+XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "${NODO_REPO:-/src/out/feed/$BOARD_ARCH}" -R "$repo" \
 	monokulo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
 
 # Offline configuration.

@@ -3,7 +3,8 @@
 //! nodo-snapshot keygen <secret-key-file>
 //! nodo-snapshot pubkey <secret-key-file>
 //! nodo-snapshot manifest <channel> <serial> <snapshot> <valid-days> <needs-restart:yes|no> \
-//!     <arch>=<repo-path>=<repodata-file>... [pkg:<name>=<version>...]
+//!     <arch>[/<repo-name>]=<repo-path>=<repodata-file>... [pkg:<name>=<version>...]
+//!     (the repository name is `void` unless given, and `nodo` for this project's packages)
 //! nodo-snapshot sign manifest|keys <document> <secret-key-file>
 //! nodo-snapshot verify <manifest> <pins.toml> <arch>
 
@@ -67,11 +68,13 @@ fn manifest(args: &[String]) -> Result<(), String> {
         }
         let mut parts = arg.splitn(3, '=');
         let (Some(arch), Some(path), Some(file)) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(format!("{arg}: expected <arch>=<repo-path>=<repodata-file>"));
+            return Err(format!("{arg}: expected <arch>[/<repo-name>]=<repo-path>=<repodata-file>"));
         };
         let index = fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+        let (arch, name) = arch.split_once('/').unwrap_or((arch, nodo_update::manifest::VOID_REPO));
         repo.push(RepoEntry {
             arch: arch.into(),
+            name: name.into(),
             path: path.into(),
             repodata_sha256: hex::encode(Sha256::digest(&index)),
         });

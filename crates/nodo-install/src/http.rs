@@ -55,10 +55,12 @@ impl Timeouts {
     }
 }
 
-/// A plain HTTP(S) client for feed files.
+/// A plain HTTP(S) client for feed files, and for the system update server.
 pub struct Fetcher {
     timeouts: Timeouts,
     roots: ureq::tls::RootCerts,
+    /// What errors call the server. Messages are written for feeds.
+    server: &'static str,
 }
 
 fn system_roots() -> ureq::tls::RootCerts {
@@ -207,7 +209,25 @@ impl Fetcher {
     }
 
     pub fn with(timeouts: Timeouts, roots: ureq::tls::RootCerts) -> Self {
-        Fetcher { timeouts, roots }
+        Fetcher { timeouts, roots, server: "feed" }
+    }
+
+    /// The same client, naming the server differently in its errors, such as `update`.
+    pub fn named(mut self, server: &'static str) -> Self {
+        self.server = server;
+        self
+    }
+
+    fn relabel(&self, error: io::Error) -> io::Error {
+        if self.server == "feed" {
+            return error;
+        }
+        let text = error
+            .to_string()
+            .replace("the feed server", &format!("the {} server", self.server))
+            .replace("the feed's host", &format!("the {} server's host", self.server))
+            .replace("the feed address", &format!("the {} server address", self.server));
+        io::Error::new(error.kind(), text)
     }
 
     fn agent(&self, limit: u64) -> ureq::Agent {
@@ -229,6 +249,10 @@ impl Fetcher {
     /// Downloads one file, refusing anything longer than `limit` bytes. `name` is how the file
     /// is called in errors.
     pub fn get(&self, url: &str, name: &str, limit: u64) -> io::Result<Vec<u8>> {
+        self.get_labelled(url, name, limit).map_err(|e| self.relabel(e))
+    }
+
+    fn get_labelled(&self, url: &str, name: &str, limit: u64) -> io::Result<Vec<u8>> {
         let agent = self.agent(limit);
         let mut current = url.to_owned();
         origin(&current).ok_or_else(|| failure("the feed address is not an http or https URL"))?;
@@ -246,7 +270,12 @@ impl Fetcher {
                     current = redirect_target(&current, location).map_err(failure)?;
                     continue;
                 }
-                404 | 410 => return Err(failure(format!("the feed server has no {name} (HTTP {status})"))),
+                404 | 410 => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("the feed server has no {name} (HTTP {status})"),
+                    ))
+                }
                 _ => return Err(failure(format!("the feed server answered HTTP {status} for {name}"))),
             }
             let declared = response
@@ -269,6 +298,17 @@ impl Fetcher {
             return Ok(body);
         }
         Err(failure(format!("the feed server redirected more than {MAX_REDIRECTS} times")))
+    }
+}
+
+impl Fetcher {
+    /// Like [`Fetcher::get`], with a missing file as `None` rather than an error.
+    pub fn get_optional(&self, url: &str, name: &str, limit: u64) -> io::Result<Option<Vec<u8>>> {
+        match self.get(url, name, limit) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -386,6 +426,11 @@ mod tests {
         let f = quick();
         let err = |path: &str, limit: u64| f.get(&format!("{url}{path}"), "x86_64-repodata", limit).unwrap_err().to_string();
         assert!(err("/missing", 100).contains("has no x86_64-repodata (HTTP 404)"), "{}", err("/missing", 100));
+        assert_eq!(f.get_optional(&format!("{url}/missing"), "x", 100).unwrap(), None);
+        let update = quick().named("update");
+        let e = update.get(&format!("{url}/teapot"), "x", 100).unwrap_err().to_string();
+        assert_eq!(e, "the update server answered HTTP 500 for x");
+        assert!(f.get_optional(&format!("{url}/teapot"), "x", 100).is_err());
         assert!(err("/loop", 100).contains("redirected more than 5 times"));
         assert!(err("/big", 100).contains("larger than the 100 bytes"), "{}", err("/big", 100));
         assert!(err("/short", 1000).contains("closed the connection early"), "{}", err("/short", 1000));
