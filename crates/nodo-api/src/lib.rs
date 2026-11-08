@@ -12,12 +12,14 @@ pub mod client;
 mod manage;
 pub mod protocol;
 mod secret;
+mod system;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use manage::*;
 pub use secret::Secret;
+pub use system::*;
 
 /// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
 /// rollbacks and confirmed exposure changes.
@@ -842,6 +844,27 @@ pub enum Request {
         updates: Vec<UpdateApproval>,
         passphrase: Secret,
     },
+    /// The installed system snapshot, the newest one the last check found, and what the
+    /// schedule will do with it.
+    SystemUpdateStatus,
+    /// Asks the update server for the channel's newest snapshot and checks its signatures.
+    /// Changes nothing on the system.
+    CheckSystemUpdate,
+    /// Moves the system to the snapshot the last check found. `serial` is the one the owner was
+    /// shown; if the channel moved on since, nothing changes and the answer says so.
+    ApplySystemUpdate {
+        serial: u64,
+    },
+    /// Turns automatic system updates on or off. Off by default: the schedule then only checks.
+    SetSystemAutoUpdate {
+        enabled: bool,
+    },
+    /// One scheduled run: checks when due and, only when automatic system updates are on,
+    /// applies a snapshot that needs no restart inside the update window. Only root, which is
+    /// the scheduler, may ask.
+    RunSystemUpdate,
+    /// Available package updates that need the device passphrase to grow encrypted storage.
+    UpdateStorageGrowth,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -904,6 +927,9 @@ pub enum Response {
     LocalSiteStatus(LocalSiteStatus),
     UsbDrives(Vec<UsbDrive>),
     UsbBackups(UsbBackupList),
+    SystemUpdate(SystemUpdateStatus),
+    SystemUpdateApplied(SystemUpdateResult),
+    StorageGrowth(Vec<StorageGrowth>),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1019,6 +1045,12 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::InspectUsbBackup { .. } => "inspect-usb-backup",
         Request::RestoreUsbBackup { .. } => "restore-usb-backup",
         Request::ApplyUpdatesWithPassphrase { .. } => "apply-updates-with-passphrase",
+        Request::SystemUpdateStatus => "system-update-status",
+        Request::CheckSystemUpdate => "check-system-update",
+        Request::ApplySystemUpdate { .. } => "apply-system-update",
+        Request::SetSystemAutoUpdate { .. } => "set-system-auto-update",
+        Request::RunSystemUpdate => "run-system-update",
+        Request::UpdateStorageGrowth => "update-storage-growth",
     }
 }
 

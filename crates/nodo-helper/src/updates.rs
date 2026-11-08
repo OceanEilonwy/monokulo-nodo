@@ -757,11 +757,35 @@ impl<S: System> Helper<S> {
                 added: added.iter().map(ToString::to_string).collect(),
                 first_install: false,
                 encrypted_storage: manifest.storage.encrypted,
-                needs_passphrase: false,
+                needs_passphrase: candidate.grows,
             })),
             Ok(Reviewed::Blocked(reasons)) => Ok(crate::apps::blocked(package, &reasons)),
             Err(e) => crate::apps::refusal(package, &candidate.to, e),
         }
+    }
+
+    /// Updates that grow encrypted storage, so the screen can ask for the device passphrase
+    /// before applying them.
+    pub(crate) fn update_storage_growth(&self) -> Result<Response, ApiError> {
+        let growth = self
+            .candidates()?
+            .into_iter()
+            .filter(|c| c.grows)
+            .map(|c| {
+                let from_bytes = self
+                    .volume_location(&c.package)
+                    .ok()
+                    .and_then(|l| self.sys.file_size(&l.file))
+                    .unwrap_or(0);
+                nodo_api::StorageGrowth {
+                    to_bytes: c.volume_bytes.unwrap_or(from_bytes),
+                    package: c.package,
+                    to: c.to,
+                    from_bytes,
+                }
+            })
+            .collect();
+        Ok(Response::StorageGrowth(growth))
     }
 
     /// Why one selected update cannot go ahead, or the permissions it was approved with.
