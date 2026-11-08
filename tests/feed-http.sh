@@ -59,17 +59,20 @@ mkdir -p "$www/honest/feed" "$www/gh/assets/v2" "$www/mitm/feed" "$work/pkgs" "$
 for k in honest rotated attacker; do openssl genrsa -out "$keys/$k.pem" 2048 2>/dev/null; done
 
 # Packages: each app only sleeps and says which version it is.
+# The attacker's build goes to its own directory, since it has the honest package's file name.
 mkpkg() {
 	name=$1 ver=$2 note=${3:-}
-	d=$work/pkgs/$name-$ver
+	dest=$work/pkgs/${note:+evil}
+	d=$work/pkgs/src-$name-$ver${note:+-evil}
 	rm -rf "$d"
 	mkdir -p "$d/opt/nodo/apps/$name/bin"
 	printf 'api_version = 1\nid = "%s"\nversion = "%s"\nexec = ["bin/run"]\nstop_timeout_secs = 5\n' "$name" "$ver" > "$d/opt/nodo/apps/$name/manifest.toml"
 	printf '#!/bin/sh\necho "%s %s %s"\nwhile :; do sleep 1; done\n' "$name" "$ver" "$note" > "$d/opt/nodo/apps/$name/bin/run"
 	chmod -R u=rwX,go=rX "$d"
 	chmod 755 "$d/opt/nodo/apps/$name/bin/run"
-	(cd "$work/pkgs" && xbps-create -A x86_64 -n "$name-${ver}_1" -s "feed test app" "$d" >/dev/null)
-	echo "$work/pkgs/$name-${ver}_1.x86_64.xbps"
+	mkdir -p "$dest"
+	(cd "$dest" && xbps-create -A x86_64 -n "$name-${ver}_1" -s "feed test app" "$d" >/dev/null)
+	echo "$dest/$name-${ver}_1.x86_64.xbps"
 }
 # publish <dir> <key> <package>...: adds the packages to a feed directory and signs it.
 publish() {
@@ -154,8 +157,8 @@ probe_fp() { ctl probe-feed "$1" > /tmp/fh.probe 2>&1; field fingerprint < /tmp/
 fp=$(probe_fp https://feeds.example.test/feed)
 [ -n "$fp" ] && grep -q "packages: 2" /tmp/fh.probe
 result "an HTTPS feed is probed through the helper and shows its signing key" "$?"
-[ "$(probe_fp http://feeds.example.test/feed)" = "$fp" ]
-result "the same feed over plain HTTP shows the same key" "$?"
+if [ "$(probe_fp http://feeds.example.test/feed)" = "$fp" ]; then r=0; else r=1; fi
+result "the same feed over plain HTTP shows the same key" "$r"
 ctl add-feed https://feeds.example.test/feed "$fp" > /tmp/fh.out 2>&1 && ctl add-feed http://feeds.example.test/feed "$fp" >> /tmp/fh.out 2>&1
 r=$?; [ "$r" = 0 ] || cat /tmp/fh.out
 result "both are added with the confirmed key" "$r"
@@ -196,13 +199,12 @@ result "MITM over HTTP: a swapped package is refused by its hash" "$?"
 mkmitm
 rm -f "$www/mitm/feed/fh-plain-1.1_1.x86_64.xbps"*
 mkdir -p "$work/evil" "$work/forge"
-cp "$evil11" "$work/evil/fh-plain-1.1_1.x86_64.xbps"
-publish "$work/evil" "$keys/attacker.pem" "$work/evil/fh-plain-1.1_1.x86_64.xbps"
+publish "$work/evil" "$keys/attacker.pem" "$evil11"
 cp "$work/evil/fh-plain-1.1_1.x86_64.xbps" "$work/evil/fh-plain-1.1_1.x86_64.xbps.sig2" "$www/mitm/feed/"
 rm -rf "$work/forge"/*
 (cd "$work/forge" && zstd -dqc "$www/honest/feed/x86_64-repodata" | tar -xf - index-meta.plist &&
 	zstd -dqc "$work/evil/x86_64-repodata" | tar -xf - index.plist &&
-	tar -cf - index.plist index-meta.plist | zstd -q > "$www/mitm/feed/x86_64-repodata")
+	tar --format=ustar -cf - index.plist index-meta.plist | zstd -q > "$www/mitm/feed/x86_64-repodata")
 says "signature does not match" ctl review "$http_feed" fh-plain && [ "$(xbps-query -p pkgver fh-plain)" = fh-plain-1.0_1 ]
 result "MITM over HTTP: a forged index and package fail the pinned key's signature" "$?"
 
@@ -215,10 +217,11 @@ result "MITM over HTTP: a feed re-signed by the attacker is blocked as a key cha
 
 mitm_off
 ctl refresh-feeds >/dev/null
+ctl check-updates >/dev/null
 says "Updated\|InstallReport\|problem: None" ctl apply-update fh-plain 1.1_1 ||
 	says "problem: None" ctl approve-install "$http_feed" fh-plain
-[ "$(xbps-query -p pkgver fh-plain)" = fh-plain-1.1_1 ]
-result "with the attacker gone, the honest update installs over HTTP" "$?"
+if [ "$(xbps-query -p pkgver fh-plain)" = fh-plain-1.1_1 ]; then r=0; else r=1; fi
+result "with the attacker gone, the honest update installs over HTTP" "$r"
 # Replaying the older, genuinely signed feed is a downgrade.
 rm -rf "$www/mitm/feed"; mkdir -p "$www/mitm/feed"
 publish "$www/mitm/feed" "$keys/honest.pem" "$plain10"
@@ -228,20 +231,20 @@ result "MITM over HTTP: replaying an older signed version is refused as a downgr
 
 # The same attacker against HTTPS cannot even complete the connection.
 mitm_on 443 8443
-says "certificate" ctl probe-feed https://feeds.example.test/feed
+says "certificate is not trusted by this device" ctl probe-feed https://feeds.example.test/feed
 result "MITM over HTTPS: the attacker's certificate is refused" "$?"
 ctl refresh-feeds > /dev/null
-ctl feeds | grep -A8 "name: \"$https_feed\"" | grep -q "problem: Some(\".*certificate"
+ctl feeds | grep -A10 "name: \"$https_feed\"" | grep -q "certificate is not trusted"
 result "a refresh records the plain reason on the feed" "$?"
 mitm_off
 ctl refresh-feeds > /dev/null
-! ctl feeds | grep -A8 "name: \"$https_feed\"" | grep -q "problem: Some"
+ctl feeds | grep -A10 "name: \"$https_feed\"" | grep -q "problem: None"
 result "the feed recovers once the attacker is gone" "$?"
 
 # Redirects, including GitHub's release layout
 
-[ "$(probe_fp https://redirect.example.test/feed)" = "$fp" ]
-result "a redirect to the feed host is followed" "$?"
+if [ "$(probe_fp https://redirect.example.test/feed)" = "$fp" ]; then r=0; else r=1; fi
+result "a redirect to the feed host is followed" "$r"
 says "redirected from HTTPS to plain HTTP" ctl probe-feed https://redirect.example.test/down
 result "a redirect from HTTPS down to plain HTTP is refused" "$?"
 says "redirected more than 5 times" ctl probe-feed https://redirect.example.test/loop
@@ -259,8 +262,8 @@ result "a package installs from the GitHub releases feed" "$?"
 start=$(date +%s)
 says "did not answer within 30 seconds" ctl probe-feed http://slow.example.test:81/feed
 r=$?; took=$(($(date +%s) - start))
-[ "$r" = 0 ] && [ "$took" -lt 45 ]
-result "a server that never answers fails plainly after ${took}s" "$?"
+if [ "$r" = 0 ] && [ "$took" -lt 45 ]; then r=0; else r=1; fi
+result "a server that never answers fails plainly after ${took}s" "$r"
 says "refused the connection\|could not connect" ctl probe-feed http://feeds.example.test:8081/feed
 result "a closed port is reported plainly" "$?"
 start=$(date +%s)

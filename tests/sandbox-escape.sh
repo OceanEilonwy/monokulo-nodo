@@ -154,8 +154,8 @@ done
 ctl install sb-victim >/tmp/sb.out 2>&1
 result "the victim installs through the helper" "$?"
 for _ in $(seq 1 20); do [ -S /run/apps/sb-victim/web.sock ] && break; sleep 1; done
-[ -S /run/apps/sb-victim/web.sock ]
-result "the victim listens on its socket file" "$?"
+if [ -S /run/apps/sb-victim/web.sock ]; then r=0; else r=1; fi
+result "the victim listens on its socket file" "$r"
 ctl install sb-client >>/tmp/sb.out 2>&1 && ctl install sb-plain >>/tmp/sb.out 2>&1
 r=$?; [ "$r" = 0 ] || cat /tmp/sb.out
 result "both probes install through the helper" "$r"

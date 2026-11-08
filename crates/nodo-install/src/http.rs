@@ -168,6 +168,8 @@ pub fn redirect_target(current: &str, location: &str) -> Result<String, String> 
 /// whether to check the address, the network or the server.
 fn explain(error: ureq::Error, timeouts: &Timeouts) -> io::Error {
     use ureq::Error;
+    const UNTRUSTED: &str =
+        "the feed server's HTTPS certificate is not trusted by this device, or the connection was tampered with";
     let text = match error {
         Error::Timeout(ureq::Timeout::Resolve) | Error::Timeout(ureq::Timeout::Connect) => {
             format!("the feed server could not be reached within {} seconds", timeouts.connect.as_secs())
@@ -181,6 +183,8 @@ fn explain(error: ureq::Error, timeouts: &Timeouts) -> io::Error {
         Error::Timeout(_) => format!("the feed server stopped sending data for {} seconds", timeouts.stall.as_secs()),
         Error::HostNotFound => "the feed's host name could not be found".into(),
         Error::ConnectionFailed => "could not connect to the feed server".into(),
+        // rustls reports a bad certificate during the handshake as an I/O error.
+        Error::Io(e) if is_tls(&e) => UNTRUSTED.into(),
         Error::Io(e) => match e.kind() {
             io::ErrorKind::ConnectionRefused => "the feed server refused the connection".into(),
             io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => {
@@ -194,13 +198,16 @@ fn explain(error: ureq::Error, timeouts: &Timeouts) -> io::Error {
             }
             _ => format!("could not download from the feed server: {e}"),
         },
-        Error::Tls(_) | Error::Rustls(_) => {
-            "the feed server's HTTPS certificate is not trusted by this device, or the connection was tampered with".into()
-        }
-        Error::BodyExceedsLimit(limit) => format!("the file is larger than the {limit} bytes allowed"),
+        Error::Tls(_) | Error::Rustls(_) => UNTRUSTED.into(),
+        Error::BodyExceedsLimit(limit) => format!("the file is larger than the {} bytes allowed", limit.saturating_sub(1)),
         other => format!("could not download from the feed server: {other}"),
     };
     failure(text)
+}
+
+fn is_tls(error: &io::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    ["certificate", "handshake", "tls", "alert"].iter().any(|word| text.contains(word))
 }
 
 impl Fetcher {
@@ -286,12 +293,17 @@ impl Fetcher {
             if declared.is_some_and(|n| n > limit) {
                 return Err(failure(format!("{name} is larger than the {limit} bytes allowed")));
             }
+            // ureq refuses a body that reaches its limit, so one byte more tells "exactly the
+            // limit" from "larger".
             let body = response
                 .body_mut()
                 .with_config()
-                .limit(limit)
+                .limit(limit.saturating_add(1))
                 .read_to_vec()
                 .map_err(|e| explain(e, &self.timeouts))?;
+            if body.len() as u64 > limit {
+                return Err(failure(format!("{name} is larger than the {limit} bytes allowed")));
+            }
             if declared.is_some_and(|n| n != body.len() as u64) {
                 return Err(failure("the feed server closed the connection early"));
             }
@@ -416,6 +428,13 @@ mod tests {
         let url = serve(|path, s| match path {
             "/loop" => respond(s, "302 Found", &[("Location", "/loop")], b""),
             "/big" => respond(s, "200 OK", &[], &[0u8; 2000]),
+            "/chunked-big" => {
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+                let _ = s.write_all(b"7d0\r\n");
+                let _ = s.write_all(&[0u8; 2000]);
+                let _ = s.write_all(b"\r\n0\r\n\r\n");
+            }
+            "/exact" => respond(s, "200 OK", &[], &[7u8; 100]),
             "/short" => {
                 let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nonly a little");
             }
@@ -433,6 +452,8 @@ mod tests {
         assert!(f.get_optional(&format!("{url}/teapot"), "x", 100).is_err());
         assert!(err("/loop", 100).contains("redirected more than 5 times"));
         assert!(err("/big", 100).contains("larger than the 100 bytes"), "{}", err("/big", 100));
+        assert!(err("/chunked-big", 100).contains("larger than the 100 bytes"), "{}", err("/chunked-big", 100));
+        assert_eq!(f.get(&format!("{url}/exact"), "x", 100).unwrap(), [7u8; 100], "exactly the limit is allowed");
         assert!(err("/short", 1000).contains("closed the connection early"), "{}", err("/short", 1000));
         assert!(err("/teapot", 100).contains("HTTP 500"));
         let started = Instant::now();

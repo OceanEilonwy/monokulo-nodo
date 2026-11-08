@@ -82,8 +82,8 @@ xbps-rindex -a "$src"/local/*.xbps >/dev/null
 xbps-install -y -R "$src/local" nodo-snaptest >/dev/null
 ln -sfn /etc/sv/nodo-snaptest /var/service/nodo-snaptest
 for _ in $(seq 1 20); do sv status nodo-snaptest 2>/dev/null | grep -q '^run:' && break; sleep 1; done
-[ "$(version)" = nodo-snaptest-1.0_1 ] && [ "$(cat /run/nodo-snaptest.version)" = 1.0 ]
-result "control: nodo-snaptest 1.0 is installed and running" "$?"
+if [ "$(version)" = nodo-snaptest-1.0_1 ] && [ "$(cat /run/nodo-snaptest.version)" = 1.0 ]; then r=0; else r=1; fi
+result "control: nodo-snaptest 1.0 is installed and running" "$r"
 pid_before=$(sv status nodo-snaptest | sed -n 's/^run: [^ ]* (pid \([0-9]*\)).*/\1/p')
 
 rm -rf "$www/channels"
@@ -96,7 +96,7 @@ says "snapshot test-a (serial 5) is available" update check --server "$http" && 
 result "check finds the signed snapshot and records nothing" "$?"
 says "applied snapshot test-a (serial 5)" update apply --server "$http" && [ "$(serial)" = 5 ]
 result "a signed snapshot applies over plain HTTP and is recorded" "$?"
-ls /var/db/xbps/keys/*.plist | xargs grep -l "monokulo-nodo" >/dev/null
+grep -l "monokulo-nodo" /var/db/xbps/keys/*.plist >/dev/null
 result "the snapshot's xbps key was installed from its verified index" "$?"
 xbps-query -L 2>/dev/null | grep -q "updates_example_test\|updates.example.test" || ls -d /var/db/xbps/http___updates_example_test_snapshots_test-a_* >/dev/null
 result "xbps holds the verified indexes as its copy of the snapshot" "$?"
@@ -135,8 +135,8 @@ rm -rf /var/cache/xbps/nodo-snaptest-1.1_1*
 # Snapshot test-b, serial 6, over HTTPS: the service updates and comes back.
 says "applied snapshot test-b (serial 6)" update apply --server "$https"
 r=$?; cp /tmp/su.out /tmp/su.applied
-[ "$r" = 0 ] && [ "$(serial)" = 6 ] && [ "$(version)" = nodo-snaptest-1.1_1 ]
-result "the next snapshot applies over HTTPS and nodo-snaptest is 1.1" "$?"
+if [ "$r" = 0 ] && [ "$(serial)" = 6 ] && [ "$(version)" = nodo-snaptest-1.1_1 ]; then r=0; else r=1; fi
+result "the next snapshot applies over HTTPS and nodo-snaptest is 1.1" "$r"
 grep -q "updated nodo-snaptest: 1.0_1 -> 1.1_1" /tmp/su.applied && grep -q "restarted nodo-snaptest" /tmp/su.applied
 result "the update names what changed and which service restarted" "$?"
 for _ in $(seq 1 20); do [ "$(cat /run/nodo-snaptest.version 2>/dev/null)" = 1.1 ] && break; sleep 1; done
