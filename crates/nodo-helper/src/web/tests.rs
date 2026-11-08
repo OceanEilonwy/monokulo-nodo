@@ -688,6 +688,26 @@ fn losing_the_address_for_a_moment_keeps_the_records() {
 }
 
 #[test]
+fn while_locked_a_missing_address_keeps_the_dns01_config_for_when_it_returns() {
+    let web = local_names_web();
+    let dns01 = |web: &NodoWeb<Fake>| caddy::DnsChallenge::kept_from(&caddy_json(web)).is_some();
+    assert!(dns01(&web));
+    let mut locked = input(true, false);
+    locked.secrets = None;
+    let before = web.io.get("/web/caddy.json");
+    // At boot nodo-localnet reports waiting before its address is ready.
+    web.io.put("/run/localnet/state", "status=waiting\n");
+    assert!(web.refresh_local(&locked).unwrap());
+    assert_eq!(web.io.get("/web/caddy.json"), before, "Caddy keeps the credentials it cannot get back");
+    assert!(!web.io.up("nodo-mdns"));
+    move_local(&web, "192.168.1.61");
+    assert!(web.refresh_local(&locked).unwrap());
+    assert!(dns01(&web), "still DNS-01, so the local name is served");
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("192.168.1.61:10444"));
+    assert!(!web.status(&locked).unwrap().sites[0].local_waiting);
+}
+
+#[test]
 fn while_locked_records_wait_for_the_unlock_and_the_status_says_why() {
     let web = local_names_web();
     let mut locked = input(true, false);

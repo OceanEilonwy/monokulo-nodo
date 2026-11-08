@@ -44,6 +44,7 @@ cleanup() {
 	for s in nodo-caddy nodo-mdns nodo-localnet; do service_down "$s"; done
 	rm -f /etc/sv/nodo-localnet/conf /var/lib/nodo-localnet/mdns-names
 	rm -f /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
+	rm -rf /var/lib/nodo-web/trust
 	nft -f /etc/nftables.conf
 	rm -rf /tmp/up-shop /tmp/up-blog /tmp/body
 }
@@ -111,6 +112,11 @@ install -m 644 "$fix/mdns-names" /var/lib/nodo-localnet/mdns-names
 service_up nodo-mdns
 
 install -m 640 -g _caddy "$fix/caddy.json" /var/lib/nodo-web/caddy.json
+# The helper writes the trust page from Caddy's root. A stand-in page is enough for routing.
+install -d -m 750 -g _caddy /var/lib/nodo-web/trust
+printf 'trust page stand-in\n' > /var/lib/nodo-web/trust/index.html
+chgrp _caddy /var/lib/nodo-web/trust/index.html
+chmod 640 /var/lib/nodo-web/trust/index.html
 install -m 644 "$fix/web.nft" /etc/nftables.d/nodo-web.nft
 nft -f /etc/nftables.conf
 result "generated nftables rules load" "$?"
@@ -202,7 +208,17 @@ expect "public host refused on the local address" ERR35 "$(loc shop.example.com 
 code=$(get weblan --resolve "shop.local:443:$local" -H "Host: $onion" https://shop.local/)
 ! body_has upstream && [ "$code" != 200 ]
 result "onion host refused on the local address ($code)" "$?"
-expect "local address has no plain HTTP" ERR28 "$(get weblan --resolve "shop.local:80:$local" http://shop.local/)"
+expect "plain HTTP on the local address serves no site" ERR52 "$(get weblan --resolve "shop.local:80:$local" http://shop.local/)"
+expect "the trust page answers the LAN at http://nodo.local" 200 "$(get weblan --resolve "nodo.local:80:$local" http://nodo.local/)"
+body_has "trust page stand-in"; result "the trust page comes from the trust directory" "$?"
+found=$(ip netns exec weblan nodo-mdns --query nodo.local --via 192.168.77.1 2>&1)
+expect "mDNS answers nodo.local with the local address" "$local" "$found"
+expect "the trust page is closed to the internet" ERR28 "$(get webinet --resolve "nodo.local:80:$local" http://nodo.local/)"
+expect "the trust listener needs the local address's port 80" ERR28 \
+	"$(get weblan --resolve "nodo.local:10081:$local" http://nodo.local:10081/)"
+code=$(get weblan --resolve "nodo.local:80:$lan" http://nodo.local/)
+! body_has "trust page stand-in"
+result "the main address does not serve the trust page ($code)" "$?"
 expect "local listener needs the local address's 443" ERR28 \
 	"$(get weblan --resolve "shop.local:10444:$local" https://shop.local:10444/)"
 expect "main address does not serve the local listener port" ERR28 \

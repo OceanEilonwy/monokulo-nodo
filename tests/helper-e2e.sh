@@ -415,6 +415,12 @@ web_get() {
 	echo "$code"
 }
 is() { [ "$1" = "$2" ] || { echo "want $2, got $1"; cat /tmp/e2e.body; return 1; }; }
+# SHA-256 of the root certificate Caddy's local CA uses, as browsers show it.
+root_fp() { openssl x509 -noout -fingerprint -sha256 -in "$cacert" | cut -d= -f2; }
+# Waits up to $1 seconds for a command to succeed.
+until_ok() { n=$1; shift; for _ in $(seq 1 "$n"); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done; "$@"; }
+applied() { [ "$(cat /var/lib/nodo-web/local-address 2>/dev/null)" = "$1" ]; }
+mdns_says() { [ "$(ip netns exec e2elan nodo-mdns --query "$1" --via 192.168.77.1 2>/dev/null)" = "$2" ]; }
 LIB
 
 check "a public host can be set" ctl host e2e-app shop shop.example.com
@@ -432,6 +438,78 @@ check "the main address serves no local host, as a masquerading router would del
 	! grep -q "e2e shop" /tmp/e2e.body && [ "${r#ERR}" != "$r" ]'
 check "the local address is closed to the internet" sh -c '
 	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.local:443:192.168.77.3 https://shop.local/)" ERR28'
+
+# The local CA trust page: plain HTTP on the local address's port 80, for the LAN only.
+check "the trust page serves the exact root Caddy uses, in DER and PEM" sh -c '
+	. /tmp/e2e-web-lib.sh; fp=$(root_fp); echo "root $fp"; [ -n "$fp" ] &&
+	is "$(web_get e2elan -D /tmp/e2e.h --resolve nodo.local:80:192.168.77.3 http://nodo.local/nodo-local-ca.crt)" 200 &&
+	grep -qi "^content-type: application/x-x509-ca-cert" /tmp/e2e.h &&
+	[ "$(openssl x509 -inform DER -in /tmp/e2e.body -noout -fingerprint -sha256 | cut -d= -f2)" = "$fp" ] &&
+	is "$(web_get e2elan --resolve nodo.local:80:192.168.77.3 http://nodo.local/nodo-local-ca.pem)" 200 &&
+	[ "$(openssl x509 -in /tmp/e2e.body -noout -fingerprint -sha256 | cut -d= -f2)" = "$fp" ]'
+check "the page and the helper show the same fingerprint, with install steps" sh -c '
+	. /tmp/e2e-web-lib.sh; fp=$(root_fp)
+	is "$(web_get e2elan --resolve nodo.local:80:192.168.77.3 http://nodo.local/)" 200 &&
+	grep -q "$(echo "$fp" | cut -c1-47)" /tmp/e2e.body && grep -q "$(echo "$fp" | cut -c49-)" /tmp/e2e.body &&
+	grep -q Android /tmp/e2e.body && grep -q iPhone /tmp/e2e.body && grep -q Windows /tmp/e2e.body &&
+	grep -q Firefox /tmp/e2e.body && ctl local-status | tr -d " \n" | tee /tmp/e2e.ls &&
+	grep -q "ca_fingerprint:Some(\"$fp\"" /tmp/e2e.ls && grep -q "trust_url:Some(\"http://nodo.local\"" /tmp/e2e.ls &&
+	ctl certs | tr -d " \n" | grep -q "local_ca_fingerprint:Some(\"$fp\""'
+check "mDNS answers nodo.local, and the bare local address serves the page" sh -c '
+	. /tmp/e2e-web-lib.sh; mdns_says nodo.local 192.168.77.3 &&
+	is "$(web_get e2elan http://192.168.77.3/)" 200 && grep -q "Trust this device" /tmp/e2e.body &&
+	is "$(web_get e2elan --resolve nodo.local:80:192.168.77.3 http://nodo.local/other)" 404 &&
+	is "$(web_get e2elan -H "Host: shop.local" http://192.168.77.3/)" ERR52'
+check "the trust page is unreachable from the internet side and its port is closed" sh -c '
+	. /tmp/e2e-web-lib.sh
+	is "$(web_get e2einet --resolve nodo.local:80:192.168.77.3 http://nodo.local/)" ERR28 &&
+	is "$(web_get e2einet --resolve nodo.local:10081:192.168.77.3 http://nodo.local:10081/)" ERR28 &&
+	is "$(web_get e2elan --resolve nodo.local:10081:192.168.77.3 http://nodo.local:10081/)" ERR28 &&
+	r=$(web_get e2einet --resolve nodo.local:80:203.0.113.2 http://nodo.local/); echo "$r"; [ "$r" != 200 ] &&
+	! grep -q "Trust this device" /tmp/e2e.body'
+check "the trust files are readable by Caddy and root only" sh -c '
+	[ "$(stat -c "%a %U %G" /var/lib/nodo-web/trust)" = "750 root _caddy" ] &&
+	[ "$(stat -c "%a %U %G" /var/lib/nodo-web/trust/nodo-local-ca.crt)" = "640 root _caddy" ]'
+
+# A new local address: nodo-localnet tells the helper, which moves the listener, the firewall, the
+# mDNS answers and the trust page with no exposure change.
+mark=$(wc -l < /var/log/nodo-helper/current)
+printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.4/24\n' > /etc/sv/nodo-localnet/conf
+sv -w 20 restart nodo-localnet >/dev/null 2>&1
+check "a new local address reaches Caddy and the firewall, told by nodo-localnet" sh -c '
+	. /tmp/e2e-web-lib.sh; until_ok 20 applied 192.168.77.4 &&
+	tail -n "+$(($0 + 1))" /var/log/nodo-helper/current | grep -q "uid 0 local-address-changed: ok" &&
+	tail -n "+$(($0 + 1))" /var/log/nodo-helper/current | grep -q "local address .* -> 192.168.77.4" &&
+	grep -q "\"192.168.77.4:10444\"" /var/lib/nodo-web/caddy.json && ! grep -q 192.168.77.3 /var/lib/nodo-web/caddy.json &&
+	nft list ruleset | grep -q "dnat ip to 192.168.77.4:10444" && nft list ruleset | grep -q "dnat ip to 192.168.77.4:10081" &&
+	! nft list ruleset | grep -q 192.168.77.3' "$mark"
+check "the local site and the trust page answer on the new address" sh -c '
+	. /tmp/e2e-web-lib.sh
+	is "$(web_get e2elan --resolve shop.local:443:192.168.77.4 https://shop.local/admin)" 200 && grep -q "e2e shop /admin" /tmp/e2e.body &&
+	is "$(web_get e2elan --resolve nodo.local:80:192.168.77.4 http://nodo.local/)" 200 && grep -q "Trust this device" /tmp/e2e.body'
+check "mDNS answers both names with the new address" sh -c '
+	. /tmp/e2e-web-lib.sh; until_ok 10 mdns_says shop.local 192.168.77.4 && mdns_says nodo.local 192.168.77.4'
+check "the old address no longer answers" sh -c '
+	. /tmp/e2e-web-lib.sh; ! mdns_says shop.local 192.168.77.3 &&
+	r=$(web_get e2elan -k --resolve shop.local:443:192.168.77.3 https://shop.local/); echo "$r"; [ "${r#ERR}" != "$r" ] &&
+	r=$(web_get e2elan --resolve nodo.local:80:192.168.77.3 http://nodo.local/); echo "$r"; [ "${r#ERR}" != "$r" ]'
+check "the new address is closed to the internet too" sh -c '
+	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.local:443:192.168.77.4 https://shop.local/)" ERR28 &&
+	is "$(web_get e2einet --resolve nodo.local:80:192.168.77.4 http://nodo.local/)" ERR28'
+
+# A change the helper was not told about, here because it was stopped, is caught by its own check
+# within a minute. It starts locked, as after a reboot, so the unlock cannot be what applies it.
+sv -w 30 stop nodo-helper >/dev/null
+printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.3/24\n' > /etc/sv/nodo-localnet/conf
+sv -w 20 restart nodo-localnet >/dev/null 2>&1
+sleep 3
+sv -w 30 start nodo-helper >/dev/null
+wait_socket
+check "the helper's own check applies a change it missed" sh -c '
+	. /tmp/e2e-web-lib.sh; until_ok 90 applied 192.168.77.3 &&
+	grep -q "\"192.168.77.3:10444\"" /var/lib/nodo-web/caddy.json && nft list ruleset | grep -q "dnat ip to 192.168.77.3:10444" &&
+	until_ok 10 mdns_says shop.local 192.168.77.3'
+printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
 check "dynamic DNS stays off while nothing is public" sh -c '! sv status nodo-ddns 2>/dev/null | grep -q "^run:"'
 
 if [ -d /etc/sv/tor ]; then
@@ -441,7 +519,8 @@ if [ -d /etc/sv/tor ]; then
 	check "the onion listener answers for the onion host only" sh -c '
 		. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
 		grep -q "e2e shop /" /tmp/e2e.body &&
-		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
+		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52 &&
+		is "$(web_get host -H "Host: nodo.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
 else
 	echo "SKIP onion: tor is not installed"
 	ctl expose e2e-app shop 1 0 0 >/dev/null
@@ -464,6 +543,12 @@ check "the public ports are redirected to Caddy" sh -c 'nft list ruleset | grep 
 check "port 80 on the main address redirects the public host to https" sh -c '
 	. /tmp/e2e-web-lib.sh; r=$(web_get e2einet -D /tmp/e2e.h --resolve shop.example.com:80:203.0.113.2 http://shop.example.com/x);
 	is "$r" 308 && grep -qi "^location: https://shop.example.com/x" /tmp/e2e.h'
+check "neither the public listener nor the main address serves the trust page" sh -c '
+	. /tmp/e2e-web-lib.sh
+	r=$(web_get e2einet --resolve nodo.local:80:203.0.113.2 http://nodo.local/); echo "$r"; [ "$r" != 200 ] &&
+	! grep -q "Trust this device" /tmp/e2e.body &&
+	r=$(web_get e2elan --resolve nodo.local:80:192.168.77.2 http://nodo.local/); echo "$r"; [ "$r" != 200 ] &&
+	! grep -q "Trust this device" /tmp/e2e.body'
 check "nodo-ddns runs while the site is public, with a private config" sh -c '
 	sv status nodo-ddns | grep -q "^run:" && [ "$(stat -c "%a %U" /run/nodo/secrets/nodo-ddns/config.toml)" = "600 _nododdns" ] &&
 	grep -q "records = \[\"shop\"\]" /run/nodo/secrets/nodo-ddns/config.toml'
@@ -485,7 +570,8 @@ check "without a local address, local sites wait with a reason and nothing falls
 	ctl expose e2e-app shop 1 0 0; ctl web-status | tr -d " \n" > /tmp/e2e.ws; cat /tmp/e2e.ws
 	grep -q "local_unavailable:Some(\"Localsitesareswitchedoff.\"" /tmp/e2e.ws &&
 	grep -q "local_waiting:true" /tmp/e2e.ws && ! grep -q shop.local /var/lib/nodo-web/caddy.json'
-check "turning every exposure off stops Caddy" sh -c 'ctl expose e2e-app shop 0 0 0 && ! sv status nodo-caddy | grep -q "^run:"'
+check "turning every exposure off stops Caddy and removes the trust page" sh -c '
+	ctl expose e2e-app shop 0 0 0 && ! sv status nodo-caddy | grep -q "^run:" && [ ! -e /var/lib/nodo-web/trust/index.html ]'
 check "a single-address site refuses two exposures" refused "single address" ctl expose e2e-app admin 1 1 0
 check "a single-address site takes one" ctl expose e2e-app admin 0 1 0
 ctl expose e2e-app admin 0 0 0 >/dev/null

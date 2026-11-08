@@ -64,13 +64,27 @@ for port in "$@"; do
 	ip netns exec e2einet nft add rule inet acmetest out ip saddr 203.0.113.1 ip daddr '{ 203.0.113.2, 93.184.216.34 }' tcp dport "$port" reject with tcp reset
 done
 EOF
+# The last state of a record at the fake provider, as {"record", "type", "values"}.
+cat > /tmp/e2e-bin/last_record <<'EOF'
+#!/bin/sh
+grep "\"record\": \"$1\"" /tmp/acme/api.log | tail -n 1
+EOF
+# Waits until the record holds exactly the address.
+cat > /tmp/e2e-bin/record_is <<'EOF'
+#!/bin/sh
+for _ in $(seq 1 "${3:-30}"); do
+	last_record "$1" | grep -q "\"values\": \[\"$2\"\]" && exit 0
+	sleep 1
+done
+last_record "$1"; exit 1
+EOF
 cat > /tmp/e2e-bin/public_dns <<'EOF'
 #!/bin/sh
 curl -sf -d "{\"host\":\"$1.\"}" http://203.0.113.1:8055/clear-a >/dev/null &&
 	curl -sf -d "{\"host\":\"$1.\",\"addresses\":[\"$2\"]}" http://203.0.113.1:8055/add-a >/dev/null
 EOF
 chmod 755 /tmp/e2e-bin/cert_state /tmp/e2e-bin/cert_block /tmp/e2e-bin/stored_fp /tmp/e2e-bin/served_fp \
-	/tmp/e2e-bin/fresh_order /tmp/e2e-bin/pebble_ports /tmp/e2e-bin/public_dns
+	/tmp/e2e-bin/fresh_order /tmp/e2e-bin/pebble_ports /tmp/e2e-bin/public_dns /tmp/e2e-bin/last_record /tmp/e2e-bin/record_is
 
 acme_down() {
 	web_down
@@ -292,6 +306,40 @@ JSON
 	check "a resolver that drops private answers is named as DNS rebinding protection" sh -c '
 		ctl local-names | tee /tmp/e2e.ln; grep -q "verdict: Blocked" /tmp/e2e.ln && grep -q "rebinding" /tmp/e2e.ln'
 	rm -f "$acme/hide-private"
+
+	# The local address changes while unlocked: the A record follows through the provider at once.
+	printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.4/24\n' > /etc/sv/nodo-localnet/conf
+	sv -w 20 restart nodo-localnet >/dev/null 2>&1
+	check "a new local address moves the A record, the listener and the firewall" sh -c '
+		record_is shop.home.example.com 192.168.77.4 &&
+		grep -q "\"192.168.77.4:10444\"" /var/lib/nodo-web/caddy.json && ! grep -q 192.168.77.3 /var/lib/nodo-web/caddy.json &&
+		nft list ruleset | grep -q "dnat ip to 192.168.77.4:10444" && ! nft list ruleset | grep -q 192.168.77.3 &&
+		ctl local-status | tr -d " \n" | tee /tmp/e2e.ls | grep -q "records_note:None" &&
+		grep -q "address:Some(\"192.168.77.4\"" /tmp/e2e.ls'
+	check "the name is served on the new address with its certificate, and not on the old one" sh -c '
+		ip netns exec e2elan curl -sf --cacert /tmp/acme/pebble-roots.pem --resolve shop.home.example.com:443:192.168.77.4 \
+			https://shop.home.example.com/admin | grep -q "e2e shop /admin" &&
+		! ip netns exec e2elan curl -s -k --connect-timeout 3 --max-time 6 --resolve shop.home.example.com:443:192.168.77.3 \
+			https://shop.home.example.com/ | grep -q "e2e shop" &&
+		ctl local-names | tee /tmp/e2e.ln; grep -q "verdict: Resolves" /tmp/e2e.ln && grep -q "192.168.77.4" /tmp/e2e.ln'
+
+	# After a reboot the provider credentials are sealed: the listener moves at once, the record waits
+	# for the unlock, and the status says why. A helper restart forgets the key as a reboot does.
+	restart_helper
+	printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.5/24\n' > /etc/sv/nodo-localnet/conf
+	sv -w 20 restart nodo-localnet >/dev/null 2>&1
+	check "while locked, a new address moves the listener and the record waits with a reason" sh -c '
+		for _ in $(seq 1 30); do grep -q "\"192.168.77.5:10444\"" /var/lib/nodo-web/caddy.json && break; sleep 1; done
+		grep -q "\"192.168.77.5:10444\"" /var/lib/nodo-web/caddy.json && nft list ruleset | grep -q "dnat ip to 192.168.77.5:10444" &&
+		sleep 2 && last_record shop.home.example.com | grep -q "\"values\": \[\"192.168.77.4\"\]" &&
+		ctl local-status | tee /tmp/e2e.ls | grep -q "when the device is unlocked" &&
+		grep -q "now 192.168.77.5" /tmp/e2e.ls && grep -q "still point at 192.168.77.4" /tmp/e2e.ls'
+	printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
+	check "the unlock writes the record that waited" sh -c '
+		record_is shop.home.example.com 192.168.77.5 && ctl local-status | tr -d " \n" | grep -q "records_note:None" &&
+		ip netns exec e2elan curl -sf --cacert /tmp/acme/pebble-roots.pem --resolve shop.home.example.com:443:192.168.77.5 \
+			https://shop.home.example.com/admin | grep -q "e2e shop /admin"'
+
 	check "back to .local, the record revealing the LAN address is removed" sh -c '
 		ctl acme-set e2e@example.com 0 &&
 		grep "\"record\": \"shop.home.example.com\"" /tmp/acme/api.log | tail -n 1 | grep -q "\"values\": \[\]" &&

@@ -99,6 +99,16 @@ impl<I: WebIo> NodoWeb<I> {
         if !moved && !trust_stale {
             return Ok(false);
         }
+        if moved && served.is_none() && input.secrets.is_none() && self.would_lose_dns01(&plan) {
+            // Locked, and the address is only gone, as at boot before the lease or during a
+            // restart of nodo-localnet. Caddy keeps its config, because it holds the DNS-01
+            // credentials that cannot be opened again before the unlock, and local names would
+            // then wait for it once the address is back. The address is off the interface, so its
+            // listener and rules reach nothing; mDNS stops announcing it. Not recording it as
+            // applied means the address coming back is compared with the old one.
+            self.apply_mdns(&plan, false)?;
+            return Ok(true);
+        }
         if moved {
             eprintln!(
                 "nodo-helper: local address {} -> {}, applying local sites again",
@@ -112,6 +122,14 @@ impl<I: WebIo> NodoWeb<I> {
         }
         self.apply_trust(&plan, false)?;
         Ok(true)
+    }
+
+    /// Whether loading this plan would drop the DNS-01 provider block the running config has.
+    fn would_lose_dns01(&self, plan: &WebPlan) -> bool {
+        let running = self.io.read(&self.paths.caddy_config).and_then(|b| serde_json::from_slice(&b).ok());
+        let planned = serde_json::to_value(&plan.caddy).ok();
+        running.as_ref().and_then(caddy::DnsChallenge::kept_from).is_some()
+            && planned.as_ref().and_then(caddy::DnsChallenge::kept_from).is_none()
     }
 
     /// Why the records of local names under the owner's domain do not hold the served address.

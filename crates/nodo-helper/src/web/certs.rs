@@ -405,7 +405,6 @@ impl<I: WebIo> NodoWeb<I> {
         let LocalAddress::Ready { address } = plan.local.address else {
             return;
         };
-        let address = Some(address);
         let mut errors = Vec::new();
         let mut kept = Vec::new();
         match (self.credentials(), self.provider(Some(key))) {
@@ -419,16 +418,14 @@ impl<I: WebIo> NodoWeb<I> {
                         kept.push(old.clone());
                     }
                 }
-                if let Some(ip) = address {
-                    for host in current {
-                        match Self::local_record_name(zone, host) {
-                            Some(name) => {
-                                if let Err(e) = provider.upsert(&name, IpAddr::V4(ip), LOCAL_RECORD_TTL) {
-                                    errors.push(format!("could not publish {host}: {e}"));
-                                }
+                for host in current {
+                    match Self::local_record_name(zone, host) {
+                        Some(name) => {
+                            if let Err(e) = provider.upsert(&name, IpAddr::V4(address), LOCAL_RECORD_TTL) {
+                                errors.push(format!("could not publish {host}: {e}"));
                             }
-                            None => errors.push(format!("{host} is not under {zone}")),
                         }
+                        None => errors.push(format!("{host} is not under {zone}")),
                     }
                 }
                 record.domain = zone.to_owned();
@@ -440,7 +437,7 @@ impl<I: WebIo> NodoWeb<I> {
         names.extend(kept);
         record = LocalRecords {
             names,
-            address: address.map(|a| a.to_string()),
+            address: Some(address.to_string()),
             error: (!errors.is_empty()).then(|| errors.join("; ")),
             ..record
         };
