@@ -9,6 +9,7 @@
 #   echo monokulo-<version>.x86_64.xbps | scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.name'
 #   tests/acme-prepare.sh                          (optional: real ACME certificates from Pebble)
 #   scripts/dev-vm.sh ssh 'cat > /tmp/acme-e2e.sh' < tests/acme-e2e.sh
+#   scripts/dev-vm.sh mirror python3; scripts/dev-vm.sh ssh 'cat > /tmp/abstract-sockets.sh' < tests/abstract-sockets.sh
 #   scripts/dev-vm.sh ssh 'cat > /tmp/e2e.sh' < tests/helper-e2e.sh
 #   scripts/dev-vm.sh ssh 'sh /tmp/e2e.sh </dev/null'
 set -u
@@ -980,7 +981,14 @@ check "Home sees the low data disk" sh -c '
 check "a low data disk stops nothing" sh -c 'sv status cuprated | grep -q "^run:"'
 echo "trial boots of the new system ran out, so the previous one was started" > /run/nodo/boot-fallback
 check "the boot fallback notice reaches Home" sh -c 'ctl health | grep -q "boot_fallback: Some"'
-rm -f /run/nodo/boot-fallback /var/service/nodo-healthd
+rm -f /run/nodo/boot-fallback
+# Abstract Unix socket listeners: none expected, and an unprivileged one is named on Home.
+if [ -f /tmp/abstract-sockets.sh ]; then
+	. /tmp/abstract-sockets.sh
+else
+	echo "SKIP abstract socket listeners: copy tests/abstract-sockets.sh to /tmp/abstract-sockets.sh"
+fi
+rm -f /var/service/nodo-healthd
 sleep 2
 umount /media/e2e-health
 cp /tmp/e2e-helper.conf /etc/sv/nodo-helper/conf

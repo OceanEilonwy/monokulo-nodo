@@ -18,7 +18,16 @@ codebase, and signed xbps packages from user-added feeds.
   pointer. Per-service network namespaces would, but would replace the per-user firewall with
   per-interface routing. On older kernels, such as the T6N's 6.1, services granted a Unix socket
   (Caddy, apps with a socket upstream or dependency) can still reach abstract sockets, and their
-  log says so; services without one cannot create Unix sockets at all. Sandboxes also get
+  log says so; services without one cannot create Unix sockets at all. What is left open there
+  is whatever listens on an abstract socket, so nodo-healthd lists those (listening stream and
+  seqpacket sockets, and bound datagram sockets) with the process and user holding each, from
+  `/proc/net/unix` and `/proc/<pid>/fd`. Home warns about any not on the allow-list
+  (`abstract_sockets.expected` in `/etc/nodo/health.toml`, optionally tied to a user), naming the
+  process and user and saying whether this kernel's sandbox can block it (Landlock ABI 6 or
+  later, detected at runtime). The allow-list is empty, because the base system needs no
+  abstract socket, and manifests cannot add to it. `nodo-healthd --abstract-sockets` prints the
+  list and exits 1 when something unexpected listens. monokulo-base's `nodo-report` is frozen
+  and does not include the list yet; it gains it after the hardware test. Sandboxes also get
   `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The frozen
   cuprated run script has neither change yet and needs both when it is next updated; a copy with both,
   tried by hand in the VM, started cuprated, served RPC and stopped cleanly.

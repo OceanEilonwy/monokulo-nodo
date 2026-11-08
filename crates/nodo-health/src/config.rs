@@ -75,6 +75,36 @@ pub struct MemoryConfig {
     pub limits: BTreeMap<String, MemoryLimit>,
 }
 
+/// An abstract Unix socket that is allowed to listen without a warning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedSocket {
+    /// As listed, starting with `@`. A trailing `*` matches any rest of the name.
+    pub name: String,
+    /// When set, the socket is expected only while every process holding it runs as this
+    /// user, so another user cannot take the name first and pass unnoticed.
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+impl ExpectedSocket {
+    pub fn matches_name(&self, name: &str) -> bool {
+        match self.name.strip_suffix('*') {
+            Some(prefix) => name.starts_with(prefix),
+            None => name == self.name,
+        }
+    }
+}
+
+/// Abstract Unix sockets the sandbox may fail to keep services away from (see
+/// [`crate::sockets`]). The base system expects none.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbstractSocketConfig {
+    #[serde(default)]
+    pub expected: Vec<ExpectedSocket>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -85,6 +115,8 @@ pub struct Config {
     pub filesystems: Vec<Filesystem>,
     pub logs: LogConfig,
     pub memory: MemoryConfig,
+    #[serde(default)]
+    pub abstract_sockets: AbstractSocketConfig,
 }
 
 impl Default for Config {
@@ -120,6 +152,7 @@ impl Default for Config {
             ],
             logs: LogConfig { roots: vec!["/var/log".into(), "/var/log/apps".into()], file_bytes: MIB, files: 5 },
             memory: MemoryConfig { cgroup_root: "/sys/fs/cgroup".into(), limits: BTreeMap::new() },
+            abstract_sockets: AbstractSocketConfig::default(),
         }
     }
 }
@@ -140,6 +173,11 @@ impl Config {
                 if svc.is_empty() || svc.contains('/') || svc.starts_with('.') {
                     return Err(format!("{}: bad service name {svc:?}", fs.name));
                 }
+            }
+        }
+        for expected in &self.abstract_sockets.expected {
+            if !expected.name.starts_with('@') || expected.name == "@*" {
+                return Err(format!("expected abstract socket {:?} must start with @ and name something", expected.name));
             }
         }
         if self.logs.file_bytes < 4096 || self.logs.files == 0 {
@@ -177,5 +215,28 @@ mod tests {
         cfg.filesystems[1].services.push("../../bin".into());
         assert!(cfg.validate().is_err());
         assert!(Config::parse("interval_secs = 1\nbogus = 2\n").is_err());
+        for name in ["/run/x.sock", "@*", ""] {
+            let mut cfg = Config::default();
+            cfg.abstract_sockets.expected.push(ExpectedSocket { name: name.into(), user: None });
+            assert!(cfg.validate().is_err(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn expects_no_abstract_sockets_by_default_and_reads_older_files() {
+        let cfg = Config::default();
+        assert!(cfg.abstract_sockets.expected.is_empty());
+        let mut text = toml::to_string(&cfg).unwrap();
+        let start = text.find("[abstract_sockets]").unwrap();
+        text.truncate(start);
+        assert_eq!(Config::parse(&text).unwrap(), cfg, "a file from before this section still parses");
+    }
+
+    #[test]
+    fn expected_names_match_exactly_or_by_prefix() {
+        let exact = ExpectedSocket { name: "@foo".into(), user: None };
+        assert!(exact.matches_name("@foo") && !exact.matches_name("@foobar") && !exact.matches_name("@fo"));
+        let prefix = ExpectedSocket { name: "@foo/*".into(), user: Some("root".into()) };
+        assert!(prefix.matches_name("@foo/1") && prefix.matches_name("@foo/") && !prefix.matches_name("@foo"));
     }
 }
