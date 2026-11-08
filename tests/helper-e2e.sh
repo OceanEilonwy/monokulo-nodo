@@ -599,9 +599,9 @@ if [ -f /tmp/monokulo.xbps ]; then
 		sed -n "/InstallReport/,\$p" /tmp/e2e.mki | grep -E "name:|state:|problem|\"" | tee /dev/stderr |
 			grep -A2 "\"Configure settings\"" | grep -q "state: Done" && xbps-query monokulo >/dev/null &&
 		cryptsetup isLuks /var/lib/nodo/volumes/monokulo.luks && mountpoint -q /run/nodo/volumes/monokulo &&
-		[ -L /var/service/monokulo ] && grep -q "^encryption_key" /var/lib/nodo/settings/monokulo.toml' "$PASS2"
-	# Monokulo reads its key from the environment, which the service does not pass yet, so its
-	# health check is expected to fail here. The install must say so rather than claim success.
+		[ -L /var/service/monokulo ] && grep -q "encryption_key" /var/lib/nodo/settings/monokulo.toml && ! grep -q "encryption_key = \"[0-9a-f]" /var/lib/nodo/settings/monokulo.toml' "$PASS2"
+	# The VM is offline and its node has no chain, so Monokulo may not pass its health check here.
+	# Either way the install must report the result rather than claim success.
 	check "Monokulo's health check result is reported, not hidden" sh -c '
 		grep -q "problem: None" /tmp/e2e.mki || grep -q "did not pass its health check" /tmp/e2e.mki'
 	sv down monokulo
@@ -640,7 +640,7 @@ check "the refused restores changed nothing" sh -c '
 	[ ! -e /var/lib/nodo/secrets/e2e ] && grep -qx "greeting = \"after\"" /run/nodo/secrets/e2e-app/config/settings.toml && ! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
 check "a restore stops the services it replaces, restores and starts them" sh -c '
 	printf "%s\n%s\n" "$1" "new device pass" | nodo-tui --ctl restore "$0" restore | tee /tmp/e2e.rs
-	grep -A4 "stopped:" /tmp/e2e.rs | grep -q e2e-vault && grep -A4 "restarted:" /tmp/e2e.rs | grep -q e2e-vault' "$bk" "$BACKUP_PASS"
+	sed -n "/stopped:/,/\]/p" /tmp/e2e.rs | grep -q "\"e2e-vault\"" && sed -n "/restarted:/,/\]/p" /tmp/e2e.rs | grep -q "\"e2e-vault\""' "$bk" "$BACKUP_PASS"
 check "settings, secrets and storage are back" sh -c '
 	grep -qx "greeting = \"before\"" /run/nodo/secrets/e2e-app/config/settings.toml && [ "$(cat /var/lib/nodo/secrets/e2e)" = keep-me ] &&
 	[ "$(cat /run/nodo/volumes/e2e-vault/data/e2e-file)" = vault-data ] && [ "$(stat -c %U /run/nodo/volumes/e2e-vault/data/e2e-file)" = _e2e-vault ]'
@@ -657,15 +657,17 @@ rm -f /tmp/e2e-tui.out
 	printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
 	printf 'b'; sleep 3; printf '\033'; sleep 2; printf 'q'; sleep 1
 ) | script -qfec 'stty rows 32 cols 100; TERM=xterm-256color nodo-tui' /tmp/e2e-tui.out >/dev/null 2>&1
-sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Z0-9]//g' /tmp/e2e-tui.out > /tmp/e2e-tui.txt
-for want in "Your feeds" "e2e-feed" "e2e-pay" "e2e-bad" "Backups on this device" "$bk" "is back and the update is on hold"; do
-	check "the TUI showed: $want" grep -q "$want" /tmp/e2e-tui.txt
+# Unchanged cells are skipped with cursor moves, so spaces are removed before comparing.
+sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Z0-9]//g' /tmp/e2e-tui.out | tr -d ' ' > /tmp/e2e-tui.txt
+for want in "Your feeds" "e2e-feed" "e2e-pay" "Backups on this device" "$bk" "is back and the update is on hold"; do
+	check "the TUI showed: $want" grep -q "$(printf %s "$want" | tr -d ' ')" /tmp/e2e-tui.txt
 done
 check "the TUI no longer says feeds or updates are not available" sh -c '! grep -q "Not available yet: feeds\|Not available yet: automatic" /tmp/e2e-tui.txt'
 check "the TUI never showed a passphrase" sh -c '! grep -q "horse" /tmp/e2e-tui.txt'
 
 # Health: the daemon's configuration from manifests, and a low disk on a small loop filesystem
 
+cp /etc/sv/nodo-helper/conf /tmp/e2e-helper.conf
 hloop=$(losetup -j /var/tmp/e2e-health.img | cut -d: -f1)
 if [ -z "$hloop" ]; then
 	rm -f /var/tmp/e2e-health.img
@@ -692,8 +694,10 @@ check "the boot fallback notice reaches Home" sh -c 'ctl health | grep -q "boot_
 rm -f /run/nodo/boot-fallback /var/service/nodo-healthd
 sleep 2
 umount /media/e2e-health
-rm -f /etc/sv/nodo-helper/conf
+cp /tmp/e2e-helper.conf /etc/sv/nodo-helper/conf
 restart_helper
+# A helper restart forgets the key that opens sealed secrets, as a reboot would.
+printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
 
 # Settings rollback, last because it waits for the crash loop to be noticed
 

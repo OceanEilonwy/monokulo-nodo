@@ -306,17 +306,17 @@ live on the small eMMC. Proposed change, for the owners of nodo-gen and nodo-hel
   `/var/log/apps/<id>` into the opened volume, then delete the originals and run `fstrim`. Be
   honest in the TUI: plaintext already written to flash cannot be reliably erased.
 
-## 8. What other crates need
+## 8. What is still missing
 
-- **nodo-api**: requests for update status and actions (check now, install selected, hold,
-  release, auto-update policy), `UpdateState.attention` and the health report for Home, backup
-  and restore requests, and a "locked" error for settings of locked encrypted packages.
-- **nodo-helper**: write `/etc/nodo/health.toml` from installed manifests (which services write to
-  which filesystem, memory limits), keep `/run/nodo/health.json` readable by the TUI, implement
-  backup and restore with the unwrapped device key, and the changes in section 7.
-- **nodo-tui**: read `/run/nodo/health.json` for Device and Needs attention, show update outcomes
-  from `UpdateState`, the Auto-update screen from `AutoPolicy`, and the boot-fallback notice.
-- **nodo-install**: implement `nodo_update::auto::Installer`, and provide the `Candidate` facts
-  (new permissions from the feed gate, key change from `PinStore`, check results).
-- **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC, a
-  runit service for `nodo-healthd`, and open the watchdog early.
+The API, helper, TUI and installer parts listed here before are connected (sections 2, 5 and 6).
+Still open:
+
+- **nodo-manifest**: a way to ask for a memory limit, so `health.toml` can set one.
+- **nodo-helper**: copying a backup to and from a USB stick, restoring onto a fresh install before
+  its packages are installed, and copying the data of a package kept on the data drive before an
+  update (such an update is refused for now). A backup restored onto a device whose volumes keep
+  their own key keeps that key, so sealed secrets from the other device cannot be opened there.
+- **System snapshots**: there is no update server, so only feed packages update today.
+- **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
+  enable the `nodo-healthd` and `nodo-autoupdate` services from nodo-tools, and open the watchdog
+  early.
