@@ -1,0 +1,85 @@
+# Template file for 'linux-mainline-rk3588'
+# Mainline Linux, the newest kernel.org longterm release, for the NanoPC-T6N and for QEMU virt.
+# It ships the boot images FriendlyElec's bootloader reads, so it can replace linux-nanopc-t6n
+# without changing the bootloader. See docs/MAINLINE_KERNEL.md.
+pkgname=linux-mainline-rk3588
+version=6.18.62
+revision=1
+# FriendlyElec's kernel tree, used only for the two small tools that write its boot image
+# formats and for the boot logo its bootloader expects. Nothing else is taken from it.
+_fe_commit=30d3e1c2470a7282f37b96fdd4354314dda69aa3
+_fe_raw="https://raw.githubusercontent.com/friendlyarm/kernel-rockchip/${_fe_commit}"
+archs="aarch64"
+hostmakedepends="bc bison flex kmod openssl-devel perl python3 elfutils-devel cpio tar xz zstd make gcc"
+makedepends="openssl-devel"
+depends="kmod"
+short_desc="Mainline Linux kernel for the FriendlyElec NanoPC-T6N"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-2.0-only"
+homepage="https://www.kernel.org"
+distfiles="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${version}.tar.xz
+ ${_fe_raw}/scripts/resource_tool.c
+ ${_fe_raw}/scripts/mkkrnlimg.c
+ ${_fe_raw}/logo.bmp"
+checksum="490a7aedf1b355c565d3a6c05333ccccb5da82064eca46b590448a7099d7d651
+ 1cd2e31672e7d2c46a819e330ab83b0b9ea823e2968b4330be7ec8a76d88a985
+ f44670a6c36a3a95b83f27de39805530e98621fc7e2e6d248ea645e14c719a67
+ 8a9ac3a02264a56d4f877457da5496f1ab40be181d94c0aa0b310985e65780ce"
+skip_extraction="resource_tool.c mkkrnlimg.c logo.bmp"
+nostrip=yes
+noverifyrdeps=yes
+preserve=yes
+nopie=yes
+
+_dtb=rk3588-nanopc-t6n
+
+_kmake() {
+	make ARCH=arm64 CROSS_COMPILE="${XBPS_CROSS_TRIPLET:-aarch64-linux-gnu}-" \
+		HOSTCC=gcc HOSTCXX=g++ HOSTCFLAGS= HOSTLDFLAGS= HOSTPKG_CONFIG=pkg-config \
+		KBUILD_BUILD_USER=monokulo KBUILD_BUILD_HOST=monokulo-nodo "$@"
+}
+
+do_configure() {
+	unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+	cp ${FILESDIR}/${_dtb}.dts arch/arm64/boot/dts/rockchip/
+	echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += ${_dtb}.dtb" >> arch/arm64/boot/dts/rockchip/Makefile
+	_kmake defconfig
+	scripts/kconfig/merge_config.sh -m .config ${FILESDIR}/monokulo.config
+	_kmake olddefconfig
+	sh ${FILESDIR}/check-config.sh ${FILESDIR}/monokulo.config .config
+}
+
+do_build() {
+	unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+	# -@ keeps the labels FriendlyElec's dtbo overlay refers to.
+	_kmake -j"${makejobs#-j}" DTC_FLAGS=-@ Image modules rockchip/${_dtb}.dtb
+
+	local fe="${XBPS_SRCDISTDIR}/${pkgname}-${version}"
+	gcc -O2 -o mkkrnlimg "${fe}/mkkrnlimg.c"
+	gcc -O2 -Wno-discarded-qualifiers -o resource_tool "${fe}/resource_tool.c"
+	# kernel.img is the Image with FriendlyElec's KRNL header and checksum.
+	./mkkrnlimg arch/arm64/boot/Image kernel.img >/dev/null
+	# The bootloader looks for its detected board revision's file first, then rk-kernel.dtb.
+	# The T6N is revision 8. Both names hold the same tree.
+	rm -rf res && mkdir res
+	cp arch/arm64/boot/dts/rockchip/${_dtb}.dtb res/rk3588-nanopi6-rev08.dtb
+	cp arch/arm64/boot/dts/rockchip/${_dtb}.dtb res/rk-kernel.dtb
+	cp "${fe}/logo.bmp" res/logo.bmp
+	cp "${fe}/logo.bmp" res/logo_kernel.bmp
+	(cd res && ../resource_tool --dtbname rk3588-nanopi6-rev08.dtb rk-kernel.dtb logo.bmp logo_kernel.bmp >/dev/null)
+	mv res/resource.img resource.img
+	# The kernel partition on the card is 0x14000 sectors.
+	[ "$(stat -c %s kernel.img)" -le $((0x14000 * 512)) ] || msg_error "kernel.img does not fit its partition\n"
+}
+
+do_install() {
+	unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+	_kmake INSTALL_MOD_PATH="${DESTDIR}/usr" INSTALL_MOD_STRIP=1 modules_install
+	rm -f "${DESTDIR}"/usr/lib/modules/*/build "${DESTDIR}"/usr/lib/modules/*/source
+	vinstall kernel.img 644 usr/share/monokulo/boot
+	vinstall resource.img 644 usr/share/monokulo/boot
+	vinstall arch/arm64/boot/dts/rockchip/${_dtb}.dtb 644 usr/share/monokulo/boot
+	vinstall .config 644 usr/share/monokulo/boot kernel.config
+	# For QEMU, which boots the Image directly. The T6N board leaves this file out.
+	vinstall arch/arm64/boot/Image 644 boot vmlinuz-${version}
+}

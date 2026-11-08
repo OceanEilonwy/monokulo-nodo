@@ -1,6 +1,7 @@
 #!/bin/sh
 # Checks the handoff from FriendlyElec's ramdisk to the Void root filesystem.
-img=/o/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
+# IMG picks another T6N image, such as the mainline one.
+img=${IMG:-/o/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img}
 dd if="$img" bs=1M skip=140 status=none of=/tmp/r.ext4 conv=sparse
 show() { debugfs -R "$1" /tmp/r.ext4 2>/dev/null; }
 for p in /sbin /usr/bin/init /usr/bin/runit-init /usr/bin/runit /usr/bin/sh /bin; do

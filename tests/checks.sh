@@ -48,4 +48,5 @@ check "cuprated closed cleanly at reboot" '[ "$(cat /var/log/cuprated/*.s /var/l
 check "cuprated back after reboot" 'for n in $(seq 1 24); do sv status cuprated | grep -q "^run:" && exit 0; sleep 5; done; exit 1'
 fi
 
+[ "${BOARD_KERNEL_CHECKS:-}" != 1 ] || . /src/tests/kernel-checks.sh
 ssh_vm 'df -h / | tail -1; free -m | sed -n 2p; du -sh /usr /var/lib/cuprated 2>/dev/null; xbps-query -l | wc -l' || true

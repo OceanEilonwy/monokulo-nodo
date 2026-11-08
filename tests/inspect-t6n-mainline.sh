@@ -1,0 +1,176 @@
+#!/bin/sh
+# Reads the mainline T6N image as plain files, with no loop devices and no root, and compares it
+# with the vendor 6.1 image when one is given. Both images are only read.
+#   tests/inspect-t6n-mainline.sh out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img \
+#       [out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img]
+# Needs sfdisk, debugfs, dtc, fdtget and python3 on the machine running it.
+set -u
+img=${1:?usage: inspect-t6n-mainline.sh <mainline image> [vendor image]}
+ref=${2:-}
+fail=0
+result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# "number start size name" for each partition, from the image's own GPT.
+layout() {
+	sfdisk -J "$1" | python3 -I -c '
+import json, sys
+for i, p in enumerate(json.load(sys.stdin)["partitiontable"]["partitions"], 1):
+    print(i, p["start"], p["size"], p.get("name", ""))'
+}
+# Partition N of an image, as a file.
+part() {
+	where=$(layout "$1" | awk -v n="$2" '$1 == n {print $2, $3}')
+	[ -n "$where" ] || { echo "no partition $2 in $1" >&2; return 1; }
+	dd if="$1" of="$3" bs=512 skip="${where% *}" count="${where#* }" status=none conv=sparse
+}
+
+echo "== partitions"
+layout "$img" | tee "$tmp/layout"
+if [ "$(cut -d' ' -f4 "$tmp/layout" | tr '\n' ' ')" = "uboot misc dtbo resource kernel boot recovery rootfs " ]; then r=0; else r=1; fi
+result "FriendlyElec's eight partitions in order" "$r"
+
+if [ -n "$ref" ]; then
+	echo "== against the vendor image $(basename "$ref")"
+	layout "$ref" > "$tmp/ref-layout"
+	# Everything but the root filesystem's size must match.
+	if [ -s "$tmp/ref-layout" ] && [ "$(head -7 "$tmp/layout")" = "$(head -7 "$tmp/ref-layout")" ]; then r=0; else r=1; fi
+	result "the boot partitions sit at the same offsets and sizes" "$r"
+	if [ "$(sed -n 8p "$tmp/layout" | cut -d' ' -f2)" = "$(sed -n 8p "$tmp/ref-layout" | cut -d' ' -f2)" ]; then r=0; else r=1; fi
+	result "the root filesystem starts at the same sector" "$r"
+	# The loader before the GPT partitions, then uboot, misc, dtbo and the ramdisk in boot.
+	cmp -s -n $((0x4000 * 512 - 0x40 * 512)) -i $((0x40 * 512)) "$img" "$ref"
+	result "idbloader is byte for byte the vendor one" "$?"
+	for n in 1 2 3 6 7; do
+		part "$img" "$n" "$tmp/a" && part "$ref" "$n" "$tmp/b" && cmp -s "$tmp/a" "$tmp/b"
+		result "partition $n ($(sed -n "${n}p" "$tmp/layout" | cut -d' ' -f4)) is byte for byte the vendor one" "$?"
+	done
+fi
+
+echo "== kernel partition"
+part "$img" 5 "$tmp/kernel"
+python3 -I - "$tmp/kernel" "$tmp/Image" <<'PY'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+assert d[:4] == b"KRNL", "no KRNL header"
+n = struct.unpack("<I", d[4:8])[0]
+body = d[8:8 + n]
+crc = 0
+table = []
+for i in range(256):
+    c = i << 24
+    for _ in range(8):
+        c = ((c << 1) ^ 0x04C10DB7) if c & 0x80000000 else (c << 1)
+    table.append(c & 0xFFFFFFFF)
+for b in body:
+    crc = ((crc << 8) & 0xFFFFFFFF) ^ table[(crc >> 24) ^ b]
+stored = struct.unpack("<I", d[8 + n:12 + n])[0]
+assert crc == stored, f"KRNL checksum {crc:08x} != stored {stored:08x}"
+assert body[0x38:0x3c] == b"ARM\x64", "not an arm64 Image"
+open(sys.argv[2], "wb").write(body)
+print(f"KRNL image of {n} bytes, checksum {crc:08x} matches, arm64 Image")
+PY
+result "kernel.img is a valid KRNL-wrapped arm64 Image" "$?"
+kver=$(grep -a -o -m1 'Linux version [0-9][^ ]*' "$tmp/Image" | head -1)
+echo "$kver"
+echo "$kver" | grep -q 'Linux version 6\.18\.'
+result "the kernel is 6.18" "$?"
+
+echo "== resource partition"
+part "$img" 4 "$tmp/resource"
+python3 -I - "$tmp/resource" "$tmp" <<'PY'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+assert d[:4] == b"RSCE", "no RSCE header"
+# resource_tool.c: magic, two versions, header size, table offset and entry size in blocks,
+# then the entry count, aligned to 4 bytes.
+tbl_off, ent_blks, count = d[9], d[10], struct.unpack("<I", d[12:16])[0]
+for i in range(count):
+    e = d[(tbl_off + i * ent_blks) * 512:]
+    assert e[:4] == b"ENTR"
+    name = e[4:260].split(b"\0")[0].decode()
+    off, size = struct.unpack("<II", e[260:268])
+    print(name, size)
+    open(f"{sys.argv[2]}/res-{name}", "wb").write(d[off * 512:off * 512 + size])
+PY
+result "resource.img parses" "$?"
+cmp -s "$tmp/res-rk3588-nanopi6-rev08.dtb" "$tmp/res-rk-kernel.dtb"
+result "the revision 8 and fallback device trees are the same file" "$?"
+dtb=$tmp/res-rk3588-nanopi6-rev08.dtb
+[ -s "$dtb" ] || { echo "FAIL no device tree to inspect"; exit 1; }
+dtc -q -I dtb -O dts -o "$tmp/t6n.dts" "$dtb"
+result "dtc decompiles the device tree without errors" "$?"
+echo "model: $(fdtget "$dtb" / model), compatible: $(fdtget "$dtb" / compatible)"
+fdtget "$dtb" / compatible | grep -q 'friendlyelec,nanopc-t6n'
+result "the device tree says friendlyelec,nanopc-t6n" "$?"
+# Each node the T6N needs, by its address in rk3588.dtsi.
+node_ok() {
+	fdtget "$dtb" "$1" compatible >/dev/null 2>&1 || return 2
+	s=$(fdtget "$dtb" "$1" status 2>/dev/null || echo okay)
+	[ "$s" = okay ]
+}
+for n in "/pcie@fe150000 pcie3x4 (NVMe)" "/pcie@fe190000 pcie2x1l2 (2.5GbE)" "/pcie@fe170000 pcie2x1l0 (M.2 E-key)" \
+	"/mmc@fe2c0000 sdmmc (microSD)" "/mmc@fe2e0000 sdhci (eMMC)" "/tsadc@fec00000 tsadc (thermal)" \
+	"/watchdog@feaf0000 watchdog" "/serial@feb50000 uart2 (console)" "/usb@fcd00000 USB 3.0 host"; do
+	node_ok "${n%% *}"
+	result "enabled: ${n#* }" "$?"
+done
+if node_ok /pcie@fe180000; [ "$?" = 1 ]; then r=0; else r=1; fi
+result "disabled: pcie2x1l1, which the T6N does not wire" "$r"
+fdtget "$dtb" /pcie@fe190000/pcie@0,0/ethernet@0,0 compatible | grep -q pci10ec,8125
+result "the RTL8125 node is where the ethernet0 alias points" "$?"
+if [ "$(fdtget "$dtb" /aliases ethernet0)" = /pcie@fe190000/pcie@0,0/ethernet@0,0 ]; then r=0; else r=1; fi
+result "ethernet0 alias, for the bootloader's MAC address" "$r"
+[ "$(fdtget "$dtb" /aliases mmc0)" = /mmc@fe2c0000 ] && ! fdtget "$dtb" /aliases mmc1 >/dev/null 2>&1
+result "the microSD card is mmc0, as on the vendor kernel" "$?"
+fdtget "$dtb" /thermal-zones/package-thermal/trips/package-crit type | grep -q critical
+result "thermal zones with a critical trip" "$?"
+fdtget "$dtb" /cpus/cpu@400 operating-points-v2 >/dev/null
+result "CPU frequency tables for cpufreq" "$?"
+if fdtget "$dtb" / pwm-fan >/dev/null 2>&1 || fdtget -l "$dtb" / | grep -q '^pwm-fan$'; then fan=yes; else fan=no; fi
+echo "pwm-fan node: $fan (FriendlyElec's T6N tree has none either)"
+if [ "$(fdtget "$dtb" /__symbols__ chosen)" = /chosen ]; then r=0; else r=1; fi
+result "the chosen label is exported for FriendlyElec's dtbo overlay" "$r"
+echo "bootargs: $(fdtget "$dtb" /chosen bootargs)"
+echo "bootargs_ext: $(fdtget "$dtb" /chosen bootargs_ext)"
+
+echo "== root filesystem"
+part "$img" 8 "$tmp/root.ext4"
+show() { debugfs -R "$1" "$tmp/root.ext4" 2>/dev/null; }
+show 'cat /etc/fstab'
+show 'cat /etc/fstab' | grep -qx 'PARTLABEL=NODO_BLOCKCHAIN /media/monero xfs defaults,noatime,nofail 0 0'
+result "the /media/monero line is in fstab" "$?"
+show 'cat /etc/fstab' | grep -q '^/dev/mmcblk0p8 / ext4'
+result "root is /dev/mmcblk0p8" "$?"
+show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep -q '^6\.18\.'
+result "modules for 6.18 are installed" "$?"
+! show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep -q '^6\.1\.'
+result "no vendor 6.1 modules" "$?"
+show 'ls /usr/lib/firmware/rtl_nic' | tr -s ' \t' '\n' | grep -q '^rtl8125b-2.fw$'
+result "rtl8125b-2.fw is there, uncompressed" "$?"
+! show 'ls /boot' | grep -q vmlinuz
+result "no QEMU kernel copy in /boot" "$?"
+show 'cat /etc/sv/cuprated/conf' | grep -qx 'DATA_MOUNT=/media/monero'
+result "cuprated waits for the data drive, as on the vendor card" "$?"
+echo "authorized_keys sha256: $(show 'cat /root/.ssh/authorized_keys' | sha256sum | cut -c1-64)"
+
+if [ -n "$ref" ]; then
+	part "$ref" 8 "$tmp/ref.ext4"
+	pkgs() { debugfs -R "cat /var/db/xbps/pkgdb-0.38.plist" "$1" 2>/dev/null | python3 -I -c '
+import plistlib, sys
+d = plistlib.loads(sys.stdin.buffer.read())
+for k in sorted(d):
+    print(d[k].get("pkgver", k))'; }
+	pkgs "$tmp/root.ext4" > "$tmp/pkgs"
+	pkgs "$tmp/ref.ext4" > "$tmp/ref-pkgs"
+	echo "packages: $(wc -l < "$tmp/pkgs") here, $(wc -l < "$tmp/ref-pkgs") on the vendor card"
+	diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^[<>]' | sed 's/^</  vendor only:/; s/^>/  mainline only:/'
+	r=1
+	if [ -s "$tmp/pkgs" ] && [ -s "$tmp/ref-pkgs" ] &&
+		[ "$(diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^[<>]' | grep -cv 'linux-nanopc-t6n-\|linux-mainline-rk3588-')" = 0 ]; then r=0; fi
+	result "the only package difference is the kernel" "$r"
+	if [ -n "$(show 'cat /root/.ssh/authorized_keys')" ] && [ "$(show 'cat /root/.ssh/authorized_keys' | sha256sum)" = "$(debugfs -R 'cat /root/.ssh/authorized_keys' "$tmp/ref.ext4" 2>/dev/null | sha256sum)" ]; then r=0; else r=1; fi
+	result "the same authorized_keys as the vendor card" "$r"
+fi
+exit "$fail"

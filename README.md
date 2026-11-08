@@ -18,7 +18,15 @@ scripts/test.sh vm                        # changed packages in a running KVM VM
 scripts/test.sh full                      # aarch64 image, cold boot, reboot and size checks
 scripts/build-packages.sh aarch64 cuprated cuprated-service monokulo-base linux-nanopc-t6n
 scripts/build-image.sh nanopc-t6n ~/.ssh/id_ed25519.pub
+# The same image on the mainline longterm kernel, see docs/MAINLINE_KERNEL.md
+scripts/build-packages.sh aarch64 linux-mainline-rk3588
+scripts/build-image.sh nanopc-t6n-mainline ~/.ssh/id_ed25519.pub
+scripts/build-image.sh qemu-virt-mainline build/test-key.pub && tests/qemu-boot-test.sh qemu-virt-mainline
+tests/inspect-t6n-mainline.sh out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img \
+	out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
 ```
+
+- [Hardware test](docs/HARDWARE_TEST.md) and [mainline kernel notes](docs/MAINLINE_KERNEL.md)
 
 ## License
 

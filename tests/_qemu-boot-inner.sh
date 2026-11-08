@@ -3,6 +3,7 @@
 set -u
 log=/src/out/images/$BOARD/serial.log
 . /src/tests/_qemu-lib.sh
+. "/src/boards/$BOARD/board.env"
 (qemu_exec) >"$log" 2>&1 &
 qpid=$!
 ssh_vm() { ssh -q -p 2222 -i /src/build/test-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@127.0.0.1 "$@"; }
