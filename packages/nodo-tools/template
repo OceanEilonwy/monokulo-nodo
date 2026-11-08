@@ -1,0 +1,39 @@
+# Template file for 'nodo-tools'
+pkgname=nodo-tools
+version=0.1.0
+revision=1
+archs="aarch64 x86_64"
+build_style=cargo
+configure_args="-p nodo-helper -p nodo-tui"
+hostmakedepends="pkg-config"
+makedepends=""
+depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow"
+short_desc="Root helper service and terminal interface for monokulo-nodo"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/OceanEilonwy/monokulo-nodo"
+# Package settings code runs as this account, never as root.
+system_accounts="_nodo-settings"
+_nodo_settings_homedir="/var/empty"
+# Members of this group may use the helper. Root always may.
+system_groups="nodo"
+make_dirs="/var/lib/nodo 0755 root root
+ /var/log/nodo-helper 0750 root root"
+
+# The source is this repository's Rust workspace, which the build script packs into
+# files/workspace.tar because the recipe's `workspace` marker asks for it.
+do_extract() {
+	mkdir -p "$wrksrc"
+	tar -C "$wrksrc" -xf "${FILESDIR}/workspace.tar"
+}
+
+do_install() {
+	vbin target/${RUST_TARGET}/release/nodo-helper
+	vbin target/${RUST_TARGET}/release/nodo-tui
+	vsv nodo-helper
+	# Settings knowledge for the base image's node, until cuprated-service ships its own.
+	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
+	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated
+	vinstall ${FILESDIR}/cuprated/Cuprated.toml.in 644 usr/share/nodo/packages/cuprated
+	vlicense LICENSE
+}

@@ -1,0 +1,19 @@
+#!/bin/sh
+exec 2>&1
+exec </dev/null
+# Optional: DRIVE and DRIVE_MOUNT name a data drive from /etc/fstab that the helper may check.
+[ -r ./conf ] && . ./conf
+
+# Root may always use the helper. Members of the nodo group may too; the list is read at start,
+# so restart the helper after changing the group.
+set -- --allow-uid 0
+members=$(getent group nodo | cut -d: -f4 | tr ',' ' ')
+for user in $members; do
+	uid=$(id -u "$user" 2>/dev/null) && set -- "$@" --allow-uid "$uid"
+done
+gid=$(getent group nodo | cut -d: -f3)
+[ -n "$gid" ] && set -- "$@" --socket-gid "$gid"
+if [ -n "${DRIVE:-}" ] && [ -n "${DRIVE_MOUNT:-}" ]; then
+	set -- "$@" --drive "$DRIVE" --drive-mount "$DRIVE_MOUNT"
+fi
+exec /usr/bin/nodo-helper "$@"

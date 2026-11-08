@@ -4,6 +4,13 @@ set -eu
 trap 'chown -R "$HOST_UID:$HOST_GID" /src/build/hostdir /src/out' EXIT
 vp=/work/void-packages
 cp -r /src/packages/* "$vp/srcpkgs/"
+# Recipes built from this repository get its source as a tarball, since xbps-src fetches nothing.
+for pkg in $PKGS; do
+	list=/src/packages/$pkg/workspace
+	[ -f "$list" ] || continue
+	mkdir -p "$vp/srcpkgs/$pkg/files"
+	(cd /src && xargs tar -cf "$vp/srcpkgs/$pkg/files/workspace.tar" < "$list")
+done
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
 export HOME=/work
