@@ -237,6 +237,10 @@ impl<S: System> Helper<S> {
         if available.needs_restart {
             return Ok(Some("waits for you: it needs a restart".into()));
         }
+        // A failed attempt is not repeated every run; the next successful check clears it.
+        if let Some(e) = &state.last_error {
+            return Ok(Some(format!("waits for the next check, since the last attempt failed: {e}")));
+        }
         let window = self.package_window()?;
         if !window.contains(self.manage.packages.local_minute()) {
             return Ok(Some(format!("installs in the update window, from {}", hhmm(window.start()))));
@@ -465,6 +469,8 @@ mod tests {
             r#"{{"version":1,"generated_at":{NOW},"disks":[],"stopped":[],"refuse_installs":false,"time":{{"synced":true}},"attention":[]}}"#
         );
         sys.put("/run/nodo/health.json", report.as_bytes());
+        // Room on the disk once the report above goes stale, as later runs in a test find it.
+        sys.set_usage(1 << 40, 1 << 40);
         let snapshots = FakeSnapshots::default();
         snapshots.0.lock().unwrap().current = 5;
         let paths = ManagePaths { updates: "/s/updates".into(), ..ManagePaths::default() };
@@ -629,6 +635,26 @@ mod tests {
         let s = run(&h);
         assert_eq!(snapshots.calls().len(), 3, "{:?}", snapshots.calls());
         assert!(s.verdict.contains("update window"), "{}", s.verdict);
+    }
+
+    #[test]
+    fn a_failed_automatic_update_is_not_repeated_every_run() {
+        let (mut h, snapshots) = rig();
+        h.handle(1000, Request::SetSystemAutoUpdate { enabled: true }).unwrap();
+        snapshots.offer(6, false, false);
+        h.handle(1000, Request::CheckSystemUpdate).unwrap();
+        snapshots.0.lock().unwrap().fail = Some("xbps failed: hash mismatch".into());
+        let s = run(&h);
+        assert_eq!(snapshots.calls(), ["check", "apply 6 keep nodo-helper"], "{s:?}");
+        let s = run(&h);
+        assert_eq!(snapshots.calls().len(), 2, "not tried again before the next check");
+        assert!(s.verdict.contains("last attempt failed"), "{}", s.verdict);
+        // The retry check an hour later succeeds and clears the error, so the run applies.
+        snapshots.0.lock().unwrap().fail = None;
+        h.manage.packages = Box::new(Clock { now: NOW + RETRY_SECS, minute: 4 * 60 });
+        let s = run(&h);
+        assert_eq!(snapshots.calls()[2..], ["check", "apply 6 keep nodo-helper"]);
+        assert!(s.last_applied.is_some());
     }
 
     #[test]
