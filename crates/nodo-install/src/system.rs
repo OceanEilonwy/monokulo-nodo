@@ -49,6 +49,7 @@ pub struct RealSystem {
     /// everyone else, because the package file sits there between inspection and installation.
     work: PathBuf,
     counter: AtomicU64,
+    http: crate::http::Fetcher,
 }
 
 impl RealSystem {
@@ -63,24 +64,9 @@ impl RealSystem {
                 format!("{} must be a directory owned by this user with mode 0700", work.display()),
             ));
         }
-        Ok(RealSystem { work, counter: AtomicU64::new(0) })
+        Ok(RealSystem { work, counter: AtomicU64::new(0), http: crate::http::Fetcher::new() })
     }
 
-    fn fetch_url(&self, url: &str, limit: u64) -> io::Result<Vec<u8>> {
-        let dir = self.private_dir()?;
-        let target = dir.join("download");
-        let result = self
-            .run("xbps-fetch", &["-o".into(), target.clone().into(), url.into()], &[])
-            .and_then(|out| {
-                if out.success {
-                    self.read(&target, limit)
-                } else {
-                    Err(io::Error::other(format!("xbps-fetch failed: {}", String::from_utf8_lossy(&out.stderr).trim())))
-                }
-            });
-        let _ = self.remove_dir_all(&dir);
-        result
-    }
 }
 
 impl System for RealSystem {
@@ -95,7 +81,7 @@ impl System for RealSystem {
 
     fn fetch(&self, feed: &str, file: &str, limit: u64) -> io::Result<Vec<u8>> {
         if feed.starts_with("https://") || feed.starts_with("http://") {
-            return self.fetch_url(&format!("{}/{file}", feed.trim_end_matches('/')), limit);
+            return self.http.get(&format!("{}/{file}", feed.trim_end_matches('/')), file, limit);
         }
         self.read(&Path::new(feed).join(file), limit)
     }
