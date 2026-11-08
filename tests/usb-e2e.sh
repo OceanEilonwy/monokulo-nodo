@@ -6,10 +6,13 @@
 # It starts from a fresh VM of the current image, so run it after the other VM tests:
 #   scripts/dev-vm.sh up && tests/usb-e2e.sh
 #
-# First VM: set up a device with a feed, an encrypted package with a secret setting, Caddy
-# storage, and back it up to a FAT32 USB stick. Refusals for the system disk, the data drive,
+# First VM: set up a device with a feed, an encrypted package with a secret setting and a public
+# site, Caddy storage, and back it up to a FAT32 USB stick. Refusals for the system disk, the data drive,
 # a read-only stick, a full stick and a stick pulled out mid-write are checked on the way.
-# Second VM: a clean image with the same stick, not set up, restored from it.
+# Second VM: a clean image with the same stick, not set up, restored from it. The restore puts
+# the public site into Caddy's configuration at once, not at the proxy's next reload.
+# Public sites ask Pebble's address (/etc/nodo/acme-test.toml), never Let's Encrypt; the VM is
+# offline either way.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 vm() { "$root/scripts/dev-vm.sh" "$@"; }
@@ -48,6 +51,7 @@ done
 sv status "$1"; exit 1
 EOF
 		chmod 755 /tmp/e2e-bin/ctl /tmp/e2e-bin/usbdisk /tmp/e2e-bin/running_for
+		mkdir -p /etc/nodo && printf "directory = \"https://203.0.113.1/dir\"\n" > /etc/nodo/acme-test.toml
 		[ -L /var/service/nodo-helper ] || ln -s /etc/sv/nodo-helper /var/service/
 		for _ in $(seq 1 30); do [ -S /run/nodo/helper.sock ] && nodo-tui --ctl services >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 }
@@ -103,6 +107,10 @@ stop_timeout_secs = 5
 encrypted = true
 size_mib = 320
 data_layout = 2
+
+[[web]]
+name = "notes"
+upstream = "127.0.0.1:8090"
 EOF
 cat > "$d/opt/nodo/apps/e2e-notes/settings.lua" <<'EOF'
 return { api_version = 1, settings = {
@@ -123,17 +131,31 @@ printf '%s\n' "$1" | nodo-tui --ctl approve-install-encrypted usb-feed e2e-notes
 printf '%s\n' "$2" | nodo-tui --ctl set e2e-notes token secret >/dev/null
 echo "kept in the volume" > /run/nodo/volumes/e2e-notes/data/notes.txt
 chown _e2e-notes: /run/nodo/volumes/e2e-notes/data/notes.txt
-# Caddy's storage as certificates leave it, owned by Caddy.
+# A public site, which starts Caddy.
+nodo-tui --ctl host e2e-notes notes notes.example.com >/dev/null
+nodo-tui --ctl expose e2e-notes notes 0 0 1 notes.example.com >/dev/null
+grep -q notes.example.com /var/lib/nodo-web/caddy.json
+# Caddy's storage as certificates leave it, owned by Caddy. Real certificates and keys, because
+# the running Caddy reads and cleans its storage.
 c=/var/lib/caddy/data/caddy
+sv -w 30 stop nodo-caddy >/dev/null
 mkdir -p "$c/certificates/acme-test/shop.example.com" "$c/pki/authorities/local"
-echo "certificate" > "$c/certificates/acme-test/shop.example.com/shop.example.com.crt"
-echo "private key" > "$c/certificates/acme-test/shop.example.com/shop.example.com.key"
-echo "local root" > "$c/pki/authorities/local/root.crt"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=shop.example.com \
+	-keyout "$c/certificates/acme-test/shop.example.com/shop.example.com.key" \
+	-out "$c/certificates/acme-test/shop.example.com/shop.example.com.crt" 2>/dev/null
+echo '{"sans":["shop.example.com"],"issuer_data":"private key"}' > "$c/certificates/acme-test/shop.example.com/shop.example.com.json"
+rm -f "$c/pki/authorities/local/root.crt" "$c/pki/authorities/local/root.key"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj "/CN=Caddy Local Authority - E2E Root" \
+	-keyout "$c/pki/authorities/local/root.key" -out "$c/pki/authorities/local/root.crt" 2>/dev/null
 chown -R _caddy: /var/lib/caddy/data
+sv start nodo-caddy >/dev/null
 SETUP
-check "the first device is set up with a feed, an encrypted package and a secret" v "sh /tmp/usb-setup.sh '$PASS1' '$TOKEN'"
+check "the first device is set up with a feed, an encrypted package, a secret and a public site" v "sh /tmp/usb-setup.sh '$PASS1' '$TOKEN'"
+# The files the setup gave Caddy, which a running Caddy leaves as they are. Caddy adds files of
+# its own, such as its instance id and locks, which are not compared.
+CADDY_FILES='/var/lib/caddy/data/caddy/certificates/acme-test /var/lib/caddy/data/caddy/pki/authorities/local/root.crt /var/lib/caddy/data/caddy/pki/authorities/local/root.key'
 # What the restored device must have again.
-v "cat /run/nodo/volumes/e2e-notes/data/notes.txt; cat /run/nodo/secrets/e2e-notes/env; find /var/lib/caddy/data/caddy -type f | sort | xargs sha256sum; nodo-tui --ctl feeds | sed -n 's/.*fingerprint: \"\\([^\"]*\\)\".*/\\1/p'" > "$root/build/usb-before.txt" 2>&1
+v "cat /run/nodo/volumes/e2e-notes/data/notes.txt; cat /run/nodo/secrets/e2e-notes/env; find $CADDY_FILES -type f | sort | xargs sha256sum; nodo-tui --ctl feeds | sed -n 's/.*fingerprint: \"\\([^\"]*\\)\".*/\\1/p'" > "$root/build/usb-before.txt" 2>&1
 check "the secret was rendered for the package" grep -q "$TOKEN" "$root/build/usb-before.txt"
 
 check "a backup to the stick needs the device passphrase" refused "NeedsConfirmation" "printf '\n%s\n' '$BPASS' | nodo-tui --ctl usb-backup $DEV"
@@ -220,9 +242,14 @@ check "its volume is recreated at the declared size, with the data and layout fr
 check "its service runs" v "$P"'running_for e2e-notes 3'
 check "the sealed secret opens with the restored device key" sh -c "\"$root/scripts/dev-vm.sh\" ssh 'cat /run/nodo/secrets/e2e-notes/env' | grep -q '$TOKEN'"
 check "Caddy's certificates and local CA are back, byte for byte, owned by Caddy" sh -c "
-	\"$root/scripts/dev-vm.sh\" ssh 'find /var/lib/caddy/data/caddy -type f | sort | xargs sha256sum' > $root/build/usb-after-certs.txt &&
+	\"$root/scripts/dev-vm.sh\" ssh 'find $CADDY_FILES -type f | sort | xargs sha256sum' > $root/build/usb-after-certs.txt &&
 	grep /var/lib/caddy $root/build/usb-before.txt | diff - $root/build/usb-after-certs.txt &&
 	\"$root/scripts/dev-vm.sh\" ssh '! find /var/lib/caddy/data -not -user _caddy | grep -q .'"
+check "the restore applied the public site to Caddy at once, without another change" sh -c "
+	grep -q 'site exposure applied to the proxy' $root/build/usb-restore.txt &&
+	\"$root/scripts/dev-vm.sh\" ssh 'grep -q notes.example.com /var/lib/nodo-web/caddy.json && sv status nodo-caddy | grep -q \"^run:\"' &&
+	\"$root/scripts/dev-vm.sh\" ssh 'nodo-tui --ctl sites' | grep -A8 'site: \"notes\"' | grep -q 'public: true'"
+check "the public host name came back with it" v "grep -q notes.example.com /var/lib/nodo/public-hosts.toml"
 check "after a restart of the helper, as after a reboot, the new passphrase unlocks the restored storage" v "
 	sv -w 30 restart nodo-helper >/dev/null; sleep 1; for _ in \$(seq 1 30); do nodo-tui --ctl services >/dev/null 2>&1 && break; sleep 1; done
 	sv -w 30 stop e2e-notes e2e-notes/log >/dev/null; umount /run/nodo/volumes/e2e-notes && cryptsetup close nodo-e2e-notes &&
