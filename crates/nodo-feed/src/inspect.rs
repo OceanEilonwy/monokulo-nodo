@@ -58,7 +58,6 @@ pub const BASE_PACKAGES: &[&str] = &[
     "libarchive",
     "monero",
     "monerod",
-    "monokulo",
     "musl",
     "nftables",
     "nodo",
