@@ -737,7 +737,7 @@ fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => {
             if ticks < state.retry_at_tick {
                 let seconds = (state.retry_at_tick - ticks).div_ceil(TICKS_PER_SECOND);
-                state.error = Some(format!("Please wait {seconds} seconds before trying again."));
+                state.error = Some(format!("Please wait {} before trying again.", counted(seconds, "second")));
             } else if state.input.is_empty() {
                 state.error = Some("Enter the device passphrase.".to_owned());
             } else {
