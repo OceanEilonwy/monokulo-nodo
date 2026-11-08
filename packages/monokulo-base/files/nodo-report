@@ -10,6 +10,20 @@ section "storage"; lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINT 2>/dev/n
 section "memory"; free -m
 section "services"; sv status /var/service/* 2>/dev/null
 section "firewall"; nft list ruleset 2>&1 | head -n 80
+# What listens on an abstract Unix socket, which kernels without Landlock scoping cannot keep
+# sandboxed services away from. nodo-healthd (nodo-tools) names each owner and exits 1 when one
+# is unexpected. Without it, the kernel's own list still shows the names.
+section "abstract Unix sockets"
+if command -v nodo-healthd >/dev/null 2>&1; then
+	timeout 30 nodo-healthd --abstract-sockets 2>&1
+	echo "(nodo-healthd exit status $?)"
+else
+	echo "nodo-healthd is not installed, so owners are not shown"
+	# Listening stream and seqpacket sockets have flags 00010000, and datagram sockets (type
+	# 0002) count once bound. Abstract names start with @.
+	awk 'NR > 1 && $8 ~ /^@/ && ($4 == "00010000" || $5 == "0002") { print $8, "type " $5, "inode " $7 }' \
+		/proc/net/unix 2>/dev/null | sort -u | grep . || echo "no abstract Unix sockets are listening"
+fi
 section "cuprated log"; tail -n 40 /var/log/cuprated/current 2>/dev/null
 section "kernel warnings and errors"; dmesg --level=err,warn 2>/dev/null | tail -n 60
 section "kernel network and storage"; dmesg 2>/dev/null | grep -iE 'r8169|r8125|eth0|nvme|mmc|xfs|firmware' | tail -n 60

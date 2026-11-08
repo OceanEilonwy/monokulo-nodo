@@ -3,7 +3,7 @@
 . "/src/boards/$BOARD/board.env"
 ARCH=$BOARD_ARCH
 if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0-9]*.xbps >/dev/null 2>&1; then
-	if push_packages nodo-caddy nodo-localnet >/dev/null && push_mirror_packages curl; then
+	if push_packages nodo-caddy nodo-localnet >/dev/null && push_mirror_packages curl python3; then
 		echo "PASS web test packages installed"
 		ssh_vm 'rm -rf /tmp/web && mkdir -p /tmp/web'
 		tar -C /src/crates/nodo-web/tests/fixtures/vm -cf - . | ssh_vm 'tar -C /tmp/web -xf -'

@@ -26,11 +26,23 @@ codebase, and signed xbps packages from user-added feeds.
   process and user and saying whether this kernel's sandbox can block it (Landlock ABI 6 or
   later, detected at runtime). The allow-list is empty, because the base system needs no
   abstract socket, and manifests cannot add to it. `nodo-healthd --abstract-sockets` prints the
-  list and exits 1 when something unexpected listens. monokulo-base's `nodo-report` is frozen
-  and does not include the list yet; it gains it after the hardware test. Sandboxes also get
-  `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The frozen
-  cuprated run script has neither change yet and needs both when it is next updated; a copy with both,
-  tried by hand in the VM, started cuprated, served RPC and stopped cleanly.
+  list and exits 1 when something unexpected listens, and monokulo-base's `nodo-report`
+  includes it (or the kernel's bare list when nodo-tools is missing). Sandboxes also get
+  `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The
+  cuprated run script has both, like every generated one: cuprated-service depends on
+  nodo-tools for nodo-confine, and cuprated gets no Unix socket.
+- **Node RPC:** cuprated serves only restricted RPC, on `127.0.0.1:18081`; the unrestricted
+  server is off and nothing puts RPC on the network. Apps reach it through the role
+  (`public_rpc_url` or `rpc-port`), which grants their sandbox that loopback port; the
+  helper reads `get_info` from it for Home, since the TUI may not. The firewall opens only P2P
+  (18080) inbound. cuprated-service's default `Cuprated.toml` and the helper's template in
+  nodo-tools must agree, which `crates/nodo-install/tests/cuprated_package.rs` checks.
+- **Images:** Every image appends monokulo-base's `dhcpcd-nodo-local.conf` to `/etc/dhcpcd.conf`
+  (dhcpcd owns that file): the `nodo-local` lease brings only an address, with no routes, DNS,
+  hostname, IPv6 or 169.254 fallback. The T6N images carry the platform (nodo-tools,
+  nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
+  nodo-autoupdate at boot; the helper starts the web services when sites need them. Monokulo
+  is a feed app and is installed through the helper, never baked into an image.
 - **Service rules:** Run scripts must `exec </dev/null`, because a console stdin makes cuprated flood its
   log. bwrap does not forward signals and `--die-with-parent` would SIGKILL the child, so `control/t`
   signals the real process. `packages/cuprated-service/` is the reference implementation.
