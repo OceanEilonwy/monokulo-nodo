@@ -1,0 +1,27 @@
+#!/bin/sh
+exec 2>&1
+exec </dev/null
+
+# Answers only for the names the helper lists, and only with the local address.
+names=/var/lib/nodo-localnet/mdns-names
+state=/run/nodo-localnet/state
+address=
+grep -q '^status=ready' "$state" 2>/dev/null && address=$(sed -n 's/^address=//p' "$state")
+if [ -z "$address" ] || [ ! -s "$names" ]; then
+	echo "not starting: no local address or no local names yet"
+	sleep 30
+	exit 1
+fi
+
+exec chpst -u _nodomdns:_nodomdns bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind "$names" "$names" \
+	--proc /proc \
+	--dev /dev \
+	--tmpfs /tmp \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/usr/bin/nodo-mdns --address "$address" --names "$names"

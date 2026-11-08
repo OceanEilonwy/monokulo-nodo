@@ -1,0 +1,11 @@
+#!/bin/sh
+# Takes the local address away whenever the service stops, so nothing keeps answering on it.
+dir=/run/nodo-localnet
+ip link del nodo-local 2>/dev/null
+if [ -s "$dir/static" ]; then
+	read -r parent address < "$dir/static"
+	ip addr del "$address" dev "$parent" 2>/dev/null
+	rm -f "$dir/static"
+fi
+grep -q '^status=ready' "$dir/state" 2>/dev/null && printf 'status=waiting\n' > "$dir/state"
+exit 0

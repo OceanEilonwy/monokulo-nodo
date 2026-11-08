@@ -17,7 +17,6 @@ result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi
 
 cleanup() {
 	sv -w 30 stop nodo-ddns >/dev/null 2>&1
-	sv exit nodo-ddns >/dev/null 2>&1
 	rm -f /etc/runit/runsvdir/default/nodo-ddns "$conf" /var/lib/nodo-ddns/state.json
 	ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null
 	ip netns del "$ns" 2>/dev/null

@@ -1,0 +1,3 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL nodo-mdns through --die-with-parent.
+exec pkill -TERM -u _nodomdns -x nodo-mdns
