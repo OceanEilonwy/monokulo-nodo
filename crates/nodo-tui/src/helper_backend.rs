@@ -561,6 +561,8 @@ impl ScreenData for HelperBackend {
                     onion_url: String::new(),
                     public_host: site.public_host,
                     locked: site.locked,
+                    // Rate limiting is the proxy's to report, which the helper does not relay yet.
+                    rate_limit_unenforced: false,
                 }
             })
             .collect();

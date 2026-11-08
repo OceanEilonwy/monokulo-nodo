@@ -339,7 +339,19 @@ pub fn check(t: &Theme, state: &WebCheckState) -> Page {
     page.footer(Item::Text(hints(t, &[("r", "check again"), ("?", "router guides"), ("o", "turn on Tor onion"), ("Esc", "back")])))
 }
 
-pub fn confirm(t: &Theme, state: &WebConfirmState) -> Page {
+fn rate_limit_row(t: &Theme, app: &App, site: &str) -> Item {
+    let unenforced = app.data.web.sites.iter().any(|s| s.package == site && s.rate_limit_unenforced);
+    if unenforced {
+        Item::Row(
+            Line::from(vec![t.a("▲"), t.n(" Repeated requests are not rate-limited for this site")]),
+            Line::from(t.d("Not enforced")),
+        )
+    } else {
+        Item::Row(Line::from(vec![t.o("●"), t.n(" Repeated requests are rate-limited")]), Line::from(t.d("Always")))
+    }
+}
+
+pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     let plan = &state.plan;
     let pair = |label: &str, value: &str| Item::Row(Line::from(t.d(label.to_owned())), Line::from(t.n(value.to_owned())));
     let access_row = |focus: ConfirmFocus, on: bool, label: &str, note: &str| {
@@ -379,12 +391,11 @@ pub fn confirm(t: &Theme, state: &WebConfirmState) -> Page {
                     "Require a password in front of this site",
                     &format!("{} has its own login", state.site),
                 ),
-                access_row(ConfirmFocus::RateLimit, state.access.rate_limit, "Rate-limit repeated requests", "Recommended"),
-                access_row(
-                    ConfirmFocus::HideAdmin,
-                    state.access.hide_admin,
-                    "Hide admin paths from the public",
-                    "/admin stays local network only",
+                rate_limit_row(t, app, &state.site),
+                // Not a choice: the proxy never serves admin paths on a public address.
+                Item::Row(
+                    Line::from(vec![t.o("●"), t.n(" Admin paths are blocked from the public")]),
+                    Line::from(t.d("Always")),
                 ),
             ],
         ))

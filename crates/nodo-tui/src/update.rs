@@ -1542,8 +1542,6 @@ fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     match state.focus {
         ConfirmFocus::Password if key.code == KeyCode::Char(' ') => state.access.require_password ^= true,
-        ConfirmFocus::RateLimit if key.code == KeyCode::Char(' ') => state.access.rate_limit ^= true,
-        ConfirmFocus::HideAdmin if key.code == KeyCode::Char(' ') => state.access.hide_admin ^= true,
         ConfirmFocus::Address => {
             if key.code == KeyCode::Enter {
                 // Enter never publishes from here. It only moves on, once the text is exact.
@@ -1971,7 +1969,7 @@ fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reac
             Screen::WebConfirm(WebConfirmState {
                 site,
                 plan,
-                access: PublicAccess { require_password: false, rate_limit: true, hide_admin: true },
+                access: PublicAccess { require_password: false },
                 focus: ConfirmFocus::Address,
                 typed: Input::plain(""),
                 error: None,

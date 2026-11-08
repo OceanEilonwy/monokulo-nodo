@@ -459,6 +459,9 @@ pub struct Site {
     /// Host name, without a scheme, because this is the text the user types to go public.
     pub public_host: Option<String>,
     pub locked: bool,
+    /// Rate limiting is always on for public sites, except where the proxy reports it cannot
+    /// enforce it for this site.
+    pub rate_limit_unenforced: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -522,8 +525,6 @@ pub enum Reachability {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PublicAccess {
     pub require_password: bool,
-    pub rate_limit: bool,
-    pub hide_admin: bool,
 }
 
 /// Read-only text shown in an overlay.

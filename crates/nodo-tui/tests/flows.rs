@@ -290,7 +290,7 @@ fn going_public_requires_typing_the_exact_address() {
     key(&mut app, &mut mock, ENTER);
     assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
     assert_eq!(app.screen.id(), ScreenId::WebSites);
-    assert!(mock.public_access["shop"].rate_limit);
+    assert!(!mock.public_access["shop"].require_password);
 }
 
 #[test]

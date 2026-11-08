@@ -268,8 +268,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::WebConfirm => &[
             "Web › shop › Go public", "✓ All checks passed", "This puts shop on the public internet", "https://shop.example.com",
             "shop.example.com  A  203.0.113.42", "Opens 80 and 443", "[ ] Require a password in front of this site",
-            "shop has its own login", "[x] Rate-limit repeated requests", "Recommended", "[x] Hide admin paths from the public",
-            "/admin stays local network only", "▲ Your home IP will be published, and DNS history can keep it after you stop.",
+            "shop has its own login", "Repeated requests are rate-limited", "Admin paths are blocked from the public",
+            "▲ Your home IP will be published, and DNS history can keep it after you stop.",
             "▲ Anyone can link this domain to your IP, including your Monero node's IP.",
             "▲ Certificate logs record shop.example.com permanently.",
             "You can take this offline at any time from the Web tab.", "Type the address to confirm",

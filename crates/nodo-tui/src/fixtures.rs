@@ -174,7 +174,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::WebConfirm(WebConfirmState {
                 site: "shop".to_owned(),
                 plan,
-                access: PublicAccess { require_password: false, rate_limit: true, hide_admin: true },
+                access: PublicAccess { require_password: false },
                 focus: ConfirmFocus::Address,
                 typed: typed("shop.example.com"),
                 error: None,

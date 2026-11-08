@@ -429,18 +429,14 @@ pub struct WebCheckState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmFocus {
     Password,
-    RateLimit,
-    HideAdmin,
     Address,
     Cancel,
     GoPublic,
 }
 
 impl ConfirmFocus {
-    pub const ORDER: [ConfirmFocus; 6] = [
+    pub const ORDER: [ConfirmFocus; 4] = [
         ConfirmFocus::Password,
-        ConfirmFocus::RateLimit,
-        ConfirmFocus::HideAdmin,
         ConfirmFocus::Address,
         ConfirmFocus::Cancel,
         ConfirmFocus::GoPublic,

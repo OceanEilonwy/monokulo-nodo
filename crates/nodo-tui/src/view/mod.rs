@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebExposure(state) => web::exposure(app, t, state),
         Screen::WebProviders(state) => web::providers(app, t, state),
         Screen::WebCheck(state) => web::check(t, state),
-        Screen::WebConfirm(state) => web::confirm(t, state),
+        Screen::WebConfirm(state) => web::confirm(app, t, state),
         Screen::WebCgnat(state) => web::cgnat(t, state),
         Screen::Setup(state) => setup::setup(t, state),
     };

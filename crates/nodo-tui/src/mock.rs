@@ -1341,6 +1341,7 @@ fn sample_web() -> WebOverview {
         onion_url: s(onion),
         public_host: host.map(s),
         locked,
+        rate_limit_unenforced: false,
     };
     WebOverview {
         sites: vec![
