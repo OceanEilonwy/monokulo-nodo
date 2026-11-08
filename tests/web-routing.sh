@@ -24,6 +24,7 @@ cleanup() {
 	done
 	ip link del weblan0 2>/dev/null
 	ip link del webinet0 2>/dev/null
+	sv exit nodo-caddy >/dev/null 2>&1
 	rm -f /etc/runit/runsvdir/default/nodo-caddy /etc/nftables.d/nodo-web.nft /var/lib/nodo-web/caddy.json
 	nft -f /etc/nftables.conf
 	rm -rf /tmp/up-shop /tmp/up-blog /tmp/body

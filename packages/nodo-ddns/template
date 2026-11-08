@@ -1,0 +1,33 @@
+# Template file for 'nodo-ddns'
+# Built from this repository's workspace, which the build container mounts at /src. The recipe hash
+# in scripts/lib.sh also covers the paths named on the monokulo-sources line, so source edits rebuild.
+# monokulo-sources: Cargo.toml Cargo.lock crates
+pkgname=nodo-ddns
+version=0.1.0
+revision=1
+archs="aarch64 x86_64"
+build_style=cargo
+make_build_args="-p nodo-web --bin nodo-ddns"
+make_install_args="--path crates/nodo-web --bin nodo-ddns"
+depends="bubblewrap nftables procps-ng ca-certificates"
+short_desc="Dynamic DNS service for monokulo-nodo public sites"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/OceanEilonwy/monokulo-nodo"
+system_accounts="_nododdns"
+_nododdns_homedir="/var/lib/nodo-ddns"
+make_dirs="/var/lib/nodo-ddns 0700 _nododdns _nododdns
+ /etc/nodo-ddns 0750 root _nododdns
+ /var/log/nodo-ddns 0750 _nododdns _nododdns"
+
+do_extract() {
+	mkdir -p "${wrksrc}"
+	cp -r /src/Cargo.toml /src/Cargo.lock /src/crates "${wrksrc}/"
+}
+
+post_install() {
+	vinstall ${FILESDIR}/nodo-ddns.nft 644 etc/nftables.d
+	vsv nodo-ddns
+	vmkdir etc/sv/nodo-ddns/control
+	vinstall ${FILESDIR}/nodo-ddns/control/t 755 etc/sv/nodo-ddns/control
+}
