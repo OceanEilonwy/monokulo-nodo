@@ -20,7 +20,8 @@ codebase, and signed xbps packages from user-added feeds.
   (Caddy, apps with a socket upstream or dependency) can still reach abstract sockets, and their
   log says so; services without one cannot create Unix sockets at all. Sandboxes also get
   `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The frozen
-  cuprated run script has neither change yet and needs both when it is next updated.
+  cuprated run script has neither change yet and needs both when it is next updated; a copy with both,
+  tried by hand in the VM, started cuprated, served RPC and stopped cleanly.
 - **Service rules:** Run scripts must `exec </dev/null`, because a console stdin makes cuprated flood its
   log. bwrap does not forward signals and `--die-with-parent` would SIGKILL the child, so `control/t`
   signals the real process. `packages/cuprated-service/` is the reference implementation.

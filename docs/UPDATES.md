@@ -102,8 +102,8 @@ machine for `nodo` (which needs the builder image there) and `sign`, and the sig
 carried back and uploaded. The tests use throwaway keys made in `build/snapshot-test` by
 `tests/snapshot-prepare.sh`; no real key exists in this repository.
 
-**Proven in the KVM VM** by `tests/snapshot-prepare.sh` and `tests/snapshot-update.sh`, with Caddy
-as the server in a network namespace: a signed snapshot applies over plain HTTP and installs its
+**Checked in the KVM VM** with `tests/snapshot-prepare.sh` and the steps of `tests/snapshot-update.sh`,
+run by hand (the script has not yet run as a whole), with Caddy as the server in a network namespace: a signed snapshot applies over plain HTTP and installs its
 xbps key; unsigned, tampered, foreign-key and expired manifests, a tampered index and a tampered
 package are refused with nothing changed; the next snapshot applies over HTTPS, updates a test
 service package, and the service comes back on the new version while the helper keeps running;
