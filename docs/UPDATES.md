@@ -214,7 +214,7 @@ user rewrites it; when the system disk is low, rotated files are pruned oldest f
 Time: `chronyc -n tracking` decides `synced`, which nodo-update uses for manifest expiry. The
 report is `/run/nodo/health.json`.
 
-VM proof, `tests/health/disk-full.sh`, all 17 checks passing in the x86_64 KVM dev VM with the
+VM proof, `tests/health/disk-full.sh`, all 16 checks passing in the x86_64 KVM dev VM with the
 real cuprated: its data goes on a 300 MB loop filesystem. The control starts cuprated on a full
 disk without protection and sees it crash-loop (50 starts and 50 `No space left on device` panics
 in 45 s), which shows the checks can fail. With the daemon running: a low disk only warns; below
