@@ -8,7 +8,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod acme;
 pub mod caddy;
+pub mod cert;
 pub mod daemon;
 pub mod detect;
 pub mod dns;

@@ -302,7 +302,7 @@ fn tls_issuers_match_each_exposure() {
     assert_eq!(policies[0].subjects, vec!["shop.local"]);
     assert_eq!(policies[0].issuers, vec![Issuer::Internal]);
     assert_eq!(policies[1].subjects, vec!["shop.example.com"]);
-    assert_eq!(policies[1].issuers, vec![Issuer::Acme { email: Some("me@example.com".to_owned()), challenges: None }]);
+    assert_eq!(policies[1].issuers, vec![Issuer::Acme { ca: LETS_ENCRYPT.to_owned(), email: Some("me@example.com".to_owned()), challenges: None }]);
     assert!(!plan.caddy.apps.pki.as_ref().unwrap().certificate_authorities["local"].install_trust);
     for name in ["public", "local"] {
         assert!(!plan.caddy.apps.http.servers[name].automatic_https.disable);
@@ -703,7 +703,9 @@ fn every_dns_challenge() -> Vec<(&'static str, DnsChallenge)> {
 
 fn dns_challenge_plan(challenge: DnsChallenge) -> WebPlan {
     let shop = site("shop", "shop", 3001, Exposure { public: true, ..Exposure::default() });
-    generate(&[shop], &DomainSettings { dns_challenge: Some(challenge), ..settings() }).unwrap()
+    // The VM only validates these files, so they carry no log file for Caddy to open.
+    let acme = AcmeConfig { events_log: None, ..AcmeConfig::default() };
+    generate(&[shop], &DomainSettings { dns_challenge: Some(challenge), acme, ..settings() }).unwrap()
 }
 
 #[test]
@@ -762,6 +764,7 @@ fn vm_fixture_matches_the_generator() {
     for policy in &mut plan.caddy.apps.tls.as_mut().unwrap().automation.policies {
         policy.issuers = vec![Issuer::Internal];
     }
+    plan.caddy.logging = None;
     let caddy = serde_json::to_string_pretty(&plan.caddy).unwrap() + "\n";
     let nft = render_nft(&plan.firewall);
     let names = plan.local.mdns_names.join("\n") + "\n";
@@ -813,4 +816,163 @@ fn sites_that_are_off_never_block_the_others() {
     assert!(generate(&[on.clone(), copy.clone()], &settings()).is_ok());
     copy.exposure.local = true;
     assert!(matches!(generate(&[on, copy], &settings()), Err(WebConfigError::SharedUpstream { .. })));
+}
+
+fn cloudflare() -> DnsChallenge {
+    DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") }
+}
+
+#[test]
+fn acme_issuer_names_its_directory_and_dns01_disables_the_port_challenges() {
+    let shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    let plan = generate(std::slice::from_ref(&shop), &settings()).unwrap();
+    let value = json(&plan);
+    let issuer = &value["apps"]["tls"]["automation"]["policies"][0]["issuers"][0];
+    assert_eq!(issuer["ca"], LETS_ENCRYPT);
+    // Without DNS-01 Caddy uses HTTP-01 and TLS-ALPN-01, which need the forwarded ports.
+    assert!(issuer.get("challenges").is_none());
+    assert_eq!(value["logging"]["logs"]["nodo_tls"]["writer"]["filename"], TLS_EVENTS_LOG);
+    assert_eq!(value["logging"]["logs"]["nodo_tls"]["level"], "DEBUG");
+    assert!(value["apps"]["tls"]["automation"].get("renew_interval").is_none());
+
+    let staging = DomainSettings {
+        dns_challenge: Some(cloudflare()),
+        acme: AcmeConfig { directory: LETS_ENCRYPT_STAGING.to_owned(), ..AcmeConfig::default() },
+        ..settings()
+    };
+    let value = json(&generate(std::slice::from_ref(&shop), &staging).unwrap());
+    let issuer = &value["apps"]["tls"]["automation"]["policies"][0]["issuers"][0];
+    assert_eq!(issuer["ca"], LETS_ENCRYPT_STAGING);
+    assert_eq!(issuer["challenges"]["dns"]["provider"]["name"], "cloudflare");
+    // Production keeps Caddy's propagation check.
+    assert!(issuer["challenges"]["dns"].get("propagation_timeout").is_none());
+
+    let test = DomainSettings {
+        dns_challenge: Some(cloudflare()),
+        acme: AcmeConfig {
+            directory: "https://203.0.113.1/dir".to_owned(),
+            dns_propagation_check: false,
+            renew_interval_secs: Some(10),
+            events_log: Some(TLS_EVENTS_LOG.to_owned()),
+        },
+        ..settings()
+    };
+    let value = json(&generate(&[shop], &test).unwrap());
+    let dns = &value["apps"]["tls"]["automation"]["policies"][0]["issuers"][0]["challenges"]["dns"];
+    assert_eq!(dns["propagation_timeout"], -1);
+    assert_eq!(value["apps"]["tls"]["automation"]["renew_interval"], "10s");
+}
+
+#[test]
+fn no_acme_site_means_no_certificate_log() {
+    let local = site("a", "a", 8001, Exposure { local: true, ..Exposure::default() });
+    assert!(json(&generate(&[local], &settings()).unwrap()).get("logging").is_none());
+}
+
+#[test]
+fn hostile_directories_and_log_paths_are_refused() {
+    let shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    for directory in ["http://acme.test/dir", "https://", "https://a/{env.HOME}", "https://a b/dir", "ftp://x"] {
+        let bad = DomainSettings {
+            acme: AcmeConfig { directory: directory.to_owned(), ..AcmeConfig::default() },
+            ..settings()
+        };
+        assert!(
+            matches!(
+                generate(std::slice::from_ref(&shop), &bad),
+                Err(WebConfigError::InvalidSetting { field: "acme_directory", .. })
+            ),
+            "{directory}"
+        );
+    }
+    let bad = DomainSettings {
+        acme: AcmeConfig { events_log: Some("/var/lib/{x}".to_owned()), ..AcmeConfig::default() },
+        ..settings()
+    };
+    assert!(generate(&[shop], &bad).is_err());
+}
+
+#[test]
+fn a_kept_provider_block_is_reused_while_locked_and_stays_out_of_debug() {
+    let shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    let with_dns = DomainSettings { dns_challenge: Some(cloudflare()), ..settings() };
+    let old = json(&generate(std::slice::from_ref(&shop), &with_dns).unwrap());
+    let kept = DnsChallenge::kept_from(&old).unwrap();
+    assert!(!format!("{kept:?}").contains("cfut_"));
+    assert_eq!(kept.module(), "cloudflare");
+    let again = generate(std::slice::from_ref(&shop), &DomainSettings { dns_challenge: Some(kept), ..settings() }).unwrap();
+    assert_eq!(json(&again), old);
+    assert_eq!(DnsChallenge::kept_from(&json(&generate(&[], &settings()).unwrap())), None);
+    // A damaged block with a placeholder is refused like typed credentials are.
+    let hostile =
+        DnsChallenge::Kept(KeptProvider(serde_json::json!({"name": "cloudflare", "api_token": "{env.HOME}"})));
+    assert!(generate(&[shop], &DomainSettings { dns_challenge: Some(hostile), ..settings() }).is_err());
+}
+
+fn local_domain_settings(dns: Option<DnsChallenge>) -> DomainSettings {
+    DomainSettings { local_domain: Some("home.example.com".to_owned()), dns_challenge: dns, ..settings() }
+}
+
+#[test]
+fn local_names_under_the_owners_domain_get_acme_on_the_local_listener_only() {
+    let shop = site("shop", "shop", 8080, Exposure { local: true, public: true, ..Exposure::default() });
+    let plan = generate(&[shop], &local_domain_settings(Some(cloudflare()))).unwrap();
+    let local_host = "shop.home.example.com";
+    assert_eq!(plan.local.dns_names, vec![local_host]);
+    assert!(plan.local.mdns_names.is_empty());
+    assert!(plan.local.waiting.is_empty());
+    // Served on the local address, for LAN clients only, and never on the public listener.
+    assert_eq!(request(&plan, "local", local_host, "/admin", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "local", local_host, "/", INTERNET_CLIENT), Outcome::Dropped);
+    assert_eq!(request(&plan, "public", local_host, "/", INTERNET_CLIENT), Outcome::Dropped);
+    let servers = &plan.caddy.apps.http.servers;
+    assert_eq!(servers["local"].listen, vec!["192.168.1.60:10444"]);
+    assert!(servers["local"].automatic_https.disable_redirects);
+    assert!(!servers["public"].tls_connection_policies[0].matcher.sni.iter().any(|h| h == local_host));
+    assert_eq!(servers["local"].tls_connection_policies[0].matcher.sni, vec![local_host]);
+    // Its certificate comes from ACME through DNS-01, so no internal CA is needed at all.
+    let policies = &plan.caddy.apps.tls.as_ref().unwrap().automation.policies;
+    let local_policy = policies.iter().find(|p| p.subjects == [local_host]).unwrap();
+    assert!(matches!(&local_policy.issuers[0], Issuer::Acme { challenges: Some(_), .. }));
+    assert!(plan.caddy.apps.pki.is_none());
+    assert_eq!(plan.firewall.local.as_ref().unwrap().address, LOCAL_IP);
+}
+
+#[test]
+fn local_names_under_the_domain_wait_without_dns01_and_never_fall_back() {
+    let shop = site("shop", "shop", 8080, Exposure { local: true, ..Exposure::default() });
+    let plan = generate(&[shop], &local_domain_settings(None)).unwrap();
+    assert_eq!(plan.local.waiting.len(), 1);
+    assert_eq!(plan.local.names_problem, Some(LOCAL_NAMES_NEED_DNS01));
+    assert_eq!(plan.local.remedy, Some(LOCAL_NAMES_NEED_DNS01));
+    assert!(plan.caddy.apps.http.servers.is_empty());
+    assert!(plan.local.dns_names.is_empty() && plan.local.mdns_names.is_empty());
+    assert!(plan.firewall.local.is_none());
+}
+
+#[test]
+fn local_domain_is_validated_and_cannot_share_a_public_name() {
+    let shop = site("shop", "shop", 8080, Exposure { local: true, ..Exposure::default() });
+    for bad in ["home.local", "x", "home..example.com", "{a}.com"] {
+        let settings = DomainSettings { local_domain: Some(bad.to_owned()), ..local_domain_settings(Some(cloudflare())) };
+        assert!(generate(std::slice::from_ref(&shop), &settings).is_err(), "{bad}");
+    }
+    // One DNS name never points at both the home IP and the LAN address.
+    let mut both = site("shop", "shop", 8080, Exposure { local: true, public: true, ..Exposure::default() });
+    both.public_host = Some("shop.home.example.com".to_owned());
+    assert!(matches!(
+        generate(&[both], &local_domain_settings(Some(cloudflare()))),
+        Err(WebConfigError::DuplicateHost { .. })
+    ));
+}
+
+#[test]
+fn dot_local_stays_the_default_with_the_internal_ca() {
+    let shop = site("shop", "shop", 8080, Exposure { local: true, ..Exposure::default() });
+    let plan = generate(&[shop], &DomainSettings { dns_challenge: Some(cloudflare()), ..settings() }).unwrap();
+    assert_eq!(plan.local.mdns_names, vec!["shop.local"]);
+    assert!(plan.local.dns_names.is_empty());
+    let policies = &plan.caddy.apps.tls.as_ref().unwrap().automation.policies;
+    assert_eq!(policies.len(), 1);
+    assert_eq!(policies[0].issuers, vec![Issuer::Internal]);
 }

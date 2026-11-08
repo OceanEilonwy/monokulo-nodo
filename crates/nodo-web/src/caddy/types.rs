@@ -8,7 +8,36 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaddyConfig {
     pub admin: Admin,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logging: Option<Logging>,
     pub apps: Apps,
+}
+
+/// Extra log sinks. The default log, which goes to the service log, is left as it is.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Logging {
+    pub logs: BTreeMap<String, LogSink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LogSink {
+    pub writer: LogWriter,
+    pub encoder: LogEncoder,
+    pub level: String,
+    pub include: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LogWriter {
+    pub output: String,
+    pub filename: String,
+    pub roll_size_mb: u32,
+    pub roll_keep: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LogEncoder {
+    pub format: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -156,6 +185,9 @@ pub struct TlsApp {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TlsAutomation {
     pub policies: Vec<AutomationPolicy>,
+    /// How often Caddy checks whether certificates need renewing. Its default is ten minutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renew_interval: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -168,6 +200,8 @@ pub struct AutomationPolicy {
 #[serde(tag = "module", rename_all = "snake_case")]
 pub enum Issuer {
     Acme {
+        /// The ACME directory URL.
+        ca: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         email: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -185,6 +219,11 @@ pub struct AcmeChallenges {
 #[derive(Clone, PartialEq, Serialize)]
 pub struct DnsChallengeConfig {
     pub provider: serde_json::Value,
+    /// `-1` turns Caddy's check that the record is visible at the authoritative servers off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub propagation_timeout: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub propagation_delay: Option<String>,
 }
 
 impl std::fmt::Debug for DnsChallengeConfig {

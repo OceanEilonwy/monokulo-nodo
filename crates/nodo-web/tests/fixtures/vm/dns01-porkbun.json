@@ -132,6 +132,7 @@
             "issuers": [
               {
                 "module": "acme",
+                "ca": "https://acme-v02.api.letsencrypt.org/directory",
                 "challenges": {
                   "dns": {
                     "provider": {

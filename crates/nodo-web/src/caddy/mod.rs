@@ -52,6 +52,13 @@ const ONION_VIRTUAL_PORT: u16 = 80;
 const INTERNAL_CA: &str = "local";
 const APEX: &str = "@";
 
+pub const LETS_ENCRYPT: &str = "https://acme-v02.api.letsencrypt.org/directory";
+pub const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
+/// Caddy writes certificate progress and errors here, inside its own state directory, for the helper.
+pub const TLS_EVENTS_LOG: &str = "/var/lib/caddy/nodo-tls.log";
+/// The loggers whose lines say how obtaining and renewing went. `events` logs at debug level only.
+const TLS_LOGGERS: [&str; 4] = ["events", "tls.obtain", "tls.renew", "tls.issuance.acme"];
+
 const UNAVAILABLE_PAGE: &str = "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unavailable</title>\
 <body><h1>This site is unavailable</h1><p>Please try again later.</p></body></html>";
 
@@ -92,6 +99,11 @@ pub enum WebConfigError {
     #[error("no free loopback port for onion sites")]
     OutOfOnionPorts,
 }
+
+/// Why local sites named under the owner's domain wait. DNS-01 is the only challenge that works
+/// for them, because the local address is never reachable from the internet.
+pub const LOCAL_NAMES_NEED_DNS01: &str = "Local names under your domain need certificates through your DNS provider. \
+Connect a provider that supports it, unlock the device, or switch local names back to .local.";
 
 /// One site as the helper knows it: what the package declared, plus what the user chose.
 #[derive(Debug, Clone, PartialEq)]
@@ -138,9 +150,62 @@ pub enum DnsChallenge {
     Gandi { personal_access_token: Secret },
     NameCom { username: String, api_token: Secret },
     Alibaba { access_key_id: Secret, access_key_secret: Secret },
+    /// The provider block of the config Caddy already runs. While the device is locked the sealed
+    /// credentials cannot be opened, and dropping DNS-01 then would break renewals for an owner who
+    /// forwards no ports.
+    Kept(KeptProvider),
+}
+
+/// A provider block copied from a config this crate generated earlier. It holds credentials.
+#[derive(Clone, PartialEq)]
+pub struct KeptProvider(pub serde_json::Value);
+
+impl std::fmt::Debug for KeptProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("KeptProvider").field(&self.0["name"]).finish()
+    }
+}
+
+/// Which ACME server issues public certificates, and how Caddy talks to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AcmeConfig {
+    /// Let's Encrypt, its staging server, or a test server.
+    pub directory: String,
+    /// Caddy normally waits until a DNS-01 record is visible at the zone's own name servers before
+    /// asking for validation. A test DNS server that cannot answer SOA queries needs this off.
+    pub dns_propagation_check: bool,
+    pub renew_interval_secs: Option<u32>,
+    /// Where Caddy logs certificate progress and errors for the helper to read.
+    pub events_log: Option<String>,
+}
+
+impl Default for AcmeConfig {
+    fn default() -> Self {
+        Self {
+            directory: LETS_ENCRYPT.to_owned(),
+            dns_propagation_check: true,
+            renew_interval_secs: None,
+            events_log: Some(TLS_EVENTS_LOG.to_owned()),
+        }
+    }
 }
 
 impl DnsChallenge {
+    /// The provider block of an ACME issuer in a config generated earlier, if it used DNS-01.
+    pub fn kept_from(config: &serde_json::Value) -> Option<DnsChallenge> {
+        config["apps"]["tls"]["automation"]["policies"]
+            .as_array()?
+            .iter()
+            .flat_map(|policy| policy["issuers"].as_array().into_iter().flatten())
+            .find_map(|issuer| issuer["challenges"]["dns"]["provider"].as_object().cloned())
+            .map(|provider| DnsChallenge::Kept(KeptProvider(serde_json::Value::Object(provider))))
+    }
+
+    /// The caddy-dns module name, for the screens.
+    pub fn module(&self) -> String {
+        self.provider_json()["name"].as_str().unwrap_or_default().to_owned()
+    }
+
     fn values(&self) -> Vec<&str> {
         match self {
             Self::Porkbun { api_key, secret_key } => vec![api_key.expose(), secret_key.expose()],
@@ -149,6 +214,13 @@ impl DnsChallenge {
             Self::Gandi { personal_access_token } => vec![personal_access_token.expose()],
             Self::NameCom { username, api_token } => vec![username, api_token.expose()],
             Self::Alibaba { access_key_id, access_key_secret } => vec![access_key_id.expose(), access_key_secret.expose()],
+            Self::Kept(KeptProvider(value)) => match value.as_object() {
+                Some(fields) if fields.values().all(serde_json::Value::is_string) => {
+                    fields.values().filter_map(serde_json::Value::as_str).collect()
+                }
+                // Only flat string fields are ever generated, so anything else fails validation.
+                _ => vec![""],
+            },
         }
     }
 
@@ -188,6 +260,7 @@ impl DnsChallenge {
             Self::Alibaba { access_key_id, access_key_secret } => json!({
                 "name": "alidns", "access_key_id": access_key_id.expose(), "access_key_secret": access_key_secret.expose()
             }),
+            Self::Kept(KeptProvider(value)) => value.clone(),
         }
     }
 }
@@ -212,6 +285,10 @@ pub struct DomainSettings {
     pub rate_limit: Option<RateLimit>,
     /// `None` uses the HTTP and TLS-ALPN challenges, which need ports 80 and 443 forwarded.
     pub dns_challenge: Option<DnsChallenge>,
+    pub acme: AcmeConfig,
+    /// Names local sites `<label>.<local_domain>` with a public certificate through DNS-01, instead
+    /// of `<label>.local` with the internal CA. The names still resolve only to the local address.
+    pub local_domain: Option<String>,
 }
 
 impl Default for DomainSettings {
@@ -227,6 +304,8 @@ impl Default for DomainSettings {
             admin_listen: "unix//run/nodo-web/caddy-admin.sock".to_owned(),
             rate_limit: Some(RateLimit::default()),
             dns_challenge: None,
+            acme: AcmeConfig::default(),
+            local_domain: None,
         }
     }
 }
@@ -280,6 +359,10 @@ pub struct LocalStatus {
     pub mdns_names: Vec<String>,
     /// What the user can do when sites are waiting. Every reason offers a static address or a fix.
     pub remedy: Option<&'static str>,
+    /// Local names under the owner's domain. Each needs a DNS record pointing at the local address.
+    pub dns_names: Vec<String>,
+    /// Why local sites named under the owner's domain wait, when the address itself is fine.
+    pub names_problem: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -377,6 +460,8 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     };
     let local_listen = local_ip.map(|ip| format!("{ip}:{CADDY_LOCAL_PORT}")).unwrap_or_default();
     let mut local_waiting = Vec::new();
+    let mut local_dns_names = Vec::new();
+    let mut names_problem = None;
 
     for item in &resolved {
         let site = item.site;
@@ -403,10 +488,19 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             plan_addresses.push(address(AddressKind::Public, host, format!("https://{host}"), &public_listen));
         }
 
-        if let (Some(_), None) = (&item.local, local_ip) {
+        // A name under the owner's domain can only get its certificate through DNS-01.
+        let needs_dns01 = item.local.as_ref().is_some_and(|host| !names::is_local_name(host));
+        let names_blocked = needs_dns01 && settings.dns_challenge.is_none();
+        if item.local.is_some() && (local_ip.is_none() || names_blocked) {
             local_waiting.push(site_ref());
+            if local_ip.is_some() {
+                names_problem = Some(LOCAL_NAMES_NEED_DNS01);
+            }
         }
-        if let Some(host) = item.local.as_ref().filter(|_| local_ip.is_some()) {
+        if let Some(host) = item.local.as_ref().filter(|_| local_ip.is_some() && !names_blocked) {
+            if needs_dns01 {
+                local_dns_names.push(host.clone());
+            }
             local_routes.push(host_route(
                 Matcher {
                     host: vec![host.clone()],
@@ -460,19 +554,29 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     }
 
     let mut policies = Vec::new();
-    if !local_subjects.is_empty() {
-        policies.push(AutomationPolicy { subjects: local_subjects.clone(), issuers: vec![Issuer::Internal] });
+    let internal_subjects: Vec<String> =
+        local_subjects.iter().filter(|host| names::is_local_name(host)).cloned().collect();
+    if !internal_subjects.is_empty() {
+        policies.push(AutomationPolicy { subjects: internal_subjects.clone(), issuers: vec![Issuer::Internal] });
     }
+    let acme_issuer = || Issuer::Acme {
+        ca: settings.acme.directory.clone(),
+        email: settings.acme_email.clone(),
+        // Caddy uses only DNS-01 when it is configured, so no inbound port is needed then.
+        challenges: settings.dns_challenge.as_ref().map(|challenge| AcmeChallenges {
+            dns: DnsChallengeConfig {
+                provider: challenge.provider_json(),
+                propagation_timeout: (!settings.acme.dns_propagation_check).then_some(-1),
+                propagation_delay: (!settings.acme.dns_propagation_check).then(|| "2s".to_owned()),
+            },
+        }),
+    };
+    if !local_dns_names.is_empty() {
+        policies.push(AutomationPolicy { subjects: local_dns_names.clone(), issuers: vec![acme_issuer()] });
+    }
+    let any_acme = !public_subjects.is_empty() || !local_dns_names.is_empty();
     if !public_subjects.is_empty() {
-        policies.push(AutomationPolicy {
-            subjects: public_subjects,
-            issuers: vec![Issuer::Acme {
-                email: settings.acme_email.clone(),
-                challenges: settings.dns_challenge.as_ref().map(|challenge| AcmeChallenges {
-                    dns: DnsChallengeConfig { provider: challenge.provider_json() },
-                }),
-            }],
-        });
+        policies.push(AutomationPolicy { subjects: public_subjects, issuers: vec![acme_issuer()] });
     }
 
     let firewall = FirewallPlan {
@@ -497,11 +601,32 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     Ok(WebPlan {
         caddy: CaddyConfig {
             admin: Admin { listen: settings.admin_listen.clone(), config: AdminConfig { persist: false } },
+            logging: settings.acme.events_log.as_ref().filter(|_| any_acme).map(|path| Logging {
+                logs: BTreeMap::from([(
+                    "nodo_tls".to_owned(),
+                    LogSink {
+                        writer: LogWriter {
+                            output: "file".to_owned(),
+                            filename: path.clone(),
+                            roll_size_mb: 1,
+                            roll_keep: 2,
+                        },
+                        encoder: LogEncoder { format: "json".to_owned() },
+                        level: "DEBUG".to_owned(),
+                        include: TLS_LOGGERS.iter().map(|l| (*l).to_owned()).collect(),
+                    },
+                )]),
+            }),
             apps: Apps {
                 http: HttpApp { http_port: CADDY_HTTP_PORT, https_port: CADDY_HTTPS_PORT, servers },
-                tls: (!policies.is_empty()).then_some(TlsApp { automation: TlsAutomation { policies } }),
+                tls: (!policies.is_empty()).then(|| TlsApp {
+                    automation: TlsAutomation {
+                        policies,
+                        renew_interval: settings.acme.renew_interval_secs.map(|secs| format!("{secs}s")),
+                    },
+                }),
                 // Stops Caddy trying to install its root in the system trust store, which needs a prompt.
-                pki: any_local.then(|| PkiApp {
+                pki: (!internal_subjects.is_empty()).then(|| PkiApp {
                     certificate_authorities: BTreeMap::from([(
                         INTERNAL_CA.to_owned(),
                         CertificateAuthority { install_trust: false },
@@ -518,11 +643,13 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
         local: LocalStatus {
             remedy: match &local_address {
                 LocalAddress::Unavailable { reason } if !local_waiting.is_empty() => Some(reason.remedy()),
-                _ => None,
+                _ => names_problem,
             },
             address: local_address,
             waiting: local_waiting,
             mdns_names,
+            dns_names: local_dns_names,
+            names_problem,
         },
     })
 }
@@ -579,6 +706,25 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
     if let Some(domain) = &settings.domain {
         if !names::is_public_name(domain) {
             return Err(WebConfigError::InvalidName { field: "domain", value: quoted(domain) });
+        }
+    }
+    if let Some(local_domain) = &settings.local_domain {
+        if !names::is_public_name(local_domain) {
+            return Err(WebConfigError::InvalidName { field: "local_domain", value: quoted(local_domain) });
+        }
+    }
+    // Caddy expands placeholders in most string fields, so the URL gets the same strict treatment.
+    let directory = &settings.acme.directory;
+    let url_ok = directory.strip_prefix("https://").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/' | b':' | b'~'))
+    });
+    if !url_ok {
+        return Err(invalid("acme_directory", directory));
+    }
+    if let Some(path) = &settings.acme.events_log {
+        if !is_safe_path(path) {
+            return Err(invalid("events_log", path));
         }
     }
     if let Some(email) = &settings.acme_email {
@@ -652,9 +798,18 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
     let local = site
         .exposure
         .local
-        .then(|| site.local_host.clone().unwrap_or_else(|| format!("{label}.local")))
+        .then(|| {
+            site.local_host.clone().unwrap_or_else(|| match &settings.local_domain {
+                Some(local_domain) => format!("{label}.{local_domain}"),
+                None => format!("{label}.local"),
+            })
+        })
         .map(|host| {
-            if names::is_local_name(&host) {
+            let under_local_domain = settings.local_domain.as_ref().is_some_and(|domain| {
+                host.strip_suffix(domain.as_str()).is_some_and(|rest| rest.ends_with('.'))
+                    && names::is_public_name(&host)
+            });
+            if names::is_local_name(&host) || under_local_domain {
                 Ok(host)
             } else {
                 Err(WebConfigError::InvalidName { field: "local_host", value: quoted(&host) })
