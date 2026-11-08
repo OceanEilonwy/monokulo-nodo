@@ -117,6 +117,9 @@ service_up nodo-ddns
 wait_log "does not exist"
 result "service waits without a config" "$?"
 
+# Earlier tests on this device may have left state, including a back-off after failed passes, which
+# would make the first pass do nothing.
+rm -f /var/lib/nodo-ddns/state.json
 write_conf '"shop"'
 mark
 i=0; until sv -w 5 restart nodo-ddns >/dev/null 2>&1 || [ "$i" -ge 6 ]; do i=$((i+1)); sleep 2; done

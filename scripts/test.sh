@@ -15,12 +15,16 @@ docker run --rm --network none --cap-add NET_ADMIN -v "$root:/src:ro" "$tag" /sr
 [ "$tier" = fast ] && exit 0
 
 if [ "$tier" = vm ]; then
-	# Service logic runs on the fast KVM machine. Stale images are rebuilt only when missing.
+	# Service logic runs on the fast KVM machine. The image is rebuilt when missing or older than its
+	# board files, so a package added to the board is never missing from the VM.
 	board=${DEV_BOARD:-x86-kvm}
 	. "$root/boards/$board/board.env"
 	changed=$("$root/scripts/build-packages.sh" --changed "$BOARD_ARCH")
 	"$root/scripts/build-packages.sh" "$BOARD_ARCH"
-	[ -s "$root/out/images/$board/disk.img" ] || "$root/scripts/build-image.sh" "$board" "$root/build/test-key.pub"
+	img=$root/out/images/$board/disk.img
+	if [ ! -s "$img" ] || [ -n "$(find "$root/boards/$board" "$root/versions.env" -newer "$img" -print -quit)" ]; then
+		"$root/scripts/build-image.sh" "$board" "$root/build/test-key.pub"
+	fi
 	"$root/scripts/dev-vm.sh" up
 	if [ -n "$changed" ]; then "$root/scripts/dev-vm.sh" push $changed; fi
 	exec "$root/scripts/dev-vm.sh" check
