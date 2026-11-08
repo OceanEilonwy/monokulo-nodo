@@ -1,0 +1,3 @@
+Real output of xbps-create and xbps-rindex 0.60 (the builder image), signed with a throwaway 2048
+bit key whose private half was discarded. query-L.txt is `xbps-query -vL` for the same repository,
+which shows the fingerprint xbps computes for the key. Regenerating these changes every hash.

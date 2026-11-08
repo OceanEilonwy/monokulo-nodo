@@ -125,6 +125,27 @@ mod tests {
         assert_eq!(compare_versions("2147483647_1", "1_1"), Some(Ordering::Greater), "the largest int is fine");
     }
 
+    /// Every pair here was compared by the real `xbps-uhelper cmpver`, so a difference in the
+    /// downgrade check's ordering shows up as a failure rather than a silent disagreement.
+    #[test]
+    fn agrees_with_real_xbps_uhelper_cmpver() {
+        let recorded = include_str!("../tests/fixtures/cmpver.txt");
+        let mut checked = 0;
+        for line in recorded.lines().filter(|line| !line.starts_with('#')) {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let [left, op, right] = fields[..] else { panic!("bad line {line:?}") };
+            let expected = match op {
+                "<" => Ordering::Less,
+                "=" => Ordering::Equal,
+                ">" => Ordering::Greater,
+                _ => panic!("bad operator in {line:?}"),
+            };
+            assert_eq!(compare_versions(left, right), Some(expected), "{line}");
+            checked += 1;
+        }
+        assert!(checked >= 40, "only {checked} pairs");
+    }
+
     #[test]
     fn refuses_garbage() {
         for bad in ["1.0-1", "1 0", "1;0", "é", "1\n"] {

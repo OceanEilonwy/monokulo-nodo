@@ -1,0 +1,6 @@
+    1 /tmp/repo (RSA signed)
+      Signed-by: nodo test
+      2048 d7:3e:73:fc:ea:e5:23:56:da:c9:28:cd:ba:2d:0d:87
+14834 https://mirror.aarnet.edu.au/pub/voidlinux/current (RSA signed)
+      Signed-by: Void Linux
+      4096 60:ae:0c:d6:f0:95:17:80:bc:93:46:7a:89:af:a3:2d
