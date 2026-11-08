@@ -1,5 +1,6 @@
 -- Settings a user may change for cuprated. Ports and listen addresses are fixed, because the
--- firewall rules in cuprated-service are written for them.
+-- firewall rules in cuprated-service are written for them. RPC is restricted and on loopback
+-- only, so there is no setting to put it on the network.
 return {
   api_version = 1,
   settings = {
@@ -8,8 +9,6 @@ return {
     { name = "inbound_peers", type = "int", label = "Inbound peer limit", default = 64, min = 0, max = 512,
       help = "Most connections other nodes may open to this one." },
     { name = "accept_inbound", type = "bool", label = "Accept inbound peers", default = true },
-    { name = "restricted_rpc", type = "bool", label = "Restricted RPC on the network", default = false,
-      help = "Lets wallets on your network use this node on port 18089." },
     { name = "log_level", type = "enum", label = "Log level", default = "info",
       choices = { "error", "warn", "info", "debug" } },
     { name = "rpc_port", type = "int", label = "Local RPC port", default = 18081, min = 18081, max = 18081,

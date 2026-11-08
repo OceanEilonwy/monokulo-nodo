@@ -16,6 +16,11 @@ if [ -n "${DATA_MOUNT:-}" ]; then
 	install -d -o _cuprated -g _cuprated -m 750 "$data"
 fi
 
+# A user namespace with no room for nested ones, so cuprated cannot make namespaces of its own.
+# The host network is shared, and with it the abstract Unix socket namespace, so nodo-confine
+# (nodo-tools) runs last: Landlock scoping against abstract sockets and signals where the kernel
+# has it (Linux 6.12), and a seccomp filter that refuses Unix sockets, io_uring and foreign
+# syscall ABIs. It then becomes cuprated, so the process keeps its name for control/t.
 exec chpst -u _cuprated:_cuprated bwrap \
 	--ro-bind /usr /usr \
 	--symlink usr/bin /bin \
@@ -29,6 +34,7 @@ exec chpst -u _cuprated:_cuprated bwrap \
 	--dev /dev \
 	--tmpfs /tmp \
 	--setenv HOME /var/lib/cuprated \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/usr/bin/cuprated --config-file /etc/cuprated/Cuprated.toml --skip-config-warning
+	/usr/bin/nodo-confine -- /usr/bin/cuprated --config-file /etc/cuprated/Cuprated.toml --skip-config-warning

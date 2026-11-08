@@ -13,14 +13,17 @@ enable_inbound_v6 = false
 outbound_connections = 32
 max_inbound_connections = 64
 
+# RPC is restricted and on loopback only: wallets, apps and the helper on this device use it,
+# and nothing on the network can. The unrestricted server, with stop_daemon and the like, is off.
+# The firewall opens only the P2P port, so these must stay on loopback (cuprated.nft).
 [rpc.unrestricted]
-address = "127.0.0.1"
-enable = true
+enable = false
 
 [rpc.restricted]
-address = "0.0.0.0"
-port = 18089
-enable = false
+address = "127.0.0.1"
+port = 18081
+enable = true
+advertise = false
 
 [fs]
 fast_data_directory = "/var/lib/cuprated"

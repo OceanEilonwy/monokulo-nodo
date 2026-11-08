@@ -14,15 +14,15 @@ enable_inbound_v6 = false
 outbound_connections = "$(cuprated.outbound_peers)"
 max_inbound_connections = "$(cuprated.inbound_peers)"
 
+# RPC is restricted and on loopback only, as in cuprated-service's default Cuprated.toml.
 [rpc.unrestricted]
+enable = false
+
+[rpc.restricted]
 address = "127.0.0.1"
 port = "$(cuprated.rpc_port)"
 enable = true
-
-[rpc.restricted]
-address = "0.0.0.0"
-port = 18089
-enable = "$(cuprated.restricted_rpc)"
+advertise = false
 
 [fs]
 fast_data_directory = "/var/lib/cuprated"
