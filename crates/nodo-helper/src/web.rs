@@ -124,6 +124,8 @@ pub trait WebIo: Send + Sync {
     /// A GET on Caddy's admin API. `None` when Caddy is not running or answers with an error.
     fn caddy_get(&self, socket: &Path, path: &str) -> Option<Vec<u8>>;
     fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String>;
+    /// The home's public IPv4 address, as the IP echo services see it.
+    fn detect_public_ip(&self) -> Option<IpAddr>;
 }
 
 /// The stored domain and credentials, in the same shape as nodo-ddns's `[dns]` table. Every value
@@ -967,6 +969,12 @@ impl WebIo for RealWebIo {
 
     fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String> {
         config.build(self.http(), domain).map_err(|e| e.to_string())
+    }
+
+    fn detect_public_ip(&self) -> Option<IpAddr> {
+        let http = self.http();
+        nodo_web::detect::detect(http.as_ref(), &nodo_web::detect::default_sources(), nodo_web::detect::Family::V4)
+            .agreed_ip()
     }
 }
 

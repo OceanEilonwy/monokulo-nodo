@@ -57,7 +57,8 @@ pub const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt
 /// Caddy writes certificate progress and errors here, inside its own state directory, for the helper.
 pub const TLS_EVENTS_LOG: &str = "/var/lib/caddy/nodo-tls.log";
 /// The loggers whose lines say how obtaining and renewing went. `events` logs at debug level only.
-const TLS_LOGGERS: [&str; 4] = ["events", "tls.obtain", "tls.renew", "tls.issuance.acme"];
+/// The ACME client logs each challenge under the HTTP app's logger, since that app provisions it.
+const TLS_LOGGERS: [&str; 5] = ["events", "tls.obtain", "tls.renew", "tls.issuance.acme", "http.acme_client"];
 
 const UNAVAILABLE_PAGE: &str = "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unavailable</title>\
 <body><h1>This site is unavailable</h1><p>Please try again later.</p></body></html>";

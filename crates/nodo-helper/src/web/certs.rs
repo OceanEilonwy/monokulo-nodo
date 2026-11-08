@@ -322,7 +322,10 @@ impl<I: WebIo> NodoWeb<I> {
                 _ => false,
             });
             if kind == HostKind::Public && port_failure {
-                let dns = DnsView { resolved: self.io.resolve(&address.host), expected: self.public_ip() };
+                // The dynamic DNS service knows the public address. Without it, the IP echo services
+                // are asked, as the reachability check does, and only because a certificate failed.
+                let expected = self.public_ip().or_else(|| self.io.detect_public_ip());
+                let dns = DnsView { resolved: self.io.resolve(&address.host), expected };
                 status = acme::host_status(&address.host, &events, cert, &dns, now);
             }
             hosts.push(HostCertificate {

@@ -14,7 +14,7 @@ fn obtaining(ts: u64) -> String {
 fn trying(ts: u64, challenge: &str) -> String {
     line(
         ts,
-        "tls.issuance.acme.acme_client",
+        "http.acme_client",
         "trying to solve challenge",
         &format!(r#","identifier":"{HOST}","challenge_type":"{challenge}","ca":"https://acme.test/dir""#),
     )
@@ -23,7 +23,7 @@ fn trying(ts: u64, challenge: &str) -> String {
 fn challenge_failed(ts: u64, challenge: &str, kind: &str, detail: &str) -> String {
     line(
         ts,
-        "tls.issuance.acme.acme_client",
+        "http.acme_client",
         "challenge failed",
         &format!(
             r#","identifier":"{HOST}","challenge_type":"{challenge}","problem":{{"type":"urn:ietf:params:acme:error:{kind}","title":"","detail":"{detail}","instance":"","subproblems":null}}"#

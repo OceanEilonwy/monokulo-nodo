@@ -133,6 +133,9 @@ impl WebIo for Fake {
     fn caddy_get(&self, _: &Path, _: &str) -> Option<Vec<u8>> {
         None
     }
+    fn detect_public_ip(&self) -> Option<IpAddr> {
+        None
+    }
     fn dns_provider(&self, _: ProviderConfig, _: &str) -> Result<Box<dyn DnsProvider>, String> {
         Ok(Box::new(FakeProvider(self.records.clone())))
     }
@@ -580,7 +583,7 @@ fn a_failed_challenge_with_dns_elsewhere_says_dns_is_not_pointing_here() {
         "/caddy-state/nodo-tls.log",
         &[
             r#"{"ts":1000.0,"logger":"tls.obtain","msg":"obtaining certificate","identifier":"shop.example.com"}"#,
-            r#"{"ts":1001.0,"logger":"tls.issuance.acme.acme_client","msg":"challenge failed","identifier":"shop.example.com","challenge_type":"http-01","problem":{"type":"urn:ietf:params:acme:error:connection","detail":"Connection refused"}}"#,
+            r#"{"ts":1001.0,"logger":"http.acme_client","msg":"challenge failed","identifier":"shop.example.com","challenge_type":"http-01","problem":{"type":"urn:ietf:params:acme:error:connection","detail":"Connection refused"}}"#,
             r#"{"ts":1002.0,"logger":"tls.obtain","msg":"could not get certificate from issuer","identifier":"shop.example.com","error":"HTTP 400 urn:ietf:params:acme:error:connection - Connection refused"}"#,
         ]
         .join("\n"),
