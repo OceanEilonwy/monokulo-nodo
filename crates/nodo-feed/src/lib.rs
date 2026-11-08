@@ -7,11 +7,15 @@
 //! - [`PinStore`] decides whether a feed's signing key and a package's version are acceptable, and
 //!   blocks changed keys and downgrades until the user approves them.
 //!
-//! This crate does not download packages, verify signatures or run xbps.
+//! - [`parse_repodata`] reads a feed's index, and [`RepoKey`] checks package signatures against
+//!   the key it names, whose fingerprint must match the pin.
+//!
+//! This crate does not download packages or run xbps.
 
 mod inspect;
 mod pins;
 mod plist;
+mod repo;
 mod tar;
 mod version;
 
@@ -20,4 +24,5 @@ pub use inspect::{
     BASE_PACKAGES, MANIFEST_FILE,
 };
 pub use pins::{Approval, ApprovalError, BlockReason, Decision, FeedPin, KeyError, KeyFingerprint, PinStore};
+pub use repo::{parse_repodata, RepoEntry, RepoError, RepoKey, Repodata, SignatureError};
 pub use version::compare_versions;
