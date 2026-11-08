@@ -506,11 +506,13 @@ def backups():
 
 
 def locked():
-    # As a reboot would: the encrypted package stops, its volume closes and the helper forgets the
-    # device key. Its logger keeps its log inside the volume open, so it stops too.
+    # As a reboot would: the volume closes and the helper forgets the device key. The package and
+    # its logger, which keeps its log inside the volume open, stop for the close and are then
+    # wanted up again, as at boot, so runit keeps trying them until the unlock opens the volume.
     with Journey("Device locked: unlock"):
         sh("sv -w 30 stop tui-shop tui-shop/log; umount /run/nodo/volumes/tui-shop && cryptsetup close nodo-tui-shop")
         restart_helper()
+        sh("sv start tui-shop/log tui-shop >/dev/null 2>&1 || true")
         unlock_journey()
     with Journey("Device locked: the helper side"):
         check("the helper reports the device unlocked", "encryption: Unlocked" in ctl("overview"))
