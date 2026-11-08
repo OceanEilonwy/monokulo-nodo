@@ -740,6 +740,8 @@ size=$(stat -c %s /var/lib/nodo/backups/nodo-tampered.nodobak)
 printf 'X' | dd of=/var/lib/nodo/backups/nodo-tampered.nodobak bs=1 seek=$((size - 100)) conv=notrunc 2>/dev/null
 ctl set e2e-app greeting text after >/dev/null
 rm -f /var/lib/nodo/secrets/e2e /run/nodo/volumes/e2e-vault/data/e2e-file
+# The sealed DNS credentials from the web checks live in the secrets directory, so backups carry them.
+cp /var/lib/nodo/secrets/web-dns.toml /tmp/e2e-dns.before && rm -f /var/lib/nodo/secrets/web-dns.toml
 check "a tampered backup is refused and changes nothing" refused "altered\\|damaged" sh -c '
 	printf "%s\n%s\n" "$0" "new device pass" | nodo-tui --ctl restore nodo-tampered.nodobak restore' "$BACKUP_PASS"
 check "a wrong passphrase restores nothing" refused "passphrase did not open" sh -c '
@@ -757,6 +759,13 @@ check "settings, secrets and storage are back" sh -c '
 check "the device key used by this device's volumes was kept" sh -c '
 	grep -q "uses its own key" /tmp/e2e.rs && printf "%s\n" "$0" | nodo-tui --ctl unlock' "$PASS2"
 check "the restored services run" running_for e2e-vault 3
+check "sealed DNS credentials come back from the backup and still open" sh -c '
+	cmp /var/lib/nodo/secrets/web-dns.toml /tmp/e2e-dns.before &&
+	[ "$(stat -c "%a %U" /var/lib/nodo/secrets/web-dns.toml)" = "600 root" ] &&
+	ctl expose e2e-app shop 0 0 1 shop.example.com && grep -q "api_token = \"cfut_0123" /run/nodo/secrets/nodo-ddns/config.toml'
+ctl expose e2e-app shop 0 0 0 >/dev/null
+for s in nodo-caddy nodo-ddns; do [ -d "/etc/sv/$s" ] && { touch "/etc/sv/$s/down"; sv -w 15 down "$s" >/dev/null 2>&1; }; done
+nft -f /etc/nftables.conf
 check "no staging copy is left behind" sh -c '! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
 
 # The real TUI against the real helper: feeds, packages, updates, Home's attention and backups
