@@ -2,11 +2,14 @@
 //!
 //! Two inputs can't be produced on this device alone, so they are traits:
 //!
-//! - [`PortProbe`]: whether a port answers from outside can only be seen from outside. No such vantage
-//!   point exists yet, so [`NoExternalVantage`] answers "not checked", and the report says the ports are
-//!   unverified rather than claiming they work.
-//! - [`RouterWan`]: the router's WAN address has to come from the router. Nothing implements this yet
-//!   either. UPnP is off by default in the Web flow, so the address may simply be unknown.
+//! - [`PortProbe`]: whether a port answers from outside can only be seen from outside. This project runs
+//!   no outside service, and a test from inside the LAN can pass through the router's hairpin NAT even
+//!   when the forward is missing. So [`NoExternalVantage`] answers "not checked", the verdict is
+//!   [`Verdict::PortsUnverified`], never a pass, and [`ReachabilityReport::manual_check`] tells the user
+//!   how to test from outside by hand.
+//! - [`RouterWan`]: the router's WAN address has to come from the router. [`crate::router::GatewayQuery`]
+//!   reads it over NAT-PMP or UPnP without opening any port. Many routers answer neither, so the
+//!   address may simply be unknown.
 
 use crate::detect::{detect, Family, IpSource};
 use crate::dns::DnsProvider;
@@ -172,6 +175,32 @@ pub enum Verdict {
     Failed,
 }
 
+/// How the user can check the ports by hand when nothing outside tested them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ManualPortCheck {
+    pub public_ip: IpAddr,
+    pub ports: Vec<u16>,
+    pub steps: Vec<String>,
+}
+
+impl ManualPortCheck {
+    fn new(public_ip: IpAddr) -> Self {
+        let ports = REQUIRED_PORTS.to_vec();
+        let steps = vec![
+            "Use a device outside your network, such as a phone with Wi-Fi turned off.".to_owned(),
+            format!(
+                "From it, test TCP ports 80 and 443 on {public_ip}, for example with `nc -vz {public_ip} 443`, \
+                 or a port checking website."
+            ),
+            "\"Connected\" or \"open\" means the forward works. A timeout or \"refused\" means it is missing \
+             or points at the wrong device."
+                .to_owned(),
+            "A test from inside your own network proves nothing, because many routers loop it back.".to_owned(),
+        ];
+        Self { public_ip, ports, steps }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReachabilityReport {
     pub checks: Vec<Check>,
@@ -179,6 +208,8 @@ pub struct ReachabilityReport {
     pub connection: ConnectionAssessment,
     pub warnings: Vec<String>,
     pub verdict: Verdict,
+    /// Present when the ports could not be tested from outside.
+    pub manual_check: Option<ManualPortCheck>,
 }
 
 pub struct ReachabilityInputs<'a> {
@@ -253,7 +284,10 @@ pub fn run_check(inputs: &ReachabilityInputs<'_>) -> ReachabilityReport {
     }
 
     let verdict = decide(&checks, &connection, &port_results, inputs.lan);
-    ReachabilityReport { checks, public_ip, connection, warnings, verdict }
+    let manual_check = public_ip
+        .filter(|_| port_results.iter().flatten().any(|p| *p == PortStatus::NotChecked))
+        .map(ManualPortCheck::new);
+    ReachabilityReport { checks, public_ip, connection, warnings, verdict, manual_check }
 }
 
 fn decide(
@@ -417,6 +451,15 @@ mod tests {
         assert_eq!(report.verdict, Verdict::PortsUnverified);
         assert_eq!(status(&report, CheckId::Port80), CheckStatus::Unknown);
         assert_eq!(status(&report, CheckId::RouterAddress), CheckStatus::Unknown);
+        let manual = report.manual_check.expect("instructions for checking by hand");
+        assert_eq!(manual.ports, vec![80, 443]);
+        assert!(manual.steps.iter().any(|s| s.contains(PUBLIC)));
+    }
+
+    #[test]
+    fn tested_ports_need_no_manual_check() {
+        let report = run(&FINE, &Router(Some(PUBLIC)), &Ports(PortStatus::Reachable), None);
+        assert_eq!(report.manual_check, None);
     }
 
     #[test]
