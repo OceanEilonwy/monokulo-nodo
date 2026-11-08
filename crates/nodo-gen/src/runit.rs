@@ -16,6 +16,10 @@ pub fn run_script(spec: &ServiceSpec) -> String {
     } else {
         data_preamble(spec, &mut out);
     }
+    if spec.has_settings {
+        out.push('\n');
+        settings_preamble(spec, &mut out);
+    }
     out.push('\n');
     let user = sh_quote(&spec.user);
     if let Some(dir) = &spec.own_socket_dir {
@@ -43,8 +47,11 @@ pub fn run_script(spec: &ServiceSpec) -> String {
         line(&format!("--ro-bind {q} {q}"));
     }
     if spec.bind_config {
-        let q = sh_quote(&layout.config_dir);
-        line(&format!("--ro-bind {q} {q}"));
+        line(&format!(
+            "--ro-bind {} {}",
+            sh_quote(&layout.config_dir),
+            sh_quote(&layout.config_mount)
+        ));
     }
     if spec.internet {
         line("--ro-bind-try /etc/resolv.conf /etc/resolv.conf");
@@ -109,24 +116,62 @@ fn encrypted_preamble(spec: &ServiceSpec, out: &mut String) {
         out,
         "# Encrypted storage opens with the device passphrase. Wait here until it does, and\n\
          # never fall back to an unencrypted directory.\n\
-         data={mount}\n\
-         if ! mountpoint -q \"$data\"; then\n\
+         mount={mount}\n\
+         if ! mountpoint -q \"$mount\"; then\n\
          \techo \"waiting: encrypted storage for {id} is locked\"\n\
          \tsleep 5\n\
          \texit 1\n\
-         fi\n",
+         fi\n\
+         data=$mount/data\n",
         mount = sh_quote(&mount),
         id = spec.id,
     );
 }
 
-/// The runit `log/run` script.
+/// Settings reach the service as environment variables from a root-only file, read here while
+/// still root. They never appear in argv, which every local user can read from `/proc`. Each
+/// line is `NAME='value'` with a validated name and a quoted value, so reading it runs nothing.
+fn settings_preamble(spec: &ServiceSpec, out: &mut String) {
+    let env = sh_quote(&spec.layout.env_file);
+    let reason = if spec.layout.settings_in_memory {
+        "are sealed until the device is unlocked"
+    } else {
+        "have not been written"
+    };
+    let _ = write!(
+        out,
+        "if [ ! -r {env} ]; then\n\
+         \techo \"waiting: settings for {id} {reason}\"\n\
+         \tsleep 5\n\
+         \texit 1\n\
+         fi\n\
+         set -a\n\
+         . {env}\n\
+         set +a\n",
+        id = spec.id,
+    );
+}
+
+/// The runit `log/run` script. An encrypted package logs inside its volume, so its logger
+/// waits for the same unlock as the service. runsv holds the pipe meanwhile, and the service
+/// writes nothing before it starts, so nothing is lost or written in clear.
 pub fn log_run(spec: &ServiceSpec) -> String {
     let user = sh_quote(&spec.user);
-    format!(
-        "#!/bin/sh\nexec chpst -u {user}:{user} svlogd -tt {}\n",
+    let mut out = String::from("#!/bin/sh\n");
+    if spec.encrypted {
+        let mount = volume_mount(&spec.id).expect("id was validated by ServiceSpec::new");
+        let _ = writeln!(
+            out,
+            "mountpoint -q {} || {{ sleep 5; exit 1; }}",
+            sh_quote(&mount)
+        );
+    }
+    let _ = writeln!(
+        out,
+        "exec chpst -u {user}:{user} svlogd -tt {}",
         sh_quote(&spec.layout.log_dir)
-    )
+    );
+    out
 }
 
 /// The runit `control/t` script.

@@ -23,7 +23,8 @@ impl Package {
     }
 
     pub fn layout(&self) -> Result<Layout, ApiError> {
-        Layout::new(self.id(), self.profile).map_err(|e| ApiError::Failed(e.to_string()))
+        Layout::new(self.id(), self.profile, self.manifest.storage.encrypted)
+            .map_err(|e| ApiError::Failed(e.to_string()))
     }
 
     /// The installer does not record which feed a package came from yet.
