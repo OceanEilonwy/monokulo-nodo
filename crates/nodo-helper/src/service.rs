@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nodo_api::{ApiError, Response, ServiceState, ServiceStatus};
+use nodo_api::{ApiError, Origin, Response, ServiceState, ServiceStatus};
 use nodo_gen::volume_mount;
 
 use crate::catalog::Package;
@@ -101,24 +101,33 @@ impl<S: System> Helper<S> {
     /// Locked and waiting come first. The run script is alive during its retry delay, so `sv`
     /// says `run` for a service that has not actually started.
     fn status_of(&self, package: &Package) -> ServiceStatus {
+        let (state, detail) = self.state_of(package);
+        ServiceStatus {
+            id: package.id().to_owned(),
+            state,
+            detail,
+            roles: package.manifest.provides.clone(),
+            origin: package.origin(),
+        }
+    }
+
+    pub(crate) fn state_of(&self, package: &Package) -> (ServiceState, String) {
         let id = package.id().to_owned();
         let status = self.sys.sv_status(&id).map(|text| parse_sv_status(&text));
         if matches!(self.is_locked(package), Ok(true)) {
-            return ServiceStatus {
-                id,
-                state: ServiceState::Locked,
-                detail: "waiting for the device passphrase".to_owned(),
-            };
+            return (
+                ServiceState::Locked,
+                "waiting for the device passphrase".to_owned(),
+            );
         }
         let down = matches!(status, Ok(SvStatus::Down));
         if let (false, Some(mount)) = (down, self.missing_data_mount(package)) {
-            return ServiceStatus {
-                id,
-                state: ServiceState::Waiting,
-                detail: format!("waiting for {mount} to be mounted"),
-            };
+            return (
+                ServiceState::Waiting,
+                format!("waiting for {mount} to be mounted"),
+            );
         }
-        let (state, detail) = match status {
+        match status {
             Ok(SvStatus::Running {
                 uptime_secs: Some(up),
             }) => (ServiceState::Running, format!("up for {up}s")),
@@ -127,8 +136,7 @@ impl<S: System> Helper<S> {
             Ok(SvStatus::Crashed) => (ServiceState::Failed, "not running".to_owned()),
             Ok(SvStatus::Unknown(line)) => (ServiceState::Failed, line),
             Err(e) => (ServiceState::Failed, e.0),
-        };
-        ServiceStatus { id, state, detail }
+        }
     }
 
     pub(crate) fn list_services(&self) -> Result<Response, ApiError> {
@@ -141,6 +149,8 @@ impl<S: System> Helper<S> {
             id: b.id,
             state: ServiceState::Failed,
             detail: b.reason,
+            roles: Vec::new(),
+            origin: Origin::Feed(None),
         }));
         statuses.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(Response::Services(statuses))

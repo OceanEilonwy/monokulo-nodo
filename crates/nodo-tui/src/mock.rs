@@ -2,7 +2,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nodo_api::{ApiError, Backend, Exposure, Request, Response, ServiceState, ServiceStatus};
+use nodo_api::{
+    ApiError, Backend, Exposure, Origin, Request, Response, Rollback, RollbackStage, ServiceState, ServiceStatus,
+    SettingInput, SettingLiteral,
+};
 
 use crate::model::*;
 use crate::secret::Secret;
@@ -21,7 +24,8 @@ fn s(text: &str) -> String {
 }
 
 fn service(id: &str, state: ServiceState, detail: &str) -> ServiceStatus {
-    ServiceStatus { id: s(id), state, detail: s(detail) }
+    let origin = if id == "cuprated" { Origin::System } else { Origin::Feed(Some(s("community"))) };
+    ServiceStatus { id: s(id), state, detail: s(detail), roles: Vec::new(), origin }
 }
 
 fn need(name: &str, source: Option<&str>) -> Need {
@@ -149,53 +153,66 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::Unlock { passphrase } => {
-                if passphrase == MOCK_PASSPHRASE {
+                if passphrase.expose() == MOCK_PASSPHRASE {
                     self.finish_unlock();
                     Ok(Response::Ok)
                 } else {
                     Err(ApiError::BadPassphrase)
                 }
             }
-            Request::ApplySettings { package, values } => {
+            Request::ApplySettings { package, changes } => {
                 let form =
                     self.forms.get_mut(&package).ok_or_else(|| ApiError::NotFound(package.clone()))?;
-                if values.iter().any(|(key, value)| key == "api_port" && value == CLASHING_PORT) {
-                    return Ok(Response::RolledBack {
+                let clash = SettingInput::Literal(SettingLiteral::Text(s(CLASHING_PORT)));
+                if changes.iter().any(|change| change.name == "api_port" && change.value == clash) {
+                    return Ok(Response::RolledBack(Rollback {
+                        stage: RollbackStage::HealthCheck,
                         reason: format!("listen tcp :{CLASHING_PORT}: bind: address already in use"),
-                    });
+                        recovered: true,
+                        recovery_problem: None,
+                    }));
                 }
-                for (key, value) in values {
-                    let Some(field) = form.fields.iter_mut().find(|field| field.key == key) else {
-                        return Err(ApiError::Failed(format!("unknown setting: {key}")));
+                for change in changes {
+                    let Some(field) = form.fields.iter_mut().find(|field| field.key == change.name) else {
+                        return Err(ApiError::Failed(format!("unknown setting: {}", change.name)));
                     };
-                    field.value = match (&field.kind, value) {
-                        (FieldKind::Secret, _) => FieldValue::SecretSet,
-                        (FieldKind::Toggle, value) => FieldValue::Bool(value == "true"),
-                        (_, value) => match value.strip_prefix("$(").and_then(|v| v.strip_suffix(')')) {
-                            Some(path) => FieldValue::Reference {
-                                path: s(path),
-                                resolved: sample_references()
-                                    .options
-                                    .iter()
-                                    .find(|option| option.path == path)
-                                    .map_or_else(String::new, |option| option.value.clone()),
-                            },
-                            None => FieldValue::Text(value),
-                        },
+                    field.value = match change.value {
+                        SettingInput::Secret(_) => FieldValue::SecretSet,
+                        SettingInput::Literal(SettingLiteral::Bool(value)) => FieldValue::Bool(value),
+                        SettingInput::Literal(SettingLiteral::Int(value)) => FieldValue::Text(value.to_string()),
+                        SettingInput::Literal(SettingLiteral::Text(value)) => FieldValue::Text(value),
+                        SettingInput::Reference { target, setting } => {
+                            let path = format!("{target}.{setting}");
+                            let resolved = sample_references()
+                                .options
+                                .iter()
+                                .find(|option| option.path == path)
+                                .map_or_else(String::new, |option| option.value.clone());
+                            FieldValue::Reference { path, resolved }
+                        }
+                        SettingInput::Reset => field.value.clone(),
                     };
                 }
                 Ok(Response::Ok)
             }
-            Request::SetExposure { package, site, exposure } => {
+            Request::SetExposure { site, exposure, confirmation } => {
                 let entry = self
                     .web
                     .sites
                     .iter_mut()
-                    .find(|entry| entry.package == site)
-                    .ok_or_else(|| ApiError::NotFound(format!("{package}/{site}")))?;
+                    .find(|entry| entry.package == site.site)
+                    .ok_or_else(|| ApiError::NotFound(format!("{}/{}", site.package, site.site)))?;
+                // The helper's rule, so flows that skip the typed host fail here as they would there.
+                if exposure.public && !entry.exposure.public {
+                    let host = entry.public_host.clone().unwrap_or_default();
+                    if confirmation.map(|c| c.typed_host) != Some(host.clone()) {
+                        return Err(ApiError::NeedsConfirmation(format!("type {host} exactly to confirm")));
+                    }
+                }
                 entry.exposure = exposure;
                 Ok(Response::Ok)
             }
+            other => Err(ApiError::NotImplemented(format!("{} in the mock", nodo_api::action_name(&other)))),
         }
     }
 }
@@ -1409,11 +1426,11 @@ mod tests {
     fn unlock_only_accepts_the_mock_passphrase() {
         let mut mock = MockBackend::new();
         assert_eq!(
-            mock.call(Request::Unlock { passphrase: s("wrong") }),
+            mock.call(Request::Unlock { passphrase: nodo_api::Secret::new("wrong") }),
             Err(ApiError::BadPassphrase)
         );
         assert!(mock.is_locked());
-        assert_eq!(mock.call(Request::Unlock { passphrase: s(MOCK_PASSPHRASE) }), Ok(Response::Ok));
+        assert_eq!(mock.call(Request::Unlock { passphrase: nodo_api::Secret::new(MOCK_PASSPHRASE) }), Ok(Response::Ok));
         assert!(!mock.is_locked());
     }
 }

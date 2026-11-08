@@ -12,7 +12,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use nodo_api::{ApiError, Backend, Request, Response};
+use nodo_api::{ApiError, Backend, PublicConfirmation, Request, Response};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -60,7 +60,7 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         Effect::Start(id) => service_command(backend, Request::StartService { id }),
         Effect::Stop(id) => service_command(backend, Request::StopService { id }),
         Effect::Unlock(passphrase) => {
-            let result = backend.call(Request::Unlock { passphrase: passphrase.expose().to_owned() });
+            let result = backend.call(Request::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) });
             vec![Event::UnlockResult(result)]
         }
         Effect::OpenService(id) => match backend.settings_form(&id) {
@@ -111,13 +111,13 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         }
         Effect::ApplySettings { package, values } => {
             // Values with no wire form are stored secrets, and those never change here.
-            let values = values
+            let changes = values
                 .into_iter()
-                .filter_map(|(key, value)| value.wire().map(|wire| (key, wire)))
+                .filter_map(|(name, value)| value.to_input().map(|value| nodo_api::SettingChange { name, value }))
                 .collect();
-            match backend.call(Request::ApplySettings { package: package.clone(), values }) {
-                Ok(Response::RolledBack { reason }) => {
-                    let explanation = backend.explain_rollback(&package, &reason);
+            match backend.call(Request::ApplySettings { package: package.clone(), changes }) {
+                Ok(Response::RolledBack(rollback)) => {
+                    let explanation = backend.explain_rollback(&package, &rollback.reason);
                     vec![Event::SettingsRolledBack { package, explanation }, refresh(backend)]
                 }
                 result => vec![Event::SettingsApplied(plain_result(result)), refresh(backend)],
@@ -147,8 +147,12 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         }
         Effect::Drive(action) => vec![Event::DriveResult(backend.drive_action(action)), refresh(backend)],
         Effect::Shell => vec![Event::Info("A shell is not available from this build yet.".to_owned())],
-        Effect::SetExposure { site, exposure, after } => {
-            let request = Request::SetExposure { package: site.clone(), site, exposure };
+        Effect::SetExposure { site, exposure, after, confirmation } => {
+            let request = Request::SetExposure {
+                site: backend.site_id(&site),
+                exposure,
+                confirmation: confirmation.map(|typed_host| PublicConfirmation { typed_host }),
+            };
             let result = plain_result(backend.call(request));
             vec![Event::ExposureSet { after, result }, refresh(backend)]
         }

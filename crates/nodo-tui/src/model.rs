@@ -4,7 +4,7 @@
 //! screen shows comes through this trait. `MockBackend` implements it today, and each method is a
 //! candidate `nodo_api::Request` for the real helper.
 
-use nodo_api::Exposure;
+use nodo_api::{Exposure, SettingInput, SettingLiteral, SiteId};
 
 use crate::secret::Secret;
 
@@ -222,13 +222,18 @@ pub enum FieldValue {
 }
 
 impl FieldValue {
-    /// The form sent to the helper. Stored secrets have no wire form; callers only send changes.
-    pub fn wire(&self) -> Option<String> {
+    /// The typed form sent to the helper. Typed text is always a literal, even if it looks like
+    /// `$(...)`, because only the reference picker makes a reference. Stored secrets have no
+    /// wire form; callers only send changes.
+    pub fn to_input(&self) -> Option<SettingInput> {
         match self {
-            Self::Text(text) => Some(text.clone()),
-            Self::Reference { path, .. } => Some(format!("$({path})")),
-            Self::Bool(value) => Some(value.to_string()),
-            Self::NewSecret(secret) => Some(secret.expose().to_owned()),
+            Self::Text(text) => Some(SettingInput::Literal(SettingLiteral::Text(text.clone()))),
+            Self::Reference { path, .. } => {
+                let (target, setting) = path.split_once('.')?;
+                Some(SettingInput::Reference { target: target.to_owned(), setting: setting.to_owned() })
+            }
+            Self::Bool(value) => Some(SettingInput::Literal(SettingLiteral::Bool(*value))),
+            Self::NewSecret(secret) => Some(SettingInput::Secret(nodo_api::Secret::new(secret.expose()))),
             Self::SecretUnset | Self::SecretSet => None,
         }
     }
@@ -575,6 +580,11 @@ pub trait ScreenData {
     fn settings_form(&self, package: &str) -> Option<SettingsForm>;
     fn references(&self, package: &str, field: &str) -> ReferenceList;
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation;
+    /// The helper's name for a site the screens know by one string. Sites are keyed by package
+    /// in the mock, where every package serves one site.
+    fn site_id(&self, key: &str) -> SiteId {
+        SiteId { package: key.to_owned(), site: key.to_owned() }
+    }
 
     fn updates(&self) -> Vec<UpdateItem>;
     fn check_updates(&mut self);

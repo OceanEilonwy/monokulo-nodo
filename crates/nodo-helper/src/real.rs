@@ -16,6 +16,10 @@ use crate::system::{Probe, SvAction, SysError, SysResult, System, WriteOptions};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_ERROR_LEN: usize = 512;
+/// The account settings code runs as. Created by the package that installs the helper.
+pub const SETTINGS_USER: &str = "_nodo-settings";
+const WORKER_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_TOOL_OUTPUT: u64 = 64 * 1024;
 
 /// `pbkdf2` at the minimum cost, because a volume key is 64 random bytes and has nothing to
 /// stretch. Argon2 here would make opening many volumes at once take far longer, and need its
@@ -135,6 +139,48 @@ fn uid_of(user: &str) -> SysResult<(u32, u32)> {
 fn gid_of(group: &str) -> SysResult<u32> {
     let groups = fs::read_to_string("/etc/group")?;
     numeric_id(&groups, group, 2).ok_or_else(|| SysError(format!("no such group: {group}")))
+}
+
+/// Runs a program and returns its exit code and combined output, bounded.
+fn run_output(program: &str, mut cmd: Command) -> SysResult<(Option<i32>, String)> {
+    let out = cmd
+        .output()
+        .map_err(|e| SysError(format!("{program}: {e}")))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    text.truncate(MAX_TOOL_OUTPUT as usize);
+    Ok((out.status.code(), text))
+}
+
+/// The filesystem check tools disagree on exit codes, so each is read on its own terms.
+/// Returns whether the filesystem is clean afterwards, or `None` when the tool itself failed.
+pub fn fsck_outcome(fs_type: &str, repair: bool, code: Option<i32>) -> Option<bool> {
+    match (fs_type, repair, code) {
+        ("xfs", _, Some(0)) => Some(true),
+        ("xfs", false, Some(1)) => Some(false),
+        ("ext4", false, Some(0)) => Some(true),
+        ("ext4", false, Some(1 | 2 | 4)) => Some(false),
+        ("ext4", true, Some(0..=2)) => Some(true),
+        ("ext4", true, Some(4)) => Some(false),
+        _ => None,
+    }
+}
+
+pub fn fsck_args(
+    fs_type: &str,
+    repair: bool,
+    device: &Path,
+) -> Option<(&'static str, Vec<OsString>)> {
+    let (program, flags): (&str, &[&str]) = match (fs_type, repair) {
+        ("xfs", false) => ("xfs_repair", &["-n"]),
+        ("xfs", true) => ("xfs_repair", &[]),
+        ("ext4", false) => ("e2fsck", &["-f", "-n"]),
+        ("ext4", true) => ("e2fsck", &["-f", "-y"]),
+        _ => return None,
+    };
+    let mut args: Vec<OsString> = flags.iter().map(OsString::from).collect();
+    args.push(device.as_os_str().to_owned());
+    Some((program, args))
 }
 
 fn mountinfo_contains(mountinfo: &str, path: &str) -> bool {
@@ -331,6 +377,106 @@ impl System for RealSystem {
             .unwrap_or(false)
     }
 
+    fn symlink(&self, target: &Path, link: &Path) -> SysResult<()> {
+        std::os::unix::fs::symlink(target, link)
+            .map_err(|e| SysError(format!("{}: {e}", link.display())))
+    }
+
+    fn read_link(&self, path: &Path) -> Option<std::path::PathBuf> {
+        let meta = fs::symlink_metadata(path).ok()?;
+        if !meta.file_type().is_symlink() {
+            return None;
+        }
+        fs::read_link(path).ok()
+    }
+
+    fn user_exists(&self, name: &str) -> bool {
+        let users = fs::read_to_string("/etc/passwd").unwrap_or_default();
+        let groups = fs::read_to_string("/etc/group").unwrap_or_default();
+        // A group of that name counts too, since useradd would fail on it or join it.
+        numeric_id(&users, name, 2).is_some() || numeric_id(&groups, name, 2).is_some()
+    }
+
+    fn create_user(&self, name: &str, home: &Path) -> SysResult<()> {
+        let mut cmd = command("useradd");
+        cmd.args([
+            "--system",
+            "--user-group",
+            "--no-create-home",
+            "--shell",
+            "/sbin/nologin",
+        ])
+        .args(["--comment", "nodo service"])
+        .arg("--home-dir")
+        .arg(home)
+        .arg(name);
+        run("useradd", cmd)
+    }
+
+    fn fs_usage(&self, path: &Path) -> SysResult<(u64, u64)> {
+        let stat =
+            rustix::fs::statvfs(path).map_err(|e| SysError(format!("{}: {e}", path.display())))?;
+        let unit = stat.f_frsize;
+        Ok((
+            stat.f_blocks.saturating_mul(unit),
+            stat.f_bavail.saturating_mul(unit),
+        ))
+    }
+
+    fn fs_type(&self, device: &Path) -> Option<String> {
+        let mut cmd = command("blkid");
+        cmd.args(["-o", "value", "-s", "TYPE"]).arg(device);
+        let (code, text) = run_output("blkid", cmd).ok()?;
+        let fs = text.trim();
+        (code == Some(0) && !fs.is_empty() && !fs.contains(char::is_whitespace))
+            .then(|| fs.to_owned())
+    }
+
+    fn fs_check(&self, device: &Path, fs_type: &str, repair: bool) -> SysResult<(bool, String)> {
+        let (program, args) = fsck_args(fs_type, repair, device)
+            .ok_or_else(|| SysError(format!("cannot check {fs_type}")))?;
+        let mut cmd = command(program);
+        cmd.args(args);
+        let (code, output) = run_output(program, cmd)?;
+        match fsck_outcome(fs_type, repair, code) {
+            Some(clean) => Ok((clean, output)),
+            None => Err(failure(program, output.as_bytes(), b"")),
+        }
+    }
+
+    fn mount_fstab(&self, mount_point: &Path) -> SysResult<()> {
+        let mut cmd = command("mount");
+        cmd.arg(mount_point);
+        run("mount", cmd)
+    }
+
+    fn settings_worker(&self, input: &[u8]) -> SysResult<Vec<u8>> {
+        let mut cmd = Command::new("/proc/self/exe");
+        cmd.arg("--settings-worker")
+            .env_clear()
+            .env("LC_ALL", "C")
+            .current_dir("/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if rustix::process::geteuid().is_root() {
+            // std clears supplementary groups when dropping from root to this uid.
+            let (uid, gid) = uid_of(SETTINGS_USER)
+                .map_err(|_| SysError(format!("the {SETTINGS_USER} account is missing")))?;
+            if uid == 0 || gid == 0 {
+                return Err(SysError(format!("{SETTINGS_USER} must not be root")));
+            }
+            use std::os::unix::process::CommandExt;
+            cmd.uid(uid).gid(gid);
+        }
+        run_bounded(
+            cmd,
+            input,
+            WORKER_TIMEOUT,
+            crate::worker::MAX_WORKER_IO as u64,
+        )
+    }
+
     fn probe(&self, probe: &Probe) -> bool {
         let port = match probe {
             Probe::Tcp { port } | Probe::Http { port, .. } => *port,
@@ -365,6 +511,68 @@ impl System for RealSystem {
     fn random(&self, out: &mut [u8]) -> SysResult<()> {
         getrandom::fill(out).map_err(|e| SysError(format!("no secure randomness: {e}")))
     }
+}
+
+/// Feeds `input`, collects bounded output, and kills the child if it outlives `timeout`.
+fn run_bounded(
+    mut cmd: Command,
+    input: &[u8],
+    timeout: Duration,
+    limit: u64,
+) -> SysResult<Vec<u8>> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| SysError(format!("settings worker: {e}")))?;
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let output = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            if let Some(mut stdin) = stdin {
+                let _ = stdin.write_all(input);
+            }
+        });
+        let out = scope.spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(stdout) = stdout {
+                let _ = stdout.take(limit + 1).read_to_end(&mut bytes);
+            }
+            bytes
+        });
+        let err = scope.spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(stderr) = stderr {
+                let _ = stderr.take(4096).read_to_end(&mut bytes);
+            }
+            bytes
+        });
+        let deadline = std::time::Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(SysError("settings code took too long".to_owned()));
+                }
+                Err(e) => break Err(SysError(format!("settings worker: {e}"))),
+            }
+        };
+        let out = out.join().unwrap_or_default();
+        let err = err.join().unwrap_or_default();
+        status.map(|status| (status, out, err))
+    });
+    let (status, out, err) = output?;
+    if !status.success() {
+        return Err(failure("settings worker", &err, b""));
+    }
+    if out.len() as u64 > limit {
+        return Err(SysError("settings worker output too large".to_owned()));
+    }
+    Ok(out)
 }
 
 fn http_success(status_line: &str) -> bool {
@@ -511,6 +719,52 @@ mod tests {
         assert!(mountinfo_contains(info, "/run/nodo/volumes/vault"));
         assert!(!mountinfo_contains(info, "/run/nodo/volumes/vau"));
         assert!(!mountinfo_contains(info, "/run/nodo/volumes"));
+    }
+
+    #[test]
+    fn fsck_exit_codes_are_read_per_tool() {
+        assert_eq!(fsck_outcome("xfs", false, Some(0)), Some(true));
+        assert_eq!(fsck_outcome("xfs", false, Some(1)), Some(false));
+        assert_eq!(
+            fsck_outcome("xfs", false, Some(2)),
+            None,
+            "dirty log is not a verdict"
+        );
+        assert_eq!(fsck_outcome("ext4", false, Some(4)), Some(false));
+        assert_eq!(fsck_outcome("ext4", true, Some(1)), Some(true));
+        assert_eq!(fsck_outcome("ext4", true, Some(8)), None);
+        assert_eq!(
+            fsck_outcome("ext4", false, None),
+            None,
+            "killed by a signal"
+        );
+        let (program, args) = fsck_args("xfs", false, Path::new("/dev/x")).unwrap();
+        assert_eq!(program, "xfs_repair");
+        assert_eq!(args, [OsString::from("-n"), OsString::from("/dev/x")]);
+        assert!(fsck_args("ntfs", false, Path::new("/dev/x")).is_none());
+    }
+
+    #[test]
+    fn bounded_runner_kills_a_child_that_hangs() {
+        let mut cmd = command("sh");
+        cmd.args(["-c", "sleep 30"]).stdin(Stdio::piped());
+        let started = std::time::Instant::now();
+        let e = run_bounded(cmd, b"", Duration::from_millis(200), 1024).unwrap_err();
+        assert!(e.0.contains("too long"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn bounded_runner_round_trips_and_refuses_oversized_output() {
+        let mut cmd = command("cat");
+        cmd.stdin(Stdio::piped());
+        assert_eq!(
+            run_bounded(cmd, b"hello", Duration::from_secs(5), 1024).unwrap(),
+            b"hello"
+        );
+        let mut cmd = command("cat");
+        cmd.stdin(Stdio::piped());
+        assert!(run_bounded(cmd, &[b'x'; 2048], Duration::from_secs(5), 1024).is_err());
     }
 
     #[test]

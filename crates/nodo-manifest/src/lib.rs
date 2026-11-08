@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use validate::{
-    is_valid_id, is_valid_name, is_valid_package_path, is_valid_version, ManifestIssue, MAX_ID_LEN,
+    is_valid_config_name, is_valid_id, is_valid_name, is_valid_package_path, is_valid_version, ManifestIssue, MAX_ID_LEN,
     MIN_PACKAGE_PORT, RESERVED_IDS,
 };
 
@@ -48,6 +48,10 @@ pub struct Manifest {
     /// Path of the Lua settings file, relative to the package directory.
     #[serde(default)]
     pub settings: Option<String>,
+    /// A TOML template, filled with this package's resolved settings, that becomes the
+    /// package's own configuration file. Without it, settings are written as a flat table.
+    #[serde(default)]
+    pub config: Option<ConfigFile>,
     #[serde(default)]
     pub storage: Storage,
     #[serde(default)]
@@ -64,6 +68,15 @@ pub struct Manifest {
 
 fn default_stop_timeout() -> u32 {
     120
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigFile {
+    /// Path of the template, relative to the package directory.
+    pub template: String,
+    /// File name written in the package's config directory, such as `Cuprated.toml`.
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,6 +347,31 @@ mod tests {
             m.settings = Some(path.into());
             assert_eq!(fields(&m), ["settings"], "settings {path:?} should be rejected");
         }
+    }
+
+    #[test]
+    fn config_template_must_stay_inside_the_package() {
+        let ok = Manifest::parse(
+            "api_version = 1\nid = \"shop\"\nversion = \"1\"\nexec = [\"bin/shop\"]\nsettings = \"s.lua\"\n[config]\ntemplate = \"conf/shop.toml\"\nname = \"shop.toml\"\n",
+        )
+        .unwrap();
+        assert_eq!(ok.config.unwrap().name, "shop.toml");
+        for (template, name) in [
+            ("../x.toml", "shop.toml"),
+            ("/etc/x.toml", "shop.toml"),
+            ("x.toml", "../shop.toml"),
+            ("x.toml", "a/b.toml"),
+            ("x.toml", ".settings.toml"),
+            ("x.toml", ""),
+        ] {
+            let mut m = base();
+            m.settings = Some("s.lua".into());
+            m.config = Some(ConfigFile { template: template.into(), name: name.into() });
+            assert!(!m.validate().is_empty(), "{template} {name}");
+        }
+        let mut m = base();
+        m.config = Some(ConfigFile { template: "x.toml".into(), name: "x.toml".into() });
+        assert_eq!(fields(&m), ["config"]);
     }
 
     #[test]

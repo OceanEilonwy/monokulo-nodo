@@ -1,12 +1,13 @@
-//! Writes generated service files and loads the firewall.
+//! Writes generated service files, creates the service user, loads the firewall and enables
+//! the service.
 //!
-//! `nodo_api::Request` has no install action yet. The package manager will reach this once it
-//! exists, and until then nothing outside the crate can trigger it from a client.
+//! `Request::InstallService` reaches this for a manifest already in a root-owned manifest
+//! directory. Placing manifests and app files there is the package manager's job.
 
 use std::path::Path;
 
-use nodo_api::ApiError;
-use nodo_gen::{generate, Artifacts, Profile, ResolvedGrants};
+use nodo_api::{ApiError, Response};
+use nodo_gen::{generate, service_user, Artifacts, Profile, ResolvedGrants};
 use nodo_manifest::Manifest;
 
 use crate::helper::{lock, Helper};
@@ -18,6 +19,10 @@ const SCRIPT: WriteOptions = WriteOptions {
 };
 const CONFIG: WriteOptions = WriteOptions {
     mode: 0o644,
+    group: None,
+};
+const CLAIM: WriteOptions = WriteOptions {
+    mode: 0o600,
     group: None,
 };
 
@@ -32,9 +37,77 @@ impl<S: System> Helper<S> {
     ) -> Result<Artifacts, ApiError> {
         let artifacts =
             generate(manifest, profile, grants).map_err(|e| ApiError::Failed(e.to_string()))?;
-        let id = &manifest.id;
         let _guard = lock(&self.service_lock);
+        self.write_service(&manifest.id, &artifacts)?;
+        Ok(artifacts)
+    }
 
+    /// Installs an app whose manifest the package manager has put in place: claims the id,
+    /// creates its user, writes the service and enables it.
+    ///
+    /// An id is refused when its user, service directory or enabled link already exists and the
+    /// helper did not create them, so a package can never take over an existing account or
+    /// service such as `sshd`.
+    pub(crate) fn install_by_id(&self, id: &str) -> Result<Response, ApiError> {
+        let package = self.package(id)?;
+        if package.profile == Profile::System {
+            return Err(ApiError::Failed(format!(
+                "{id} is part of the base system and is installed with it"
+            )));
+        }
+        // Grants that settings references imply are not resolved here yet, so an app gets only
+        // what its manifest declares.
+        let artifacts = generate(
+            &package.manifest,
+            package.profile,
+            &ResolvedGrants::default(),
+        )
+        .map_err(|e| ApiError::Failed(e.to_string()))?;
+        let user = service_user(id).map_err(|e| ApiError::Failed(e.to_string()))?;
+        let layout = package.layout()?;
+        let marker = self.paths.installed.join(id);
+        let service = self.paths.sv_dir.join(id);
+        let enabled = self.paths.service_dir.join(id);
+
+        let _guard = lock(&self.service_lock);
+        if !self.sys.exists(&marker) {
+            let clash = if self.sys.user_exists(&user) {
+                Some(format!("the user {user} already exists"))
+            } else if self.sys.exists(&service) || self.sys.read_link(&service).is_some() {
+                Some(format!("{} already exists", service.display()))
+            } else if self.sys.exists(&enabled) || self.sys.read_link(&enabled).is_some() {
+                Some(format!("{} already exists", enabled.display()))
+            } else {
+                None
+            };
+            if let Some(clash) = clash {
+                return Err(ApiError::Failed(format!(
+                    "the id {id} is already in use on this device: {clash}"
+                )));
+            }
+            // Claimed before anything is created, so a failure part way leaves an install that
+            // can be retried rather than a user that now blocks the id.
+            self.sys.ensure_dir(&self.paths.installed, 0o700, None)?;
+            self.sys.atomic_write(&marker, b"", CLAIM)?;
+        }
+        if !self.sys.user_exists(&user) {
+            self.sys.create_user(&user, Path::new(&layout.data_dir))?;
+        }
+        self.write_service(id, &artifacts)?;
+        match self.sys.read_link(&enabled) {
+            Some(target) if target == service => {}
+            Some(_) => {
+                return Err(ApiError::Failed(format!(
+                    "{} points somewhere else",
+                    enabled.display()
+                )))
+            }
+            None => self.sys.symlink(&service, &enabled)?,
+        }
+        Ok(Response::Ok)
+    }
+
+    fn write_service(&self, id: &str, artifacts: &Artifacts) -> Result<(), ApiError> {
         let pending = self.paths.nft_dir.join(format!("{id}.nft.pending"));
         self.sys
             .atomic_write(&pending, artifacts.nft.as_bytes(), CONFIG)?;
@@ -73,7 +146,7 @@ impl<S: System> Helper<S> {
             };
             return Err(e.into());
         }
-        Ok(artifacts)
+        Ok(())
     }
 }
 
@@ -138,6 +211,89 @@ mod tests {
         h.sys.fail("nft load");
         assert!(install(&h).is_err());
         assert_eq!(h.sys.get("/nft/shop.nft"), None);
+    }
+
+    fn by_id(h: &Helper<FakeSystem>) -> Result<Response, ApiError> {
+        h.handle(
+            1000,
+            nodo_api::Request::InstallService { id: "shop".into() },
+        )
+    }
+
+    fn installed() -> Helper<FakeSystem> {
+        let sys = FakeSystem::default();
+        sys.add_manifest(SHOP);
+        helper(sys)
+    }
+
+    #[test]
+    fn install_by_id_creates_the_user_then_enables_the_service() {
+        let h = installed();
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+        assert!(h.sys.has_user("_shop"));
+        assert_eq!(h.sys.link("/service/shop").as_deref(), Some("/sv/shop"));
+        assert!(h.sys.get("/sv/shop/run").is_some());
+        let calls = h.sys.calls();
+        let at = |needle: &str| calls.iter().position(|c| c.starts_with(needle)).unwrap();
+        assert!(at("write /s/installed/shop") < at("useradd _shop"));
+        assert!(at("useradd _shop") < at("mkdir /var/lib/apps/shop"));
+        assert!(at("write /sv/shop/run") < at("symlink /service/shop"));
+    }
+
+    #[test]
+    fn reinstall_by_the_helper_is_allowed() {
+        let h = installed();
+        by_id(&h).unwrap();
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+    }
+
+    #[test]
+    fn ids_already_in_use_are_refused_without_changes() {
+        for setup in [
+            |sys: &FakeSystem| sys.add_user("_shop"),
+            |sys: &FakeSystem| sys.put("/sv/shop/run", b"#!/bin/sh"),
+            |sys: &FakeSystem| sys.add_link("/service/shop", "/etc/sv/other"),
+        ] {
+            let h = installed();
+            setup(&h.sys);
+            let Err(ApiError::Failed(message)) = by_id(&h) else {
+                panic!()
+            };
+            assert!(message.contains("already in use"), "{message}");
+            assert!(
+                !h.sys
+                    .calls()
+                    .iter()
+                    .any(|c| c.starts_with("write") || c.starts_with("useradd")),
+                "{:?}",
+                h.sys.calls()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_install_can_be_retried() {
+        let h = installed();
+        h.sys.fail_once("nft check");
+        assert!(by_id(&h).is_err());
+        assert!(h.sys.has_user("_shop"));
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+    }
+
+    #[test]
+    fn base_system_and_unknown_ids_are_not_installed() {
+        let sys = FakeSystem::default();
+        sys.add_system_manifest(SHOP);
+        let h = helper(sys);
+        assert!(matches!(by_id(&h), Err(ApiError::Failed(_))));
+        assert!(matches!(
+            h.handle(
+                1000,
+                nodo_api::Request::InstallService { id: "sshd".into() }
+            ),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("useradd")));
     }
 
     #[test]

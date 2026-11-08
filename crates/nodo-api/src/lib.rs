@@ -2,9 +2,27 @@
 //!
 //! The helper only performs the actions listed in `Request`. Nothing here accepts a shell
 //! command, a file path to write, or arbitrary system configuration.
+//!
+//! Postcard identifies enum variants and struct fields by position. Any change other than adding
+//! a variant at the end of an enum needs a new [`PROTOCOL_VERSION`].
+
+#![forbid(unsafe_code)]
+
+pub mod client;
+pub mod protocol;
+mod secret;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use secret::Secret;
+
+/// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
+/// rollbacks and confirmed exposure changes.
+pub const PROTOCOL_VERSION: u8 = 2;
+
+/// The helper's socket on the device.
+pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceState {
@@ -17,11 +35,23 @@ pub enum ServiceState {
     Waiting,
 }
 
+/// Where a service's package came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Origin {
+    /// Part of the signed base image.
+    System,
+    /// Installed from a user-added feed. `None` when the installer has not recorded which one.
+    Feed(Option<String>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceStatus {
     pub id: String,
     pub state: ServiceState,
     pub detail: String,
+    /// Roles the package provides, such as `monero-daemon`.
+    pub roles: Vec<String>,
+    pub origin: Origin,
 }
 
 /// Exposures are independent, so a site can use any combination.
@@ -32,28 +62,376 @@ pub struct Exposure {
     pub public: bool,
 }
 
+/// A package can serve several sites, so a site is named by both.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SiteId {
+    pub package: String,
+    pub site: String,
+}
+
+/// Proof that the user typed the public host name to confirm going public. The helper compares
+/// it with the host it has stored for the site, so a client cannot skip the step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicConfirmation {
+    pub typed_host: String,
+}
+
+/// Proof that the user saw a read-only check find damage and chose to repair. `check_id` must
+/// name the helper's most recent check, which must be recent and must have found problems.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairConfirmation {
+    pub check_id: u64,
+    pub accept_data_loss_risk: bool,
+}
+
+/// A literal setting value. Text is never scanned for references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingLiteral {
+    Text(String),
+    Int(i64),
+    Bool(bool),
+}
+
+/// A new value for one setting. A reference and a literal can never be confused, whatever the
+/// text holds, because they are different variants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingInput {
+    Literal(SettingLiteral),
+    /// `$(target.setting)`, where `target` is a package id or a role.
+    Reference {
+        target: String,
+        setting: String,
+    },
+    Secret(Secret),
+    /// Go back to the package's default.
+    Reset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingChange {
+    pub name: String,
+    pub value: SettingInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingKind {
+    Text,
+    Int { min: Option<i64>, max: Option<i64> },
+    Bool,
+    Choice(Vec<String>),
+    MoneroAddress,
+    Url,
+    Secret,
+}
+
+/// What a setting holds now. Secrets are only ever reported as set or unset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettingCurrent {
+    /// No value stored, so the default applies, if there is one.
+    Default,
+    Literal(SettingLiteral),
+    Reference {
+        target: String,
+        setting: String,
+        /// The value it resolves to now, unless it is a secret or does not resolve.
+        resolved: Option<String>,
+    },
+    SecretSet,
+    SecretUnset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingField {
+    pub name: String,
+    pub label: String,
+    pub help: String,
+    pub required: bool,
+    pub kind: SettingKind,
+    pub current: SettingCurrent,
+    /// The default as text, or a `$(...)` reference. Never present for a secret.
+    pub default: Option<String>,
+    /// The name other packages reference this setting by, when it is public.
+    pub public_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsForm {
+    pub package: String,
+    pub fields: Vec<SettingField>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RollbackStage {
+    Restart,
+    HealthCheck,
+}
+
+/// New settings were applied, failed, and were taken back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rollback {
+    pub stage: RollbackStage,
+    pub reason: String,
+    /// Whether the service is healthy again on its old settings.
+    pub recovered: bool,
+    /// Set when it is not, saying what went wrong the second time.
+    pub recovery_problem: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncryptionState {
+    /// First boot: no device passphrase exists yet.
+    NotSetUp,
+    Locked,
+    Unlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceOverview {
+    pub hostname: String,
+    pub kernel: String,
+    pub uptime_secs: u64,
+    pub memory_total_kib: u64,
+    pub memory_available_kib: u64,
+    pub disk_total_bytes: u64,
+    pub disk_free_bytes: u64,
+    pub encryption: EncryptionState,
+    /// Whether any SSH key may log in. The setup screen offers to add one when none can.
+    pub ssh_keys: u32,
+    /// The data drive, when the board has one.
+    pub drive: Option<DriveStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageInfo {
+    pub id: String,
+    pub version: String,
+    pub origin: Origin,
+    pub roles: Vec<String>,
+    pub needs: Vec<String>,
+    pub encrypted_storage: bool,
+    pub has_settings: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageDetail {
+    pub info: PackageInfo,
+    pub sites: Vec<String>,
+    /// Inbound ports, as `18080/tcp lan`.
+    pub inbound: Vec<String>,
+    pub outbound_internet: bool,
+    pub public_settings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedInfo {
+    pub name: String,
+    pub address: String,
+    pub fingerprint: String,
+    pub enabled: bool,
+    pub packages: u32,
+    pub key_changed: bool,
+    pub last_checked: Option<String>,
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub package: String,
+    pub from: String,
+    pub to: String,
+    pub feed: String,
+    pub held: bool,
+    pub needs_new_permissions: bool,
+    pub needs_restart: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoUpdatePrefs {
+    pub frequency: String,
+    /// Device-local `HH:MM`.
+    pub window_start: String,
+    pub window_end: String,
+    /// Packages opted in. Everything else is off, which is the default.
+    pub enabled: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogChunk {
+    pub source: String,
+    pub lines: Vec<String>,
+    /// More lines exist before the first one returned.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriveStatus {
+    pub label: String,
+    pub mount_point: String,
+    pub present: bool,
+    pub mounted: bool,
+    pub filesystem: Option<String>,
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriveReport {
+    /// Quote this in a [`RepairConfirmation`].
+    pub check_id: u64,
+    pub clean: bool,
+    pub output: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteInfo {
+    pub id: SiteId,
+    pub exposure: Exposure,
+    pub multi_address: bool,
+    pub public_host: Option<String>,
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityCheck {
+    pub passed: bool,
+    pub text: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReachabilityReport {
+    Checked {
+        checks: Vec<ReachabilityCheck>,
+    },
+    /// The ISP shares one public address between customers, so inbound connections cannot work.
+    Cgnat {
+        wan_address: String,
+        internet_address: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    pub dynamic_dns: bool,
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKey {
+    pub algorithm: String,
+    /// `SHA256:` and the unpadded base64 digest, as `ssh-keygen -l` prints it.
+    pub fingerprint: String,
+    pub comment: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     ListServices,
-    StartService { id: String },
-    StopService { id: String },
-    RestartService { id: String },
+    StartService {
+        id: String,
+    },
+    StopService {
+        id: String,
+    },
+    RestartService {
+        id: String,
+    },
     /// Opens all encrypted storage with the single device passphrase.
-    Unlock { passphrase: String },
+    Unlock {
+        passphrase: Secret,
+    },
     /// Validates, applies, health checks, and rolls back on failure.
-    ApplySettings { package: String, values: Vec<(String, String)> },
-    SetExposure { package: String, site: String, exposure: Exposure },
+    ApplySettings {
+        package: String,
+        changes: Vec<SettingChange>,
+    },
+    /// Turning `public` on needs `confirmation`. Turning anything off never does.
+    SetExposure {
+        site: SiteId,
+        exposure: Exposure,
+        confirmation: Option<PublicConfirmation>,
+    },
+    /// First boot. Creates the device key, and refuses if one exists.
+    InitEncryption {
+        passphrase: Secret,
+    },
+    /// Rewraps the device key. Volumes keep their keys, so nothing is reformatted.
+    ChangePassphrase {
+        current: Secret,
+        new: Secret,
+    },
+    DeviceOverview,
+    ListPackages,
+    PackageDetail {
+        id: String,
+    },
+    SettingsForm {
+        package: String,
+    },
+    ListFeeds,
+    ListUpdates,
+    GetAutoUpdate,
+    SetAutoUpdate(AutoUpdatePrefs),
+    LogSources,
+    ReadLog {
+        source: String,
+        max_lines: u32,
+    },
+    DriveStatus,
+    /// Read-only. Its report's id is what a repair must quote.
+    CheckDrive,
+    RepairDrive(RepairConfirmation),
+    ListSites,
+    /// The host the user brought for a site. Going public must then quote it.
+    SetPublicHost {
+        site: SiteId,
+        host: String,
+    },
+    CheckReachability {
+        site: SiteId,
+    },
+    ListProviders,
+    /// Creates the service user, writes the generated service and enables it. The manifest must
+    /// already be in a root-owned manifest directory.
+    InstallService {
+        id: String,
+    },
+    ListSshKeys,
+    AddSshKey {
+        line: String,
+    },
+    RemoveSshKey {
+        fingerprint: String,
+    },
+    /// Mounts the data drive as `/etc/fstab` describes it, for retrying after a repair.
+    MountDrive,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
     Ok,
     Services(Vec<ServiceStatus>),
-    /// Settings were restored because the service failed its health check.
-    RolledBack { reason: String },
+    /// Settings were restored because the service failed to restart or its health check.
+    RolledBack(Rollback),
+    Overview(DeviceOverview),
+    Packages(Vec<PackageInfo>),
+    PackageDetail(PackageDetail),
+    SettingsForm(SettingsForm),
+    Feeds(Vec<FeedInfo>),
+    Updates(Vec<UpdateInfo>),
+    AutoUpdate(AutoUpdatePrefs),
+    LogSources(Vec<String>),
+    Log(LogChunk),
+    Drive(Option<DriveStatus>),
+    DriveReport(DriveReport),
+    Sites(Vec<SiteInfo>),
+    Reachability(ReachabilityReport),
+    Providers(Vec<ProviderInfo>),
+    SshKeys(Vec<SshKey>),
 }
 
-#[derive(Debug, Error, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApiError {
     #[error("this user may not perform that action")]
     Denied,
@@ -63,9 +441,90 @@ pub enum ApiError {
     NotFound(String),
     #[error("{0}")]
     Failed(String),
+    /// The backing system does not exist yet. Clients show this rather than any placeholder data.
+    #[error("not available yet: {0}")]
+    NotImplemented(String),
+    #[error("too many attempts, try again in {retry_after_secs} seconds")]
+    RateLimited { retry_after_secs: u64 },
+    /// The action needs a confirmation the request did not carry, or carried wrongly.
+    #[error("{0}")]
+    NeedsConfirmation(String),
+    #[error("encrypted storage has not been set up")]
+    NotSetUp,
 }
 
 /// Implemented by the helper client and by a mock for TUI development and tests.
 pub trait Backend {
     fn call(&mut self, request: Request) -> Result<Response, ApiError>;
+}
+
+/// The name of a request, for logs. Logging the request itself would write secrets and setting
+/// values into them.
+pub fn action_name(request: &Request) -> &'static str {
+    match request {
+        Request::ListServices => "list-services",
+        Request::StartService { .. } => "start-service",
+        Request::StopService { .. } => "stop-service",
+        Request::RestartService { .. } => "restart-service",
+        Request::Unlock { .. } => "unlock",
+        Request::ApplySettings { .. } => "apply-settings",
+        Request::SetExposure { .. } => "set-exposure",
+        Request::InitEncryption { .. } => "init-encryption",
+        Request::ChangePassphrase { .. } => "change-passphrase",
+        Request::DeviceOverview => "device-overview",
+        Request::ListPackages => "list-packages",
+        Request::PackageDetail { .. } => "package-detail",
+        Request::SettingsForm { .. } => "settings-form",
+        Request::ListFeeds => "list-feeds",
+        Request::ListUpdates => "list-updates",
+        Request::GetAutoUpdate => "get-auto-update",
+        Request::SetAutoUpdate(_) => "set-auto-update",
+        Request::LogSources => "log-sources",
+        Request::ReadLog { .. } => "read-log",
+        Request::DriveStatus => "drive-status",
+        Request::CheckDrive => "check-drive",
+        Request::RepairDrive(_) => "repair-drive",
+        Request::ListSites => "list-sites",
+        Request::SetPublicHost { .. } => "set-public-host",
+        Request::CheckReachability { .. } => "check-reachability",
+        Request::ListProviders => "list-providers",
+        Request::InstallService { .. } => "install-service",
+        Request::ListSshKeys => "list-ssh-keys",
+        Request::AddSshKey { .. } => "add-ssh-key",
+        Request::RemoveSshKey { .. } => "remove-ssh-key",
+        Request::MountDrive => "mount-drive",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_never_prints_secrets() {
+        let requests = [
+            Request::Unlock {
+                passphrase: Secret::new("hunter2"),
+            },
+            Request::InitEncryption {
+                passphrase: Secret::new("hunter2"),
+            },
+            Request::ChangePassphrase {
+                current: Secret::new("hunter2"),
+                new: Secret::new("hunter3"),
+            },
+            Request::ApplySettings {
+                package: "a".into(),
+                changes: vec![SettingChange {
+                    name: "k".into(),
+                    value: SettingInput::Secret(Secret::new("hunter2")),
+                }],
+            },
+        ];
+        for request in requests {
+            let text = format!("{request:?}");
+            assert!(!text.contains("hunter"), "{text}");
+            assert!(!action_name(&request).contains("hunter"));
+        }
+    }
 }

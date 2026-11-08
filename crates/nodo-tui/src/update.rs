@@ -293,7 +293,7 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
             .map(|site| Effect::SetExposure {
                 site: site.package.clone(),
                 exposure: Exposure::default(),
-                after: ExposureAfter::Stay,
+                after: ExposureAfter::Stay, confirmation: None
             })
             .collect(),
         ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
@@ -1287,13 +1287,13 @@ fn exposure_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     effects.push(Effect::SetExposure {
                         site: site_name.clone(),
                         exposure: others,
-                        after: ExposureAfter::Stay,
+                        after: ExposureAfter::Stay, confirmation: None
                     });
                 }
                 effects.push(Effect::CheckReachability { site: site_name, going_public: true });
                 return effects;
             }
-            return vec![Effect::SetExposure { site: site_name, exposure: draft, after: ExposureAfter::Back }];
+            return vec![Effect::SetExposure { site: site_name, exposure: draft, after: ExposureAfter::Back, confirmation: None }];
         }
         _ => {}
     }
@@ -1395,7 +1395,7 @@ fn with_onion(app: &App, site: &str) -> Option<Effect> {
     Some(Effect::SetExposure {
         site: site.to_owned(),
         exposure: Exposure { onion: true, ..entry.exposure },
-        after: ExposureAfter::Stay,
+        after: ExposureAfter::Stay, confirmation: None
     })
 }
 
@@ -1467,6 +1467,7 @@ fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     site: state.site.clone(),
                     exposure: Exposure { public: true, ..site.exposure },
                     after: ExposureAfter::WentPublic,
+                    confirmation: Some(state.typed.text().to_owned()),
                 },
             ];
         }

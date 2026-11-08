@@ -642,7 +642,8 @@ pub enum Effect {
     LoadLogs(String),
     Drive(DriveAction),
     Shell,
-    SetExposure { site: String, exposure: Exposure, after: ExposureAfter },
+    /// `confirmation` is the host the user typed, which the helper requires to go public.
+    SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
     SetPublicHost { site: String, host: String },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
