@@ -1,4 +1,8 @@
-//! `nodo-helper --allow-uid <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]`
+//! `nodo-helper --allow-uid <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]
+//!  [--drive <device> --drive-mount <path>]`
+//!
+//! `nodo-helper --settings-worker` is the unprivileged child that runs package settings code.
+//! The helper starts it itself.
 
 #![forbid(unsafe_code)]
 
@@ -9,17 +13,20 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use nodo_api::DEFAULT_SOCKET;
 use nodo_helper::real::RealSystem;
-use nodo_helper::{server, AllowedUids, FlatTomlSettings, Helper, NoCaddyYet};
+use nodo_helper::{
+    server, worker, AllowedUids, DriveConfig, Helper, NoCaddyYet, NodoSettings, Paths,
+};
 use rustix::mm::{mlockall, MlockAllFlags};
 use rustix::process::{set_dumpable_behavior, DumpableBehavior};
-
-const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
 
 struct Options {
     allowed: Vec<u32>,
     socket: PathBuf,
     socket_gid: Option<u32>,
+    drive: Option<PathBuf>,
+    drive_mount: Option<PathBuf>,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -27,6 +34,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         allowed: Vec::new(),
         socket: DEFAULT_SOCKET.into(),
         socket_gid: None,
+        drive: None,
+        drive_mount: None,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -43,11 +52,16 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
                 options.socket_gid = Some(gid);
             }
             "--socket" => options.socket = value()?.into(),
+            "--drive" => options.drive = Some(value()?.into()),
+            "--drive-mount" => options.drive_mount = Some(value()?.into()),
             other => return Err(format!("unknown option: {other}")),
         }
     }
     if options.allowed.is_empty() {
         return Err("at least one --allow-uid is required".to_owned());
+    }
+    if options.drive.is_some() != options.drive_mount.is_some() {
+        return Err("--drive and --drive-mount go together".to_owned());
     }
     Ok(options)
 }
@@ -82,6 +96,15 @@ fn bind(path: &Path, gid: Option<u32>) -> std::io::Result<UnixListener> {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--settings-worker") {
+        return match worker::serve_stdio() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("nodo-helper settings worker: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let options = match parse_options(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(e) => {
@@ -100,12 +123,23 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let paths = Paths {
+        drive: options
+            .drive
+            .zip(options.drive_mount)
+            .map(|(device, mount_point)| DriveConfig {
+                device,
+                mount_point,
+            }),
+        ..Paths::default()
+    };
     let helper = Helper::new(
         RealSystem,
         AllowedUids::new(options.allowed),
-        Box::new(FlatTomlSettings),
+        Box::new(NodoSettings),
         Box::new(NoCaddyYet),
-    );
+    )
+    .with_paths(paths);
     if let Err(e) = server::serve(listener, Arc::new(helper)) {
         eprintln!("nodo-helper: {e}");
         return ExitCode::FAILURE;
@@ -136,11 +170,16 @@ mod tests {
             "1001",
             "--socket-gid",
             "5",
+            "--drive",
+            "/dev/disk/by-partlabel/NODO_BLOCKCHAIN",
+            "--drive-mount",
+            "/media/monero",
         ]);
         let options = options.ok().unwrap();
         assert_eq!(options.allowed, [1000, 1001]);
         assert_eq!(options.socket_gid, Some(5));
         assert_eq!(options.socket, PathBuf::from(DEFAULT_SOCKET));
+        assert_eq!(options.drive_mount, Some(PathBuf::from("/media/monero")));
     }
 
     #[test]
@@ -148,6 +187,7 @@ mod tests {
         assert!(parse(&["--allow-uid", "root"]).is_err());
         assert!(parse(&["--allow-uid"]).is_err());
         assert!(parse(&["--allow-uid", "1000", "--force"]).is_err());
+        assert!(parse(&["--allow-uid", "1000", "--drive", "/dev/x"]).is_err());
     }
 
     #[test]

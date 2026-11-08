@@ -5,7 +5,9 @@
 //! covers today, and `model::ScreenData` carries the rest until that API grows.
 
 pub mod app;
+pub mod ctl;
 pub mod fixtures;
+pub mod helper_backend;
 pub mod mock;
 pub mod model;
 pub mod runtime;

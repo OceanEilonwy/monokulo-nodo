@@ -5,7 +5,7 @@ mod common;
 
 use common::{draw, screen_text, send, text, type_text};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, Exposure, Request, ServiceState};
+use nodo_api::{ApiError, Exposure, Request, ServiceState, SettingChange, SettingInput, SettingLiteral};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{ctrl, fixture, press};
 use nodo_tui::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
@@ -39,6 +39,25 @@ fn exposure_calls(mock: &MockBackend) -> Vec<Exposure> {
         .filter_map(|call| match call {
             Request::SetExposure { exposure, .. } => Some(*exposure),
             _ => None,
+        })
+        .collect()
+}
+
+/// What an apply call carried, as text, so assertions read like the form.
+fn sent_values(call: &Request) -> Vec<(String, String)> {
+    let Request::ApplySettings { changes, .. } = call else { return Vec::new() };
+    changes
+        .iter()
+        .map(|change| {
+            let value = match &change.value {
+                SettingInput::Literal(SettingLiteral::Text(text)) => text.clone(),
+                SettingInput::Literal(SettingLiteral::Int(n)) => n.to_string(),
+                SettingInput::Literal(SettingLiteral::Bool(b)) => b.to_string(),
+                SettingInput::Reference { target, setting } => format!("$({target}.{setting})"),
+                SettingInput::Secret(secret) => secret.expose().to_owned(),
+                SettingInput::Reset => String::new(),
+            };
+            (change.name.clone(), value)
         })
         .collect()
 }
@@ -271,7 +290,7 @@ fn going_public_requires_typing_the_exact_address() {
     key(&mut app, &mut mock, ENTER);
     assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
     assert_eq!(app.screen.id(), ScreenId::WebSites);
-    assert!(mock.public_access["shop"].rate_limit);
+    assert!(!mock.public_access["shop"].require_password);
 }
 
 #[test]
@@ -476,8 +495,7 @@ fn a_secret_setting_is_never_rendered_at_any_stage() {
     key(&mut app, &mut mock, ENTER);
     dispatch(&mut app, &mut mock, ctrl('s'));
     let sent = mock.calls.iter().any(|call| {
-        matches!(call, Request::ApplySettings { values, .. }
-            if values.iter().any(|(key, value)| key == "webhook_secret" && value == SECRET))
+        sent_values(call).iter().any(|(key, value)| key == "webhook_secret" && value == SECRET)
     });
     assert!(sent);
     assert_hidden(&app);
@@ -659,7 +677,10 @@ fn only_changed_settings_are_sent_through_the_real_api() {
     dispatch(&mut app, &mut mock, ctrl('s'));
     assert!(mock.calls.contains(&Request::ApplySettings {
         package: "moneropay".to_owned(),
-        values: vec![("api_port".to_owned(), "5001".to_owned())],
+        changes: vec![SettingChange {
+            name: "api_port".to_owned(),
+            value: SettingInput::Literal(SettingLiteral::Text("5001".to_owned())),
+        }],
     }));
     assert!(screen_text(&app).contains("✓ Saved. moneropay restarted"));
 }
@@ -728,8 +749,8 @@ fn using_a_reference_writes_a_reference_and_shows_what_it_resolves_to() {
     assert!(screen.contains("$(monero-daemon.restricted_rpc_url)"), "{screen}");
     assert!(screen.contains("Resolves to http://127.0.0.1:18089"), "{screen}");
     dispatch(&mut app, &mut mock, ctrl('s'));
-    assert!(mock.calls.iter().any(|call| matches!(call, Request::ApplySettings { values, .. }
-        if values.contains(&("daemon_rpc".to_owned(), "$(monero-daemon.restricted_rpc_url)".to_owned())))));
+    assert!(mock.calls.iter().any(|call| sent_values(call)
+        .contains(&("daemon_rpc".to_owned(), "$(monero-daemon.restricted_rpc_url)".to_owned()))));
 }
 
 #[test]

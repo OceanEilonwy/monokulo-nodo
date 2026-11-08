@@ -1,0 +1,22 @@
+# cuprated as the helper sees it: its settings, config template and health check. The service
+# itself comes from cuprated-service.
+api_version = 1
+id = "cuprated"
+version = "0.1.0"
+exec = ["/usr/bin/cuprated", "--config-file", "/etc/cuprated/Cuprated.toml"]
+provides = ["monero-daemon"]
+settings = "settings.lua"
+stop_timeout_secs = 120
+
+[config]
+template = "Cuprated.toml.in"
+name = "Cuprated.toml"
+
+[health.tcp]
+port = 18081
+
+# Declared so the RPC port can be referenced as an endpoint by other packages.
+[[network.inbound]]
+port = 18081
+protocol = "tcp"
+scope = "local"

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nodo_api::{ApiError, Response};
+use nodo_api::{ApiError, Response, Secret};
 use nodo_gen::{mapper_name, service_user, validate, volume_mount, VOLUME_ROOT};
 use zeroize::Zeroizing;
 
@@ -13,6 +13,21 @@ use crate::system::{System, WriteOptions};
 
 const SALT_AND_NONCE_LEN: usize = 40;
 const MIN_PASSPHRASE_LEN: usize = 8;
+
+const KEY_FILE: WriteOptions = WriteOptions {
+    mode: 0o600,
+    group: None,
+};
+
+/// Counted in characters, so a passphrase in any script meets the same rule.
+fn check_new_passphrase(passphrase: &Secret) -> Result<(), ApiError> {
+    if passphrase.char_count() < MIN_PASSPHRASE_LEN {
+        return Err(ApiError::Failed(format!(
+            "the passphrase must have at least {MIN_PASSPHRASE_LEN} characters"
+        )));
+    }
+    Ok(())
+}
 
 fn gen_failed(e: nodo_gen::GenError) -> ApiError {
     ApiError::Failed(e.to_string())
@@ -37,24 +52,59 @@ impl<S: System> Helper<S> {
     fn read_keystore(&self) -> Result<Vec<u8>, ApiError> {
         self.sys
             .read_file(&self.paths.keystore)?
-            .ok_or_else(|| ApiError::Failed("encrypted storage has not been set up".to_owned()))
+            .ok_or(ApiError::NotSetUp)
     }
 
-    pub(crate) fn unlock(&self, passphrase: &str) -> Result<Response, ApiError> {
-        let mut failures = lock(&self.failed_unlocks);
-        let file = self.read_keystore()?;
-        let device_key = match keys::unwrap_device_key(passphrase.as_bytes(), &file) {
-            Ok(key) => key,
+    /// Every passphrase check goes through here, so unlocking and changing the passphrase share
+    /// one failure count. The caller holds the count's lock across the delay, so parallel
+    /// guesses queue and each pays its own delay.
+    fn verify_passphrase(
+        &self,
+        failures: &mut u32,
+        passphrase: &Secret,
+        file: &[u8],
+    ) -> Result<DeviceKey, ApiError> {
+        match keys::unwrap_device_key(passphrase.expose().as_bytes(), file) {
+            Ok(key) => {
+                *failures = 0;
+                Ok(key)
+            }
             Err(KeyError::WrongPassphrase) => {
                 *failures = failures.saturating_add(1);
                 self.sys.sleep(self.unlock_delay(*failures));
-                return Err(ApiError::BadPassphrase);
+                Err(ApiError::BadPassphrase)
             }
-            Err(e) => return Err(ApiError::Failed(e.to_string())),
-        };
-        *failures = 0;
+            Err(e) => Err(ApiError::Failed(e.to_string())),
+        }
+    }
+
+    pub(crate) fn unlock(&self, passphrase: &Secret) -> Result<Response, ApiError> {
+        let mut failures = lock(&self.failed_unlocks);
+        let file = self.read_keystore()?;
+        let device_key = self.verify_passphrase(&mut failures, passphrase, &file)?;
         // Still holding the lock, so a concurrent unlock cannot race these mounts.
         self.open_all(&device_key)
+    }
+
+    /// Rewraps the same device key under a new passphrase. Volume keys derive from the device
+    /// key, so every volume keeps working and nothing is reformatted.
+    pub(crate) fn change_passphrase(
+        &self,
+        current: &Secret,
+        new: &Secret,
+    ) -> Result<Response, ApiError> {
+        check_new_passphrase(new)?;
+        let mut failures = lock(&self.failed_unlocks);
+        let file = self.read_keystore()?;
+        let device_key = self.verify_passphrase(&mut failures, current, &file)?;
+        let mut random = [0u8; SALT_AND_NONCE_LEN];
+        self.sys.random(&mut random)?;
+        let rewrapped =
+            keys::wrap_device_key(new.expose().as_bytes(), &device_key, &random, self.kdf)
+                .map_err(|e| ApiError::Failed(e.to_string()))?;
+        self.sys
+            .atomic_write(&self.paths.keystore, &rewrapped, KEY_FILE)?;
+        Ok(Response::Ok)
     }
 
     /// Opens what it can and reports the rest. One damaged volume must not keep every other
@@ -120,12 +170,8 @@ impl<S: System> Helper<S> {
     }
 
     /// First-time setup. Refuses to replace an existing key, which would lose every volume.
-    pub fn init_device(&self, passphrase: &str) -> Result<(), ApiError> {
-        if passphrase.len() < MIN_PASSPHRASE_LEN {
-            return Err(ApiError::Failed(format!(
-                "the passphrase must have at least {MIN_PASSPHRASE_LEN} characters"
-            )));
-        }
+    pub fn init_device(&self, passphrase: &Secret) -> Result<(), ApiError> {
+        check_new_passphrase(passphrase)?;
         let _guard = lock(&self.failed_unlocks);
         if self.sys.read_file(&self.paths.keystore)?.is_some() {
             return Err(ApiError::Failed("this device is already set up".to_owned()));
@@ -134,35 +180,35 @@ impl<S: System> Helper<S> {
         self.sys.random(device_key.as_mut())?;
         let mut random = [0u8; SALT_AND_NONCE_LEN];
         self.sys.random(&mut random)?;
-        let file = keys::wrap_device_key(passphrase.as_bytes(), &device_key, &random, self.kdf)
-            .map_err(|e| ApiError::Failed(e.to_string()))?;
+        let file = keys::wrap_device_key(
+            passphrase.expose().as_bytes(),
+            &device_key,
+            &random,
+            self.kdf,
+        )
+        .map_err(|e| ApiError::Failed(e.to_string()))?;
         if let Some(dir) = self.paths.keystore.parent() {
             self.sys.ensure_dir(dir, 0o700, None)?;
         }
-        let options = WriteOptions {
-            mode: 0o600,
-            group: None,
-        };
         self.sys
-            .atomic_write(&self.paths.keystore, &file, options)?;
+            .atomic_write(&self.paths.keystore, &file, KEY_FILE)?;
         Ok(())
     }
 
     /// Creates and mounts a new volume for a package. It takes the passphrase because the device
     /// key is never kept in memory after an unlock.
-    pub fn create_volume(&self, id: &str, passphrase: &str, size: u64) -> Result<(), ApiError> {
+    pub fn create_volume(&self, id: &str, passphrase: &Secret, size: u64) -> Result<(), ApiError> {
         validate::package_id(id).map_err(gen_failed)?;
         let user = service_user(id).map_err(gen_failed)?;
         let name = mapper_name(id).map_err(gen_failed)?;
         let mount = volume_mount(id).map_err(gen_failed)?;
         let mount = Path::new(&mount);
-        let device_key: DeviceKey =
-            keys::unwrap_device_key(passphrase.as_bytes(), &self.read_keystore()?).map_err(
-                |e| match e {
-                    KeyError::WrongPassphrase => ApiError::BadPassphrase,
-                    other => ApiError::Failed(other.to_string()),
-                },
-            )?;
+        // Reachable from a client through installs, so it shares the unlock delay.
+        let device_key: DeviceKey = {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            self.verify_passphrase(&mut failures, passphrase, &file)?
+        };
         let key = keys::volume_key(&device_key, id);
         let file = self.volume_file(id);
         self.sys.ensure_dir(&self.paths.volumes, 0o700, None)?;
@@ -198,15 +244,19 @@ mod tests {
     const VAULT2: &str =
         "api_version = 1\nid = \"notes\"\nversion = \"1\"\nexec = [\"a\"]\n[storage]\nencrypted = true\n";
 
+    fn s(text: &str) -> Secret {
+        Secret::new(text)
+    }
+
     fn setup() -> Helper<FakeSystem> {
         let sys = FakeSystem::default();
         sys.add_manifest(ENCRYPTED);
         sys.add_manifest(VAULT2);
         sys.add_manifest(SHOP);
         let h = helper(sys);
-        h.init_device(PASS).unwrap();
-        h.create_volume("vault", PASS, 1 << 20).unwrap();
-        h.create_volume("notes", PASS, 1 << 20).unwrap();
+        h.init_device(&s(PASS)).unwrap();
+        h.create_volume("vault", &s(PASS), 1 << 20).unwrap();
+        h.create_volume("notes", &s(PASS), 1 << 20).unwrap();
         h.sys.reboot();
         h
     }
@@ -215,7 +265,7 @@ mod tests {
         h.handle(
             1000,
             nodo_api::Request::Unlock {
-                passphrase: pass.to_owned(),
+                passphrase: s(pass),
             },
         )
     }
@@ -364,10 +414,7 @@ mod tests {
     fn missing_key_file_is_not_treated_as_a_bad_passphrase() {
         let h = setup();
         h.sys.remove("/k/device.key");
-        let Err(ApiError::Failed(message)) = unlock(&h, PASS) else {
-            panic!()
-        };
-        assert!(message.contains("not been set up"), "{message}");
+        assert_eq!(unlock(&h, PASS), Err(ApiError::NotSetUp));
         assert!(h.sys.sleeps().is_empty());
     }
 
@@ -383,16 +430,16 @@ mod tests {
     fn init_refuses_to_replace_an_existing_key() {
         let h = setup();
         let before = h.sys.get("/k/device.key").unwrap();
-        assert!(h.init_device("another passphrase").is_err());
+        assert!(h.init_device(&s("another passphrase")).is_err());
         assert_eq!(h.sys.get("/k/device.key").unwrap(), before);
     }
 
     #[test]
     fn init_refuses_a_short_passphrase_and_protects_the_key_file() {
         let h = helper(FakeSystem::default());
-        assert!(h.init_device("short").is_err());
+        assert!(h.init_device(&s("short")).is_err());
         assert_eq!(h.sys.get("/k/device.key"), None);
-        h.init_device(PASS).unwrap();
+        h.init_device(&s(PASS)).unwrap();
         assert!(h
             .sys
             .calls()
@@ -403,7 +450,7 @@ mod tests {
     fn create_refuses_to_format_over_an_existing_volume() {
         let h = setup();
         let before = h.sys.format_keys().len();
-        assert!(h.create_volume("vault", PASS, 1 << 20).is_err());
+        assert!(h.create_volume("vault", &s(PASS), 1 << 20).is_err());
         assert_eq!(h.sys.format_keys().len(), before);
     }
 
@@ -411,17 +458,17 @@ mod tests {
     fn create_needs_the_passphrase_and_a_valid_id() {
         let h = setup();
         assert_eq!(
-            h.create_volume("newapp", "nope nope nope", 1 << 20),
+            h.create_volume("newapp", &s("nope nope nope"), 1 << 20),
             Err(ApiError::BadPassphrase)
         );
-        assert!(h.create_volume("../evil", PASS, 1 << 20).is_err());
+        assert!(h.create_volume("../evil", &s(PASS), 1 << 20).is_err());
         assert_eq!(h.sys.get("/v/newapp.luks"), None);
     }
 
     #[test]
     fn new_volume_is_private_to_its_user() {
         let h = setup();
-        h.create_volume("newapp", PASS, 1 << 20).unwrap();
+        h.create_volume("newapp", &s(PASS), 1 << 20).unwrap();
         assert!(h
             .sys
             .calls()
@@ -432,8 +479,79 @@ mod tests {
     fn failed_format_leaves_no_volume_file() {
         let h = setup();
         h.sys.fail("luks format");
-        assert!(h.create_volume("newapp", PASS, 1 << 20).is_err());
+        assert!(h.create_volume("newapp", &s(PASS), 1 << 20).is_err());
         assert_eq!(h.sys.get("/v/newapp.luks"), None);
+    }
+
+    fn change(h: &Helper<FakeSystem>, current: &str, new: &str) -> Result<Response, ApiError> {
+        h.handle(
+            1000,
+            nodo_api::Request::ChangePassphrase {
+                current: s(current),
+                new: s(new),
+            },
+        )
+    }
+
+    #[test]
+    fn changed_passphrase_opens_the_same_volumes_and_the_old_one_stops_working() {
+        let h = setup();
+        let formats = h.sys.format_keys().len();
+        assert_eq!(change(&h, PASS, "a brand new passphrase"), Ok(Response::Ok));
+        assert_eq!(unlock(&h, PASS), Err(ApiError::BadPassphrase));
+        assert_eq!(unlock(&h, "a brand new passphrase"), Ok(Response::Ok));
+        assert!(h.sys.mounted("/run/nodo/volumes/vault"));
+        assert_eq!(h.sys.format_keys().len(), formats, "nothing is reformatted");
+    }
+
+    #[test]
+    fn change_needs_the_current_passphrase_and_shares_the_unlock_delay() {
+        let h = setup();
+        let before = h.sys.get("/k/device.key").unwrap();
+        assert_eq!(
+            change(&h, "nope nope nope", "a brand new passphrase"),
+            Err(ApiError::BadPassphrase)
+        );
+        assert_eq!(unlock(&h, "nope nope nope"), Err(ApiError::BadPassphrase));
+        assert_eq!(
+            h.sys.sleeps(),
+            [Duration::from_secs(2), Duration::from_secs(4)]
+        );
+        assert_eq!(h.sys.get("/k/device.key").unwrap(), before);
+    }
+
+    #[test]
+    fn change_refuses_a_short_new_passphrase_before_checking_anything() {
+        let h = setup();
+        assert!(matches!(
+            change(&h, PASS, "short"),
+            Err(ApiError::Failed(_))
+        ));
+        assert!(h.sys.sleeps().is_empty());
+        assert_eq!(unlock(&h, PASS), Ok(Response::Ok));
+    }
+
+    #[test]
+    fn init_through_the_api_then_refuses_a_second_time() {
+        let h = helper(FakeSystem::default());
+        let init = |pass: &str| {
+            h.handle(
+                1000,
+                nodo_api::Request::InitEncryption {
+                    passphrase: s(pass),
+                },
+            )
+        };
+        assert_eq!(init(PASS), Ok(Response::Ok));
+        assert!(init("another long passphrase").is_err());
+    }
+
+    #[test]
+    fn short_passphrase_rule_counts_characters_not_bytes() {
+        let h = helper(FakeSystem::default());
+        // Seven characters, fourteen bytes.
+        assert!(h.init_device(&s("ääääääá")).is_err());
+        assert!(h.init_device(&s("ääääääää")).is_ok());
     }
 
     #[test]

@@ -5,8 +5,7 @@ use std::io;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use nodo_api::{ApiError, Backend, Request, Response};
-use zeroize::Zeroize;
+use crate::{ApiError, Backend, Request, Response};
 
 use crate::protocol::{self, CallResult, ProtocolError, MAX_RESPONSE};
 
@@ -58,11 +57,9 @@ impl HelperClient {
 }
 
 impl Backend for HelperClient {
-    fn call(&mut self, mut request: Request) -> Result<Response, ApiError> {
-        let result = self.exchange(&request);
-        if let Request::Unlock { passphrase } = &mut request {
-            passphrase.zeroize();
-        }
-        result.unwrap_or_else(|e| Err(ApiError::Failed(e.to_string())))
+    fn call(&mut self, request: Request) -> Result<Response, ApiError> {
+        // Secrets in the request wipe themselves when it drops at the end of this call.
+        self.exchange(&request)
+            .unwrap_or_else(|e| Err(ApiError::Failed(e.to_string())))
     }
 }

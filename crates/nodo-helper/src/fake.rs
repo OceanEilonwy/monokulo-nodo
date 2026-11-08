@@ -6,11 +6,21 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use nodo_api::{
+    ApiError, SettingChange, SettingCurrent, SettingField, SettingInput, SettingKind,
+    SettingLiteral, SettingsForm,
+};
+use zeroize::Zeroizing;
+
+use crate::catalog::Package;
 use crate::exposure::NoCaddyYet;
-use crate::helper::{AllowedUids, Helper, Paths, Timing};
+use crate::helper::{AllowedUids, DriveConfig, Helper, Paths, Timing};
 use crate::keys::KdfParams;
-use crate::settings::FlatTomlSettings;
+use crate::settings::{PlannedFile, SettingsContext, SettingsPolicy};
 use crate::system::{Probe, SvAction, SysError, SysResult, System, WriteOptions};
+
+/// Where the test policy keeps shop's values.
+pub const STORE: &str = "/s/settings/shop.toml";
 
 pub const SHOP: &str = r#"api_version = 1
 id = "shop"
@@ -55,6 +65,11 @@ struct State {
     mapped: BTreeSet<String>,
     format_keys: Vec<Vec<u8>>,
     counter: u8,
+    links: BTreeMap<String, String>,
+    users: BTreeSet<String>,
+    fs_types: HashMap<String, String>,
+    /// Whether each device's filesystem is damaged. A repair fixes it.
+    damaged: BTreeSet<String>,
 }
 
 struct Failure {
@@ -188,6 +203,34 @@ impl FakeSystem {
         self.state().format_keys.clone()
     }
 
+    pub fn add_user(&self, name: &str) {
+        self.state().users.insert(name.to_owned());
+    }
+
+    pub fn has_user(&self, name: &str) -> bool {
+        self.state().users.contains(name)
+    }
+
+    pub fn link(&self, path: &str) -> Option<String> {
+        self.state().links.get(path).cloned()
+    }
+
+    pub fn add_link(&self, path: &str, target: &str) {
+        self.state()
+            .links
+            .insert(path.to_owned(), target.to_owned());
+    }
+
+    /// A block device with a filesystem, damaged or not.
+    pub fn add_device(&self, path: &str, fs_type: &str, damaged: bool) {
+        let mut state = self.state();
+        state.files.insert(path.to_owned(), Vec::new());
+        state.fs_types.insert(path.to_owned(), fs_type.to_owned());
+        if damaged {
+            state.damaged.insert(path.to_owned());
+        }
+    }
+
     /// Loses everything a reboot loses: mounts and open mappings.
     pub fn reboot(&self) {
         let mut state = self.state();
@@ -223,8 +266,11 @@ impl System for FakeSystem {
             .unwrap_or_else(|| format!("run: {id}: (pid 1) 100s; run: log: (pid 2) 100s\n")))
     }
 
+    /// A directory exists when any file is inside it, as it would on disk.
     fn exists(&self, path: &Path) -> bool {
-        self.state().files.contains_key(&text(path))
+        let state = self.state();
+        let dir = format!("{}/", text(path));
+        state.files.contains_key(&text(path)) || state.files.keys().any(|f| f.starts_with(&dir))
     }
 
     fn read_file(&self, path: &Path) -> SysResult<Option<Vec<u8>>> {
@@ -336,6 +382,70 @@ impl System for FakeSystem {
         self.state().mounted.contains(&text(path))
     }
 
+    fn symlink(&self, target: &Path, link: &Path) -> SysResult<()> {
+        self.record(format!("symlink {} {}", text(link), text(target)))?;
+        let mut state = self.state();
+        if state.links.contains_key(&text(link)) || state.files.contains_key(&text(link)) {
+            return Err(SysError("file exists".to_owned()));
+        }
+        state.links.insert(text(link), text(target));
+        Ok(())
+    }
+
+    fn read_link(&self, path: &Path) -> Option<std::path::PathBuf> {
+        self.state().links.get(&text(path)).map(Into::into)
+    }
+
+    fn user_exists(&self, name: &str) -> bool {
+        self.state().users.contains(name)
+    }
+
+    fn create_user(&self, name: &str, home: &Path) -> SysResult<()> {
+        self.record(format!("useradd {name} {}", text(home)))?;
+        let mut state = self.state();
+        if !state.users.insert(name.to_owned()) {
+            return Err(SysError("user exists".to_owned()));
+        }
+        Ok(())
+    }
+
+    fn fs_usage(&self, path: &Path) -> SysResult<(u64, u64)> {
+        self.check(&format!("statvfs {}", text(path)))?;
+        Ok((1000, 400))
+    }
+
+    fn fs_type(&self, device: &Path) -> Option<String> {
+        self.state().fs_types.get(&text(device)).cloned()
+    }
+
+    fn fs_check(&self, device: &Path, fs_type: &str, repair: bool) -> SysResult<(bool, String)> {
+        let verb = if repair { "repair" } else { "check" };
+        self.record(format!("fsck {verb} {} {fs_type}", text(device)))?;
+        let mut state = self.state();
+        let damaged = state.damaged.contains(&text(device));
+        if repair {
+            state.damaged.remove(&text(device));
+            return Ok((true, "repaired".to_owned()));
+        }
+        Ok((
+            !damaged,
+            if damaged { "bad inode 12" } else { "clean" }.to_owned(),
+        ))
+    }
+
+    fn mount_fstab(&self, mount_point: &Path) -> SysResult<()> {
+        self.record(format!("mount {}", text(mount_point)))?;
+        self.state().mounted.insert(text(mount_point));
+        Ok(())
+    }
+
+    fn settings_worker(&self, input: &[u8]) -> SysResult<Vec<u8>> {
+        self.record("settings-worker".to_owned())?;
+        let request: crate::worker::WorkerRequest =
+            serde_json::from_slice(input).map_err(|e| SysError(e.to_string()))?;
+        serde_json::to_vec(&crate::worker::run(&request)).map_err(|e| SysError(e.to_string()))
+    }
+
     fn probe(&self, probe: &Probe) -> bool {
         let mut state = self.state();
         state.calls.push(format!("probe {probe:?}"));
@@ -363,14 +473,104 @@ pub const TEST_PATHS: fn() -> Paths = || Paths {
     keystore: "/k/device.key".into(),
     volumes: "/v".into(),
     exposure_state: "/s/exposure.toml".into(),
+    public_hosts: "/s/public-hosts.toml".into(),
+    system_packages: "/p/sys".into(),
+    settings_store: "/s/settings".into(),
+    installed: "/s/installed".into(),
+    service_dir: "/service".into(),
+    authorized_keys: "/root/.ssh/authorized_keys".into(),
+    drive: Some(DriveConfig {
+        device: "/dev/disk/by-partlabel/NODO_BLOCKCHAIN".into(),
+        mount_point: "/media/monero".into(),
+    }),
 };
+
+/// Stores plain text values and writes them as a flat file, refusing any value containing
+/// "refuse". Enough to drive the apply and rollback engine.
+pub struct TestPolicy;
+
+fn read_table(ctx: &SettingsContext, path: &Path) -> Result<toml::Table, ApiError> {
+    match ctx.sys.read_file(path)? {
+        Some(bytes) => toml::from_str(std::str::from_utf8(&bytes).unwrap())
+            .map_err(|_| ApiError::Failed("corrupt".to_owned())),
+        None => Ok(toml::Table::new()),
+    }
+}
+
+impl SettingsPolicy for TestPolicy {
+    fn form(&self, ctx: &SettingsContext, package: &Package) -> Result<SettingsForm, ApiError> {
+        let store = ctx
+            .paths
+            .settings_store
+            .join(format!("{}.toml", package.id()));
+        let table = read_table(ctx, &store)?;
+        Ok(SettingsForm {
+            package: package.id().to_owned(),
+            fields: table
+                .iter()
+                .map(|(name, value)| SettingField {
+                    name: name.clone(),
+                    label: name.clone(),
+                    help: String::new(),
+                    required: false,
+                    kind: SettingKind::Text,
+                    current: SettingCurrent::Literal(SettingLiteral::Text(
+                        value.as_str().unwrap_or_default().to_owned(),
+                    )),
+                    default: None,
+                    public_name: None,
+                })
+                .collect(),
+        })
+    }
+
+    fn plan(
+        &self,
+        ctx: &SettingsContext,
+        package: &Package,
+        changes: &[SettingChange],
+    ) -> Result<Vec<PlannedFile>, ApiError> {
+        let store = ctx
+            .paths
+            .settings_store
+            .join(format!("{}.toml", package.id()));
+        let mut table = read_table(ctx, &store)?;
+        for change in changes {
+            let SettingInput::Literal(SettingLiteral::Text(value)) = &change.value else {
+                return Err(ApiError::Failed("only text".to_owned()));
+            };
+            if value.contains("refuse") {
+                return Err(ApiError::Failed("refused".to_owned()));
+            }
+            table.insert(change.name.clone(), toml::Value::String(value.clone()));
+        }
+        let bytes = toml::to_string(&table).unwrap().into_bytes();
+        let layout = package.layout()?;
+        Ok(vec![
+            PlannedFile {
+                path: store,
+                bytes: Zeroizing::new(bytes.clone()),
+                mode: 0o600,
+                group: None,
+                parent_mode: 0o700,
+            },
+            PlannedFile {
+                path: Path::new(&layout.config_dir).join("settings.toml"),
+                bytes: Zeroizing::new(bytes),
+                mode: 0o640,
+                group: Some(format!("_{}", package.id())),
+                parent_mode: 0o755,
+            },
+        ])
+    }
+}
 
 /// A helper over `sys` that allows uid 1000, with a KDF cheap enough for tests.
 pub fn helper(sys: FakeSystem) -> Helper<FakeSystem> {
     Helper::new(
         sys,
         AllowedUids::new([1000]),
-        Box::new(FlatTomlSettings),
+        Box::new(TestPolicy),
         Box::new(NoCaddyYet),
     )
     .with_paths(TEST_PATHS())

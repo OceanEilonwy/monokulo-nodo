@@ -90,6 +90,26 @@ pub trait System: Send + Sync {
     fn mount(&self, device: &Path, target: &Path) -> SysResult<()>;
     fn is_mounted(&self, path: &Path) -> bool;
 
+    /// Creates `link` pointing at `target`. Fails if anything already exists at `link`.
+    fn symlink(&self, target: &Path, link: &Path) -> SysResult<()>;
+    /// Where a symlink points, or `None` when `path` is missing or not a symlink.
+    fn read_link(&self, path: &Path) -> Option<std::path::PathBuf>;
+    fn user_exists(&self, name: &str) -> bool;
+    /// A locked system account with its own group and no login shell.
+    fn create_user(&self, name: &str, home: &Path) -> SysResult<()>;
+    /// Total and free bytes of the filesystem holding `path`.
+    fn fs_usage(&self, path: &Path) -> SysResult<(u64, u64)>;
+    /// The filesystem type on a block device, if one is recognised.
+    fn fs_type(&self, device: &Path) -> Option<String>;
+    /// Checks a filesystem, repairing only when asked. Returns whether it was clean, and the
+    /// tool's output.
+    fn fs_check(&self, device: &Path, fs_type: &str, repair: bool) -> SysResult<(bool, String)>;
+    /// Mounts what `/etc/fstab` lists for this mount point.
+    fn mount_fstab(&self, mount_point: &Path) -> SysResult<()>;
+    /// Runs package settings code as an unprivileged user and returns its answer. Lua never runs
+    /// inside the helper itself.
+    fn settings_worker(&self, input: &[u8]) -> SysResult<Vec<u8>>;
+
     fn probe(&self, probe: &Probe) -> bool;
     fn sleep(&self, duration: Duration);
     fn random(&self, out: &mut [u8]) -> SysResult<()>;

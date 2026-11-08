@@ -72,6 +72,8 @@ pub enum ScreenId {
     WebConfirm,
     WebCgnat,
     AutoUpdate,
+    /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
+    Setup,
 }
 
 impl ScreenId {
@@ -131,6 +133,7 @@ impl ScreenId {
             ScreenId::WebConfirm => "webconfirm",
             ScreenId::WebCgnat => "webcgnat",
             ScreenId::AutoUpdate => "autoupdate",
+            ScreenId::Setup => "setup",
         }
     }
 
@@ -176,6 +179,34 @@ impl Default for UnlockState {
         Self { input: Input::secret(), error: None, failures: 0, retry_at_tick: 0 }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetupStep {
+    /// The passphrase twice. `confirming` is true once the first is entered.
+    Passphrase { first: Input, second: Input, confirming: bool },
+    Keys { keys: Vec<nodo_api::SshKey>, selected: usize, adding: Option<Input> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupState {
+    pub step: SetupStep,
+    pub error: Option<String>,
+    pub busy: bool,
+}
+
+impl SetupState {
+    pub fn passphrase() -> Self {
+        let step = SetupStep::Passphrase { first: Input::secret(), second: Input::secret(), confirming: false };
+        Self { step, error: None, busy: false }
+    }
+
+    pub fn keys() -> Self {
+        Self { step: SetupStep::Keys { keys: Vec::new(), selected: 0, adding: None }, error: None, busy: true }
+    }
+}
+
+/// The helper enforces this too. Checking here saves a round trip and a KDF run.
+pub const MIN_PASSPHRASE_CHARS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
@@ -225,6 +256,15 @@ pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
             Ok(port) if port > 0 => None,
             _ => Some("Port must be a number from 1 to 65535.".to_owned()),
         },
+        FieldKind::Number { min, max } => match text.parse::<i64>() {
+            Ok(n) if min.is_none_or(|min| n >= min) && max.is_none_or(|max| n <= max) => None,
+            Ok(_) => Some(format!(
+                "Must be from {} to {}.",
+                min.map_or("any".to_owned(), |n| n.to_string()),
+                max.map_or("any".to_owned(), |n| n.to_string())
+            )),
+            Err(_) => Some("Must be a whole number.".to_owned()),
+        },
         FieldKind::Url => (!(text.starts_with("http://") || text.starts_with("https://")))
             .then(|| "Must start with http:// or https://.".to_owned()),
         FieldKind::MoneroAddress => {
@@ -238,7 +278,7 @@ pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
                 _ => None,
             }
         }
-        FieldKind::Choice(_) | FieldKind::Secret | FieldKind::Toggle => None,
+        FieldKind::Choice(_) | FieldKind::Secret | FieldKind::Toggle | FieldKind::Text => None,
     }
 }
 
@@ -389,18 +429,14 @@ pub struct WebCheckState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmFocus {
     Password,
-    RateLimit,
-    HideAdmin,
     Address,
     Cancel,
     GoPublic,
 }
 
 impl ConfirmFocus {
-    pub const ORDER: [ConfirmFocus; 6] = [
+    pub const ORDER: [ConfirmFocus; 4] = [
         ConfirmFocus::Password,
-        ConfirmFocus::RateLimit,
-        ConfirmFocus::HideAdmin,
         ConfirmFocus::Address,
         ConfirmFocus::Cancel,
         ConfirmFocus::GoPublic,
@@ -454,6 +490,7 @@ pub enum Screen {
     WebCheck(WebCheckState),
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
+    Setup(SetupState),
 }
 
 impl Screen {
@@ -484,6 +521,7 @@ impl Screen {
             Screen::WebCheck(_) => ScreenId::WebCheck,
             Screen::WebConfirm(_) => ScreenId::WebConfirm,
             Screen::WebCgnat(_) => ScreenId::WebCgnat,
+            Screen::Setup(_) => ScreenId::Setup,
         }
     }
 
@@ -520,6 +558,7 @@ pub enum ModalAction {
     RepairDrive,
     DiscardSettings,
     DiscardAutoUpdate,
+    RemoveSshKey(String),
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -549,6 +588,8 @@ pub struct App {
     pub overlay: Option<Overlay>,
     pub should_quit: bool,
     pub ticks: u64,
+    /// The backend is busy with a request. Restarts and settings changes can take minutes.
+    pub working: bool,
 }
 
 impl Default for App {
@@ -569,6 +610,7 @@ impl App {
             overlay: None,
             should_quit: false,
             ticks: 0,
+            working: false,
         }
     }
 
@@ -642,7 +684,8 @@ pub enum Effect {
     LoadLogs(String),
     Drive(DriveAction),
     Shell,
-    SetExposure { site: String, exposure: Exposure, after: ExposureAfter },
+    /// `confirmation` is the host the user typed, which the helper requires to go public.
+    SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
     SetPublicHost { site: String, host: String },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
@@ -650,6 +693,10 @@ pub enum Effect {
     SaveProvider { provider: String, domain: String, api_key: Secret, secret_key: Secret },
     ShowDocument(DocKind),
     CopyReport(String),
+    InitEncryption(Secret),
+    LoadSshKeys,
+    AddSshKey(String),
+    RemoveSshKey(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -684,4 +731,7 @@ pub enum Event {
     ProviderTested(Result<String, String>),
     ProviderSaved(Result<(), String>),
     DocumentLoaded(Document),
+    SetupDone(Result<(), ApiError>),
+    SshKeysLoaded(Result<Vec<nodo_api::SshKey>, String>),
+    SshKeyChanged(Result<(), String>),
 }

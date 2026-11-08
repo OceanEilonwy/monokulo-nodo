@@ -3,15 +3,16 @@
 
 use std::path::{Path, PathBuf};
 
-use nodo_api::ApiError;
+use nodo_api::{ApiError, Origin};
 use nodo_gen::{validate, Layout, Profile};
 use nodo_manifest::Manifest;
 
 use crate::helper::Helper;
 use crate::system::System;
 
+/// An installed package's manifest, and whether it came from the base image.
 #[derive(Debug, Clone)]
-pub(crate) struct Package {
+pub struct Package {
     pub manifest: Manifest,
     pub profile: Profile,
 }
@@ -23,6 +24,26 @@ impl Package {
 
     pub fn layout(&self) -> Result<Layout, ApiError> {
         Layout::new(self.id(), self.profile).map_err(|e| ApiError::Failed(e.to_string()))
+    }
+
+    /// The installer does not record which feed a package came from yet.
+    pub fn origin(&self) -> Origin {
+        match self.profile {
+            Profile::System => Origin::System,
+            Profile::App => Origin::Feed(None),
+        }
+    }
+
+    /// Where the package's own files are: its settings code and templates.
+    pub fn package_dir(&self, system_packages: &Path) -> Result<PathBuf, ApiError> {
+        match self.profile {
+            Profile::System => Ok(system_packages.join(self.id())),
+            Profile::App => self
+                .layout()?
+                .app_dir
+                .map(PathBuf::from)
+                .ok_or_else(|| ApiError::Failed("app has no directory".to_owned())),
+        }
     }
 }
 

@@ -6,23 +6,29 @@
 #![forbid(unsafe_code)]
 
 mod catalog;
-pub mod client;
+mod drive;
 mod exposure;
 #[cfg(test)]
 mod fake;
 mod health;
 mod helper;
+mod info;
 mod install;
 pub mod keys;
-pub mod protocol;
+mod policy;
 pub mod real;
 pub mod server;
 mod service;
 mod settings;
+mod ssh;
 pub mod system;
 mod volumes;
+pub mod worker;
 
-pub use exposure::{ExposureApplier, ExposureState, NoCaddyYet};
-pub use helper::{AllowedUids, Helper, Paths, Timing};
-pub use settings::{FlatTomlSettings, SettingsPolicy};
+pub use catalog::Package;
+pub use exposure::{ExposureApplier, ExposureState, NoCaddyYet, PublicHosts};
+pub use helper::{AllowedUids, DriveConfig, Helper, Paths, Timing};
+pub use nodo_api::{client, protocol};
+pub use policy::NodoSettings;
+pub use settings::{PlannedFile, SettingsContext, SettingsPolicy};
 pub use system::{Probe, SvAction, SysError, System, WriteOptions};

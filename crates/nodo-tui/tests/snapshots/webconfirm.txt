@@ -6,8 +6,8 @@ Web › shop › Go public                                                      
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Access ──────────────────────────────────────────────────────────────────────────────────────────┐
 │  [ ] Require a password in front of this site                             shop has its own login │
-│  [x] Rate-limit repeated requests                                                    Recommended │
-│  [x] Hide admin paths from the public                            /admin stays local network only │
+│ ● Repeated requests are rate-limited                                                      Always │
+│ ● Admin paths are blocked from the public                                                 Always │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Before you confirm ──────────────────────────────────────────────────────────────────────────────┐
 │ ▲ Your home IP will be published, and DNS history can keep it after you stop.                    │

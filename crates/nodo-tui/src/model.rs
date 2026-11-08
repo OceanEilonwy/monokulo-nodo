@@ -4,7 +4,7 @@
 //! screen shows comes through this trait. `MockBackend` implements it today, and each method is a
 //! candidate `nodo_api::Request` for the real helper.
 
-use nodo_api::Exposure;
+use nodo_api::{Exposure, SettingInput, SettingLiteral, SiteId};
 
 use crate::secret::Secret;
 
@@ -203,6 +203,8 @@ pub struct KeyChange {
 pub enum FieldKind {
     Url,
     Port,
+    Text,
+    Number { min: Option<i64>, max: Option<i64> },
     Choice(Vec<String>),
     MoneroAddress,
     Secret,
@@ -222,13 +224,18 @@ pub enum FieldValue {
 }
 
 impl FieldValue {
-    /// The form sent to the helper. Stored secrets have no wire form; callers only send changes.
-    pub fn wire(&self) -> Option<String> {
+    /// The typed form sent to the helper. Typed text is always a literal, even if it looks like
+    /// `$(...)`, because only the reference picker makes a reference. Stored secrets have no
+    /// wire form; callers only send changes.
+    pub fn to_input(&self) -> Option<SettingInput> {
         match self {
-            Self::Text(text) => Some(text.clone()),
-            Self::Reference { path, .. } => Some(format!("$({path})")),
-            Self::Bool(value) => Some(value.to_string()),
-            Self::NewSecret(secret) => Some(secret.expose().to_owned()),
+            Self::Text(text) => Some(SettingInput::Literal(SettingLiteral::Text(text.clone()))),
+            Self::Reference { path, .. } => {
+                let (target, setting) = path.split_once('.')?;
+                Some(SettingInput::Reference { target: target.to_owned(), setting: setting.to_owned() })
+            }
+            Self::Bool(value) => Some(SettingInput::Literal(SettingLiteral::Bool(*value))),
+            Self::NewSecret(secret) => Some(SettingInput::Secret(nodo_api::Secret::new(secret.expose()))),
             Self::SecretUnset | Self::SecretSet => None,
         }
     }
@@ -439,6 +446,8 @@ pub struct Overview {
     pub restarted: String,
     pub unlock_targets: Vec<UnlockTarget>,
     pub updates_checked: String,
+    /// First boot: no device passphrase exists yet, so setup comes before anything else.
+    pub setup_needed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -450,6 +459,9 @@ pub struct Site {
     /// Host name, without a scheme, because this is the text the user types to go public.
     pub public_host: Option<String>,
     pub locked: bool,
+    /// Rate limiting is always on for public sites, except where the proxy reports it cannot
+    /// enforce it for this site.
+    pub rate_limit_unenforced: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -513,8 +525,6 @@ pub enum Reachability {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PublicAccess {
     pub require_password: bool,
-    pub rate_limit: bool,
-    pub hide_admin: bool,
 }
 
 /// Read-only text shown in an overlay.
@@ -551,6 +561,25 @@ pub struct Snapshot {
     pub providers: Vec<Provider>,
     pub log_sources: Vec<String>,
     pub auto_update: AutoUpdatePrefs,
+    /// Areas whose backing system does not exist yet, with the reason. Their screens say so
+    /// instead of showing sample data.
+    pub unavailable: Vec<(Area, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Area {
+    Catalog,
+    Feeds,
+    Updates,
+    AutoUpdate,
+    Providers,
+    Reachability,
+}
+
+impl Snapshot {
+    pub fn unavailable(&self, area: Area) -> Option<&str> {
+        self.unavailable.iter().find(|(a, _)| *a == area).map(|(_, reason)| reason.as_str())
+    }
 }
 
 /// Screen data outside `nodo_api`. Errors are text because they are only ever shown.
@@ -575,6 +604,11 @@ pub trait ScreenData {
     fn settings_form(&self, package: &str) -> Option<SettingsForm>;
     fn references(&self, package: &str, field: &str) -> ReferenceList;
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation;
+    /// The helper's name for a site the screens know by one string. Sites are keyed by package
+    /// in the mock, where every package serves one site.
+    fn site_id(&self, key: &str) -> SiteId {
+        SiteId { package: key.to_owned(), site: key.to_owned() }
+    }
 
     fn updates(&self) -> Vec<UpdateItem>;
     fn check_updates(&mut self);
@@ -611,4 +645,12 @@ pub trait ScreenData {
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
 
     fn document(&self, kind: &DocKind) -> Document;
+
+    fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String>;
+    fn add_ssh_key(&mut self, line: &str) -> Result<(), String>;
+    fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String>;
+    /// See [`Snapshot::unavailable`]. Read after the other snapshot calls.
+    fn unavailable(&self) -> Vec<(Area, String)> {
+        Vec::new()
+    }
 }

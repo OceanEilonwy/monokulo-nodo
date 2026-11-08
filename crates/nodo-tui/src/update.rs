@@ -133,6 +133,7 @@ fn help_document() -> Document {
             "Esc              back or cancel",
             "/                search packages",
             "u                unlock this device",
+            "k                SSH keys that may log in",
             "q                quit, from a tab",
             "Ctrl-C           quit, from anywhere",
             "",
@@ -210,6 +211,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebCheck => web_check_key(app, key),
         ScreenId::WebConfirm => web_confirm_key(app, key),
         ScreenId::WebCgnat => cgnat_key(app, key),
+        ScreenId::Setup => setup_key(app, key),
     }
 }
 
@@ -233,6 +235,10 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             ProviderFocus::SecretKey => Some(&mut state.secret_key),
         },
         Screen::WebConfirm(state) if state.focus == ConfirmFocus::Address => Some(&mut state.typed),
+        Screen::Setup(SetupState { step: SetupStep::Passphrase { first, second, confirming }, .. }) => {
+            Some(if *confirming { second } else { first })
+        }
+        Screen::Setup(SetupState { step: SetupStep::Keys { adding, .. }, .. }) => adding.as_mut(),
         _ => None,
     }
 }
@@ -293,10 +299,16 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
             .map(|site| Effect::SetExposure {
                 site: site.package.clone(),
                 exposure: Exposure::default(),
-                after: ExposureAfter::Stay,
+                after: ExposureAfter::Stay, confirmation: None
             })
             .collect(),
         ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
+        ModalAction::RemoveSshKey(fingerprint) => {
+            if let Screen::Setup(state) = &mut app.screen {
+                state.busy = true;
+            }
+            vec![Effect::RemoveSshKey(fingerprint)]
+        }
         ModalAction::DiscardSettings | ModalAction::DiscardAutoUpdate => {
             pop(app);
             Vec::new()
@@ -384,9 +396,104 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             return switch_tab(app, Tab::Packages);
         }
         KeyCode::Char('u') => return open_unlock(app),
+        KeyCode::Char('k') => {
+            push(app, Screen::Setup(SetupState::keys()));
+            return vec![Effect::LoadSshKeys];
+        }
         _ => {}
     }
     Vec::new()
+}
+
+/// First boot asks for the device passphrase twice, then offers SSH keys. There is no default
+/// passphrase and no way to skip the first step, because encrypted storage needs it.
+fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::Setup(SetupState { step: stage, error, busy }) = &mut app.screen else {
+        return Vec::new();
+    };
+    if *busy {
+        return Vec::new();
+    }
+    let mut leave = false;
+    let mut effects = Vec::new();
+    match stage {
+        SetupStep::Passphrase { first, second, confirming } => match key.code {
+            KeyCode::Enter if !*confirming => {
+                if first.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
+                    *error = Some(format!("Use at least {MIN_PASSPHRASE_CHARS} characters."));
+                } else {
+                    *error = None;
+                    *confirming = true;
+                }
+            }
+            KeyCode::Enter => {
+                if first.secret_value() != second.secret_value() {
+                    *error = Some("The two passphrases differ. Type them again.".to_owned());
+                    first.clear();
+                    second.clear();
+                    *confirming = false;
+                } else {
+                    *error = None;
+                    *busy = true;
+                    second.clear();
+                    effects.push(Effect::InitEncryption(first.take_secret()));
+                }
+            }
+            KeyCode::Esc if *confirming => {
+                second.clear();
+                *confirming = false;
+            }
+            _ => {
+                edit_input(if *confirming { second } else { first }, key);
+            }
+        },
+        SetupStep::Keys { keys, selected, adding } => {
+            if let Some(input) = adding {
+                match key.code {
+                    KeyCode::Enter => {
+                        let line = input.text().trim().to_owned();
+                        *adding = None;
+                        if !line.is_empty() {
+                            *busy = true;
+                            effects.push(Effect::AddSshKey(line));
+                        }
+                    }
+                    KeyCode::Esc => *adding = None,
+                    _ => {
+                        edit_input(input, key);
+                    }
+                }
+                return effects;
+            }
+            match key.code {
+                KeyCode::Down | KeyCode::Up => step(selected, keys.len(), key.code == KeyCode::Down),
+                KeyCode::Char('a') => *adding = Some(Input::plain("")),
+                KeyCode::Char('d') => {
+                    if let Some(chosen) = keys.get(*selected) {
+                        let fingerprint = chosen.fingerprint.clone();
+                        app.modal = Some(Modal {
+                            title: "Remove this SSH key?".to_owned(),
+                            body: vec![
+                                format!("{} {}", chosen.algorithm, chosen.comment),
+                                fingerprint.clone(),
+                                "It will no longer be able to log in.".to_owned(),
+                            ],
+                            confirm_label: "Remove".to_owned(),
+                            confirm_focused: false,
+                            action: ModalAction::RemoveSshKey(fingerprint),
+                        });
+                    }
+                }
+                KeyCode::Esc | KeyCode::Enter => leave = true,
+                _ => {}
+            }
+        }
+    }
+    if leave {
+        pop(app);
+        effects.push(Effect::Refresh);
+    }
+    effects
 }
 
 fn open_unlock(app: &mut App) -> Vec<Effect> {
@@ -1287,13 +1394,13 @@ fn exposure_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     effects.push(Effect::SetExposure {
                         site: site_name.clone(),
                         exposure: others,
-                        after: ExposureAfter::Stay,
+                        after: ExposureAfter::Stay, confirmation: None
                     });
                 }
                 effects.push(Effect::CheckReachability { site: site_name, going_public: true });
                 return effects;
             }
-            return vec![Effect::SetExposure { site: site_name, exposure: draft, after: ExposureAfter::Back }];
+            return vec![Effect::SetExposure { site: site_name, exposure: draft, after: ExposureAfter::Back, confirmation: None }];
         }
         _ => {}
     }
@@ -1395,7 +1502,7 @@ fn with_onion(app: &App, site: &str) -> Option<Effect> {
     Some(Effect::SetExposure {
         site: site.to_owned(),
         exposure: Exposure { onion: true, ..entry.exposure },
-        after: ExposureAfter::Stay,
+        after: ExposureAfter::Stay, confirmation: None
     })
 }
 
@@ -1435,8 +1542,6 @@ fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     match state.focus {
         ConfirmFocus::Password if key.code == KeyCode::Char(' ') => state.access.require_password ^= true,
-        ConfirmFocus::RateLimit if key.code == KeyCode::Char(' ') => state.access.rate_limit ^= true,
-        ConfirmFocus::HideAdmin if key.code == KeyCode::Char(' ') => state.access.hide_admin ^= true,
         ConfirmFocus::Address => {
             if key.code == KeyCode::Enter {
                 // Enter never publishes from here. It only moves on, once the text is exact.
@@ -1467,6 +1572,7 @@ fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     site: state.site.clone(),
                     exposure: Exposure { public: true, ..site.exposure },
                     after: ExposureAfter::WentPublic,
+                    confirmation: Some(state.typed.text().to_owned()),
                 },
             ];
         }
@@ -1507,6 +1613,10 @@ fn drop_check_screen(app: &mut App) {
 
 fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     app.data = snapshot;
+    if app.data.overview.setup_needed && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
+        push(app, Screen::Setup(SetupState::passphrase()));
+        return;
+    }
     let sources = app.data.log_sources.len();
     let services = app.data.services.len();
     let feeds = app.data.feeds.len();
@@ -1532,6 +1642,40 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         Event::Failed(text) => fail(app, text),
         Event::Info(text) => notice(app, NoticeKind::Info, text),
         Event::UnlockResult(result) => return on_unlock_result(app, result),
+        Event::SetupDone(result) => {
+            if let Screen::Setup(state) = &mut app.screen {
+                match result {
+                    Ok(()) => {
+                        *state = SetupState::keys();
+                        notice(app, NoticeKind::Ok, "Device passphrase set. Keep it somewhere safe.");
+                        return vec![Effect::LoadSshKeys];
+                    }
+                    Err(error) => {
+                        *state = SetupState::passphrase();
+                        state.error = Some(error.to_string());
+                    }
+                }
+            }
+        }
+        Event::SshKeysLoaded(result) => {
+            if let Screen::Setup(state) = &mut app.screen {
+                state.busy = false;
+                match result {
+                    Ok(list) => {
+                        if let SetupStep::Keys { keys, selected, .. } = &mut state.step {
+                            *selected = (*selected).min(list.len().saturating_sub(1));
+                            *keys = list;
+                        }
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+        }
+        Event::SshKeyChanged(result) => {
+            if let Screen::Setup(state) = &mut app.screen {
+                state.error = result.err();
+            }
+        }
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {
@@ -1825,7 +1969,7 @@ fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reac
             Screen::WebConfirm(WebConfirmState {
                 site,
                 plan,
-                access: PublicAccess { require_password: false, rate_limit: true, hide_admin: true },
+                access: PublicAccess { require_password: false },
                 focus: ConfirmFocus::Address,
                 typed: Input::plain(""),
                 error: None,
