@@ -10,6 +10,8 @@ use nodo_manifest::WebService;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::catalog::Package;
+use crate::secrets::SecretsKey;
+use std::sync::Arc;
 use crate::helper::{lock, Helper};
 use crate::system::{System, WriteOptions};
 
@@ -29,9 +31,11 @@ pub struct WebSite {
     pub locked: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct WebInput {
     pub sites: Vec<WebSite>,
+    /// Present while the device is unlocked. DNS credentials are sealed under it.
+    pub secrets: Option<Arc<SecretsKey>>,
 }
 
 fn not_connected() -> ApiError {
@@ -42,6 +46,11 @@ fn not_connected() -> ApiError {
 /// it with Caddy, nftables, Tor and dynamic DNS.
 pub trait ExposureApplier: Send + Sync {
     fn apply(&self, input: &WebInput) -> Result<(), String>;
+
+    /// Called after an unlock, when sealed credentials can be opened again.
+    fn unlocked(&self, _input: &WebInput) -> Result<(), String> {
+        Ok(())
+    }
 
     fn status(&self, _input: &WebInput) -> Result<WebStatus, ApiError> {
         Err(not_connected())
@@ -58,7 +67,7 @@ pub trait ExposureApplier: Send + Sync {
     ) -> Result<(), ApiError> {
         Err(not_connected())
     }
-    fn test_provider(&self) -> Result<String, ApiError> {
+    fn test_provider(&self, _input: &WebInput) -> Result<String, ApiError> {
         Err(not_connected())
     }
     fn retire_stale(&self) -> Result<Vec<String>, ApiError> {
@@ -170,7 +179,14 @@ impl<S: System> Helper<S> {
                 });
             }
         }
-        Ok(WebInput { sites })
+        Ok(WebInput { sites, secrets: self.secrets_key() })
+    }
+
+    /// After an unlock, gives the web side its sealed credentials again. The caller holds the
+    /// service lock.
+    pub(crate) fn web_unlocked(&self) -> Result<(), String> {
+        let input = self.current_web_input().map_err(|e| e.to_string())?;
+        self.exposure.unlocked(&input)
     }
 
     fn current_web_input(&self) -> Result<WebInput, ApiError> {
@@ -195,7 +211,9 @@ impl<S: System> Helper<S> {
                 let input = self.current_web_input()?;
                 self.exposure.set_provider(&domain, &provider, &fields, &input).map(|()| Response::Ok)
             }
-            Request::TestDnsProvider => Ok(Response::ProviderTest(self.exposure.test_provider()?)),
+            Request::TestDnsProvider => {
+                Ok(Response::ProviderTest(self.exposure.test_provider(&self.current_web_input()?)?))
+            }
             Request::RetireStaleRecords => {
                 let _guard = lock(&self.service_lock);
                 Ok(Response::RetiredRecords(self.exposure.retire_stale()?))

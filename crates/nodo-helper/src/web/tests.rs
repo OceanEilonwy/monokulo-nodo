@@ -83,6 +83,10 @@ impl WebIo for Fake {
         unreachable!("no test reaches the network")
     }
     fn sleep(&self, _: Duration) {}
+    fn random(&self, out: &mut [u8]) -> Result<(), String> {
+        out.fill(9);
+        Ok(())
+    }
 }
 
 fn paths() -> WebPaths {
@@ -91,7 +95,7 @@ fn paths() -> WebPaths {
         caddy_admin: "/run/admin.sock".into(),
         nft_fragment: "/nft/web.nft".into(),
         nft_main: "/nft/main.conf".into(),
-        ddns_config: "/ddns/config.toml".into(),
+        ddns_config: "/secrets/nodo-ddns/config.toml".into(),
         ddns_state: "/ddns/state.json".into(),
         dns_credentials: "/nodo/web-dns.toml".into(),
         mdns_names: "/localnet/mdns-names".into(),
@@ -108,8 +112,13 @@ fn web(fake: Fake) -> NodoWeb<Fake> {
     web
 }
 
+fn key() -> std::sync::Arc<SecretsKey> {
+    std::sync::Arc::new(SecretsKey::derive(&[7u8; crate::keys::DEVICE_KEY_LEN]))
+}
+
 fn input(local: bool, public: bool) -> WebInput {
     WebInput {
+        secrets: Some(key()),
         sites: vec![WebSite {
             package: "shop".into(),
             service: WebService {
@@ -154,19 +163,42 @@ fn dynamic_dns_runs_only_while_a_site_is_public() {
     store_cloudflare(&web);
     web.apply(&input(true, true)).unwrap();
     assert!(web.io.up("nodo-ddns"));
-    let config = web.io.get("/ddns/config.toml").unwrap();
+    let config = web.io.get("/secrets/nodo-ddns/config.toml").unwrap();
     assert!(config.contains("records = [\"shop\"]") && config.contains("provider = \"cloudflare\""));
-    assert_eq!(web.io.owner("/ddns/config.toml"), (0o600, "_nododdns".into(), "_nododdns".into()));
+    assert_eq!(web.io.owner("/secrets/nodo-ddns/config.toml"), (0o600, "_nododdns".into(), "_nododdns".into()));
 
     web.apply(&input(true, false)).unwrap();
     assert!(!web.io.up("nodo-ddns"));
+    assert!(web.io.get("/secrets/nodo-ddns/config.toml").is_none(), "no public site, no config with credentials");
 }
 
 #[test]
-fn credentials_are_root_only_and_validated() {
+fn while_locked_dynamic_dns_waits_and_an_unlock_gives_it_its_config() {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    web.apply(&input(false, false)).unwrap();
+    let mut locked = input(false, true);
+    locked.secrets = None;
+    web.apply(&locked).unwrap();
+    assert!(web.io.up("nodo-ddns"), "enabled, and waiting for its config");
+    assert!(web.io.get("/secrets/nodo-ddns/config.toml").is_none());
+    web.unlocked(&input(false, true)).unwrap();
+    let config = web.io.get("/secrets/nodo-ddns/config.toml").unwrap();
+    assert!(config.contains("api_token = \"cfut_0123456789"), "opened for the service");
+}
+
+#[test]
+fn credentials_are_sealed_root_only_and_validated() {
     let web = web(Fake::default());
     store_cloudflare(&web);
     assert_eq!(web.io.owner("/nodo/web-dns.toml"), (0o600, "root".into(), "root".into()));
+    let stored = web.io.get("/nodo/web-dns.toml").unwrap();
+    assert!(!stored.contains("cfut_") && stored.contains("api_token = \"v1."), "{stored}");
+    let mut locked = input(false, false);
+    locked.secrets = None;
+    let token = vec![("api_token".to_owned(), Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789"))];
+    assert!(matches!(web.set_provider("example.com", "cloudflare", &token, &locked), Err(ApiError::Locked(_))));
+    assert!(matches!(web.test_provider(&locked), Err(ApiError::Locked(_))));
     let none = input(false, false);
     let token = || vec![("api_token".to_owned(), Secret::new("x"))];
     for (domain, provider, fields) in [
@@ -240,7 +272,7 @@ fn going_fully_offline_stops_caddy() {
 #[test]
 fn retiring_stale_records_pauses_the_running_service() {
     let web = web(Fake { retire_output: "{\"removed\":[\"old/A\"]}\n".into(), ..Fake::default() });
-    assert_eq!(web.retire_stale().unwrap(), Vec::<String>::new(), "no config, nothing to retire");
+    assert!(matches!(web.retire_stale(), Err(ApiError::Locked(_))), "no config, nothing to retire with");
     store_cloudflare(&web);
     web.apply(&input(false, true)).unwrap();
     assert_eq!(web.retire_stale().unwrap(), vec!["old/A"]);

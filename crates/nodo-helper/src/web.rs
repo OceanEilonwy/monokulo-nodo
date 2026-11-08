@@ -4,8 +4,9 @@
 //! right owners, reloads each service, and puts the old files back when a reload fails. Side effects
 //! go through [`WebIo`], so the logic runs in tests without root.
 //!
-//! DNS provider credentials are kept in a root-only file. TODO: move them to sealed secrets once
-//! that interface lands, so they are encrypted at rest.
+//! DNS provider credentials are sealed under the device key (see `crate::secrets`) in a root-only
+//! file, so they cannot be read while the device is locked. nodo-ddns gets them in a config under
+//! `/run/nodo/secrets`, which is memory only, so after a reboot it waits until the device is unlocked.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -30,6 +31,7 @@ use nodo_web::router::{self, GatewayQuery};
 use serde::{Deserialize, Serialize};
 
 use crate::exposure::{ExposureApplier, WebInput};
+use crate::secrets::{self, SecretsKey};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebPaths {
@@ -55,7 +57,7 @@ impl Default for WebPaths {
             caddy_admin: "/run/nodo-web/caddy-admin.sock".into(),
             nft_fragment: "/etc/nftables.d/nodo-web.nft".into(),
             nft_main: "/etc/nftables.conf".into(),
-            ddns_config: "/etc/nodo-ddns/config.toml".into(),
+            ddns_config: "/run/nodo/secrets/nodo-ddns/config.toml".into(),
             ddns_state: "/var/lib/nodo-ddns/state.json".into(),
             dns_credentials: "/var/lib/nodo/web-dns.toml".into(),
             mdns_names: "/var/lib/nodo-localnet/mdns-names".into(),
@@ -88,9 +90,11 @@ pub trait WebIo: Send + Sync {
     fn retire_stale(&self, config: &Path) -> Result<String, String>;
     fn http(&self) -> SharedHttp;
     fn sleep(&self, duration: Duration);
+    fn random(&self, out: &mut [u8]) -> Result<(), String>;
 }
 
-/// The stored domain and credentials, in the same shape as nodo-ddns's `[dns]` table.
+/// The stored domain and credentials, in the same shape as nodo-ddns's `[dns]` table. Every value
+/// other than `provider` is sealed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct Credentials {
     domain: String,
@@ -123,6 +127,9 @@ const LOCALNET: &str = "nodo-localnet";
 const TOR: &str = "tor";
 const ROOT_ONLY: Owner = (0o600, "root", "root");
 const PUBLIC_FILE: Owner = (0o644, "root", "root");
+/// Sealed values are bound to this name and the field, so they open nowhere else.
+const SEAL_PACKAGE: &str = "nodo-ddns";
+const SECRETS_DIR: Owner = (0o711, "root", "root");
 /// How long to wait for a new local address or a new onion address before generating without it.
 const SETTLE_SECS: u64 = 20;
 
@@ -156,6 +163,21 @@ impl<I: WebIo> NodoWeb<I> {
     fn credentials(&self) -> Option<Credentials> {
         let bytes = self.io.read(&self.paths.dns_credentials)?;
         toml::from_str(std::str::from_utf8(&bytes).ok()?).ok()
+    }
+
+    /// The provider table with every sealed value opened.
+    fn opened(&self, credentials: &Credentials, key: &SecretsKey) -> Result<BTreeMap<String, String>, String> {
+        credentials
+            .dns
+            .iter()
+            .map(|(name, value)| {
+                if name == "provider" {
+                    Ok((name.clone(), value.clone()))
+                } else {
+                    secrets::open(key, SEAL_PACKAGE, name, value).map(|v| (name.clone(), v.to_string()))
+                }
+            })
+            .collect()
     }
 
     fn local_address(&self) -> LocalAddress {
@@ -307,15 +329,21 @@ impl<I: WebIo> NodoWeb<I> {
         }
     }
 
-    fn apply_ddns(&self, plan: &WebPlan) -> Result<(), String> {
+    fn apply_ddns(&self, plan: &WebPlan, key: Option<&SecretsKey>) -> Result<(), String> {
         let any_public = plan.addresses.iter().any(|a| a.kind == AddressKind::Public);
         let Some(credentials) = self.credentials().filter(|_| any_public) else {
             // No public site, so the home IP has no business being looked up or published.
             if self.io.service_installed(DDNS) {
                 self.io.service(DDNS, false, false)?;
             }
+            self.io.remove(&self.paths.ddns_config)?;
             return Ok(());
         };
+        let Some(key) = key else {
+            // Locked: the credentials cannot be opened, so nodo-ddns waits for its config.
+            return self.io.service(DDNS, true, false);
+        };
+        let dns = self.opened(&credentials, key)?;
         let config = DdnsConfig {
             domain: &credentials.domain,
             state_file: self.paths.ddns_state.to_string_lossy().into_owned(),
@@ -323,8 +351,14 @@ impl<I: WebIo> NodoWeb<I> {
             ttl: 600,
             ipv6: false,
             interval_secs: 300,
-            dns: &credentials.dns,
+            dns: &dns,
         };
+        if let Some(dir) = self.paths.ddns_config.parent() {
+            if let Some(parent) = dir.parent() {
+                self.io.ensure_dir(parent, SECRETS_DIR)?;
+            }
+            self.io.ensure_dir(dir, (0o700, "_nododdns", "_nododdns"))?;
+        }
         let text = toml::to_string(&config).map_err(|e| e.to_string())?;
         let changed = self.io.read(&self.paths.ddns_config).as_deref() != Some(text.as_bytes());
         // nodo-ddns refuses a config that group or others can read.
@@ -392,10 +426,12 @@ impl<I: WebIo> NodoWeb<I> {
         }
     }
 
-    fn provider(&self) -> Result<Box<dyn DnsProvider>, ApiError> {
+    fn provider(&self, key: Option<&SecretsKey>) -> Result<Box<dyn DnsProvider>, ApiError> {
         let credentials =
             self.credentials().ok_or_else(|| ApiError::Failed("no DNS provider is set up".to_owned()))?;
-        let text = toml::to_string(&credentials.dns).map_err(|e| ApiError::Failed(e.to_string()))?;
+        let key = key.ok_or_else(|| ApiError::Locked("unlock the device to use the DNS provider".to_owned()))?;
+        let dns = self.opened(&credentials, key).map_err(ApiError::Failed)?;
+        let text = toml::to_string(&dns).map_err(|e| ApiError::Failed(e.to_string()))?;
         let config: ProviderConfig =
             toml::from_str(&text).map_err(|_| ApiError::Failed("the stored provider settings are not valid".to_owned()))?;
         config.build(self.io.http(), &credentials.domain).map_err(|e| ApiError::Failed(e.to_string()))
@@ -438,7 +474,12 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         }
         self.apply_files(&plan)?;
         self.apply_mdns(&plan)?;
-        self.apply_ddns(&plan)
+        self.apply_ddns(&plan, input.secrets.as_deref())
+    }
+
+    fn unlocked(&self, input: &WebInput) -> Result<(), String> {
+        let plan = self.plan(input)?;
+        self.apply_ddns(&plan, input.secrets.as_deref())
     }
 
     fn status(&self, input: &WebInput) -> Result<WebStatus, ApiError> {
@@ -478,6 +519,10 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         fields: &[(String, Secret)],
         input: &WebInput,
     ) -> Result<(), ApiError> {
+        let key = input
+            .secrets
+            .as_deref()
+            .ok_or_else(|| ApiError::Locked("unlock the device to store DNS credentials".to_owned()))?;
         let info = catalog::lookup(provider)
             .filter(|p| p.status == ProviderStatus::Implemented)
             .ok_or_else(|| ApiError::Failed(format!("{} is not a supported provider", provider.escape_debug())))?;
@@ -494,18 +539,29 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         let text = toml::to_string(&dns).map_err(|e| ApiError::Failed(e.to_string()))?;
         toml::from_str::<ProviderConfig>(&text)
             .map_err(|_| ApiError::Failed(format!("{} needs: {}", info.name, expected.join(", "))))?;
-        let credentials = Credentials { domain: domain.to_owned(), dns };
+        let mut sealed = BTreeMap::new();
+        for (name, value) in &dns {
+            let stored = if name == "provider" {
+                value.clone()
+            } else {
+                let mut nonce = [0u8; 24];
+                self.io.random(&mut nonce).map_err(ApiError::Failed)?;
+                secrets::seal(key, SEAL_PACKAGE, name, value, &nonce).map_err(ApiError::Failed)?
+            };
+            sealed.insert(name.clone(), stored);
+        }
+        let credentials = Credentials { domain: domain.to_owned(), dns: sealed };
         let stored = toml::to_string(&credentials).map_err(|e| ApiError::Failed(e.to_string()))?;
         if let Some(dir) = self.paths.dns_credentials.parent() {
             self.io.ensure_dir(dir, (0o755, "root", "root")).map_err(ApiError::Failed)?;
         }
         self.io.write(&self.paths.dns_credentials, stored.as_bytes(), ROOT_ONLY).map_err(ApiError::Failed)?;
         let plan = self.plan(input).map_err(ApiError::Failed)?;
-        self.apply_ddns(&plan).map_err(ApiError::Failed)
+        self.apply_ddns(&plan, Some(key)).map_err(ApiError::Failed)
     }
 
-    fn test_provider(&self) -> Result<String, ApiError> {
-        let report = self.provider()?.test().map_err(|e| ApiError::Failed(e.to_string()))?;
+    fn test_provider(&self, input: &WebInput) -> Result<String, ApiError> {
+        let report = self.provider(input.secrets.as_deref())?.test().map_err(|e| ApiError::Failed(e.to_string()))?;
         let mut text = format!("Test passed: wrote and removed {}", report.record);
         for warning in report.warnings {
             text.push_str(". ");
@@ -516,7 +572,9 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
 
     fn retire_stale(&self) -> Result<Vec<String>, ApiError> {
         if self.io.read(&self.paths.ddns_config).is_none() {
-            return Ok(Vec::new());
+            return Err(ApiError::Locked(
+                "dynamic DNS has no config, because no site is public or the device is locked".to_owned(),
+            ));
         }
         // The service and this run would both write the state file.
         let was_running = self.io.service_running(DDNS);
@@ -541,7 +599,7 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         if !input.sites.iter().any(|s| s.package == site.package && s.service.name == site.site) {
             return Err(ApiError::NotFound(format!("{}/{}", site.package, site.site)));
         }
-        let provider = match self.provider() {
+        let provider = match self.provider(input.secrets.as_deref()) {
             Ok(provider) => provider,
             Err(e) => {
                 return Ok(ReachabilityDetail {
@@ -783,6 +841,10 @@ impl WebIo for RealWebIo {
 
     fn sleep(&self, duration: Duration) {
         std::thread::sleep(duration);
+    }
+
+    fn random(&self, out: &mut [u8]) -> Result<(), String> {
+        getrandom::fill(out).map_err(|e| format!("no secure randomness: {e}"))
     }
 }
 

@@ -182,123 +182,6 @@ check "so the app's user can no longer connect to the node" sh -c '! connects_as
 check "putting the reference back restores the access" sh -c '
 	ctl set e2e-app daemon_port ref monero-daemon.rpc-port && connects_as e2e-app 18081'
 
-# Exposure, applied for real: Caddy, nftables, the local address, mDNS, Tor and dynamic DNS.
-# The device's main address is 192.168.77.2 on a LAN namespace and 203.0.113.2 towards an internet
-# namespace. Its local address is 192.168.77.3, static, because this LAN has no DHCP server.
-
-onion_host=
-web_down() {
-	for s in nodo-caddy nodo-mdns nodo-localnet nodo-ddns tor; do
-		[ -d "/etc/sv/$s" ] && { touch "/etc/sv/$s/down"; sv -w 15 down "$s" >/dev/null 2>&1; }
-	done
-	pkill -u nobody -x nodo-caddy 2>/dev/null
-	for ns in e2elan e2einet; do ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null; ip netns del "$ns" 2>/dev/null; done
-	ip link del e2elan0 2>/dev/null; ip link del e2einet0 2>/dev/null
-	rm -f /etc/nftables.d/nodo-web.nft /etc/sv/nodo-localnet/conf
-	nft -f /etc/nftables.conf
-}
-web_down
-ip netns add e2elan; ip netns add e2einet
-ip link add e2elan0 type veth peer name eth0 netns e2elan
-ip link add e2einet0 type veth peer name eth0 netns e2einet
-ip addr add 192.168.77.2/24 dev e2elan0; ip addr add 203.0.113.2/24 dev e2einet0
-ip link set e2elan0 up; ip link set e2einet0 up
-ip netns exec e2elan ip addr add 192.168.77.1/24 dev eth0
-ip netns exec e2einet ip addr add 203.0.113.1/24 dev eth0
-for ns in e2elan e2einet; do ip netns exec "$ns" ip link set lo up; ip netns exec "$ns" ip link set eth0 up; done
-ip netns exec e2einet ip route add 192.168.77.0/24 via 203.0.113.2
-printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.3/24\n' > /etc/sv/nodo-localnet/conf
-# The app itself only sleeps, so a stand-in answers on its upstream port with the path it was sent.
-mkdir -p /tmp/e2e-up
-printf '{"admin":{"disabled":true},"apps":{"http":{"servers":{"u":{"listen":["127.0.0.1:8080"],"automatic_https":{"disable":true},"routes":[{"handle":[{"handler":"static_response","body":"e2e shop {http.request.uri}"}]}]}}}}}' > /tmp/e2e-up/config.json
-chown -R nobody /tmp/e2e-up
-HOME=/tmp/e2e-up XDG_DATA_HOME=/tmp/e2e-up nohup chpst -u nobody nodo-caddy run --config /tmp/e2e-up/config.json >/tmp/e2e-up/log 2>&1 </dev/null &
-# The request helpers go in a file, because each check runs in its own sh -c.
-cat > /tmp/e2e-web-lib.sh <<'LIB'
-cacert=/var/lib/caddy/data/caddy/pki/authorities/local/root.crt
-# Prints the HTTP status, or ERR and curl's exit code when no response came back.
-web_get() {
-	ns=$1; shift
-	if [ "$ns" = host ]; then set -- curl "$@"; else set -- ip netns exec "$ns" curl "$@"; fi
-	: > /tmp/e2e.body
-	code=$("$@" -s -o /tmp/e2e.body -w '%{http_code}' --cacert "$cacert" --connect-timeout 3 --max-time 6 2>/dev/null) || code="ERR$?"
-	echo "$code"
-}
-is() { [ "$1" = "$2" ] || { echo "want $2, got $1"; cat /tmp/e2e.body; return 1; }; }
-LIB
-
-check "a public host can be set" ctl host e2e-app shop shop.example.com
-check "local exposure brings up the local address and Caddy" sh -c '
-	ctl expose e2e-app shop 1 0 0 && grep -qx "address=192.168.77.3" /run/nodo-localnet/state &&
-	sv status nodo-caddy | grep -q "^run:" && [ "$(stat -c "%a %U %G" /var/lib/nodo-web/caddy.json)" = "640 root _caddy" ]'
-sleep 2
-check "the local site answers at https://shop.local with no port" sh -c '
-	. /tmp/e2e-web-lib.sh; is "$(web_get e2elan --resolve shop.local:443:192.168.77.3 https://shop.local/admin)" 200 &&
-	grep -q "e2e shop /admin" /tmp/e2e.body'
-check "mDNS answers shop.local with the local address" sh -c '
-	[ "$(ip netns exec e2elan nodo-mdns --query shop.local --via 192.168.77.1)" = 192.168.77.3 ]'
-check "the main address serves no local host, as a masquerading router would deliver it" sh -c '
-	. /tmp/e2e-web-lib.sh; r=$(web_get e2elan -k --resolve shop.local:443:192.168.77.2 https://shop.local/admin);
-	! grep -q "e2e shop" /tmp/e2e.body && [ "${r#ERR}" != "$r" ]'
-check "the local address is closed to the internet" sh -c '
-	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.local:443:192.168.77.3 https://shop.local/)" ERR28'
-check "dynamic DNS stays off while nothing is public" sh -c '! sv status nodo-ddns 2>/dev/null | grep -q "^run:"'
-
-if [ -d /etc/sv/tor ]; then
-	check "onion exposure starts Tor and serves the onion address" sh -c '
-		ctl expose e2e-app shop 1 1 0 && ctl web-status | tr -d " \n" | tee /tmp/e2e.ws | grep -q "onion_url:Some(\"http://"'
-	onion_host=$(grep -o 'onion_url:Some("http://[a-z2-7]*\.onion"' /tmp/e2e.ws | head -1 | sed 's|.*http://||; s|"$||')
-	check "the onion listener answers for the onion host only" sh -c '
-		. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
-		is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/ADMIN)" 404 &&
-		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
-else
-	echo "SKIP onion: tor is not installed"
-	ctl expose e2e-app shop 1 0 0 >/dev/null
-fi
-
-check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'
-check "DNS credentials are stored root only" sh -c '
-	echo cfut_0123456789abcdefghijABCDEFGHIJ0123456789 | nodo-tui --ctl set-dns example.com cloudflare api_token &&
-	[ "$(stat -c "%a %U" /var/lib/nodo/web-dns.toml)" = "600 root" ] && ! ctl web-status | grep -q cfut_'
-check "the provider list carries DNS-01 support" sh -c 'ctl dns-providers | grep -A12 "id: \"godaddy\"" | grep -q BundledSeparateCredentials'
-check "going public without the typed host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1
-check "going public with the wrong host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1 evil.example.com
-check "refused attempts left the firewall closed" sh -c '! nft list ruleset | grep -q "redirect to :10443"'
-check "going public with the typed host works" ctl expose e2e-app shop 1 0 1 shop.example.com
-check "the site lists as public" sh -c 'ctl sites | grep -A6 "site: \"shop\"" | grep -q "public: true"'
-check "the public ports are redirected to Caddy" sh -c 'nft list ruleset | grep -q "redirect to :10443" && nft list ruleset | grep -q "redirect to :10080"'
-# The VM is offline, so no public certificate can be issued. Port 80 shows the public listener routes.
-check "port 80 on the main address redirects the public host to https" sh -c '
-	. /tmp/e2e-web-lib.sh; r=$(web_get e2einet -D /tmp/e2e.h --resolve shop.example.com:80:203.0.113.2 http://shop.example.com/x);
-	is "$r" 308 && grep -qi "^location: https://shop.example.com/x" /tmp/e2e.h'
-check "nodo-ddns runs while the site is public, with a private config" sh -c '
-	sv status nodo-ddns | grep -q "^run:" && [ "$(stat -c "%a %U" /etc/nodo-ddns/config.toml)" = "600 _nododdns" ] &&
-	grep -q "records = \[\"shop\"\]" /etc/nodo-ddns/config.toml'
-check "web status reports the addresses and dynamic DNS" sh -c '
-	ctl web-status | tr -d " \n" > /tmp/e2e.ws; cat /tmp/e2e.ws; grep -q "local_address:Some(\"192.168.77.3\"" /tmp/e2e.ws &&
-	grep -q "public_url:Some(\"https://shop.example.com\"" /tmp/e2e.ws && grep -q "ddns_running:true" /tmp/e2e.ws &&
-	grep -q "rate_limit_unenforced:false" /tmp/e2e.ws'
-check "the reachability check runs as root and never claims the ports" sh -c '
-	ctl reach e2e-app shop | tee /tmp/e2e.r; grep -q "verdict:" /tmp/e2e.r && ! grep -q "verdict: \"ready\"" /tmp/e2e.r &&
-	! grep -B2 -A2 "port_443" /tmp/e2e.r | grep -q "status: Passed"'
-check "retiring stale records is an explicit action" sh -c 'ctl retire-stale | grep -q RetiredRecords'
-check "taking the site off public stops dynamic DNS and closes the ports" sh -c '
-	ctl expose e2e-app shop 1 0 0 && ! sv status nodo-ddns | grep -q "^run:" && ! nft list ruleset | grep -q "redirect to :10443"'
-check "port 80 is closed again" sh -c '
-	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.example.com:80:203.0.113.2 http://shop.example.com/)" ERR28'
-printf 'MODE=off\n' > /etc/sv/nodo-localnet/conf
-sv -w 20 restart nodo-localnet >/dev/null 2>&1
-check "without a local address, local sites wait with a reason and nothing falls back" sh -c '
-	ctl expose e2e-app shop 1 0 0; ctl web-status | tr -d " \n" > /tmp/e2e.ws; cat /tmp/e2e.ws
-	grep -q "local_unavailable:Some(\"Localsitesareswitchedoff.\"" /tmp/e2e.ws &&
-	grep -q "local_waiting:true" /tmp/e2e.ws && ! grep -q shop.local /var/lib/nodo-web/caddy.json'
-check "turning every exposure off stops Caddy" sh -c 'ctl expose e2e-app shop 0 0 0 && ! sv status nodo-caddy | grep -q "^run:"'
-check "a single-address site refuses two exposures" refused "single address" ctl expose e2e-app admin 1 1 0
-check "a single-address site takes one" ctl expose e2e-app admin 0 1 0
-ctl expose e2e-app admin 0 0 0 >/dev/null
-web_down
-
 # Encrypted storage with the single device passphrase
 
 check "before setup, the device reports encryption as not set up" sh -c 'ctl overview | grep -q NotSetUp'
@@ -480,6 +363,125 @@ check "Home shows the node's height and peers" sh -c '
 	TERM=xterm script -qc "stty rows 40 cols 120; timeout 10 nodo-tui" /tmp/e2e.tui >/dev/null 2>&1 </dev/null
 	sed "s/\x1b\[[0-9;?]*[a-zA-Z]//g" /tmp/e2e.tui | tr -d " " > /tmp/e2e.tui.txt
 	grep -q "1(synced)" /tmp/e2e.tui.txt && grep -q "0out,0in" /tmp/e2e.tui.txt'
+
+# Exposure, applied for real: Caddy, nftables, the local address, mDNS, Tor and dynamic DNS.
+# The device's main address is 192.168.77.2 on a LAN namespace and 203.0.113.2 towards an internet
+# namespace. Its local address is 192.168.77.3, static, because this LAN has no DHCP server.
+
+onion_host=
+web_down() {
+	for s in nodo-caddy nodo-mdns nodo-localnet nodo-ddns tor; do
+		[ -d "/etc/sv/$s" ] && { touch "/etc/sv/$s/down"; sv -w 15 down "$s" >/dev/null 2>&1; }
+	done
+	pkill -u nobody -x nodo-caddy 2>/dev/null
+	for ns in e2elan e2einet; do ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null; ip netns del "$ns" 2>/dev/null; done
+	ip link del e2elan0 2>/dev/null; ip link del e2einet0 2>/dev/null
+	rm -f /etc/nftables.d/nodo-web.nft /etc/sv/nodo-localnet/conf
+	nft -f /etc/nftables.conf
+}
+web_down
+ip netns add e2elan; ip netns add e2einet
+ip link add e2elan0 type veth peer name eth0 netns e2elan
+ip link add e2einet0 type veth peer name eth0 netns e2einet
+ip addr add 192.168.77.2/24 dev e2elan0; ip addr add 203.0.113.2/24 dev e2einet0
+ip link set e2elan0 up; ip link set e2einet0 up
+ip netns exec e2elan ip addr add 192.168.77.1/24 dev eth0
+ip netns exec e2einet ip addr add 203.0.113.1/24 dev eth0
+for ns in e2elan e2einet; do ip netns exec "$ns" ip link set lo up; ip netns exec "$ns" ip link set eth0 up; done
+ip netns exec e2einet ip route add 192.168.77.0/24 via 203.0.113.2
+printf 'MODE=static\nPARENT=e2elan0\nADDRESS=192.168.77.3/24\n' > /etc/sv/nodo-localnet/conf
+# The app itself only sleeps, so a stand-in answers on its upstream port with the path it was sent.
+mkdir -p /tmp/e2e-up
+printf '{"admin":{"disabled":true},"apps":{"http":{"servers":{"u":{"listen":["127.0.0.1:8080"],"automatic_https":{"disable":true},"routes":[{"handle":[{"handler":"static_response","body":"e2e shop {http.request.uri}"}]}]}}}}}' > /tmp/e2e-up/config.json
+chown -R nobody /tmp/e2e-up
+HOME=/tmp/e2e-up XDG_DATA_HOME=/tmp/e2e-up nohup chpst -u nobody nodo-caddy run --config /tmp/e2e-up/config.json >/tmp/e2e-up/log 2>&1 </dev/null &
+# The request helpers go in a file, because each check runs in its own sh -c.
+cat > /tmp/e2e-web-lib.sh <<'LIB'
+cacert=/var/lib/caddy/data/caddy/pki/authorities/local/root.crt
+# Prints the HTTP status, or ERR and curl's exit code when no response came back.
+web_get() {
+	ns=$1; shift
+	if [ "$ns" = host ]; then set -- curl "$@"; else set -- ip netns exec "$ns" curl "$@"; fi
+	: > /tmp/e2e.body
+	code=$("$@" -s -o /tmp/e2e.body -w '%{http_code}' --cacert "$cacert" --connect-timeout 3 --max-time 6 2>/dev/null) || code="ERR$?"
+	echo "$code"
+}
+is() { [ "$1" = "$2" ] || { echo "want $2, got $1"; cat /tmp/e2e.body; return 1; }; }
+LIB
+
+check "a public host can be set" ctl host e2e-app shop shop.example.com
+check "local exposure brings up the local address and Caddy" sh -c '
+	ctl expose e2e-app shop 1 0 0 && grep -qx "address=192.168.77.3" /run/nodo-localnet/state &&
+	sv status nodo-caddy | grep -q "^run:" && [ "$(stat -c "%a %U %G" /var/lib/nodo-web/caddy.json)" = "640 root _caddy" ]'
+sleep 2
+check "the local site answers at https://shop.local with no port" sh -c '
+	. /tmp/e2e-web-lib.sh; is "$(web_get e2elan --resolve shop.local:443:192.168.77.3 https://shop.local/admin)" 200 &&
+	grep -q "e2e shop /admin" /tmp/e2e.body'
+check "mDNS answers shop.local with the local address" sh -c '
+	[ "$(ip netns exec e2elan nodo-mdns --query shop.local --via 192.168.77.1)" = 192.168.77.3 ]'
+check "the main address serves no local host, as a masquerading router would deliver it" sh -c '
+	. /tmp/e2e-web-lib.sh; r=$(web_get e2elan -k --resolve shop.local:443:192.168.77.2 https://shop.local/admin);
+	! grep -q "e2e shop" /tmp/e2e.body && [ "${r#ERR}" != "$r" ]'
+check "the local address is closed to the internet" sh -c '
+	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.local:443:192.168.77.3 https://shop.local/)" ERR28'
+check "dynamic DNS stays off while nothing is public" sh -c '! sv status nodo-ddns 2>/dev/null | grep -q "^run:"'
+
+if [ -d /etc/sv/tor ]; then
+	check "onion exposure starts Tor and serves the onion address" sh -c '
+		ctl expose e2e-app shop 1 1 0 && ctl web-status | tr -d " \n" | tee /tmp/e2e.ws | grep -q "onion_url:Some(\"http://"'
+	onion_host=$(grep -o 'onion_url:Some("http://[a-z2-7]*\.onion"' /tmp/e2e.ws | head -1 | sed 's|.*http://||; s|"$||')
+	check "the onion listener answers for the onion host only" sh -c '
+		. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
+		is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/ADMIN)" 404 &&
+		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
+else
+	echo "SKIP onion: tor is not installed"
+	ctl expose e2e-app shop 1 0 0 >/dev/null
+fi
+
+check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'
+# The device was unlocked above, so the credentials can be sealed.
+check "DNS credentials are stored sealed and root only" sh -c '
+	echo cfut_0123456789abcdefghijABCDEFGHIJ0123456789 | nodo-tui --ctl set-dns example.com cloudflare api_token &&
+	[ "$(stat -c "%a %U" /var/lib/nodo/web-dns.toml)" = "600 root" ] && ! grep -q cfut_ /var/lib/nodo/web-dns.toml &&
+	grep -q "api_token = \"v1\." /var/lib/nodo/web-dns.toml && ! ctl web-status | grep -q cfut_'
+check "the provider list carries DNS-01 support" sh -c 'ctl dns-providers | grep -A12 "id: \"godaddy\"" | grep -q BundledSeparateCredentials'
+check "going public without the typed host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1
+check "going public with the wrong host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1 evil.example.com
+check "refused attempts left the firewall closed" sh -c '! nft list ruleset | grep -q "redirect to :10443"'
+check "going public with the typed host works" ctl expose e2e-app shop 1 0 1 shop.example.com
+check "the site lists as public" sh -c 'ctl sites | grep -A6 "site: \"shop\"" | grep -q "public: true"'
+check "the public ports are redirected to Caddy" sh -c 'nft list ruleset | grep -q "redirect to :10443" && nft list ruleset | grep -q "redirect to :10080"'
+# The VM is offline, so no public certificate can be issued. Port 80 shows the public listener routes.
+check "port 80 on the main address redirects the public host to https" sh -c '
+	. /tmp/e2e-web-lib.sh; r=$(web_get e2einet -D /tmp/e2e.h --resolve shop.example.com:80:203.0.113.2 http://shop.example.com/x);
+	is "$r" 308 && grep -qi "^location: https://shop.example.com/x" /tmp/e2e.h'
+check "nodo-ddns runs while the site is public, with a private config" sh -c '
+	sv status nodo-ddns | grep -q "^run:" && [ "$(stat -c "%a %U" /run/nodo/secrets/nodo-ddns/config.toml)" = "600 _nododdns" ] &&
+	grep -q "records = \[\"shop\"\]" /run/nodo/secrets/nodo-ddns/config.toml'
+check "web status reports the addresses and dynamic DNS" sh -c '
+	ctl web-status | tr -d " \n" > /tmp/e2e.ws; cat /tmp/e2e.ws; grep -q "local_address:Some(\"192.168.77.3\"" /tmp/e2e.ws &&
+	grep -q "public_url:Some(\"https://shop.example.com\"" /tmp/e2e.ws && grep -q "ddns_running:true" /tmp/e2e.ws &&
+	grep -q "rate_limit_unenforced:false" /tmp/e2e.ws'
+check "the reachability check runs as root and never claims the ports" sh -c '
+	ctl reach e2e-app shop | tee /tmp/e2e.r; grep -q "verdict:" /tmp/e2e.r && ! grep -q "verdict: \"ready\"" /tmp/e2e.r &&
+	! grep -B2 -A2 "port_443" /tmp/e2e.r | grep -q "status: Passed"'
+check "retiring stale records is an explicit action" sh -c 'ctl retire-stale | grep -q RetiredRecords'
+check "taking the site off public stops dynamic DNS and closes the ports" sh -c '
+	ctl expose e2e-app shop 1 0 0 && ! sv status nodo-ddns | grep -q "^run:" && ! nft list ruleset | grep -q "redirect to :10443"'
+check "port 80 is closed again" sh -c '
+	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.example.com:80:203.0.113.2 http://shop.example.com/)" ERR28'
+printf 'MODE=off\n' > /etc/sv/nodo-localnet/conf
+sv -w 20 restart nodo-localnet >/dev/null 2>&1
+check "without a local address, local sites wait with a reason and nothing falls back" sh -c '
+	ctl expose e2e-app shop 1 0 0; ctl web-status | tr -d " \n" > /tmp/e2e.ws; cat /tmp/e2e.ws
+	grep -q "local_unavailable:Some(\"Localsitesareswitchedoff.\"" /tmp/e2e.ws &&
+	grep -q "local_waiting:true" /tmp/e2e.ws && ! grep -q shop.local /var/lib/nodo-web/caddy.json'
+check "turning every exposure off stops Caddy" sh -c 'ctl expose e2e-app shop 0 0 0 && ! sv status nodo-caddy | grep -q "^run:"'
+check "a single-address site refuses two exposures" refused "single address" ctl expose e2e-app admin 1 1 0
+check "a single-address site takes one" ctl expose e2e-app admin 0 1 0
+ctl expose e2e-app admin 0 0 0 >/dev/null
+web_down
 
 # SSH keys
 

@@ -19,7 +19,7 @@ pub mod keys;
 mod node;
 mod policy;
 pub mod real;
-mod secrets;
+pub mod secrets;
 pub mod server;
 mod service;
 mod settings;

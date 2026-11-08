@@ -10,7 +10,7 @@ fake=/tmp/fakeapi
 ip_seen=93.184.216.34
 zone=023e105f4ecef8ad9ca31a8372d0c353
 token=cf-test-token-1234567890
-conf=/etc/nodo-ddns/config.toml
+conf=/run/nodo/secrets/nodo-ddns/config.toml
 hosts="api.cloudflare.com api.ipify.org ipv4.icanhazip.com checkip.amazonaws.com v4.ident.me ipv4.wtfismyip.com"
 fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -92,6 +92,8 @@ r=1; [ "$code" = 200 ] && r=0
 result "fake internet answers over trusted TLS ($code)" "$r"
 
 write_conf() {
+	install -d -m 711 /run/nodo/secrets
+	install -d -m 700 -o _nododdns -g _nododdns /run/nodo/secrets/nodo-ddns
 	install -m 600 -o _nododdns -g _nododdns /dev/null "$conf"
 	cat > "$conf" <<TOML
 domain = "example.com"

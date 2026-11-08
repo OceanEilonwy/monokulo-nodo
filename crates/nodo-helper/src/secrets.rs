@@ -187,6 +187,9 @@ impl<S: System> Helper<S> {
                 }
             }
         }
+        if let Err(e) = self.web_unlocked() {
+            problems.push(format!("web: {e}"));
+        }
         if problems.is_empty() {
             Ok(())
         } else {
