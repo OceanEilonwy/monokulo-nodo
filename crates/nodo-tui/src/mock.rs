@@ -716,6 +716,31 @@ impl ScreenData for MockBackend {
         UpdateReport { results, failure }
     }
 
+    fn apply_updates_with_passphrase(
+        &mut self,
+        names: &[String],
+        approvals: &[(String, nodo_api::PermissionApproval)],
+        passphrase: &Secret,
+    ) -> UpdateReport {
+        self.calls.push(Request::ApplyUpdatesWithPassphrase {
+            updates: Vec::new(),
+            passphrase: nodo_api::Secret::new(passphrase.expose()),
+        });
+        if passphrase.expose() != MOCK_PASSPHRASE {
+            let results = names
+                .iter()
+                .map(|name| UpdateResult {
+                    name: name.clone(),
+                    applied: false,
+                    version: String::new(),
+                    note: s("that passphrase did not unlock this device"),
+                })
+                .collect();
+            return UpdateReport { results, failure: None };
+        }
+        self.apply_updates(names, approvals)
+    }
+
     fn set_held(&mut self, name: &str, held: bool) {
         if let Some(item) = self.updates.iter_mut().find(|item| item.name == name) {
             item.held = held;
@@ -1444,6 +1469,7 @@ fn sample_updates() -> Vec<UpdateItem> {
             note: UpdateNote::Ready,
             held: false,
             preselected: true,
+            grows: None,
         },
         UpdateItem {
             name: s("system base"),
@@ -1454,6 +1480,7 @@ fn sample_updates() -> Vec<UpdateItem> {
             note: UpdateNote::RestartNeeded,
             held: false,
             preselected: true,
+            grows: None,
         },
         UpdateItem {
             name: s("wallet-relay"),
@@ -1464,6 +1491,7 @@ fn sample_updates() -> Vec<UpdateItem> {
             note: UpdateNote::NewPermission(s("Connect out to any internet address")),
             held: false,
             preselected: false,
+            grows: None,
         },
         UpdateItem {
             name: s("cuprated"),
@@ -1474,6 +1502,7 @@ fn sample_updates() -> Vec<UpdateItem> {
             note: UpdateNote::Skipped,
             held: true,
             preselected: false,
+            grows: None,
         },
     ]
 }

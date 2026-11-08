@@ -1174,6 +1174,92 @@ fn updating_with_nothing_selected_explains_itself() {
     assert!(screen_text(&app).contains("Select at least one update first."));
 }
 
+fn reload(app: &mut App, mock: &mut MockBackend) {
+    app.data = load_snapshot(mock).unwrap();
+}
+
+fn passphrase_calls(mock: &MockBackend) -> Vec<String> {
+    mock.calls
+        .iter()
+        .filter_map(|call| match call {
+            Request::ApplyUpdatesWithPassphrase { passphrase, .. } => Some(passphrase.expose().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_update_that_grows_encrypted_storage_asks_for_the_device_passphrase_first() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[0].grows = Some("256 MB to 512 MB of encrypted storage".to_owned());
+    reload(&mut app, &mut mock);
+    assert!(screen_text(&app).contains("◆ Needs the device passphrase"), "{}", screen_text(&app));
+
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::Updates);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Encrypted storage grows"), "{screen}");
+    assert!(screen.contains("moneropay: 256 MB to 512 MB of encrypted storage"), "{screen}");
+    assert!(screen.contains("Device passphrase"), "{screen}");
+    assert!(screen.contains("Esc cancel"), "{screen}");
+    assert_eq!(mock.updates.len(), 4, "nothing is applied before the passphrase");
+
+    // Every key types: q does not quit, and the passphrase never shows.
+    type_text(&mut app, &mut mock, "q");
+    assert!(!app.should_quit);
+    assert!(!screen_text(&app).contains("Device passphrase   q"));
+    key(&mut app, &mut mock, ESC);
+    assert!(!screen_text(&app).contains("Encrypted storage grows"), "Esc cancels the whole batch");
+    assert_eq!(mock.updates.len(), 4);
+    assert!(passphrase_calls(&mock).is_empty());
+
+    key(&mut app, &mut mock, ENTER);
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Enter the device passphrase"), "an empty passphrase is not sent");
+    type_text(&mut app, &mut mock, "wrong horse");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(screen_text(&app).contains("did not unlock"), "{}", screen_text(&app));
+    assert_eq!(mock.updates.len(), 4);
+
+    key(&mut app, &mut mock, ESC);
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(screen_text(&app).contains("✓ system base"), "{}", screen_text(&app));
+    assert_eq!(passphrase_calls(&mock), ["wrong horse", MOCK_PASSPHRASE]);
+}
+
+#[test]
+fn a_reviewed_update_that_grows_storage_still_asks_for_the_passphrase() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[2].grows = Some("256 MB to 320 MB of encrypted storage".to_owned());
+    reload(&mut app, &mut mock);
+    keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE, ENTER]);
+    assert_eq!(app.screen.id(), ScreenId::Review);
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert_eq!(app.screen.id(), ScreenId::Updates, "back on Updates, asking for the passphrase");
+    let screen = screen_text(&app);
+    assert!(screen.contains("wallet-relay: 256 MB to 320 MB of encrypted storage"), "{screen}");
+    assert_eq!(mock.updates.len(), 4);
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(!mock.updates.iter().any(|item| item.name == "wallet-relay"));
+}
+
+#[test]
+fn a_withdrawn_system_snapshot_is_explained_before_it_is_replaced() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[1].note = UpdateNote::Withdrawal("2026.11".to_owned());
+    reload(&mut app, &mut mock);
+    let screen = text(&draw(&app, 120, 40).0);
+    assert!(screen.contains("▲ Replaces a withdrawn snapshot"), "{screen}");
+    assert!(screen.contains("system base replaces a withdrawn snapshot"), "{screen}");
+    assert!(screen.contains("The publisher withdrew snapshot 2026.11"), "{screen}");
+}
+
 // Auto-update
 
 fn at_auto_update() -> (App, MockBackend) {

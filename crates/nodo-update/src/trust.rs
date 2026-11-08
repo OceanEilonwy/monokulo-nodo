@@ -230,6 +230,7 @@ mod tests {
                 repodata_sha256: "00".repeat(32),
             }],
             packages: vec![PackagePin { name: "monokulo-base".into(), version: "0.1.0_1".into() }],
+            withdraws: vec![],
         }
     }
 

@@ -31,6 +31,7 @@ mod service;
 mod settings;
 mod ssh;
 mod stores;
+pub mod sysupdate;
 pub mod system;
 mod updates;
 pub mod usb;

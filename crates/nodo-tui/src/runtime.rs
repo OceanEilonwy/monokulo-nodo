@@ -42,6 +42,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         log_sources: backend.log_sources(),
         auto_update: backend.auto_update(),
         unavailable: backend.unavailable(),
+        system_note: backend.system_note(),
     })
 }
 
@@ -230,6 +231,10 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
                 None => backend.restore_backup(&name, &passphrase, new_device_passphrase.as_ref(), &typed),
             };
             vec![Event::BackupRestored(result), refresh(backend)]
+        }
+        Effect::ApplyUpdatesWithPassphrase { names, approvals, passphrase } => {
+            let report = backend.apply_updates_with_passphrase(&names, &approvals, &passphrase);
+            vec![Event::UpdatesApplied(report), refresh(backend)]
         }
     }
 }

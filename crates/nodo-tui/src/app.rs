@@ -403,6 +403,18 @@ pub struct ApplyFailedState {
 pub struct UpdatesState {
     pub selected: usize,
     pub checked: Vec<String>,
+    /// Asked before applying a batch in which an update grows encrypted storage.
+    pub passphrase: Option<UpdatePassphrase>,
+}
+
+/// The device passphrase for a batch of updates, and the batch it is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdatePassphrase {
+    pub names: Vec<String>,
+    pub approvals: Vec<(String, nodo_api::PermissionApproval)>,
+    /// Each growing update in words, such as "vault: 256 MB to 512 MB".
+    pub growing: Vec<String>,
+    pub input: Input,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -874,6 +886,12 @@ pub enum Effect {
         new_device_passphrase: Option<Secret>,
         typed: String,
         usb: Option<String>,
+    },
+    /// Like `ApplyUpdates`, with the device passphrase for updates that grow encrypted storage.
+    ApplyUpdatesWithPassphrase {
+        names: Vec<String>,
+        approvals: Vec<(String, nodo_api::PermissionApproval)>,
+        passphrase: Secret,
     },
 }
 

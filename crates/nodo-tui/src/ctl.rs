@@ -51,6 +51,9 @@ nodo-tui --ctl COMMAND [ARGS]
   usb-inspect DEVICE NAME          (backup passphrase on stdin)
   usb-restore DEVICE NAME TYPED_WORD   (backup passphrase, then new device passphrase or empty)
   apply-update-pass PACKAGE TO     (device passphrase on stdin, for an update that grows storage)
+  update-storage                   (updates that need the device passphrase to grow storage)
+  system-status | system-check | system-apply SERIAL | system-auto 0|1
+  system-run                       (root only, sent by the nodo-systemupdate schedule)
   web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
   set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)
   acme | certs | local-names | local-status
@@ -285,6 +288,14 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             updates: vec![nodo_api::UpdateApproval { package: id(package), to: id(to), approval: None }],
             passphrase: secret_line()?,
         },
+        ["update-storage"] => Request::UpdateStorageGrowth,
+        ["system-status"] => Request::SystemUpdateStatus,
+        ["system-check"] => Request::CheckSystemUpdate,
+        ["system-apply", serial] => {
+            Request::ApplySystemUpdate { serial: serial.parse().map_err(|_| "SERIAL must be a number")? }
+        }
+        ["system-auto", on] => Request::SetSystemAutoUpdate { enabled: flag(on)? },
+        ["system-run"] => Request::RunSystemUpdate,
         ["web-status"] => Request::WebStatus,
         ["dns-providers"] => Request::ListDnsProviders,
         ["test-dns"] => Request::TestDnsProvider,
@@ -356,5 +367,16 @@ mod tests {
         assert!(matches!(parse(&args("unbind monero-daemon")), Ok(Request::SetRoleBinding { package: None, .. })));
         assert!(matches!(parse(&args("data-drive vault 1")), Ok(Request::UseDataDrive { enabled: true, .. })));
         assert!(matches!(parse(&args("node")), Ok(Request::NodeStatus)));
+    }
+
+    #[test]
+    fn parses_system_updates() {
+        assert!(matches!(parse(&args("system-apply 7")), Ok(Request::ApplySystemUpdate { serial: 7 })));
+        assert!(parse(&args("system-apply seven")).is_err());
+        assert!(matches!(parse(&args("system-auto 1")), Ok(Request::SetSystemAutoUpdate { enabled: true })));
+        assert!(matches!(parse(&args("system-auto 0")), Ok(Request::SetSystemAutoUpdate { enabled: false })));
+        assert!(matches!(parse(&args("system-run")), Ok(Request::RunSystemUpdate)));
+        assert!(matches!(parse(&args("system-check")), Ok(Request::CheckSystemUpdate)));
+        assert!(matches!(parse(&args("update-storage")), Ok(Request::UpdateStorageGrowth)));
     }
 }

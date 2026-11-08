@@ -702,6 +702,23 @@ mod encrypted_updates {
     }
 
     #[test]
+    fn the_screen_learns_which_updates_need_the_passphrase_before_applying() {
+        let (h, _) = updating("size_mib = 512\n");
+        let Ok(Response::StorageGrowth(growth)) = call(&h, Request::UpdateStorageGrowth) else { panic!() };
+        assert_eq!(
+            growth,
+            [nodo_api::StorageGrowth { package: "demo".into(), to: "2.0_1".into(), from_bytes: 256 << 20, to_bytes: 512 << 20 }]
+        );
+        let Ok(Response::InstallReview(review)) = call(&h, Request::ReviewUpdate { package: "demo".into() }) else {
+            panic!()
+        };
+        assert!(review.needs_passphrase);
+        // An update that keeps the volume's size needs no passphrase.
+        let (h, _) = updating("data_layout = 2\n");
+        assert_eq!(call(&h, Request::UpdateStorageGrowth), Ok(Response::StorageGrowth(vec![])));
+    }
+
+    #[test]
     fn an_older_layout_is_refused_before_anything_changes() {
         let (h, packages) = updating("data_layout = 2\n");
         apply(&h, None);
@@ -765,6 +782,10 @@ mod backups {
 
     fn with_dir() -> (Helper<FakeSystem>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
+        (with_dir_at(&dir), dir)
+    }
+
+    fn with_dir_at(dir: &tempfile::TempDir) -> Helper<FakeSystem> {
         let root = dir.path();
         fs::create_dir_all(root.join("secrets")).unwrap();
         fs::write(root.join("secrets/token"), b"top secret").unwrap();
@@ -779,7 +800,7 @@ mod backups {
             ..test_paths()
         };
         let (h, _) = setup();
-        (h.with_manage_paths(paths), dir)
+        h.with_manage_paths(paths)
     }
 
     fn create(h: &Helper<FakeSystem>, device: Option<&str>) -> Result<Response, ApiError> {
@@ -865,6 +886,75 @@ mod backups {
         assert!(report.restored.contains(&"certificates".to_owned()), "{report:?}");
         let backup = fs::read(dir.path().join("backups").join(&created.info.name)).unwrap();
         assert!(!backup.windows(11).any(|w| w == b"private key"), "encrypted like every other secret");
+    }
+
+    /// Counts how often exposure was put into effect, and can refuse like a broken proxy.
+    #[derive(Clone, Default)]
+    struct Proxy(Arc<Mutex<(u32, bool)>>);
+
+    impl crate::exposure::ExposureApplier for Proxy {
+        fn apply(&self, _input: &crate::exposure::WebInput) -> Result<(), String> {
+            let mut s = self.0.lock().unwrap();
+            s.0 += 1;
+            if s.1 {
+                Err("caddy refused the config".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn with_proxy(dir: &tempfile::TempDir, proxy: &Proxy) -> Helper<FakeSystem> {
+        let mut h = Helper { exposure: Box::new(proxy.clone()), ..with_dir_at(dir) };
+        h.paths.exposure_state = dir.path().join("exposure.toml");
+        h.paths.public_hosts = dir.path().join("public-hosts.toml");
+        h
+    }
+
+    #[test]
+    fn a_restore_applies_site_exposure_and_public_hosts_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy = Proxy::default();
+        let exposure = "[shop.web]\nlocal = false\nonion = false\npublic = true\n";
+        let hosts = "[shop]\nweb = \"shop.example.com\"\n";
+        fs::write(dir.path().join("exposure.toml"), exposure).unwrap();
+        fs::write(dir.path().join("public-hosts.toml"), hosts).unwrap();
+        let h = with_proxy(&dir, &proxy);
+        let Ok(Response::BackupCreated(created)) = create(&h, None) else { panic!() };
+        assert_eq!(proxy.0.lock().unwrap().0, 0);
+        let Ok(Response::Restored(report)) = restore(&h, &created.info.name, "backup passphrase 1", "restore") else {
+            panic!()
+        };
+        assert_eq!(h.sys.get(&h.paths.exposure_state.display().to_string()).unwrap(), exposure.as_bytes());
+        assert_eq!(h.sys.get(&h.paths.public_hosts.display().to_string()).unwrap(), hosts.as_bytes());
+        assert_eq!(proxy.0.lock().unwrap().0, 1, "applied once, by the restore itself");
+        assert!(report.restored.contains(&"site exposure applied to the proxy".to_owned()), "{report:?}");
+        assert!(report.restored.contains(&"public host names".to_owned()), "{report:?}");
+    }
+
+    #[test]
+    fn a_proxy_that_refuses_leaves_the_restore_standing_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy = Proxy::default();
+        fs::write(dir.path().join("exposure.toml"), "[shop.web]\nlocal = true\nonion = false\npublic = false\n").unwrap();
+        let h = with_proxy(&dir, &proxy);
+        let Ok(Response::BackupCreated(created)) = create(&h, None) else { panic!() };
+        proxy.0.lock().unwrap().1 = true;
+        let Ok(Response::Restored(report)) = restore(&h, &created.info.name, "backup passphrase 1", "restore") else {
+            panic!()
+        };
+        assert!(report.skipped.iter().any(|s| s.contains("caddy refused the config")), "{report:?}");
+        assert!(report.restored.contains(&"site exposure".to_owned()));
+    }
+
+    #[test]
+    fn a_backup_without_site_choices_does_not_touch_the_proxy() {
+        let dir = tempfile::tempdir().unwrap();
+        let proxy = Proxy::default();
+        let h = with_proxy(&dir, &proxy);
+        let Ok(Response::BackupCreated(created)) = create(&h, None) else { panic!() };
+        restore(&h, &created.info.name, "backup passphrase 1", "restore").unwrap();
+        assert_eq!(proxy.0.lock().unwrap().0, 0);
     }
 
     #[test]

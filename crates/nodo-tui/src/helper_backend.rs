@@ -519,7 +519,20 @@ impl ScreenData for HelperBackend {
     }
 
     fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport {
-        crate::helper_manage::apply_updates(self, names, approvals)
+        crate::helper_manage::apply_updates(self, names, approvals, None)
+    }
+
+    fn apply_updates_with_passphrase(
+        &mut self,
+        names: &[String],
+        approvals: &[(String, nodo_api::PermissionApproval)],
+        passphrase: &Secret,
+    ) -> UpdateReport {
+        crate::helper_manage::apply_updates(self, names, approvals, Some(passphrase))
+    }
+
+    fn system_note(&self) -> Option<String> {
+        crate::helper_manage::system_note(self)
     }
 
     fn set_held(&mut self, name: &str, held: bool) {

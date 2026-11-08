@@ -283,6 +283,12 @@ mod tests {
                 }],
                 passphrase: Secret::new("p"),
             },
+            Request::SystemUpdateStatus,
+            Request::CheckSystemUpdate,
+            Request::ApplySystemUpdate { serial: 7 },
+            Request::SetSystemAutoUpdate { enabled: true },
+            Request::RunSystemUpdate,
+            Request::UpdateStorageGrowth,
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -536,6 +542,39 @@ mod tests {
                 free_bytes: 5,
                 read_only: true,
             })),
+            Ok(Response::SystemUpdate(SystemUpdateStatus {
+                unavailable: None,
+                current_serial: 6,
+                current_snapshot: Some("2026.12".into()),
+                available: Some(SystemSnapshot {
+                    serial: 7,
+                    snapshot: "2026.11".into(),
+                    needs_restart: false,
+                    withdraws_current: true,
+                }),
+                last_check: Some(1),
+                last_error: None,
+                automatic: false,
+                verdict: "waits for you".into(),
+                last_applied: None,
+            })),
+            Ok(Response::SystemUpdateApplied(SystemUpdateResult {
+                at: 2,
+                serial: 7,
+                snapshot: "2026.11".into(),
+                changed: vec!["nodo-tools: 0.2_1 -> 0.1_1".into()],
+                restarted: vec![],
+                deferred: vec!["nodo-helper".into()],
+                needs_restart: false,
+                withdrew: Some("2026.12".into()),
+                automatic: false,
+            })),
+            Ok(Response::StorageGrowth(vec![StorageGrowth {
+                package: "vault".into(),
+                to: "2.0_1".into(),
+                from_bytes: 256 << 20,
+                to_bytes: 320 << 20,
+            }])),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

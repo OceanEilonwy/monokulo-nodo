@@ -136,6 +136,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::Updates => Screen::Updates(UpdatesState {
             selected: 0,
             checked: vec!["moneropay".to_owned(), "system base".to_owned()],
+            passphrase: None,
         }),
         ScreenId::AutoUpdate => {
             let mut state = AutoUpdateState::new(mock.auto_update());
