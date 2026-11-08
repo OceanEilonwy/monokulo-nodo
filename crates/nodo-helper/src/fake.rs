@@ -16,7 +16,7 @@ use crate::catalog::Package;
 use crate::exposure::NoCaddyYet;
 use crate::helper::{AllowedUids, DriveConfig, Helper, Paths, Timing};
 use crate::keys::KdfParams;
-use crate::settings::{PlannedFile, SettingsContext, SettingsPolicy};
+use crate::settings::{Plan, PlannedFile, SettingsContext, SettingsPolicy};
 use crate::system::{Probe, SvAction, SysError, SysResult, System, WriteOptions};
 
 /// Where the test policy keeps shop's values.
@@ -231,12 +231,13 @@ impl FakeSystem {
         }
     }
 
-    /// Loses everything a reboot loses: mounts and open mappings.
+    /// Loses everything a reboot loses: mounts, open mappings and `/run`, which is memory.
     pub fn reboot(&self) {
         let mut state = self.state();
         state.mounted.clear();
         state.mapped.clear();
         state.calls.clear();
+        state.files.retain(|path, _| !path.starts_with("/run/"));
     }
 }
 
@@ -462,6 +463,37 @@ impl System for FakeSystem {
         out.fill(state.counter);
         Ok(())
     }
+
+    fn rename(&self, from: &Path, to: &Path) -> SysResult<()> {
+        self.record(format!("rename {} {}", text(from), text(to)))?;
+        let mut state = self.state();
+        if state.files.contains_key(&text(to)) {
+            return Err(SysError("file exists".to_owned()));
+        }
+        let prefix = format!("{}/", text(from));
+        let moved: Vec<String> = state
+            .files
+            .keys()
+            .filter(|f| **f == text(from) || f.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for old in moved {
+            let bytes = state.files.remove(&old).unwrap_or_default();
+            let new = format!("{}{}", text(to), &old[text(from).len()..]);
+            state.files.insert(new, bytes);
+        }
+        Ok(())
+    }
+
+    fn http_get_local(&self, port: u16, path: &str, _limit: usize) -> SysResult<Vec<u8>> {
+        let call = format!("http {port}{path}");
+        self.check(&call)?;
+        self.state()
+            .files
+            .get(&call)
+            .cloned()
+            .ok_or_else(|| SysError(format!("port {port}: Connection refused")))
+    }
 }
 
 pub const TEST_PATHS: fn() -> Paths = || Paths {
@@ -483,6 +515,7 @@ pub const TEST_PATHS: fn() -> Paths = || Paths {
         device: "/dev/disk/by-partlabel/NODO_BLOCKCHAIN".into(),
         mount_point: "/media/monero".into(),
     }),
+    bindings: "/s/bindings.toml".into(),
 };
 
 /// Stores plain text values and writes them as a flat file, refusing any value containing
@@ -529,7 +562,7 @@ impl SettingsPolicy for TestPolicy {
         ctx: &SettingsContext,
         package: &Package,
         changes: &[SettingChange],
-    ) -> Result<Vec<PlannedFile>, ApiError> {
+    ) -> Result<Plan, ApiError> {
         let store = ctx
             .paths
             .settings_store
@@ -546,7 +579,7 @@ impl SettingsPolicy for TestPolicy {
         }
         let bytes = toml::to_string(&table).unwrap().into_bytes();
         let layout = package.layout()?;
-        Ok(vec![
+        let files = vec![
             PlannedFile {
                 path: store,
                 bytes: Zeroizing::new(bytes.clone()),
@@ -561,7 +594,11 @@ impl SettingsPolicy for TestPolicy {
                 group: Some(format!("_{}", package.id())),
                 parent_mode: 0o755,
             },
-        ])
+        ];
+        Ok(Plan {
+            files,
+            service: Default::default(),
+        })
     }
 }
 

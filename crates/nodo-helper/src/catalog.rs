@@ -22,16 +22,17 @@ impl Package {
         &self.manifest.id
     }
 
+    /// Where its files are, before settings decide whether they render to memory.
     pub fn layout(&self) -> Result<Layout, ApiError> {
         Layout::new(self.id(), self.profile, self.manifest.storage.encrypted)
             .map_err(|e| ApiError::Failed(e.to_string()))
     }
 
-    /// The installer does not record which feed a package came from yet.
-    pub fn origin(&self) -> Origin {
+    /// `feed` is what the installer recorded, if anything.
+    pub fn origin(&self, feed: Option<String>) -> Origin {
         match self.profile {
             Profile::System => Origin::System,
-            Profile::App => Origin::Feed(None),
+            Profile::App => Origin::Feed(feed),
         }
     }
 
