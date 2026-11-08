@@ -1,0 +1,42 @@
+api_version = 1
+id = "monokulo"
+version = "@VERSION@"
+# bin/monokulo is a small launcher that maps the device's settings onto Monokulo's own options
+# and then executes libexec/monokulo under the same name.
+exec = [
+    "bin/monokulo",
+    "--server-bind", "127.0.0.1:8081",
+    # Every visitor arrives through the appliance's proxy on loopback, so the real client address
+    # is taken from X-Forwarded-For. Without this, rate limits would treat all visitors as one.
+    "--abuse-trusted-proxies", "127.0.0.1",
+    "--daemon-url=$(monokulo.daemon_url)",
+]
+needs = ["monero-daemon"]
+settings = "settings.lua"
+# Requests in flight and the SQLite write-ahead log get time to finish.
+stop_timeout_secs = 30
+health = { http = { url = "http://127.0.0.1:8081/status" } }
+
+[storage]
+# Orders, store tokens and the wallets' view keys live in the database.
+encrypted = true
+
+[network]
+# Exchange rates, webhooks to shops and push notifications all leave the device.
+outbound = "internet"
+
+[[web]]
+name = "web"
+upstream = "127.0.0.1:8081"
+suggested_subdomain = "pay"
+# Checkout pages and the plugin API must stay public. Instance administration must not.
+admin_paths = [
+    "/admin",
+    "/admin/*",
+    "/api/v1/admin",
+    "/api/v1/admin/*",
+    "/status/engine",
+    "/status/engine/*",
+]
+# Pages use relative links, and Tor visitors get their own address (onion_uri).
+multi_address = true

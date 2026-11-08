@@ -734,6 +734,7 @@ dependencies = [
  "libc",
  "nodo-feed",
  "nodo-manifest",
+ "nodo-settings",
  "serde",
  "tempfile",
  "thiserror",
