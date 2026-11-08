@@ -3,7 +3,9 @@
 //! Secrets are read from standard input, one per line, so they never appear in an argument list
 //! that other users can read from `/proc`.
 
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, IsTerminal};
+
+use zeroize::Zeroizing;
 
 use nodo_api::{
     Exposure, PublicConfirmation, RepairConfirmation, Request, Secret, SettingChange, SettingInput, SettingLiteral,
@@ -27,14 +29,41 @@ nodo-tui --ctl COMMAND [ARGS]
   add-key LINE | remove-key FINGERPRINT
   drive-check | drive-repair CHECK_ID | drive-mount";
 
+/// One line from stdin. On a terminal the line is typed without echo, so it never shows.
 fn secret_line() -> Result<Secret, String> {
-    let mut line = String::new();
+    if io::stdin().is_terminal() {
+        return typed_secret();
+    }
+    let mut line = Zeroizing::new(String::new());
     io::stdin().lock().read_line(&mut line).map_err(|e| e.to_string())?;
-    let text = line.trim_end_matches(['\n', '\r']);
-    let secret = Secret::new(text);
-    line.clear();
-    line.shrink_to(0);
-    Ok(secret)
+    Ok(Secret::new(line.trim_end_matches(['\n', '\r'])))
+}
+
+fn typed_secret() -> Result<Secret, String> {
+    use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
+    eprint!("Secret: ");
+    crossterm::terminal::enable_raw_mode().map_err(|e| e.to_string())?;
+    let mut text = Zeroizing::new(String::new());
+    let result = loop {
+        match read() {
+            Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => match key.code {
+                KeyCode::Enter => break Ok(()),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    break Err("cancelled".to_owned())
+                }
+                KeyCode::Char(c) => text.push(c),
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(e) => break Err(e.to_string()),
+        }
+    };
+    let _ = crossterm::terminal::disable_raw_mode();
+    eprintln!();
+    result.map(|()| Secret::new(text.as_str()))
 }
 
 fn flag(text: &str) -> Result<bool, String> {
