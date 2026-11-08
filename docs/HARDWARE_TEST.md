@@ -10,8 +10,13 @@ same partitions and the same Void Linux system; only the kernel differs. See
 
 | Card | Image | SHA-256 |
 |---|---|---|
-| 1, mainline 6.18 (try first) | `out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img` | `8fb8edafd9abf60a01e293b9034432a5440052226defe20d5a65898a95c17be3` |
-| 2, vendor 6.1 (fallback) | `out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img` | `485933f5c39e2d2242457910352d85238e6bda7e112df03e105eca26ad0ac9b4` |
+| 1, mainline 6.18 (try first) | `out/hardware-test-1/monokulo-nanopc-t6n-mainline-sd.img` | `8fb8edafd9abf60a01e293b9034432a5440052226defe20d5a65898a95c17be3` |
+| 2, vendor 6.1 (fallback) | `out/hardware-test-1/monokulo-nanopc-t6n-sd.img` | `485933f5c39e2d2242457910352d85238e6bda7e112df03e105eca26ad0ac9b4` |
+
+These two images were built from commit `b666687`, before the platform packages, the confined
+cuprated and the restricted loopback RPC were merged. They are kept in `out/hardware-test-1/` so
+that later builds, which write to `out/images/`, cannot replace them. Images built from a later
+commit have different checksums and are not the ones this test describes.
 
 Label the cards so they cannot be mixed up. Both accept only your `id_ed25519` key.
 
@@ -43,14 +48,12 @@ sudo shutdown -h now
 
 ## Flash the cards
 
-Use microSD cards of 8 GB or more. Check both images first. Each pair of checksums must match
-the table above:
+Use microSD cards of 8 GB or more. Check both images first. Each checksum must match the table
+above:
 
 ```sh
-sha256sum out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img
-cat out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img.sha256
-sha256sum out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
-cat out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img.sha256
+sha256sum out/hardware-test-1/monokulo-nanopc-t6n-mainline-sd.img
+sha256sum out/hardware-test-1/monokulo-nanopc-t6n-sd.img
 ```
 
 Insert one card and find its device name on your PC:
@@ -66,14 +69,14 @@ name can change when you swap them. Replace `/dev/sdX` with the card's name.
 Card 1, mainline:
 
 ```sh
-sudo dd if=out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n-mainline-sd.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=out/hardware-test-1/monokulo-nanopc-t6n-mainline-sd.img of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
 
 Remove it, insert card 2, run `lsblk` again, and flash the 6.1 image:
 
 ```sh
-sudo dd if=out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img of=/dev/sdX bs=4M conv=fsync status=progress
+sudo dd if=out/hardware-test-1/monokulo-nanopc-t6n-sd.img of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
 
