@@ -49,6 +49,23 @@ codebase, and signed xbps packages from user-added feeds.
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. Admin paths are always blocked on public and
   onion addresses.
+- **Local address changes:** When the local address changes (a new lease, a lost one, or a new
+  static address), nodo-localnet sends the helper a root-only `LocalAddressChanged` as it writes
+  its new state, and the helper also checks once a minute in case that message was lost. The helper
+  compares the address in the plan with the one it last applied (`/var/lib/nodo-web/local-address`)
+  and on a difference loads Caddy's local listeners and the firewall again, restarts the mDNS
+  responder, which reads its address at start, and rewrites the A records of local names under the
+  owner's domain. Records need the sealed provider credentials, so while locked they wait for the
+  unlock and `LocalSiteStatus` says why in plain words; while the address is gone they are left
+  alone rather than removed and written again.
+- **Local CA trust page:** While any `.local` site uses Caddy's internal CA, Caddy serves a plain
+  HTTP page at `http://nodo.local` (also by the bare local address) on the local address's port
+  80, which nftables sends to a listener bound to that address alone, for LAN sources only. It
+  offers the root in DER and PEM, its SHA-256 fingerprint, and short install steps per platform.
+  The helper writes the files to `/var/lib/nodo-web/trust` (root:_caddy) from the root Caddy
+  reports, and the TUI shows the same fingerprint under Web › Domains › Local CA so the owner can
+  compare before trusting a page that is necessarily unencrypted. No public, onion or main-address
+  listener has a route to it.
 - **Certificates:** Public certificates come from Let's Encrypt through Caddy's ACME issuer, with an
   optional email and a staging choice. The helper picks the challenge: DNS-01 when the provider has a
   bundled caddy-dns module and its credentials are stored, else HTTP-01 and TLS-ALPN-01, which need

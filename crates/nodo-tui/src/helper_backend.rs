@@ -652,9 +652,24 @@ impl ScreenData for HelperBackend {
             })
             .collect();
         *self.sites.borrow_mut() = map;
-        let (certs, acme) = self.certificates();
+        let (certs, mut acme) = self.certificates();
+        let local = match self.ask(Request::LocalSiteStatus) {
+            Ok(Response::LocalSiteStatus(local)) => local,
+            _ => nodo_api::LocalSiteStatus::default(),
+        };
+        // The fingerprint the trust page serves, which is the one the owner compares.
+        if local.ca_fingerprint.is_some() {
+            acme.local_ca = local.ca_fingerprint.clone();
+        }
         let Some(status) = status else {
-            return WebOverview { sites, certs, acme, ..WebOverview::default() };
+            return WebOverview {
+                sites,
+                certs,
+                acme,
+                local_records_note: local.records_note,
+                trust_url: local.trust_url,
+                ..WebOverview::default()
+            };
         };
         let provider = status.provider.as_deref().map(|id| {
             self.dns_providers().into_iter().find(|p| p.id == id).map_or_else(|| id.to_owned(), |p| p.name)
@@ -671,6 +686,8 @@ impl ScreenData for HelperBackend {
             reachable: false,
             local_problem: status.local_unavailable,
             local_remedy: status.local_remedy,
+            local_records_note: local.records_note,
+            trust_url: local.trust_url,
             certs,
             acme,
         }

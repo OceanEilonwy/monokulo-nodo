@@ -3,6 +3,7 @@ table inet monokulo {
 	chain web_prerouting {
 		type nat hook prerouting priority dstnat; policy accept;
 		ip daddr 192.168.77.3 ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport 443 dnat ip to 192.168.77.3:10444
+		ip daddr 192.168.77.3 ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport 80 dnat ip to 192.168.77.3:10081
 		ip daddr 192.168.77.3 return
 		tcp dport 80 redirect to :10080
 		tcp dport 443 redirect to :10443
@@ -12,6 +13,7 @@ table inet monokulo {
 		tcp dport 10080 ct status dnat accept
 		tcp dport 10443 ct status dnat accept
 		ip daddr 192.168.77.3 ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport 10444 ct status dnat accept
+		ip daddr 192.168.77.3 ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } tcp dport 10081 ct status dnat accept
 		ip daddr 224.0.0.251 ip saddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } udp dport 5353 accept
 	}
 }

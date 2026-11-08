@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 27, "26 design files plus the auto-update screen");
+    assert_eq!(ScreenId::ALL.len(), 28, "27 design files plus the auto-update screen");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -295,6 +295,13 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "Web › shop › Certificate", "◆ Getting a certificate", "shop.example.com is configured on this device",
             "Asking Let's Encrypt to prove control of the name", "DNS-01 through Porkbun", "Certificate in place",
             "What happens now", "It usually takes under a minute.", "r refresh", "l proxy log", "Esc back",
+        ],
+        ScreenId::WebTrust => &[
+            "Web › Domains › Local CA", "✓ Served at http://nodo.local", "Open on a phone or computer here",
+            "http://nodo.local", "macOS, Windows, Linux and Firefox. It needs no port and no app.",
+            "3F:9A:21:C4:7E:05:B8:D2:61:4A:93:0C:EE:17:5B:28", "A6:D9:40:7F:12:C3:8B:65:E0:94:2D:71:BC:58:0A:F6",
+            "Install the root only if the page shows this same fingerprint.", "What trusting it does",
+            "r refresh", "Esc back",
         ],
         ScreenId::Setup => &["Set up this device", "Device passphrase", "There is no default passphrase"],
         ScreenId::Backup => &[

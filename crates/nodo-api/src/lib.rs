@@ -567,6 +567,20 @@ pub struct LocalNameCheck {
     pub explanation: String,
 }
 
+/// Local sites as applied now, for the Web screens.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSiteStatus {
+    /// The address Caddy, mDNS and the firewall serve local sites on.
+    pub address: Option<String>,
+    /// `http://nodo.local`, while a `.local` site uses the local CA and the page is served.
+    pub trust_url: Option<String>,
+    /// SHA-256 of the local CA root that the trust page serves.
+    pub ca_fingerprint: Option<String>,
+    /// Why the DNS records of local names under the owner's domain do not point at the address,
+    /// such as the device being locked since the address changed.
+    pub records_note: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     ListServices,
@@ -790,6 +804,11 @@ pub enum Request {
     CertificateStatus,
     /// Whether local names under the owner's domain are published and resolve on this network.
     CheckLocalNames,
+    /// The local address may have changed. When it did, the helper applies it to Caddy, mDNS, the
+    /// firewall and the DNS records of local names. Only root, which nodo-localnet runs as, may ask.
+    LocalAddressChanged,
+    /// The applied local address, the local CA trust page, and why local name records lag, if they do.
+    LocalSiteStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -849,6 +868,7 @@ pub enum Response {
     AcmeSettings(AcmeSettingsInfo),
     Certificates(CertificateReport),
     LocalNames(Vec<LocalNameCheck>),
+    LocalSiteStatus(LocalSiteStatus),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -956,6 +976,8 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::SetDns01Credentials { .. } => "set-dns01-credentials",
         Request::CertificateStatus => "certificate-status",
         Request::CheckLocalNames => "check-local-names",
+        Request::LocalAddressChanged => "local-address-changed",
+        Request::LocalSiteStatus => "local-site-status",
     }
 }
 

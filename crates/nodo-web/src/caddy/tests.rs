@@ -47,6 +47,8 @@ fn settings() -> DomainSettings {
 #[derive(Debug, PartialEq)]
 enum Outcome {
     Proxy(String),
+    /// A file from this directory.
+    File(String),
     Status(String),
     Dropped,
     NoRoute,
@@ -82,7 +84,8 @@ fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
         }
         for handle in &route.handle {
             match handle {
-                Handler::RateLimit { .. } => {}
+                Handler::RateLimit { .. } | Handler::Headers { .. } => {}
+                Handler::FileServer { root, .. } => return Outcome::File(root.clone()),
                 Handler::Subroute { routes } => return walk(routes, host, path, client),
                 Handler::ReverseProxy { upstreams } => return Outcome::Proxy(upstreams[0].dial.clone()),
                 Handler::StaticResponse { abort: true, .. } => return Outcome::Dropped,
@@ -321,7 +324,7 @@ fn ports_80_and_443_open_only_with_a_public_site() {
     let fw = local.firewall.local.as_ref().unwrap();
     assert_eq!((fw.address, fw.caddy_port), (LOCAL_IP, 10444));
     assert!(fw.lan_ranges.iter().all(|r| !r.contains(':')));
-    assert_eq!(local.local.mdns_names, vec!["a.local"]);
+    assert_eq!(local.local.mdns_names, vec!["a.local", "nodo.local"]);
     assert!(local.caddy.apps.http.servers["local"].automatic_https.disable_redirects);
 
     let onion = generate(&[site("a", "a", 8001, Exposure { onion: true, ..Exposure::default() })], &settings()).unwrap();
@@ -369,6 +372,84 @@ fn nft_rules_keep_the_local_address_apart_from_the_redirects() {
     assert!(!local_only.contains("redirect to"));
     assert!(local_only.contains("dnat ip to 192.168.1.60:10444"));
     assert_eq!(render_nft(&FirewallPlan::default()).matches("accept").count(), 0);
+}
+
+#[test]
+fn the_trust_page_is_plain_http_on_the_local_address_for_lan_clients_only() {
+    let mut shop = site("shop", "shop", 8080, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    let plan = generate(&[shop], &settings()).unwrap();
+    let trust = &plan.caddy.apps.http.servers["local-trust"];
+    assert_eq!(trust.listen, vec!["192.168.1.60:10081"], "bound to the local address only");
+    assert!(trust.automatic_https.disable && trust.tls_connection_policies.is_empty());
+    assert_eq!(plan.local.trust_url.as_deref(), Some("http://nodo.local"));
+    assert!(plan.local.mdns_names.contains(&"nodo.local".to_owned()));
+
+    let dir = "/var/lib/nodo-web/trust".to_owned();
+    for host in ["nodo.local", "192.168.1.60"] {
+        for path in ["/", "/nodo-local-ca.crt", "/nodo-local-ca.pem"] {
+            assert_eq!(request(&plan, "local-trust", host, path, LAN_CLIENT), Outcome::File(dir.clone()), "{host}{path}");
+            assert_eq!(request(&plan, "local-trust", host, path, INTERNET_CLIENT), Outcome::Dropped, "{host}{path}");
+        }
+        assert_eq!(request(&plan, "local-trust", host, "/index.html/../x", LAN_CLIENT), Outcome::Status("404".into()));
+    }
+    assert_eq!(request(&plan, "local-trust", "shop.local", "/", LAN_CLIENT), Outcome::Dropped);
+    assert_eq!(request(&plan, "local-trust", "shop.example.com", "/", LAN_CLIENT), Outcome::Dropped);
+    // No other listener knows the page.
+    for client in [LAN_CLIENT, INTERNET_CLIENT] {
+        assert_eq!(request(&plan, "public", "nodo.local", "/", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "local", "nodo.local", "/", client), Outcome::Dropped);
+        assert_eq!(request(&plan, onion_server_for(&plan, ONION), "nodo.local", "/", client), Outcome::Dropped);
+    }
+
+    let value = json(&plan);
+    let routes = &value["apps"]["http"]["servers"]["local-trust"]["routes"][0]["handle"][0]["routes"];
+    assert_eq!(routes[1]["match"][0]["path"][0], "/nodo-local-ca.crt");
+    assert_eq!(routes[1]["handle"][0]["handler"], "headers");
+    assert_eq!(routes[1]["handle"][0]["response"]["set"]["Content-Type"][0], "application/x-x509-ca-cert");
+    assert_eq!(routes[2]["handle"][0]["response"]["set"]["Content-Type"][0], "application/x-pem-file");
+    assert_eq!(routes[0]["handle"][1]["handler"], "file_server");
+    assert_eq!(routes[0]["handle"][1]["index_names"][0], "index.html");
+
+    let rules = render_nft(&plan.firewall);
+    let lan = "{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }";
+    let dnat = format!("ip daddr 192.168.1.60 ip saddr {lan} tcp dport 80 dnat ip to 192.168.1.60:10081");
+    let position = |needle: &str| rules.find(needle).unwrap_or_else(|| panic!("missing: {needle}\n{rules}"));
+    assert!(position(&dnat) < position("ip daddr 192.168.1.60 return"));
+    assert!(position("ip daddr 192.168.1.60 return") < position("tcp dport 80 redirect to :10080"));
+    assert!(rules.contains(&format!("ip daddr 192.168.1.60 ip saddr {lan} tcp dport 10081 ct status dnat accept")));
+}
+
+#[test]
+fn the_trust_page_exists_only_while_a_dot_local_site_uses_the_internal_ca() {
+    let local = Exposure { local: true, ..Exposure::default() };
+    let under_domain = DomainSettings {
+        local_domain: Some("home.example.com".to_owned()),
+        dns_challenge: Some(DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") }),
+        ..settings()
+    };
+    let no_address = DomainSettings {
+        local_address: LocalAddress::Unavailable { reason: LocalUnavailable::NoLease },
+        ..settings()
+    };
+    let public = Exposure { public: true, ..Exposure::default() };
+    for (sites, settings) in [
+        (vec![site("a", "a", 8001, local)], under_domain),
+        (vec![site("a", "a", 8001, local)], no_address),
+        (vec![site("a", "a", 8001, public)], settings()),
+    ] {
+        let plan = generate(&sites, &settings).unwrap();
+        assert!(!plan.caddy.apps.http.servers.contains_key("local-trust"));
+        assert!(plan.local.trust_url.is_none());
+        assert!(!plan.local.mdns_names.contains(&"nodo.local".to_owned()));
+        assert!(plan.firewall.local.as_ref().is_none_or(|l| l.trust_port.is_none()));
+        assert!(!render_nft(&plan.firewall).contains("10081"));
+    }
+    let mut nodo = site("nodo", "nodo", 8001, local);
+    nodo.service.suggested_subdomain = Some("nodo".to_owned());
+    let plan = generate(&[nodo], &settings()).unwrap();
+    assert_eq!(plan.local.mdns_names, vec!["nodo.local"], "a site named nodo shares the name, on port 443");
+    assert_eq!(request(&plan, "local", "nodo.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
 }
 
 #[test]
@@ -970,7 +1051,7 @@ fn local_domain_is_validated_and_cannot_share_a_public_name() {
 fn dot_local_stays_the_default_with_the_internal_ca() {
     let shop = site("shop", "shop", 8080, Exposure { local: true, ..Exposure::default() });
     let plan = generate(&[shop], &DomainSettings { dns_challenge: Some(cloudflare()), ..settings() }).unwrap();
-    assert_eq!(plan.local.mdns_names, vec!["shop.local"]);
+    assert_eq!(plan.local.mdns_names, vec!["nodo.local", "shop.local"]);
     assert!(plan.local.dns_names.is_empty());
     let policies = &plan.caddy.apps.tls.as_ref().unwrap().automation.policies;
     assert_eq!(policies.len(), 1);

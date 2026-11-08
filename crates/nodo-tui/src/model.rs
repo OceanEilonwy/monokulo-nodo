@@ -503,6 +503,10 @@ pub struct WebOverview {
     /// Why local sites are not being served, and what to do about it.
     pub local_problem: Option<String>,
     pub local_remedy: Option<String>,
+    /// Why the DNS records of local names under the domain lag behind the local address.
+    pub local_records_note: Option<String>,
+    /// `http://nodo.local`, where LAN devices get the local CA root, while it is served.
+    pub trust_url: Option<String>,
     /// One row per served host, public and local.
     pub certs: Vec<CertRow>,
     pub acme: AcmeView,

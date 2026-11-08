@@ -160,6 +160,8 @@ fn paths() -> WebPaths {
         caddy_storage: "/caddy".into(),
         tls_events: "/caddy-state/nodo-tls.log".into(),
         local_records: "/web/local-records.json".into(),
+        trust_dir: "/web/trust".into(),
+        local_applied: "/web/local-address".into(),
     }
 }
 
@@ -207,7 +209,8 @@ fn local_and_public_write_every_file_and_start_the_services() {
     assert_eq!(web.io.owner("/web/caddy.json"), (0o640, "root".into(), "_caddy".into()));
     let nft = web.io.get("/nft/web.nft").unwrap();
     assert!(nft.contains("dnat ip to 192.168.1.60:10444") && nft.contains("redirect to :10443"));
-    assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "shop.local\n");
+    assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "nodo.local\nshop.local\n");
+    assert_eq!(web.io.get("/web/local-address").unwrap(), "192.168.1.60\n");
     for service in ["nodo-localnet", "nodo-caddy", "nodo-mdns"] {
         assert!(web.io.up(service), "{service}");
     }
@@ -597,6 +600,152 @@ fn a_failed_challenge_with_dns_elsewhere_says_dns_is_not_pointing_here() {
     assert_eq!(error.kind, CertProblemKind::DnsNotPointingHere);
     assert!(error.summary.contains("203.0.113.99") && error.summary.contains("203.0.113.2"), "{}", error.summary);
     assert_eq!(host.challenge.as_deref(), Some("http-01"));
+}
+
+/// Caddy's local CA root, as it stores it. Any certificate does for these tests.
+const ROOT_PEM: &str = include_str!("../../../nodo-web/tests/fixtures/cert.pem");
+const ROOT_FP: &str = "31:E5:AB:8B:5C:45:A6:50:47:ED:0F:37:0B:F0:4F:FA:05:5F:22:C0:74:78:85:65:90:49:4A:68:E2:DA:71:C9";
+const ROOT_PATH: &str = "/caddy/pki/authorities/local/root.crt";
+
+fn move_local(web: &NodoWeb<Fake>, address: &str) {
+    web.io.put("/run/localnet/state", &format!("status=ready\naddress={address}\n"));
+}
+
+fn mdns_restarts(web: &NodoWeb<Fake>) -> usize {
+    web.io.calls().iter().filter(|c| *c == "restart nodo-mdns").count()
+}
+
+#[test]
+fn a_new_local_address_moves_the_listener_the_firewall_and_mdns() {
+    let web = web(Fake::default());
+    web.apply(&input(true, true)).unwrap();
+    assert!(!web.refresh_local(&input(true, true)).unwrap(), "nothing changed");
+    let restarts = mdns_restarts(&web);
+
+    move_local(&web, "192.168.1.61");
+    assert!(web.refresh_local(&input(true, true)).unwrap());
+    let json = web.io.get("/web/caddy.json").unwrap();
+    assert!(json.contains("192.168.1.61:10444") && !json.contains("192.168.1.60"));
+    let nft = web.io.get("/nft/web.nft").unwrap();
+    assert!(nft.contains("dnat ip to 192.168.1.61:10444") && !nft.contains("192.168.1.60"));
+    assert!(nft.contains("redirect to :10443"), "public sites stay as they were");
+    assert_eq!(mdns_restarts(&web), restarts + 1, "the responder reads its address when it starts");
+    assert_eq!(web.io.get("/web/local-address").unwrap(), "192.168.1.61\n");
+    assert_eq!(web.status(&input(true, true)).unwrap().local_address.as_deref(), Some("192.168.1.61"));
+    assert!(!web.refresh_local(&input(true, true)).unwrap(), "applied once");
+    assert_eq!(mdns_restarts(&web), restarts + 1);
+}
+
+#[test]
+fn losing_the_local_address_takes_local_sites_down_until_it_returns() {
+    let web = web(Fake::default());
+    web.apply(&input(true, false)).unwrap();
+    web.io.put("/run/localnet/state", "status=no-lease\ninterface=nodo-local\n");
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("10444"));
+    assert!(!web.io.get("/nft/web.nft").unwrap().contains("dnat"));
+    assert!(!web.io.up("nodo-mdns"));
+    assert_eq!(web.io.get("/web/local-address").unwrap(), "");
+    move_local(&web, "192.168.1.62");
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("192.168.1.62:10444"));
+    assert!(web.io.up("nodo-mdns"));
+}
+
+fn local_names_web() -> NodoWeb<Fake> {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    web.set_acme_settings(&acme(None, false, Some("home.example.com")), &input(true, false)).unwrap();
+    assert_eq!(web.io.records.lock().unwrap().get("shop.home"), Some(&vec!["192.168.1.60".parse().unwrap()]));
+    web
+}
+
+#[test]
+fn records_of_local_names_follow_the_address_while_unlocked() {
+    let web = local_names_web();
+    move_local(&web, "192.168.1.61");
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert_eq!(web.io.records.lock().unwrap().get("shop.home"), Some(&vec!["192.168.1.61".parse().unwrap()]));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("192.168.1.61:10444"));
+    let status = web.local_site_status(&input(true, false)).unwrap();
+    assert_eq!(status.address.as_deref(), Some("192.168.1.61"));
+    assert_eq!(status.records_note, None);
+    assert_eq!(status.trust_url, None, "no .local site, so no local CA to trust");
+}
+
+#[test]
+fn losing_the_address_for_a_moment_keeps_the_records() {
+    let web = local_names_web();
+    web.io.put("/run/localnet/state", "status=waiting\n");
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert_eq!(web.io.records.lock().unwrap().get("shop.home"), Some(&vec!["192.168.1.60".parse().unwrap()]));
+    move_local(&web, "192.168.1.61");
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert_eq!(web.io.records.lock().unwrap().get("shop.home"), Some(&vec!["192.168.1.61".parse().unwrap()]));
+    // Names no longer served are removed once there is an address to work with.
+    web.set_acme_settings(&acme(None, false, None), &input(true, false)).unwrap();
+    assert!(web.io.records.lock().unwrap().is_empty());
+}
+
+#[test]
+fn while_locked_records_wait_for_the_unlock_and_the_status_says_why() {
+    let web = local_names_web();
+    let mut locked = input(true, false);
+    locked.secrets = None;
+    move_local(&web, "192.168.1.61");
+    assert!(web.refresh_local(&locked).unwrap());
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("192.168.1.61:10444"), "the listener moves at once");
+    assert_eq!(
+        web.io.records.lock().unwrap().get("shop.home"),
+        Some(&vec!["192.168.1.60".parse().unwrap()]),
+        "the credentials are sealed"
+    );
+    let note = web.local_site_status(&locked).unwrap().records_note.unwrap();
+    assert!(note.contains("192.168.1.61") && note.contains("192.168.1.60") && note.contains("unlocked"), "{note}");
+    assert!(note.contains("shop.home.example.com"), "{note}");
+
+    web.unlocked(&input(true, false)).unwrap();
+    assert_eq!(web.io.records.lock().unwrap().get("shop.home"), Some(&vec!["192.168.1.61".parse().unwrap()]));
+    assert_eq!(web.local_site_status(&input(true, false)).unwrap().records_note, None);
+}
+
+#[test]
+fn the_trust_page_serves_caddys_root_with_its_fingerprint() {
+    let web = web(Fake::default());
+    web.io.put(ROOT_PATH, ROOT_PEM);
+    web.apply(&input(true, false)).unwrap();
+    let root = nodo_web::trust::RootCert::from_pem(ROOT_PEM).unwrap();
+    let der = web.io.files.lock().unwrap()[Path::new("/web/trust/nodo-local-ca.crt")].0.clone();
+    assert_eq!(der, root.der);
+    assert_eq!(web.io.get("/web/trust/nodo-local-ca.pem").unwrap(), root.pem);
+    let page = web.io.get("/web/trust/index.html").unwrap();
+    assert!(page.contains(&ROOT_FP[..47]) && page.contains(&ROOT_FP[48..]));
+    for file in ["index.html", "nodo-local-ca.pem", "nodo-local-ca.crt"] {
+        assert_eq!(web.io.owner(&format!("/web/trust/{file}")), (0o640, "root".into(), "_caddy".into()));
+    }
+    let status = web.local_site_status(&input(true, false)).unwrap();
+    assert_eq!(status.trust_url.as_deref(), Some("http://nodo.local"));
+    assert_eq!(status.ca_fingerprint.as_deref(), Some(ROOT_FP));
+    assert_eq!(web.certificates(&input(true, false)).unwrap().local_ca_fingerprint.as_deref(), Some(ROOT_FP));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("\"root\": \"/web/trust\""));
+
+    web.apply(&input(false, true)).unwrap();
+    assert!(web.io.get("/web/trust/index.html").is_none() && web.io.get("/web/trust/nodo-local-ca.crt").is_none());
+    assert!(web.local_site_status(&input(false, true)).unwrap().trust_url.is_none());
+}
+
+#[test]
+fn before_caddy_has_a_root_the_page_says_so_and_the_check_fills_it_in() {
+    let web = web(Fake::default());
+    web.apply(&input(true, false)).unwrap();
+    assert!(web.io.get("/web/trust/index.html").unwrap().contains("not ready"));
+    assert!(web.io.get("/web/trust/nodo-local-ca.crt").is_none());
+    assert!(!web.refresh_local(&input(true, false)).unwrap(), "still no root");
+    web.io.put(ROOT_PATH, ROOT_PEM);
+    assert!(web.refresh_local(&input(true, false)).unwrap());
+    assert!(web.io.get("/web/trust/index.html").unwrap().contains(&ROOT_FP[..47]));
+    assert!(web.io.get("/web/trust/nodo-local-ca.pem").is_some());
+    assert!(!web.refresh_local(&input(true, false)).unwrap());
 }
 
 #[test]

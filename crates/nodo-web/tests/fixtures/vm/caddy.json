@@ -161,6 +161,204 @@
           ],
           "strict_sni_host": true
         },
+        "local-trust": {
+          "listen": [
+            "192.168.77.3:10081"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "nodo.local",
+                    "192.168.77.3"
+                  ],
+                  "remote_ip": {
+                    "ranges": [
+                      "127.0.0.0/8",
+                      "10.0.0.0/8",
+                      "172.16.0.0/12",
+                      "192.168.0.0/16",
+                      "169.254.0.0/16",
+                      "::1/128",
+                      "fc00::/7",
+                      "fe80::/10"
+                    ]
+                  }
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "Content-Type": [
+                                "text/html; charset=utf-8"
+                              ],
+                              "X-Content-Type-Options": [
+                                "nosniff"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "handler": "file_server",
+                          "root": "/var/lib/nodo-web/trust",
+                          "index_names": [
+                            "index.html"
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/nodo-local-ca.crt"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "Content-Disposition": [
+                                "attachment; filename=\"nodo-local-ca.crt\""
+                              ],
+                              "Content-Type": [
+                                "application/x-x509-ca-cert"
+                              ],
+                              "X-Content-Type-Options": [
+                                "nosniff"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "handler": "file_server",
+                          "root": "/var/lib/nodo-web/trust",
+                          "index_names": [
+                            "index.html"
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/nodo-local-ca.pem"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "Content-Disposition": [
+                                "attachment; filename=\"nodo-local-ca.pem\""
+                              ],
+                              "Content-Type": [
+                                "application/x-pem-file"
+                              ],
+                              "X-Content-Type-Options": [
+                                "nosniff"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "handler": "file_server",
+                          "root": "/var/lib/nodo-web/trust",
+                          "index_names": [
+                            "index.html"
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": "404"
+                        }
+                      ],
+                      "terminal": true
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "abort": true
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "errors": {
+            "routes": [
+              {
+                "handle": [
+                  {
+                    "handler": "static_response",
+                    "status_code": "{http.error.status_code}",
+                    "headers": {
+                      "Cache-Control": [
+                        "no-store"
+                      ],
+                      "Content-Type": [
+                        "text/html; charset=utf-8"
+                      ],
+                      "Retry-After": [
+                        "60"
+                      ]
+                    },
+                    "body": "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unavailable</title><body><h1>This site is unavailable</h1><p>Please try again later.</p></body></html>"
+                  }
+                ],
+                "terminal": true
+              }
+            ]
+          },
+          "automatic_https": {
+            "disable": true
+          },
+          "protocols": [
+            "h1"
+          ],
+          "strict_sni_host": false
+        },
         "onion-0": {
           "listen": [
             "127.0.0.1:19000"

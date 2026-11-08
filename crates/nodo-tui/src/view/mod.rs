@@ -58,6 +58,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebCgnat(state) => web::cgnat(t, state),
         Screen::WebDomain(state) => certs::domain(app, t, state),
         Screen::WebCertificate(state) => certs::certificate(app, t, state),
+        Screen::WebTrust => certs::trust(app, t),
         Screen::Setup(state) => setup::setup(t, state),
         Screen::Backup(state) => backup::backup(t, state),
     };

@@ -245,7 +245,11 @@ impl<S: System> Helper<S> {
             | Request::SetAcmeSettings(_)
             | Request::SetDns01Credentials { .. }
             | Request::CertificateStatus
-            | Request::CheckLocalNames) => self.web_request(request),
+            | Request::CheckLocalNames
+            | Request::LocalSiteStatus) => self.web_request(request),
+            // Only root may ask, which is what the nodo-localnet service runs as.
+            Request::LocalAddressChanged if uid != 0 => Err(ApiError::Denied),
+            Request::LocalAddressChanged => self.check_local_address().map(|_| Response::Ok),
             other => self.handle_managed(uid, other),
         }
     }
@@ -339,6 +343,15 @@ mod tests {
             );
         }
         assert!(h.sys.calls().is_empty(), "{:?}", h.sys.calls());
+    }
+
+    #[test]
+    fn only_root_may_report_a_local_address_change() {
+        let h = helper(FakeSystem::default());
+        assert_eq!(h.handle(1000, Request::LocalAddressChanged), Err(ApiError::Denied));
+        assert!(matches!(h.handle(1000, Request::LocalSiteStatus), Err(ApiError::NotImplemented(_))));
+        // The test helper's applier has no web side, so the check finds nothing to do.
+        assert_eq!(h.check_local_address(), Ok(false));
     }
 
     #[test]

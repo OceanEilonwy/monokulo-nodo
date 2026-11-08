@@ -7,5 +7,9 @@ if [ -s "$dir/static" ]; then
 	ip addr del "$address" dev "$parent" 2>/dev/null
 	rm -f "$dir/static"
 fi
-grep -q '^status=ready' "$dir/state" 2>/dev/null && printf 'status=waiting\n' > "$dir/state"
+if grep -q '^status=ready' "$dir/state" 2>/dev/null; then
+	printf 'status=waiting\n' > "$dir/state"
+	# The helper takes local sites off the address that just went away. See notify in ./run.
+	[ -x /usr/bin/nodo-tui ] && /usr/bin/nodo-tui --ctl local-address-changed >/dev/null 2>&1 </dev/null &
+fi
 exit 0

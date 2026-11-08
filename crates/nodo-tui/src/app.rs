@@ -74,6 +74,7 @@ pub enum ScreenId {
     AutoUpdate,
     WebDomain,
     WebCertificate,
+    WebTrust,
     /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
     Setup,
     /// Backups and restore. It has no design file either, and follows the others' style.
@@ -81,7 +82,7 @@ pub enum ScreenId {
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 27] = [
+    pub const ALL: [ScreenId; 28] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -109,6 +110,7 @@ impl ScreenId {
         ScreenId::AutoUpdate,
         ScreenId::WebDomain,
         ScreenId::WebCertificate,
+        ScreenId::WebTrust,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -141,6 +143,7 @@ impl ScreenId {
             ScreenId::AutoUpdate => "autoupdate",
             ScreenId::WebDomain => "webdomain",
             ScreenId::WebCertificate => "webcertificate",
+            ScreenId::WebTrust => "webtrust",
             ScreenId::Setup => "setup",
             ScreenId::Backup => "backup",
         }
@@ -606,6 +609,8 @@ pub enum Screen {
     WebCgnat(CgnatState),
     WebDomain(DomainState),
     WebCertificate(CertificateState),
+    /// The local CA's fingerprint and the page where LAN devices get its root.
+    WebTrust,
     Setup(SetupState),
     Backup(BackupState),
 }
@@ -640,6 +645,7 @@ impl Screen {
             Screen::WebCgnat(_) => ScreenId::WebCgnat,
             Screen::WebDomain(_) => ScreenId::WebDomain,
             Screen::WebCertificate(_) => ScreenId::WebCertificate,
+            Screen::WebTrust => ScreenId::WebTrust,
             Screen::Setup(_) => ScreenId::Setup,
             Screen::Backup(_) => ScreenId::Backup,
         }

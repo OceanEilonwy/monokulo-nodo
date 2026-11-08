@@ -181,7 +181,11 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
             t.n(" Some routers hide private addresses in DNS answers. Press t to test this network."),
         ])));
     } else if let Some(fingerprint) = &acme.local_ca {
-        local_rows.push(Item::Text(Line::from(t.d(format!("   Local CA: {}", &fingerprint[..fingerprint.len().min(47)])))));
+        local_rows.push(Item::Text(Line::from(vec![
+            t.d(format!("   Local CA: {}…  ", &fingerprint[..fingerprint.len().min(47)])),
+            t.a("c"),
+            t.d(" trust it on your devices"),
+        ])));
     }
     match &state.checks {
         Some(Ok(checks)) if checks.is_empty() => {
@@ -216,9 +220,62 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
     let keys: &[(&str, &str)] = if state.focus.is_text() {
         &[("↑↓", "fields"), ("type", "to edit"), ("↵", "save"), ("Esc", "back")]
     } else {
-        &[("↑↓", "fields"), ("Space", "choose"), ("↵", "save"), ("p", "change provider"), ("t", "test local names"), ("Esc", "back")]
+        &[("↑↓", "fields"), ("Space", "choose"), ("↵", "save"), ("p", "provider"), ("t", "test local names"), ("c", "local CA"), ("Esc", "back")]
     };
     page.footer(Item::Text(hints(t, keys)))
+}
+
+/// The local CA: its full fingerprint, and the page where phones and computers on the LAN get it.
+pub fn trust(app: &App, t: &Theme) -> Page {
+    let web = &app.data.web;
+    let crumbs = Line::from(vec![t.n("Web "), t.d("› "), t.n("Domains "), t.d("› "), t.b("Local CA")]);
+    let right = match &web.trust_url {
+        Some(url) => t.o(format!("✓ Served at {url}")),
+        None => t.a("▲ Not served"),
+    };
+    let page_rows = match &web.trust_url {
+        Some(url) => vec![
+            Item::Row(Line::from(t.d("Open on a phone or computer here")), Line::from(t.b(url.clone()))),
+            Item::Text(Line::from(t.n(
+                "It offers this device's root certificate and short install steps for Android, iPhone,",
+            ))),
+            Item::Text(Line::from(t.n("macOS, Windows, Linux and Firefox. It needs no port and no app."))),
+            Item::Text(Line::from(t.d(
+                "Only the local network can open it, on the local address. It is never public or on Tor.",
+            ))),
+        ],
+        None => vec![Item::Text(Line::from(t.n(
+            "The page is served while a local site uses a .local name and the local address is up.",
+        )))],
+    };
+    let fingerprint_rows = match &web.acme.local_ca {
+        Some(fingerprint) => {
+            let mut rows: Vec<Item> = fingerprint_lines(fingerprint).into_iter().map(|l| Item::Text(Line::from(t.b(l)))).collect();
+            rows.push(Item::Blank);
+            rows.push(Item::Text(Line::from(vec![
+                t.a("▲ "),
+                t.n("The page is plain HTTP. Install the root only if the page shows this same fingerprint."),
+            ])));
+            rows
+        }
+        None => vec![Item::Text(Line::from(t.d("Caddy has not created the local CA yet.")))],
+    };
+    let after = vec![
+        Item::Text(Line::from(t.n("Browsers on that device then open this device's .local sites without a warning."))),
+        Item::Text(Line::from(t.d("The root vouches only for this device's local sites. Remove it from a device to"))),
+        Item::Text(Line::from(t.d("stop trusting them. Names under your own domain get public certificates instead."))),
+    ];
+    Page::new(crumbs, Line::from(right))
+        .panel(Panel::new("Trust page", page_rows))
+        .panel(Panel::new("SHA-256 fingerprint", fingerprint_rows))
+        .panel(Panel::new("What trusting it does", after).grow())
+        .footer(Item::Text(hints(t, &[("r", "refresh"), ("Esc", "back")])))
+}
+
+/// The fingerprint in two lines of 16 bytes, as the trust page shows it.
+fn fingerprint_lines(fingerprint: &str) -> Vec<String> {
+    let parts: Vec<&str> = fingerprint.split(':').collect();
+    parts.chunks(16).map(|chunk| chunk.join(":")).collect()
 }
 
 pub fn certificate(app: &App, t: &Theme, state: &CertificateState) -> Page {

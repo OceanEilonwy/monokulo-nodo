@@ -208,6 +208,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             }]));
             Screen::WebDomain(state)
         }
+        ScreenId::WebTrust => Screen::WebTrust,
         ScreenId::WebCertificate => Screen::WebCertificate(CertificateState {
             site: "shop".to_owned(),
             host: "shop.example.com".to_owned(),

@@ -18,7 +18,6 @@ use nodo_web::cert::{self, CertInfo};
 use nodo_web::dns::RecordType;
 use nodo_web::names;
 use nodo_web::secret::Secret as WebSecret;
-use sha2::{Digest, Sha256};
 
 /// The owner's choices, as stored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -45,11 +44,11 @@ fn yes() -> bool {
 
 /// What the helper last published for local names.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-struct LocalRecords {
-    domain: String,
-    names: Vec<String>,
-    address: Option<String>,
-    error: Option<String>,
+pub(super) struct LocalRecords {
+    pub domain: String,
+    pub names: Vec<String>,
+    pub address: Option<String>,
+    pub error: Option<String>,
 }
 
 const LOCAL_RECORD_TTL: u32 = 300;
@@ -368,27 +367,15 @@ impl<I: WebIo> NodoWeb<I> {
         }
     }
 
-    /// From Caddy's admin API, or from its storage when Caddy is not running.
     fn local_ca_fingerprint(&self) -> Option<String> {
-        let from_api = self
-            .io
-            .caddy_get(&self.paths.caddy_admin, "/pki/ca/local")
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .and_then(|v| v["root_certificate"].as_str().map(str::to_owned));
-        let pem = from_api.or_else(|| {
-            let path = self.paths.caddy_storage.join("pki/authorities/local/root.crt");
-            String::from_utf8(self.io.read(&path)?).ok()
-        })?;
-        let body: String = pem
-            .lines()
-            .skip_while(|l| !l.starts_with("-----BEGIN CERTIFICATE"))
-            .skip(1)
-            .take_while(|l| !l.starts_with("-----END"))
-            .collect();
-        use base64::Engine;
-        let der = base64::engine::general_purpose::STANDARD.decode(body).ok()?;
-        let digest = Sha256::digest(&der);
-        Some(digest.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":"))
+        self.local_ca_root().map(|root| root.fingerprint())
+    }
+
+    pub(super) fn local_records(&self) -> LocalRecords {
+        self.io
+            .read(&self.paths.local_records)
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
     }
 
     fn local_record_name(zone: &str, host: &str) -> Option<RecordName> {
@@ -403,11 +390,7 @@ impl<I: WebIo> NodoWeb<I> {
     /// records of names no longer served. Failures are kept for the screens rather than failing
     /// the exposure change, since the sites themselves are already applied.
     pub(super) fn apply_local_names(&self, plan: &WebPlan, key: Option<&SecretsKey>) {
-        let mut record: LocalRecords = self
-            .io
-            .read(&self.paths.local_records)
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+        let mut record = self.local_records();
         let current = &plan.local.dns_names;
         if current.is_empty() && record.names.is_empty() {
             return;
@@ -416,10 +399,13 @@ impl<I: WebIo> NodoWeb<I> {
         let Some(key) = key else {
             return;
         };
-        let address = match plan.local.address {
-            LocalAddress::Ready { address } => Some(address),
-            LocalAddress::Unavailable { .. } => None,
+        // Without an address the records stay as they are, rather than being removed and written
+        // again when a lease or a service restart briefly takes the address away. Names no longer
+        // wanted are removed once there is an address again.
+        let LocalAddress::Ready { address } = plan.local.address else {
+            return;
         };
+        let address = Some(address);
         let mut errors = Vec::new();
         let mut kept = Vec::new();
         match (self.credentials(), self.provider(Some(key))) {

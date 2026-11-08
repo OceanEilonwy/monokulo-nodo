@@ -17,9 +17,18 @@ dir=/run/nodo-localnet
 iface=nodo-local
 mkdir -p "$dir"
 
+# Tells the helper, which applies a new address to Caddy, the firewall, mDNS and the DNS records of
+# local names. In the background, because the helper may be busy applying something else; it also
+# checks once a minute by itself, so a lost message only delays the change.
+notify() {
+	[ -x /usr/bin/nodo-tui ] || return 0
+	/usr/bin/nodo-tui --ctl local-address-changed >/dev/null 2>&1 </dev/null &
+}
 report() {
 	{ echo "status=$1"; shift; for line in "$@"; do echo "$line"; done; } > "$dir/state.tmp"
+	old=$(cat "$dir/state" 2>/dev/null)
 	mv "$dir/state.tmp" "$dir/state"
+	[ "$(cat "$dir/state")" = "$old" ] || notify
 }
 unavailable() {
 	report "$1" ${2:+"detail=$2"}

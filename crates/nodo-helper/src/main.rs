@@ -96,6 +96,19 @@ fn bind(path: &Path, gid: Option<u32>) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
+/// nodo-localnet tells the helper when the local address changes. This catches a message that was
+/// lost, such as one sent while the helper was restarting, and a change across a reboot.
+const LOCAL_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn watch_local_address<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(LOCAL_CHECK_INTERVAL);
+        if let Err(e) = helper.check_local_address() {
+            eprintln!("nodo-helper: local address check: {e}");
+        }
+    });
+}
+
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--settings-worker") {
         return match worker::serve_stdio() {
@@ -145,7 +158,9 @@ fn main() -> ExitCode {
     if let Err(e) = helper.refresh_health_config() {
         eprintln!("nodo-helper: could not write the health configuration: {e}");
     }
-    if let Err(e) = server::serve(listener, Arc::new(helper)) {
+    let helper = Arc::new(helper);
+    watch_local_address(helper.clone());
+    if let Err(e) = server::serve(listener, helper) {
         eprintln!("nodo-helper: {e}");
         return ExitCode::FAILURE;
     }

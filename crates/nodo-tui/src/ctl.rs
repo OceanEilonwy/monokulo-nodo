@@ -48,7 +48,8 @@ nodo-tui --ctl COMMAND [ARGS]
   restore NAME TYPED_WORD          (backup passphrase, then new device passphrase or empty)
   web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
   set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)
-  acme | certs | local-names
+  acme | certs | local-names | local-status
+  local-address-changed            (root only, sent by nodo-localnet)
   acme-set EMAIL|- 0|1 [LOCAL_DOMAIN]   (1 is Let's Encrypt staging)
   dns01 [FIELD...]                 (one value per field on stdin, none removes them)";
 
@@ -271,6 +272,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["acme"] => Request::AcmeSettings,
         ["certs"] => Request::CertificateStatus,
         ["local-names"] => Request::CheckLocalNames,
+        ["local-status"] => Request::LocalSiteStatus,
+        ["local-address-changed"] => Request::LocalAddressChanged,
         ["acme-set", email, staging @ ("0" | "1"), rest @ ..] if rest.len() <= 1 => {
             Request::SetAcmeSettings(nodo_api::AcmeSettingsInput {
                 email: (*email != "-").then(|| id(email)),

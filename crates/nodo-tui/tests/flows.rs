@@ -429,6 +429,34 @@ fn a_supported_provider_can_be_tested_and_saved() {
 }
 
 #[test]
+fn the_local_ca_screen_shows_the_whole_fingerprint_and_the_trust_page() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('d'));
+    // On the email field, c is typed rather than taken as a shortcut.
+    key(&mut app, &mut mock, KeyCode::Char('c'));
+    assert_eq!(app.screen.id(), ScreenId::WebDomain);
+    assert!(screen_text(&app).contains("c trust it on your devices"));
+    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('c')]);
+    assert_eq!(app.screen.id(), ScreenId::WebTrust);
+    let screen = screen_text(&app);
+    let fingerprint = app.data.web.acme.local_ca.clone().unwrap();
+    assert!(screen.contains(&fingerprint[..47]) && screen.contains(&fingerprint[48..]), "{screen}");
+    assert!(screen.contains("http://nodo.local"));
+    key(&mut app, &mut mock, ESC);
+    assert_eq!(app.screen.id(), ScreenId::WebDomain);
+}
+
+#[test]
+fn local_name_records_that_lag_are_explained_on_the_web_tab() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    app.data.web.local_records_note = Some("The DNS records wait for the unlock.".to_owned());
+    app.data.web.trust_url = None;
+    assert!(screen_text(&app).contains("▲ Local names: The DNS records wait for the unlock."));
+    keys(&mut app, &mut mock, &[KeyCode::Char('d'), DOWN, KeyCode::Char('c')]);
+    assert!(screen_text(&app).contains("▲ Not served"));
+}
+
+#[test]
 fn keys_typed_for_one_provider_are_not_kept_for_another() {
     let (mut app, mut mock) = fixture(ScreenId::WebProviders);
     keys(&mut app, &mut mock, &[TAB, TAB]);

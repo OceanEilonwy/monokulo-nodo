@@ -3,7 +3,7 @@ use std::path::Path;
 
 use nodo_api::{
     AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, DnsProviderDetail, Exposure,
-    LocalNameCheck, ProviderInfo, PublicConfirmation, ReachabilityCheck, ReachabilityDetail,
+    LocalNameCheck, LocalSiteStatus, ProviderInfo, PublicConfirmation, ReachabilityCheck, ReachabilityDetail,
     ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo, WebStatus,
 };
 use nodo_manifest::WebService;
@@ -89,6 +89,13 @@ pub trait ExposureApplier: Send + Sync {
         Err(not_connected())
     }
     fn check_local_names(&self, _input: &WebInput) -> Result<Vec<LocalNameCheck>, ApiError> {
+        Err(not_connected())
+    }
+    /// Applies the local address again if it changed. Returns whether anything changed.
+    fn local_address_changed(&self, _input: &WebInput) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn local_site_status(&self, _input: &WebInput) -> Result<LocalSiteStatus, ApiError> {
         Err(not_connected())
     }
 }
@@ -204,6 +211,14 @@ impl<S: System> Helper<S> {
         self.exposure.unlocked(&input)
     }
 
+    /// Applies a changed local address to the local sites. nodo-localnet asks whenever its state
+    /// changes, and the helper itself checks once a minute in case a message was lost.
+    pub fn check_local_address(&self) -> Result<bool, ApiError> {
+        let _guard = lock(&self.service_lock);
+        let input = self.current_web_input()?;
+        self.exposure.local_address_changed(&input).map_err(ApiError::Failed)
+    }
+
     fn current_web_input(&self) -> Result<WebInput, ApiError> {
         let (state, _): (ExposureState, _) = self.load_toml(&self.paths.exposure_state)?;
         self.web_input(&state)
@@ -255,6 +270,9 @@ impl<S: System> Helper<S> {
             }
             Request::CheckLocalNames => {
                 Ok(Response::LocalNames(self.exposure.check_local_names(&self.current_web_input()?)?))
+            }
+            Request::LocalSiteStatus => {
+                Ok(Response::LocalSiteStatus(self.exposure.local_site_status(&self.current_web_input()?)?))
             }
             Request::CheckReachability { site } => {
                 let input = self.current_web_input()?;

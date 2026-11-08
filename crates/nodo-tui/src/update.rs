@@ -214,6 +214,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebCgnat => cgnat_key(app, key),
         ScreenId::WebDomain => domain_key(app, key),
         ScreenId::WebCertificate => certificate_key(app, key),
+        ScreenId::WebTrust => trust_key(app, key),
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
     }
@@ -1489,6 +1490,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
         }
         KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
+        KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
         KeyCode::Enter => {
             let text = |input: &Input| Some(input.text().trim().to_owned()).filter(|t| !t.is_empty());
             let settings = nodo_api::AcmeSettingsInput {
@@ -1508,6 +1510,15 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(input, key);
             }
         }
+    }
+    Vec::new()
+}
+
+fn trust_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => pop(app),
+        KeyCode::Char('r') => return vec![Effect::Refresh],
+        _ => {}
     }
     Vec::new()
 }

@@ -23,3 +23,4 @@ pub mod net;
 pub mod reachability;
 pub mod router;
 pub mod secret;
+pub mod trust;

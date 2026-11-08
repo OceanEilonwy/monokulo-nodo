@@ -161,6 +161,20 @@ pub enum Handler {
     RateLimit {
         rate_limits: BTreeMap<String, RateLimitZone>,
     },
+    /// Sets response headers before the next handler writes the response.
+    Headers {
+        response: HeaderOps,
+    },
+    FileServer {
+        root: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        index_names: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HeaderOps {
+    pub set: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

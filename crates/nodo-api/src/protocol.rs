@@ -254,6 +254,8 @@ mod tests {
             },
             Request::CertificateStatus,
             Request::CheckLocalNames,
+            Request::LocalAddressChanged,
+            Request::LocalSiteStatus,
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -482,6 +484,12 @@ mod tests {
                 verdict: LocalNameVerdict::Blocked,
                 explanation: "e".into(),
             }])),
+            Ok(Response::LocalSiteStatus(LocalSiteStatus {
+                address: Some("192.168.1.61".into()),
+                trust_url: Some("http://nodo.local".into()),
+                ca_fingerprint: Some("AB:CD".into()),
+                records_note: Some("n".into()),
+            })),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

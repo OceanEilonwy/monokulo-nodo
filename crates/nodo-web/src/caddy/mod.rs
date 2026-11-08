@@ -12,6 +12,10 @@
 //! - **Local** hosts are served only on the device's second LAN address (see [`crate::local`]), at
 //!   port 443, so their URLs have no port: `https://shop.local`. nftables sends that address's 443 to
 //!   Caddy's [`CADDY_LOCAL_PORT`], which Caddy binds on that address alone, and only for LAN sources.
+//! - The **local CA trust page** is served in plain HTTP on the local address's port 80, as
+//!   `http://nodo.local`, while any `.local` site uses the internal CA. nftables sends that port to
+//!   [`CADDY_TRUST_PORT`], which Caddy binds on the local address alone, and only for LAN sources.
+//!   See [`crate::trust`]. No other listener has a route to it.
 //! - Every **onion** address has its own plain-HTTP server on its own loopback port, reachable only
 //!   through Tor. A shared socket would let anyone probing the public IP send `Host: <addr>.onion` and
 //!   link the onion site to the home IP.
@@ -48,6 +52,9 @@ pub const CADDY_HTTPS_PORT: u16 = 10443;
 pub const CADDY_HTTP_PORT: u16 = 10080;
 /// Caddy binds this on the local address only. nftables sends the local address's port 443 here.
 pub const CADDY_LOCAL_PORT: u16 = 10444;
+/// Caddy binds this on the local address only, for the trust page. nftables sends the local
+/// address's port 80 here.
+pub const CADDY_TRUST_PORT: u16 = 10081;
 const ONION_VIRTUAL_PORT: u16 = 80;
 const INTERNAL_CA: &str = "local";
 const APEX: &str = "@";
@@ -298,6 +305,8 @@ pub struct DomainSettings {
     /// Names local sites `<label>.<local_domain>` with a public certificate through DNS-01, instead
     /// of `<label>.local` with the internal CA. The names still resolve only to the local address.
     pub local_domain: Option<String>,
+    /// Where the helper writes the local CA trust page and the root certificate files.
+    pub trust_dir: String,
 }
 
 impl Default for DomainSettings {
@@ -315,6 +324,7 @@ impl Default for DomainSettings {
             dns_challenge: None,
             acme: AcmeConfig::default(),
             local_domain: None,
+            trust_dir: crate::trust::TRUST_DIR.to_owned(),
         }
     }
 }
@@ -356,6 +366,8 @@ pub struct LocalFirewall {
     pub caddy_port: u16,
     /// IPv4 ranges only, since the local address is IPv4.
     pub lan_ranges: Vec<String>,
+    /// Where the local address's port 80 goes, for the trust page. `None` when it is not served.
+    pub trust_port: Option<u16>,
 }
 
 /// Whether local sites are being served, and which are waiting for the local address.
@@ -372,6 +384,8 @@ pub struct LocalStatus {
     pub dns_names: Vec<String>,
     /// Why local sites named under the owner's domain wait, when the address itself is fine.
     pub names_problem: Option<&'static str>,
+    /// The page where LAN devices get the local CA's root, while a `.local` site uses that CA.
+    pub trust_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -565,6 +579,11 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut policies = Vec::new();
     let internal_subjects: Vec<String> =
         local_subjects.iter().filter(|host| names::is_local_name(host)).cloned().collect();
+    // Only `.local` names use the internal CA, so only then is there a root to offer.
+    let trust_ip = local_ip.filter(|_| !internal_subjects.is_empty());
+    if let Some(ip) = trust_ip {
+        servers.insert("local-trust".to_owned(), trust_server(ip, settings));
+    }
     if !internal_subjects.is_empty() {
         policies.push(AutomationPolicy { subjects: internal_subjects.clone(), issuers: vec![Issuer::Internal] });
     }
@@ -599,11 +618,16 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             address,
             caddy_port: CADDY_LOCAL_PORT,
             lan_ranges: settings.lan_ranges.iter().filter(|r| !r.contains(':')).cloned().collect(),
+            trust_port: trust_ip.map(|_| CADDY_TRUST_PORT),
         }),
     };
     let mut mdns_names: Vec<String> =
         local_subjects.iter().filter(|host| names::has_mdns_suffix(host)).cloned().collect();
+    if trust_ip.is_some() {
+        mdns_names.push(crate::trust::TRUST_HOST.to_owned());
+    }
     mdns_names.sort();
+    mdns_names.dedup();
 
     let tor_lines = tor_services.iter().flat_map(TorHiddenService::lines).collect();
 
@@ -659,12 +683,13 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             mdns_names,
             dns_names: local_dns_names,
             names_problem,
+            trust_url: trust_ip.map(|_| format!("http://{}", crate::trust::TRUST_HOST)),
         },
     })
 }
 
-const LISTENER_PORTS: [u16; 5] =
-    [PUBLIC_HTTP_PORT, PUBLIC_HTTPS_PORT, CADDY_HTTP_PORT, CADDY_HTTPS_PORT, CADDY_LOCAL_PORT];
+const LISTENER_PORTS: [u16; 6] =
+    [PUBLIC_HTTP_PORT, PUBLIC_HTTPS_PORT, CADDY_HTTP_PORT, CADDY_HTTPS_PORT, CADDY_LOCAL_PORT, CADDY_TRUST_PORT];
 const MDNS_GROUP: &str = "224.0.0.251";
 const MDNS_PORT: u16 = 5353;
 
@@ -686,6 +711,11 @@ pub fn render_nft(plan: &FirewallPlan) -> String {
                 "\t\tip daddr {ip} ip saddr {lan} tcp dport {PUBLIC_HTTPS_PORT} dnat ip to {ip}:{}\n",
                 local.caddy_port
             ));
+            if let Some(port) = local.trust_port {
+                out.push_str(&format!(
+                    "\t\tip daddr {ip} ip saddr {lan} tcp dport {PUBLIC_HTTP_PORT} dnat ip to {ip}:{port}\n"
+                ));
+            }
             out.push_str(&format!("\t\tip daddr {ip} return\n"));
         }
         for (from, to) in &plan.redirects {
@@ -703,6 +733,9 @@ pub fn render_nft(plan: &FirewallPlan) -> String {
             "\t\tip daddr {ip} ip saddr {lan} tcp dport {} ct status dnat accept\n",
             local.caddy_port
         ));
+        if let Some(port) = local.trust_port {
+            out.push_str(&format!("\t\tip daddr {ip} ip saddr {lan} tcp dport {port} ct status dnat accept\n"));
+        }
         out.push_str(&format!("\t\tip daddr {MDNS_GROUP} ip saddr {lan} udp dport {MDNS_PORT} accept\n"));
     }
     out.push_str("\t}\n}\n");
@@ -749,6 +782,9 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
 
     if !is_safe_path(&settings.tor_dir) {
         return Err(invalid("tor_dir", &settings.tor_dir));
+    }
+    if !is_safe_path(&settings.trust_dir) {
+        return Err(invalid("trust_dir", &settings.trust_dir));
     }
     // Some modules expand `{...}` placeholders in their fields, which could pull in environment values.
     if let Some(challenge) = &settings.dns_challenge {
@@ -1098,6 +1134,66 @@ fn drop_connection_route() -> Route {
         handle: vec![Handler::StaticResponse { status_code: None, headers: BTreeMap::new(), body: None, abort: true }],
         terminal: true,
         ..Route::default()
+    }
+}
+
+/// The local CA trust page: plain HTTP on the local address, for LAN sources and two names only,
+/// the page's mDNS name and the bare address. Only the page and the two certificate files exist.
+fn trust_server(ip: Ipv4Addr, settings: &DomainSettings) -> Server {
+    use crate::trust::{DER_FILE, INDEX_FILE, PEM_FILE, TRUST_HOST};
+    let file = |path: &str, content_type: &str, download: Option<&str>| {
+        let mut set = BTreeMap::from([
+            ("Content-Type".to_owned(), vec![content_type.to_owned()]),
+            // A new root must replace the old one at once, so nothing is cached.
+            ("Cache-Control".to_owned(), vec!["no-store".to_owned()]),
+            ("X-Content-Type-Options".to_owned(), vec!["nosniff".to_owned()]),
+        ]);
+        if let Some(name) = download {
+            set.insert("Content-Disposition".to_owned(), vec![format!("attachment; filename=\"{name}\"")]);
+        }
+        Route {
+            matchers: vec![Matcher { path: vec![path.to_owned()], ..Matcher::default() }],
+            handle: vec![
+                Handler::Headers { response: HeaderOps { set } },
+                Handler::FileServer { root: settings.trust_dir.clone(), index_names: vec![INDEX_FILE.to_owned()] },
+            ],
+            terminal: true,
+        }
+    };
+    let routes = vec![
+        file("/", "text/html; charset=utf-8", None),
+        file(&format!("/{DER_FILE}"), "application/x-x509-ca-cert", Some(DER_FILE)),
+        file(&format!("/{PEM_FILE}"), "application/x-pem-file", Some(PEM_FILE)),
+        Route {
+            handle: vec![Handler::StaticResponse {
+                status_code: Some("404".to_owned()),
+                headers: BTreeMap::new(),
+                body: None,
+                abort: false,
+            }],
+            terminal: true,
+            ..Route::default()
+        },
+    ];
+    Server {
+        listen: vec![format!("{ip}:{CADDY_TRUST_PORT}")],
+        routes: vec![
+            host_route(
+                Matcher {
+                    host: vec![TRUST_HOST.to_owned(), ip.to_string()],
+                    remote_ip: Some(RemoteIp { ranges: settings.lan_ranges.clone() }),
+                    ..Matcher::default()
+                },
+                routes,
+            ),
+            drop_connection_route(),
+        ],
+        errors: error_routes(),
+        tls_connection_policies: Vec::new(),
+        // Plain HTTP on purpose: the page is how a device comes to trust the CA in the first place.
+        automatic_https: AutomaticHttps { disable: true, disable_redirects: false },
+        protocols: vec!["h1".to_owned()],
+        strict_sni_host: false,
     }
 }
 

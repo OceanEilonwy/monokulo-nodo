@@ -120,6 +120,10 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
             rows.push(Item::Text(Line::from(t.d(format!("  {remedy}")))));
         }
     }
+    if let Some(note) = &web.local_records_note {
+        rows.push(Item::Blank);
+        rows.push(Item::Text(Line::from(vec![t.a("▲ Local names: "), t.n(note.clone())])));
+    }
     Page::new(tab_bar(app, t, Tab::Web), Line::from(t.d("monokulo-nodo")))
         .panel(Panel::new("Sites", rows).grow())
         .columns(vec![(1, vec![domain]), (1, vec![ddns])])

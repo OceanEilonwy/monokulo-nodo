@@ -1496,6 +1496,8 @@ fn sample_web() -> WebOverview {
         reachable: true,
         local_problem: None,
         local_remedy: None,
+        local_records_note: None,
+        trust_url: Some(s("http://nodo.local")),
         certs: sample_certs(),
         acme: AcmeView {
             email: s("me@example.com"),

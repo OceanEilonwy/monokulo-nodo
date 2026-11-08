@@ -64,6 +64,10 @@ pub struct WebPaths {
     pub tls_events: PathBuf,
     /// The local names this helper published at the DNS provider, so stale ones can be removed.
     pub local_records: PathBuf,
+    /// The local CA trust page and root files, which Caddy serves on the local address.
+    pub trust_dir: PathBuf,
+    /// The local address that Caddy, the firewall, mDNS and the records were last applied for.
+    pub local_applied: PathBuf,
 }
 
 impl Default for WebPaths {
@@ -88,6 +92,8 @@ impl Default for WebPaths {
             caddy_storage: "/var/lib/caddy/data/caddy".into(),
             tls_events: caddy::TLS_EVENTS_LOG.into(),
             local_records: "/var/lib/nodo-web/local-records.json".into(),
+            trust_dir: nodo_web::trust::TRUST_DIR.into(),
+            local_applied: "/var/lib/nodo-web/local-address".into(),
         }
     }
 }
@@ -244,6 +250,7 @@ impl<I: WebIo> NodoWeb<I> {
             dns_challenge: self.dns_challenge(key).0,
             acme: self.acme_config(&stored),
             local_domain: stored.local_domain,
+            trust_dir: self.paths.trust_dir.to_string_lossy().into_owned(),
             ..DomainSettings::default()
         }
     }
@@ -359,13 +366,14 @@ impl<I: WebIo> NodoWeb<I> {
         Ok(())
     }
 
-    fn apply_mdns(&self, plan: &WebPlan) -> Result<(), String> {
+    /// The responder reads the address when it starts, so a new address restarts it, like new names.
+    fn apply_mdns(&self, plan: &WebPlan, moved: bool) -> Result<(), String> {
         let ready = matches!(plan.local.address, LocalAddress::Ready { .. });
         if ready && !plan.local.mdns_names.is_empty() {
             let names = plan.local.mdns_names.join("\n") + "\n";
             let changed = self.io.read(&self.paths.mdns_names).as_deref() != Some(names.as_bytes());
             self.io.write(&self.paths.mdns_names, names.as_bytes(), PUBLIC_FILE)?;
-            self.io.service(MDNS, true, changed)
+            self.io.service(MDNS, true, changed || moved)
         } else if self.io.service_installed(MDNS) {
             self.io.service(MDNS, false, false)
         } else {
@@ -516,9 +524,12 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
             self.wait_for(|| pending.iter().all(|r| self.onion_host(&r.package, &r.site).is_some()));
             plan = self.plan(input)?;
         }
+        let moved = localsite::served_address(&plan) != self.applied_address();
         self.apply_files(&plan)?;
-        self.apply_mdns(&plan)?;
+        self.apply_mdns(&plan, moved)?;
+        self.apply_trust(&plan, true)?;
         self.apply_local_names(&plan, input.secrets.as_deref());
+        self.record_applied(&plan)?;
         self.apply_ddns(&plan, input.secrets.as_deref())
     }
 
@@ -529,8 +540,23 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         if self.io.read(&self.paths.caddy_config).as_deref() != Some(json.as_slice()) {
             self.apply_files(&plan)?;
         }
+        // The address may have moved while locked and before the periodic check noticed.
+        if localsite::served_address(&plan) != self.applied_address() {
+            self.apply_mdns(&plan, true)?;
+            self.apply_trust(&plan, false)?;
+            self.record_applied(&plan)?;
+        }
+        // Records that waited for the credentials since the address changed are written now.
         self.apply_local_names(&plan, input.secrets.as_deref());
         self.apply_ddns(&plan, input.secrets.as_deref())
+    }
+
+    fn local_address_changed(&self, input: &WebInput) -> Result<bool, String> {
+        self.refresh_local(input)
+    }
+
+    fn local_site_status(&self, input: &WebInput) -> Result<nodo_api::LocalSiteStatus, ApiError> {
+        NodoWeb::local_site_status(self, input)
     }
 
     fn status(&self, input: &WebInput) -> Result<WebStatus, ApiError> {
@@ -982,6 +1008,7 @@ impl WebIo for RealWebIo {
 }
 
 mod certs;
+mod localsite;
 
 #[cfg(test)]
 mod tests;
