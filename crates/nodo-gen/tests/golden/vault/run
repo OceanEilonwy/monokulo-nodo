@@ -5,12 +5,13 @@ exec </dev/null
 
 # Encrypted storage opens with the device passphrase. Wait here until it does, and
 # never fall back to an unencrypted directory.
-data=/run/nodo/volumes/vault
-if ! mountpoint -q "$data"; then
+mount=/run/nodo/volumes/vault
+if ! mountpoint -q "$mount"; then
 	echo "waiting: encrypted storage for vault is locked"
 	sleep 5
 	exit 1
 fi
+data=$mount/data
 
 exec chpst -u _vault:_vault bwrap \
 	--ro-bind /usr /usr \

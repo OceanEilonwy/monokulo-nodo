@@ -107,7 +107,7 @@ impl<S: System> Helper<S> {
             state,
             detail,
             roles: package.manifest.provides.clone(),
-            origin: package.origin(),
+            origin: package.origin(self.feed_of(package.id())),
         }
     }
 

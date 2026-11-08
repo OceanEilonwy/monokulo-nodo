@@ -511,6 +511,54 @@ impl System for RealSystem {
     fn random(&self, out: &mut [u8]) -> SysResult<()> {
         getrandom::fill(out).map_err(|e| SysError(format!("no secure randomness: {e}")))
     }
+
+    fn rename(&self, from: &Path, to: &Path) -> SysResult<()> {
+        // rename(2) would silently replace an existing target.
+        if fs::symlink_metadata(to).is_ok() {
+            return Err(SysError(format!("{} already exists", to.display())));
+        }
+        fs::rename(from, to).map_err(|e| SysError(format!("{}: {e}", from.display())))
+    }
+
+    fn http_get_local(&self, port: u16, path: &str, limit: usize) -> SysResult<Vec<u8>> {
+        if port == 0 || !path.starts_with('/') || !path.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(SysError("invalid local address".to_owned()));
+        }
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let mut stream = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT)
+            .map_err(|e| SysError(format!("port {port}: {e}")))?;
+        stream.set_read_timeout(Some(PROBE_TIMEOUT))?;
+        stream.set_write_timeout(Some(PROBE_TIMEOUT))?;
+        let request =
+            format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes())?;
+        // Bounded, since whoever answers is untrusted. Headers count toward the limit too.
+        let mut response = Vec::new();
+        (&mut stream)
+            .take(limit as u64 + 8192)
+            .read_to_end(&mut response)?;
+        let split = response
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or_else(|| SysError("malformed HTTP response".to_owned()))?;
+        let status = String::from_utf8_lossy(&response[..split]);
+        let status = status.lines().next().unwrap_or_default();
+        if !http_success(status) {
+            return Err(SysError(format!(
+                "port {port} answered {}",
+                status
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(64)
+                    .collect::<String>()
+            )));
+        }
+        let body = response.split_off(split + 4);
+        if body.len() > limit {
+            return Err(SysError("response too large".to_owned()));
+        }
+        Ok(body)
+    }
 }
 
 /// Feeds `input`, collects bounded output, and kills the child if it outlives `timeout`.
