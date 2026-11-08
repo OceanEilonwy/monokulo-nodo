@@ -1,9 +1,12 @@
 //! The impure half: performing effects, owning the terminal, and the event loop.
 
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, Show};
@@ -12,7 +15,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use nodo_api::{ApiError, Backend, Request, Response};
+use nodo_api::{ApiError, Backend, PublicConfirmation, Request, Response};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -38,6 +41,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         providers: backend.providers(),
         log_sources: backend.log_sources(),
         auto_update: backend.auto_update(),
+        unavailable: backend.unavailable(),
     })
 }
 
@@ -60,7 +64,7 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         Effect::Start(id) => service_command(backend, Request::StartService { id }),
         Effect::Stop(id) => service_command(backend, Request::StopService { id }),
         Effect::Unlock(passphrase) => {
-            let result = backend.call(Request::Unlock { passphrase: passphrase.expose().to_owned() });
+            let result = backend.call(Request::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) });
             vec![Event::UnlockResult(result)]
         }
         Effect::OpenService(id) => match backend.settings_form(&id) {
@@ -111,13 +115,13 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         }
         Effect::ApplySettings { package, values } => {
             // Values with no wire form are stored secrets, and those never change here.
-            let values = values
+            let changes = values
                 .into_iter()
-                .filter_map(|(key, value)| value.wire().map(|wire| (key, wire)))
+                .filter_map(|(name, value)| value.to_input().map(|value| nodo_api::SettingChange { name, value }))
                 .collect();
-            match backend.call(Request::ApplySettings { package: package.clone(), values }) {
-                Ok(Response::RolledBack { reason }) => {
-                    let explanation = backend.explain_rollback(&package, &reason);
+            match backend.call(Request::ApplySettings { package: package.clone(), changes }) {
+                Ok(Response::RolledBack(rollback)) => {
+                    let explanation = backend.explain_rollback(&package, &rollback.reason);
                     vec![Event::SettingsRolledBack { package, explanation }, refresh(backend)]
                 }
                 result => vec![Event::SettingsApplied(plain_result(result)), refresh(backend)],
@@ -147,8 +151,12 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         }
         Effect::Drive(action) => vec![Event::DriveResult(backend.drive_action(action)), refresh(backend)],
         Effect::Shell => vec![Event::Info("A shell is not available from this build yet.".to_owned())],
-        Effect::SetExposure { site, exposure, after } => {
-            let request = Request::SetExposure { package: site.clone(), site, exposure };
+        Effect::SetExposure { site, exposure, after, confirmation } => {
+            let request = Request::SetExposure {
+                site: backend.site_id(&site),
+                exposure,
+                confirmation: confirmation.map(|typed_host| PublicConfirmation { typed_host }),
+            };
             let result = plain_result(backend.call(request));
             vec![Event::ExposureSet { after, result }, refresh(backend)]
         }
@@ -175,6 +183,20 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             Ok(text) => vec![Event::Info(text)],
             Err(text) => vec![Event::Failed(text)],
         },
+        Effect::InitEncryption(passphrase) => {
+            let request = Request::InitEncryption { passphrase: nodo_api::Secret::new(passphrase.expose()) };
+            let result = plain_result(backend.call(request));
+            vec![Event::SetupDone(result), refresh(backend)]
+        }
+        Effect::LoadSshKeys => vec![Event::SshKeysLoaded(backend.ssh_keys())],
+        Effect::AddSshKey(line) => {
+            let result = backend.add_ssh_key(&line);
+            vec![Event::SshKeyChanged(result), Event::SshKeysLoaded(backend.ssh_keys())]
+        }
+        Effect::RemoveSshKey(fingerprint) => {
+            let result = backend.remove_ssh_key(&fingerprint);
+            vec![Event::SshKeyChanged(result), Event::SshKeysLoaded(backend.ssh_keys())]
+        }
     }
 }
 
@@ -187,21 +209,106 @@ fn service_command<T: Backend + ScreenData>(backend: &mut T, request: Request) -
     events
 }
 
-/// Feeds an event through `update` and performs every resulting effect until none are left.
+/// Performs one batch of effects in order, handing each effect's events to `deliver`.
+fn run_batch<T: Backend + ScreenData>(backend: &mut T, batch: Vec<Effect>, mut deliver: impl FnMut(Vec<Event>)) {
+    let mut effects = VecDeque::from(batch);
+    while let Some(effect) = effects.pop_front() {
+        let events = execute_effect(backend, effect);
+        // A step towards public never runs after its prerequisite failed. Other batches, such
+        // as taking every site offline, carry on so one failure does not leave the rest up.
+        if events.iter().any(reports_failure) && effects.front().is_some_and(moves_towards_public) {
+            effects.clear();
+        }
+        deliver(events);
+    }
+}
+
+/// Feeds an event through `update` and performs every resulting effect until none are left, on
+/// this thread. Tests use this; the terminal runtime uses [`EffectWorker`].
 pub fn dispatch<T: Backend + ScreenData>(app: &mut App, backend: &mut T, event: Event) {
-    let mut queue = std::collections::VecDeque::from([event]);
+    let mut queue = VecDeque::from([event]);
     while let Some(event) = queue.pop_front() {
-        let mut effects = std::collections::VecDeque::from(update(app, event));
-        while let Some(effect) = effects.pop_front() {
-            let events = execute_effect(backend, effect);
-            // A step towards public never runs after its prerequisite failed. Other batches, such
-            // as taking every site offline, carry on so one failure does not leave the rest up.
-            if events.iter().any(reports_failure) && effects.front().is_some_and(moves_towards_public) {
-                effects.clear();
+        let effects = update(app, event);
+        run_batch(backend, effects, |events| queue.extend(events));
+    }
+}
+
+enum FromWorker {
+    Events(Vec<Event>),
+    BatchDone,
+}
+
+/// Owns the backend on its own thread, so a helper call that takes minutes never stops the
+/// screen from drawing or keys from being read.
+pub struct EffectWorker {
+    batches: Sender<Vec<Effect>>,
+    results: Receiver<FromWorker>,
+    in_flight: usize,
+}
+
+impl EffectWorker {
+    pub fn spawn<T: Backend + ScreenData + Send + 'static>(mut backend: T) -> Self {
+        let (batches, inbox) = mpsc::channel::<Vec<Effect>>();
+        let (outbox, results) = mpsc::channel();
+        thread::spawn(move || {
+            for batch in inbox {
+                run_batch(&mut backend, batch, |events| {
+                    let _ = outbox.send(FromWorker::Events(events));
+                });
+                if outbox.send(FromWorker::BatchDone).is_err() {
+                    return;
+                }
             }
-            queue.extend(events);
+        });
+        Self { batches, results, in_flight: 0 }
+    }
+
+    pub fn busy(&self) -> bool {
+        self.in_flight > 0
+    }
+
+    pub fn submit(&mut self, effects: Vec<Effect>) {
+        if !effects.is_empty() && self.batches.send(effects).is_ok() {
+            self.in_flight += 1;
         }
     }
+
+    fn take(&mut self, message: FromWorker, events: &mut Vec<Event>) {
+        match message {
+            FromWorker::Events(more) => events.extend(more),
+            FromWorker::BatchDone => self.in_flight = self.in_flight.saturating_sub(1),
+        }
+    }
+
+    /// Events that are ready now, without waiting.
+    pub fn ready(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        while let Ok(message) = self.results.try_recv() {
+            self.take(message, &mut events);
+        }
+        events
+    }
+
+    /// Waits up to `timeout` for the worker to go idle, returning what arrived meanwhile.
+    pub fn wait_idle(&mut self, timeout: Duration) -> Vec<Event> {
+        let deadline = Instant::now() + timeout;
+        let mut events = Vec::new();
+        while self.busy() {
+            match self.results.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(message) => self.take(message, &mut events),
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        events
+    }
+}
+
+/// Feeds an event through `update` and hands the effects to the worker. Their results come back
+/// later through [`EffectWorker::ready`].
+pub fn dispatch_async(app: &mut App, worker: &mut EffectWorker, event: Event) {
+    let effects = update(app, event);
+    worker.submit(effects);
+    app.working = worker.busy();
 }
 
 fn reports_failure(event: &Event) -> bool {
@@ -277,8 +384,9 @@ fn install_panic_hook<M: TerminalMode>(mode: Arc<M>) {
     }));
 }
 
-/// Runs the TUI until the user quits or a termination signal arrives.
-pub fn run<T: Backend + ScreenData>(mut app: App, mut backend: T, theme: Theme) -> io::Result<()> {
+/// Runs the TUI until the user quits or a termination signal arrives. The backend lives on a
+/// worker thread, so slow helper calls never freeze the screen.
+pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, theme: Theme) -> io::Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGHUP, signal_hook::consts::SIGINT] {
         signal_hook::flag::register(signal, Arc::clone(&stop))?;
@@ -288,17 +396,20 @@ pub fn run<T: Backend + ScreenData>(mut app: App, mut backend: T, theme: Theme) 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
 
+    let mut worker = EffectWorker::spawn(backend);
     let (width, height) = crossterm::terminal::size()?;
-    dispatch(&mut app, &mut backend, Event::Resize(width, height));
+    dispatch_async(&mut app, &mut worker, Event::Resize(width, height));
     if app.data == Snapshot::default() {
-        for event in execute_effect(&mut backend, Effect::Refresh) {
-            dispatch(&mut app, &mut backend, event);
-        }
+        worker.submit(vec![Effect::Refresh]);
     }
 
     let tick = Duration::from_millis(1000 / TICKS_PER_SECOND);
     let mut last_tick = Instant::now();
     while !app.should_quit && !stop.load(Ordering::Relaxed) {
+        for event in worker.ready() {
+            dispatch_async(&mut app, &mut worker, event);
+        }
+        app.working = worker.busy();
         terminal.draw(|frame| {
             view::render(frame, &app, &theme);
         })?;
@@ -307,18 +418,22 @@ pub fn run<T: Backend + ScreenData>(mut app: App, mut backend: T, theme: Theme) 
             match event::read()? {
                 // Some terminals also report key releases, which must not count as presses.
                 event::Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    dispatch(&mut app, &mut backend, Event::Key(key));
+                    dispatch_async(&mut app, &mut worker, Event::Key(key));
                 }
-                event::Event::Paste(text) => dispatch(&mut app, &mut backend, Event::Paste(text)),
+                event::Event::Paste(text) => dispatch_async(&mut app, &mut worker, Event::Paste(text)),
                 event::Event::Resize(width, height) => {
-                    dispatch(&mut app, &mut backend, Event::Resize(width, height));
+                    dispatch_async(&mut app, &mut worker, Event::Resize(width, height));
                 }
                 _ => {}
             }
         }
         if last_tick.elapsed() >= tick {
             last_tick = Instant::now();
-            dispatch(&mut app, &mut backend, Event::Tick);
+            // Ticks only poll. While the worker is busy their effects would just queue behind it.
+            let effects = update(&mut app, Event::Tick);
+            if !worker.busy() {
+                worker.submit(effects);
+            }
         }
     }
     Ok(())

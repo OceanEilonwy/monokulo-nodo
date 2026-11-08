@@ -106,6 +106,14 @@ pub fn is_valid_version(version: &str) -> bool {
 
 /// A relative path that stays inside the package directory however it is joined. It must be in
 /// canonical form, so checks elsewhere never disagree with the kernel about what it names.
+/// A file name inside the package's config directory. No separators, and no leading dot, so
+/// it can neither leave the directory nor hide or replace the settings store.
+pub fn is_valid_config_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && !name.starts_with('.')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 pub fn is_valid_package_path(path: &str) -> bool {
     !path.is_empty() && path.len() <= MAX_PATH_LEN && path.split('/').all(is_safe_segment)
 }
@@ -282,6 +290,17 @@ impl Manifest {
         if let Some(settings) = &self.settings {
             if !is_valid_package_path(settings) || !settings.ends_with(".lua") {
                 c.add("settings", "must be a canonical relative .lua path inside the package");
+            }
+        }
+        if let Some(config) = &self.config {
+            if self.settings.is_none() {
+                c.add("config", "needs a settings file to fill it");
+            }
+            if !is_valid_package_path(&config.template) {
+                c.add("config.template", "must be a canonical relative path inside the package");
+            }
+            if !is_valid_config_name(&config.name) {
+                c.add("config.name", "must be a plain file name");
             }
         }
 

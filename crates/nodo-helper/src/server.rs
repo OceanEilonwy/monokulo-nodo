@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use nodo_api::ApiError;
+use nodo_api::protocol::{self, CallResult, ProtocolError, MAX_REQUEST};
+use nodo_api::{action_name, ApiError};
 use rustix::net::sockopt::socket_peercred;
 
-use crate::helper::{action_name, Helper};
-use crate::protocol::{self, CallResult, ProtocolError, MAX_REQUEST};
+use crate::helper::Helper;
 use crate::system::System;
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,9 +57,23 @@ pub fn serve_connection<S: System>(
         // Only the action name, as requests can hold the passphrase and setting values.
         let action = action_name(&request);
         let result = helper.handle(uid, request);
-        let outcome = if result.is_ok() { "ok" } else { "failed" };
-        eprintln!("nodo-helper: uid {uid} {action}: {outcome}");
+        eprintln!("nodo-helper: uid {uid} {action}: {}", outcome(&result));
         respond(&mut stream, &result)?;
+    }
+}
+
+/// The kind of result only. Error messages can name settings and paths, and are for the client.
+fn outcome(result: &CallResult) -> &'static str {
+    match result {
+        Ok(_) => "ok",
+        Err(ApiError::Denied) => "denied",
+        Err(ApiError::BadPassphrase) => "bad passphrase",
+        Err(ApiError::NotFound(_)) => "not found",
+        Err(ApiError::Failed(_)) => "failed",
+        Err(ApiError::NotImplemented(_)) => "not implemented",
+        Err(ApiError::RateLimited { .. }) => "rate limited",
+        Err(ApiError::NeedsConfirmation(_)) => "needs confirmation",
+        Err(ApiError::NotSetUp) => "not set up",
     }
 }
 
@@ -109,9 +123,9 @@ pub fn serve<S: System + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::HelperClient;
     use crate::fake::{helper, FakeSystem, SHOP};
     use crate::helper::AllowedUids;
+    use nodo_api::client::HelperClient;
     use nodo_api::{Backend, Request, Response};
     use rustix::process::geteuid;
     use std::io::{Read, Write};

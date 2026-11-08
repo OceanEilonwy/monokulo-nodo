@@ -2,7 +2,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nodo_api::{ApiError, Backend, Exposure, Request, Response, ServiceState, ServiceStatus};
+use nodo_api::{
+    ApiError, Backend, Exposure, Origin, Request, Response, Rollback, RollbackStage, ServiceState, ServiceStatus,
+    SettingInput, SettingLiteral,
+};
 
 use crate::model::*;
 use crate::secret::Secret;
@@ -21,7 +24,8 @@ fn s(text: &str) -> String {
 }
 
 fn service(id: &str, state: ServiceState, detail: &str) -> ServiceStatus {
-    ServiceStatus { id: s(id), state, detail: s(detail) }
+    let origin = if id == "cuprated" { Origin::System } else { Origin::Feed(Some(s("community"))) };
+    ServiceStatus { id: s(id), state, detail: s(detail), roles: Vec::new(), origin }
 }
 
 fn need(name: &str, source: Option<&str>) -> Need {
@@ -62,6 +66,11 @@ pub struct MockBackend {
     pub auto_update: AutoUpdatePrefs,
     /// Makes applying a site's protections fail, to exercise that failure path.
     pub fail_public_access: bool,
+    /// First boot: no device passphrase yet.
+    pub setup_needed: bool,
+    pub ssh_keys: Vec<nodo_api::SshKey>,
+    /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
+    pub delay: Option<std::time::Duration>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
 }
@@ -87,6 +96,13 @@ impl MockBackend {
             stored_provider: Some(StoredProvider { provider: s("Porkbun"), domain: s("example.com") }),
             auto_update: sample_auto_update(),
             fail_public_access: false,
+            setup_needed: false,
+            delay: None,
+            ssh_keys: vec![nodo_api::SshKey {
+                algorithm: s("ssh-ed25519"),
+                fingerprint: s("SHA256:mockmockmockmockmockmockmockmockmockmockmo"),
+                comment: s("laptop"),
+            }],
             reach_attempts: HashMap::new(),
             job: None,
         }
@@ -122,6 +138,9 @@ impl MockBackend {
 
 impl Backend for MockBackend {
     fn call(&mut self, request: Request) -> Result<Response, ApiError> {
+        if let Some(delay) = self.delay {
+            std::thread::sleep(delay);
+        }
         self.calls.push(request.clone());
         match request {
             Request::ListServices => Ok(Response::Services(self.services.clone())),
@@ -149,53 +168,76 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::Unlock { passphrase } => {
-                if passphrase == MOCK_PASSPHRASE {
+                if passphrase.expose() == MOCK_PASSPHRASE {
                     self.finish_unlock();
                     Ok(Response::Ok)
                 } else {
                     Err(ApiError::BadPassphrase)
                 }
             }
-            Request::ApplySettings { package, values } => {
+            Request::ApplySettings { package, changes } => {
                 let form =
                     self.forms.get_mut(&package).ok_or_else(|| ApiError::NotFound(package.clone()))?;
-                if values.iter().any(|(key, value)| key == "api_port" && value == CLASHING_PORT) {
-                    return Ok(Response::RolledBack {
+                let clash = SettingInput::Literal(SettingLiteral::Text(s(CLASHING_PORT)));
+                if changes.iter().any(|change| change.name == "api_port" && change.value == clash) {
+                    return Ok(Response::RolledBack(Rollback {
+                        stage: RollbackStage::HealthCheck,
                         reason: format!("listen tcp :{CLASHING_PORT}: bind: address already in use"),
-                    });
+                        recovered: true,
+                        recovery_problem: None,
+                    }));
                 }
-                for (key, value) in values {
-                    let Some(field) = form.fields.iter_mut().find(|field| field.key == key) else {
-                        return Err(ApiError::Failed(format!("unknown setting: {key}")));
+                for change in changes {
+                    let Some(field) = form.fields.iter_mut().find(|field| field.key == change.name) else {
+                        return Err(ApiError::Failed(format!("unknown setting: {}", change.name)));
                     };
-                    field.value = match (&field.kind, value) {
-                        (FieldKind::Secret, _) => FieldValue::SecretSet,
-                        (FieldKind::Toggle, value) => FieldValue::Bool(value == "true"),
-                        (_, value) => match value.strip_prefix("$(").and_then(|v| v.strip_suffix(')')) {
-                            Some(path) => FieldValue::Reference {
-                                path: s(path),
-                                resolved: sample_references()
-                                    .options
-                                    .iter()
-                                    .find(|option| option.path == path)
-                                    .map_or_else(String::new, |option| option.value.clone()),
-                            },
-                            None => FieldValue::Text(value),
-                        },
+                    field.value = match change.value {
+                        SettingInput::Secret(_) => FieldValue::SecretSet,
+                        SettingInput::Literal(SettingLiteral::Bool(value)) => FieldValue::Bool(value),
+                        SettingInput::Literal(SettingLiteral::Int(value)) => FieldValue::Text(value.to_string()),
+                        SettingInput::Literal(SettingLiteral::Text(value)) => FieldValue::Text(value),
+                        SettingInput::Reference { target, setting } => {
+                            let path = format!("{target}.{setting}");
+                            let resolved = sample_references()
+                                .options
+                                .iter()
+                                .find(|option| option.path == path)
+                                .map_or_else(String::new, |option| option.value.clone());
+                            FieldValue::Reference { path, resolved }
+                        }
+                        SettingInput::Reset => field.value.clone(),
                     };
                 }
                 Ok(Response::Ok)
             }
-            Request::SetExposure { package, site, exposure } => {
+            Request::SetExposure { site, exposure, confirmation } => {
                 let entry = self
                     .web
                     .sites
                     .iter_mut()
-                    .find(|entry| entry.package == site)
-                    .ok_or_else(|| ApiError::NotFound(format!("{package}/{site}")))?;
+                    .find(|entry| entry.package == site.site)
+                    .ok_or_else(|| ApiError::NotFound(format!("{}/{}", site.package, site.site)))?;
+                // The helper's rule, so flows that skip the typed host fail here as they would there.
+                if exposure.public && !entry.exposure.public {
+                    let host = entry.public_host.clone().unwrap_or_default();
+                    if confirmation.map(|c| c.typed_host) != Some(host.clone()) {
+                        return Err(ApiError::NeedsConfirmation(format!("type {host} exactly to confirm")));
+                    }
+                }
                 entry.exposure = exposure;
                 Ok(Response::Ok)
             }
+            Request::InitEncryption { passphrase } => {
+                if !self.setup_needed {
+                    return Err(ApiError::Failed(s("this device is already set up")));
+                }
+                if passphrase.char_count() < 8 {
+                    return Err(ApiError::Failed(s("the passphrase must have at least 8 characters")));
+                }
+                self.setup_needed = false;
+                Ok(Response::Ok)
+            }
+            other => Err(ApiError::NotImplemented(format!("{} in the mock", nodo_api::action_name(&other)))),
         }
     }
 }
@@ -237,6 +279,7 @@ impl ScreenData for MockBackend {
                 Vec::new()
             },
             updates_checked: s("Last checked 2 hours ago"),
+            setup_needed: self.setup_needed,
         }
     }
 
@@ -756,6 +799,34 @@ impl ScreenData for MockBackend {
         Ok(())
     }
 
+    fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String> {
+        Ok(self.ssh_keys.clone())
+    }
+
+    fn add_ssh_key(&mut self, line: &str) -> Result<(), String> {
+        let mut fields = line.split_whitespace();
+        let (Some(algorithm), Some(data)) = (fields.next(), fields.next()) else {
+            return Err(s("that is not a single public key line"));
+        };
+        if !algorithm.starts_with("ssh-") && !algorithm.starts_with("ecdsa-") {
+            return Err(s("the line must start with a key type such as ssh-ed25519"));
+        }
+        self.ssh_keys.push(nodo_api::SshKey {
+            algorithm: algorithm.to_owned(),
+            fingerprint: format!("SHA256:{}", data.chars().rev().take(43).collect::<String>()),
+            comment: fields.collect::<Vec<_>>().join(" "),
+        });
+        Ok(())
+    }
+
+    fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String> {
+        if self.ssh_keys.len() <= 1 {
+            return Err(s("this is the only key that can log in. Add another before removing it"));
+        }
+        self.ssh_keys.retain(|key| key.fingerprint != fingerprint);
+        Ok(())
+    }
+
     fn document(&self, kind: &DocKind) -> Document {
         match kind {
             DocKind::Changelog(name) => Document {
@@ -1270,6 +1341,7 @@ fn sample_web() -> WebOverview {
         onion_url: s(onion),
         public_host: host.map(s),
         locked,
+        rate_limit_unenforced: false,
     };
     WebOverview {
         sites: vec![
@@ -1409,11 +1481,11 @@ mod tests {
     fn unlock_only_accepts_the_mock_passphrase() {
         let mut mock = MockBackend::new();
         assert_eq!(
-            mock.call(Request::Unlock { passphrase: s("wrong") }),
+            mock.call(Request::Unlock { passphrase: nodo_api::Secret::new("wrong") }),
             Err(ApiError::BadPassphrase)
         );
         assert!(mock.is_locked());
-        assert_eq!(mock.call(Request::Unlock { passphrase: s(MOCK_PASSPHRASE) }), Ok(Response::Ok));
+        assert_eq!(mock.call(Request::Unlock { passphrase: nodo_api::Secret::new(MOCK_PASSPHRASE) }), Ok(Response::Ok));
         assert!(!mock.is_locked());
     }
 }

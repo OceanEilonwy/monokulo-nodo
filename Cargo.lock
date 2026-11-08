@@ -735,8 +735,10 @@ dependencies = [
 name = "nodo-api"
 version = "0.1.0"
 dependencies = [
+ "postcard",
  "serde",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -795,15 +797,18 @@ name = "nodo-helper"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "base64 0.23.1",
  "chacha20poly1305",
  "getrandom 0.4.3",
  "hkdf",
  "nodo-api",
  "nodo-gen",
  "nodo-manifest",
+ "nodo-settings",
  "postcard",
  "rustix 1.1.6",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",
