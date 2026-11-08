@@ -11,3 +11,15 @@ push_packages() {
 		case $p in *-service) s=${p%-service}; ssh_vm "sv -w 120 restart $s" ;; esac
 	done
 }
+# Installs packages from the pinned Void mirror into the VM, which is offline. Only for test tools.
+push_mirror_packages() {
+	. /src/versions.env
+	case $ARCH in aarch64) repo=$VOID_MIRROR/current/aarch64 ;; *) repo=$VOID_MIRROR/current ;; esac
+	dl=/tmp/mirror-$ARCH
+	mkdir -p "$dl/root/var/db/xbps/keys" "$dl/cache"
+	cp /var/db/xbps/keys/* "$dl/root/var/db/xbps/keys/"
+	XBPS_ARCH=$ARCH xbps-install -S -y -D -r "$dl/root" -c "$dl/cache" -R "$repo" "$@" >/dev/null || return 1
+	ssh_vm 'rm -rf /tmp/mirror && mkdir -p /tmp/mirror'
+	tar -C "$dl/cache" -cf - $(cd "$dl/cache" && ls ./*.xbps) | ssh_vm 'tar -C /tmp/mirror -xf -'
+	ssh_vm 'xbps-rindex -a /tmp/mirror/*.xbps >/dev/null && for p in '"$*"'; do xbps-query "$p" >/dev/null || xbps-install -y -R /tmp/mirror "$p" >/dev/null || exit 1; done'
+}
