@@ -443,8 +443,8 @@ check "an unknown DNS provider is refused" refused "not a supported provider" sh
 # The device was unlocked above, so the credentials can be sealed.
 check "DNS credentials are stored sealed and root only" sh -c '
 	echo cfut_0123456789abcdefghijABCDEFGHIJ0123456789 | nodo-tui --ctl set-dns example.com cloudflare api_token &&
-	[ "$(stat -c "%a %U" /var/lib/nodo/web-dns.toml)" = "600 root" ] && ! grep -q cfut_ /var/lib/nodo/web-dns.toml &&
-	grep -q "api_token = \"v1\." /var/lib/nodo/web-dns.toml && ! ctl web-status | grep -q cfut_'
+	[ "$(stat -c "%a %U" /var/lib/nodo/secrets/web-dns.toml)" = "600 root" ] && ! grep -q cfut_ /var/lib/nodo/secrets/web-dns.toml &&
+	grep -q "api_token = \"v1\." /var/lib/nodo/secrets/web-dns.toml && ! ctl web-status | grep -q cfut_'
 check "the provider list carries DNS-01 support" sh -c 'ctl dns-providers | grep -A12 "id: \"godaddy\"" | grep -q BundledSeparateCredentials'
 check "going public without the typed host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1
 check "going public with the wrong host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1 evil.example.com

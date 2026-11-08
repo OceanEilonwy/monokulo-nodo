@@ -59,7 +59,8 @@ impl Default for WebPaths {
             nft_main: "/etc/nftables.conf".into(),
             ddns_config: "/run/nodo/secrets/nodo-ddns/config.toml".into(),
             ddns_state: "/var/lib/nodo-ddns/state.json".into(),
-            dns_credentials: "/var/lib/nodo/web-dns.toml".into(),
+            // Inside the secrets directory, so backups carry it.
+            dns_credentials: "/var/lib/nodo/secrets/web-dns.toml".into(),
             mdns_names: "/var/lib/nodo-localnet/mdns-names".into(),
             localnet_state: local::STATE_FILE.into(),
             torrc: "/var/lib/nodo-web/torrc".into(),
@@ -553,7 +554,7 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         let credentials = Credentials { domain: domain.to_owned(), dns: sealed };
         let stored = toml::to_string(&credentials).map_err(|e| ApiError::Failed(e.to_string()))?;
         if let Some(dir) = self.paths.dns_credentials.parent() {
-            self.io.ensure_dir(dir, (0o755, "root", "root")).map_err(ApiError::Failed)?;
+            self.io.ensure_dir(dir, (0o700, "root", "root")).map_err(ApiError::Failed)?;
         }
         self.io.write(&self.paths.dns_credentials, stored.as_bytes(), ROOT_ONLY).map_err(ApiError::Failed)?;
         let plan = self.plan(input).map_err(ApiError::Failed)?;
