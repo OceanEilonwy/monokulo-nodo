@@ -110,6 +110,10 @@ impl<S: System> Helper<S> {
             self.create_volume(id, passphrase, DEFAULT_VOLUME_SIZE)?;
         }
         self.write_service(id, &artifacts)?;
+        // Settings, including generated secrets, exist before the service first starts.
+        if package.manifest.settings.is_some() {
+            self.write_initial_settings(&package)?;
+        }
         match self.sys.read_link(&enabled) {
             Some(target) if target == service => {}
             Some(_) => {
@@ -121,6 +125,26 @@ impl<S: System> Helper<S> {
             None => self.sys.symlink(&service, &enabled)?,
         }
         Ok(Response::Ok)
+    }
+
+    fn write_initial_settings(&self, package: &crate::catalog::Package) -> Result<(), ApiError> {
+        let (packages, _) = self.packages()?;
+        let ctx = crate::settings::SettingsContext {
+            sys: &self.sys,
+            paths: &self.paths,
+            packages: &packages,
+        };
+        for file in self.settings.plan(&ctx, package, &[])? {
+            if let Some(dir) = file.path.parent() {
+                self.sys.ensure_dir(dir, file.parent_mode, None)?;
+            }
+            let options = WriteOptions {
+                mode: file.mode,
+                group: file.group.as_deref(),
+            };
+            self.sys.atomic_write(&file.path, &file.bytes, options)?;
+        }
+        Ok(())
     }
 
     fn write_service(&self, id: &str, artifacts: &Artifacts) -> Result<(), ApiError> {

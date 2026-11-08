@@ -375,6 +375,23 @@ impl SettingsPolicy for NodoSettings {
         store
             .values
             .retain(|name, _| schema.setting(name).is_some());
+        // A secret the package asks the device to generate is made once, the first time its
+        // settings are written, and then kept like any other value. Resetting it makes a new one.
+        for def in &schema.settings {
+            let Some(generate) = def.generate else {
+                continue;
+            };
+            if store.values.contains_key(&def.name) {
+                continue;
+            }
+            let mut random = Zeroizing::new(vec![0u8; generate.byte_len()]);
+            ctx.sys.random(&mut random)?;
+            let secret = generate.encode(&random).map_err(failed)?;
+            store.values.insert(
+                def.name.clone(),
+                Stored::Literal(secret.expose().to_owned()),
+            );
+        }
 
         let mut values = BTreeMap::new();
         for (name, stored) in &store.values {
@@ -802,6 +819,40 @@ settings = "settings.lua"
             workers, 3,
             "one load for the form, one load and one validation for the change"
         );
+    }
+
+    #[test]
+    fn a_generated_secret_is_made_once_and_kept() {
+        let h = setup();
+        h.sys.put(
+            "/opt/nodo/apps/shop/settings.lua",
+            br#"return { api_version = 1, settings = {
+                { name = "label", type = "string", label = "Label" },
+                { name = "db_key", type = "secret", label = "Database key", generate = { hex = 16 } },
+            } }"#,
+        );
+        apply(&h, "shop", vec![change("label", text("a"))]).unwrap();
+        let read = |h: &Helper<FakeSystem>| -> toml::Table {
+            toml::from_str(
+                std::str::from_utf8(&h.sys.get("/etc/apps/shop/settings.toml").unwrap()).unwrap(),
+            )
+            .unwrap()
+        };
+        let first = read(&h)["db_key"].as_str().unwrap().to_owned();
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        apply(&h, "shop", vec![change("label", text("b"))]).unwrap();
+        assert_eq!(
+            read(&h)["db_key"].as_str().unwrap(),
+            first,
+            "never regenerated"
+        );
+        let field = form(&h, "shop")
+            .fields
+            .into_iter()
+            .find(|f| f.name == "db_key")
+            .unwrap();
+        assert_eq!(field.current, SettingCurrent::SecretSet);
     }
 
     #[test]
