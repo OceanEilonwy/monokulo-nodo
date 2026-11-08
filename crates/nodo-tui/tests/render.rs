@@ -284,6 +284,10 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "↑↓ choose", "↵ continue", "r check again", "Esc back",
         ],
         ScreenId::Setup => &["Set up this device", "Device passphrase", "There is no default passphrase"],
+        ScreenId::Backup => &[
+            "Home › Backups", "Backups on this device", "nodo-1762560000.nodobak", "4.8 MB", "A backup holds",
+            "The device key, so encrypted storage can be restored", "Never chain data.", "n new backup", "r restore",
+        ],
     }
 }
 

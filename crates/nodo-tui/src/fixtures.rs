@@ -54,6 +54,12 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
     match id {
         ScreenId::Main => Screen::Home { selected: 0 },
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
+        ScreenId::Backup => {
+            let mut state = BackupState::new(true);
+            state.busy = false;
+            state.list = mock.backups().unwrap_or_default();
+            Screen::Backup(state)
+        }
         ScreenId::NoDrive => Screen::NoDrive { choice: 0 },
         ScreenId::Search => {
             let mut state = search_state(false);
@@ -67,7 +73,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let InstallGate::Review(data) = gate(mock, "community", "wallet-relay") else {
                 unreachable!("wallet-relay always reaches review");
             };
-            Screen::Review(ReviewState { data, confirm_focused: false, purpose: ReviewPurpose::Install })
+            Screen::Review(ReviewState::new(data, ReviewPurpose::Install))
         }
         ScreenId::Installing => {
             Screen::Installing(install_snapshot(&PackageId::new("official", "moneropay"), "2.7.0", 4))
@@ -126,7 +132,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         }
         ScreenId::UpdateFailed => {
             let mut scratch = MockBackend::new();
-            let report = scratch.apply_updates(&["moneropay".to_owned(), "system base".to_owned()]);
+            let report = scratch.apply_updates(&["moneropay".to_owned(), "system base".to_owned()], &[]);
             Screen::UpdateResults(UpdateResultsState { report, choice: 0 })
         }
         ScreenId::Logs => Screen::Logs(LogsState {

@@ -50,7 +50,15 @@ pub fn review(t: &Theme, state: &ReviewState) -> Page {
             )))],
         ));
     }
-    page.panel(Panel::new(title, items).grow()).footer(Item::Row(
+    page = page.panel(Panel::new(title, items).grow());
+    if let Some(input) = &state.passphrase {
+        let row = Item::Row(Line::from(t.b("Device passphrase")), Line::from(vec![t.n(input.display()), t.s(" ")]));
+        let note = Item::Text(Line::from(t.d("Its encrypted storage is created now and opens with this passphrase.")));
+        return page
+            .panel(Panel::accent("Encrypted storage", vec![row, note]))
+            .footer(Item::Text(hints(t, &[("↵", "install"), ("Esc", "back")])));
+    }
+    page.footer(Item::Row(
         button_line(t, "Cancel", risky, state.confirm_focused),
         hints(t, &[("←→", "choose"), ("↵", "confirm"), ("d", "file list"), ("Esc", "cancel")]),
     ))
