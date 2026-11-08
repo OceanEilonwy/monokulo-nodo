@@ -31,6 +31,7 @@ ssh_vm 'cat > /tmp/fw.sh' < /src/tests/firewall-traffic.sh
 ssh_vm 'sh /tmp/fw.sh </dev/null' || fail=1
 check "service restarts" 'sv -w 60 start cuprated | grep -q "^ok: run"'
 . /src/tests/web-checks.sh
+. /src/tests/snapshot-checks.sh
 if [ "${SKIP_REBOOT:-}" != 1 ]; then
 ssh_vm 'for n in $(seq 1 60); do grep -q ":46A1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'
 boot1=$(ssh_vm 'cat /proc/sys/kernel/random/boot_id')
