@@ -24,6 +24,7 @@ exec chpst -u _vault:_vault bwrap \
 	--dev /dev \
 	--tmpfs /tmp \
 	--setenv HOME /var/lib/apps/vault \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/opt/nodo/apps/vault/bin/vault-with-a-very-long-name --serve
+	/usr/bin/nodo-confine -- /opt/nodo/apps/vault/bin/vault-with-a-very-long-name --serve

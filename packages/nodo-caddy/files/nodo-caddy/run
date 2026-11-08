@@ -10,6 +10,8 @@ install -d -o _caddy -g _caddy -m 750 /run/nodo-web
 # shellcheck disable=SC3045
 ulimit -n 8192
 
+# Caddy needs Unix sockets for its admin endpoint and app upstreams. nodo-confine keeps it away
+# from abstract sockets outside its sandbox, and --disable-userns from nested user namespaces.
 exec chpst -u _caddy:_caddy bwrap \
 	--ro-bind /usr /usr \
 	--symlink usr/bin /bin \
@@ -28,6 +30,7 @@ exec chpst -u _caddy:_caddy bwrap \
 	--setenv HOME /var/lib/caddy \
 	--setenv XDG_DATA_HOME /var/lib/caddy/data \
 	--setenv XDG_CONFIG_HOME /var/lib/caddy/config \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/usr/bin/nodo-caddy run --config "$config"
+	/usr/bin/nodo-confine --unix -- /usr/bin/nodo-caddy run --config "$config"

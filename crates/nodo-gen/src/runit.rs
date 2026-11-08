@@ -3,6 +3,9 @@ use std::fmt::Write;
 use crate::shell::sh_quote;
 use crate::spec::{volume_mount, ServiceSpec};
 
+/// Runs inside every sandbox, last, before the service. Shipped by nodo-tools.
+pub const CONFINE: &str = "/usr/bin/nodo-confine";
+
 /// The runit `run` script. `packages/cuprated-service/files/cuprated/run` is the reference.
 pub fn run_script(spec: &ServiceSpec) -> String {
     let mut out = String::from(
@@ -70,10 +73,21 @@ pub fn run_script(spec: &ServiceSpec) -> String {
     line("--dev /dev");
     line("--tmpfs /tmp");
     line(&format!("--setenv HOME {}", sh_quote(&layout.data_dir)));
+    // A user namespace of its own with no room for another, so the service cannot create
+    // namespaces of its own to reach kernel code that unprivileged users normally cannot.
+    line("--unshare-user --disable-userns");
     line("--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try");
     line("--new-session --die-with-parent");
 
-    let mut command = sh_quote(&spec.program);
+    // The host network is shared, and with it the abstract Unix socket namespace, so
+    // nodo-confine keeps the service away from other services' abstract sockets. It then
+    // becomes the program, so the process keeps the program's name for control/t.
+    let mut command = String::from(CONFINE);
+    if spec.unix_sockets() {
+        command.push_str(" --unix");
+    }
+    command.push_str(" -- ");
+    command.push_str(&sh_quote(&spec.program));
     for arg in &spec.args {
         command.push(' ');
         command.push_str(&sh_quote(arg));

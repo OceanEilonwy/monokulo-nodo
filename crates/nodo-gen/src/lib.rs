@@ -11,7 +11,7 @@ mod spec;
 pub mod validate;
 
 pub use nft::nft_fragment;
-pub use runit::{control_t, log_run, run_script};
+pub use runit::{control_t, log_run, run_script, CONFINE};
 pub use shell::sh_quote;
 pub use spec::{
     mapper_name, secrets_dir, service_user, volume_directories, volume_mount, Directory, LanGrant,

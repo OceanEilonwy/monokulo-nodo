@@ -757,6 +757,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodo-confine"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nodo-feed"
 version = "0.1.0"
 dependencies = [
@@ -835,6 +842,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "ureq",
 ]
 
 [[package]]

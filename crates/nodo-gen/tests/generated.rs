@@ -877,7 +877,7 @@ fn the_resolved_command_line_runs_and_an_unresolved_one_is_refused() {
         .unwrap()
         .run;
     assert!(
-        run.ends_with("\t/opt/nodo/apps/shop/bin/app --port 18081\n"),
+        run.ends_with("\t/usr/bin/nodo-confine -- /opt/nodo/apps/shop/bin/app --port 18081\n"),
         "{run}"
     );
     let other_program = Resolution {
@@ -915,6 +915,33 @@ fn sandbox_always_links_lib64_and_detaches_stdin() {
         assert!(run.contains("--symlink usr/lib /lib64"), "{name}");
         assert!(run.contains("exec </dev/null\n"), "{name}");
     }
+}
+
+#[test]
+fn every_sandbox_has_a_user_namespace_with_no_room_for_another() {
+    for name in ["cuprated", "shop", "vault"] {
+        let run = golden_artifacts(name).run;
+        assert!(run.contains("\t--unshare-user --disable-userns \\\n"), "{name}: {run}");
+    }
+}
+
+/// The last line runs the program through nodo-confine, with `--unix` exactly when the service
+/// was granted a Unix socket of its own or of a dependency.
+#[test]
+fn unix_sockets_are_allowed_only_with_a_socket_grant() {
+    let last = |run: &str| run.lines().last().unwrap().trim().to_owned();
+    assert_eq!(
+        last(&golden_artifacts("vault").run),
+        "/usr/bin/nodo-confine -- /opt/nodo/apps/vault/bin/vault-with-a-very-long-name --serve"
+    );
+    assert!(last(&golden_artifacts("shop").run).starts_with("/usr/bin/nodo-confine --unix -- "));
+    let own = generate(&with_web("unix:/run/apps/shop/web.sock"), Profile::App, &ResolvedGrants::default()).unwrap();
+    assert!(last(&own.run).starts_with("/usr/bin/nodo-confine --unix -- "), "{}", own.run);
+    let dep = ResolvedGrants { socket_deps: vec!["cuprated".into()], ..Default::default() };
+    let client = generate(&app("client"), Profile::App, &dep).unwrap();
+    assert!(last(&client.run).starts_with("/usr/bin/nodo-confine --unix -- "), "{}", client.run);
+    let port = generate(&with_web("127.0.0.1:8080"), Profile::App, &ResolvedGrants::default()).unwrap();
+    assert!(last(&port.run).starts_with("/usr/bin/nodo-confine -- "), "{}", port.run);
 }
 
 #[test]

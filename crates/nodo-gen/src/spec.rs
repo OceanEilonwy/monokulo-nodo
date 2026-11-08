@@ -352,6 +352,12 @@ impl ServiceSpec {
         &self.layout
     }
 
+    /// Whether the service was granted a Unix socket: its own web socket or a dependency's.
+    /// Without one, its sandbox cannot create Unix sockets at all.
+    pub fn unix_sockets(&self) -> bool {
+        self.own_socket_dir.is_some() || !self.dep_socket_dirs.is_empty()
+    }
+
     /// An encrypted package's directories are inside its volume, so the helper creates them
     /// only while it is mounted.
     pub fn directories(&self) -> Vec<Directory> {

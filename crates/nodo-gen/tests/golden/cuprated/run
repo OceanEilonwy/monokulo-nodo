@@ -29,6 +29,7 @@ exec chpst -u _cuprated:_cuprated bwrap \
 	--dev /dev \
 	--tmpfs /tmp \
 	--setenv HOME /var/lib/cuprated \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/usr/bin/cuprated --config-file /etc/cuprated/Cuprated.toml --skip-config-warning
+	/usr/bin/nodo-confine -- /usr/bin/cuprated --config-file /etc/cuprated/Cuprated.toml --skip-config-warning

@@ -13,6 +13,7 @@ if [ -z "$address" ] || [ ! -s "$names" ]; then
 	exit 1
 fi
 
+# It needs no Unix socket, so nodo-confine refuses to create any, abstract ones included.
 exec chpst -u _nodomdns:_nodomdns bwrap \
 	--ro-bind /usr /usr \
 	--symlink usr/bin /bin \
@@ -22,6 +23,7 @@ exec chpst -u _nodomdns:_nodomdns bwrap \
 	--proc /proc \
 	--dev /dev \
 	--tmpfs /tmp \
+	--unshare-user --disable-userns \
 	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
 	--new-session --die-with-parent \
-	/usr/bin/nodo-mdns --address "$address" --names "$names"
+	/usr/bin/nodo-confine -- /usr/bin/nodo-mdns --address "$address" --names "$names"
