@@ -10,11 +10,19 @@
 //!   --state DIR    where the last applied snapshot is recorded. Default: /var/lib/nodo/update
 //!   --now SECONDS  treat the clock as synchronised at this time, for checking expiry. Without
 //!                  it, expiry is checked only when nodo-healthd reports a synchronised clock.
+//!   --expect-serial N   apply only this serial, the one the user was shown
+//!   --keep-running NAME a service not to restart even if its package changed, such as the
+//!                  helper that asked for this update; it is listed as deferred instead
+//!   --json         print one line of JSON (`nodo_update::client::Report`) instead of text
+//!
+//! A snapshot that moves one of this project's packages back is refused unless it withdraws
+//! the snapshot this device is recorded on; then those packages are moved back.
 //!
 //! Plain http:// is allowed for the same reason as for feeds: the manifest is signed, the indexes
 //! it names are pinned by hash, and every package is checked by xbps against them. Someone on
 //! the network can still withhold updates until the manifest expires.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -24,7 +32,10 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nodo_install::http::Fetcher;
-use nodo_update::client::{self, xbps_key_plist, xbps_repo_dir, Machine, Outcome, Source, XbpsKey};
+use nodo_update::client::{
+    self, xbps_key_plist, xbps_repo_dir, ApplyReport, AvailableSnapshot, CheckReport, Machine, Outcome, Report, Source,
+    XbpsKey,
+};
 use nodo_update::store::{load_toml, save_toml, DirStore};
 use nodo_update::trust::{Accepted, Pins};
 use nodo_update::TrustState;
@@ -54,6 +65,8 @@ impl Source for Http {
 
 struct Device {
     now: Option<u64>,
+    keep: Vec<String>,
+    deferred: RefCell<Vec<String>>,
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
@@ -148,6 +161,19 @@ impl Machine for Device {
         run("xbps-install", &args).map(drop)
     }
 
+    fn downgrade(&self, urls: &[String], packages: &[String]) -> Result<(), String> {
+        // -f moves exactly these packages to the versions the verified indexes offer.
+        let mut args = vec!["--ignore-conf-repos"];
+        for url in urls {
+            args.push("--repository");
+            args.push(url);
+        }
+        args.push("--yes");
+        args.push("--force");
+        args.extend(packages.iter().map(String::as_str));
+        run("xbps-install", &args).map(drop)
+    }
+
     fn restart_services(&self, packages: &[String]) -> Vec<String> {
         let mut restarted = Vec::new();
         for package in packages {
@@ -159,6 +185,10 @@ impl Machine for Device {
                     continue;
                 }
                 let running = run("sv", &["status", name]).is_ok_and(|s| s.starts_with("run:"));
+                if running && self.keep.iter().any(|k| k == name) {
+                    self.deferred.borrow_mut().push(name.to_owned());
+                    continue;
+                }
                 if running && run("sv", &["-w", "60", "restart", name]).is_ok() {
                     restarted.push(name.to_owned());
                 }
@@ -174,20 +204,45 @@ struct Options {
     pins: PathBuf,
     state: PathBuf,
     now: Option<u64>,
+    expect: Option<u64>,
+    keep: Vec<String>,
+    json: bool,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
-    let (command, mut rest) = args.split_first().ok_or("usage: nodo-sysupdate check|apply [--server URL] [--pins FILE] [--state DIR] [--now SECONDS]")?;
+    let (command, mut rest) = args.split_first().ok_or(
+        "usage: nodo-sysupdate check|apply [--server URL] [--pins FILE] [--state DIR] [--now SECONDS] \
+         [--expect-serial N] [--keep-running NAME] [--json]",
+    )?;
     if command != "check" && command != "apply" {
         return Err(format!("unknown command {command}"));
     }
-    let mut options = Options { command: command.clone(), server: None, pins: PINS.into(), state: STATE_DIR.into(), now: None };
-    while let [flag, value, tail @ ..] = rest {
+    let mut options = Options {
+        command: command.clone(),
+        server: None,
+        pins: PINS.into(),
+        state: STATE_DIR.into(),
+        now: None,
+        expect: None,
+        keep: Vec::new(),
+        json: false,
+    };
+    loop {
+        if let [flag, tail @ ..] = rest {
+            if flag == "--json" {
+                options.json = true;
+                rest = tail;
+                continue;
+            }
+        }
+        let [flag, value, tail @ ..] = rest else { break };
         match flag.as_str() {
             "--server" => options.server = Some(value.clone()),
             "--pins" => options.pins = value.into(),
             "--state" => options.state = value.into(),
             "--now" => options.now = Some(value.parse().map_err(|_| "--now takes seconds since 1970")?),
+            "--expect-serial" => options.expect = Some(value.parse().map_err(|_| "--expect-serial takes a number")?),
+            "--keep-running" => options.keep.push(value.clone()),
             other => return Err(format!("unknown option {other}")),
         }
         rest = tail;
@@ -232,51 +287,157 @@ fn trust_state(options: &Options, store: &DirStore) -> Result<TrustState, String
     Ok(state)
 }
 
-fn main_inner(args: &[String]) -> Result<(), String> {
-    let options = parse(args)?;
-    let base = server_address(&options)?;
+/// Does what the options ask and says what happened.
+fn execute(options: &Options) -> Result<Report, String> {
+    let base = server_address(options)?;
     let store = DirStore::new(&options.state);
-    let mut state = trust_state(&options, &store)?;
+    let mut state = trust_state(options, &store)?;
     let source = Http { base, fetcher: Fetcher::new().named("update") };
-    let device = Device { now: options.now };
+    let device = Device { now: options.now, keep: options.keep.clone(), deferred: RefCell::new(Vec::new()) };
     if options.command == "check" {
         let (accepted, _, _) = client::check(&source, &device, &state).map_err(|e| e.to_string())?;
-        match accepted {
-            Accepted::Unchanged => println!("up to date: snapshot {} (serial {})", state.snapshot.as_deref().unwrap_or("?"), state.serial),
-            Accepted::New(m) => {
-                let restart = if m.needs_restart { ", needs a restart" } else { "" };
-                println!("snapshot {} (serial {}) is available{restart}", m.snapshot, m.serial);
+        return Ok(Report::Check(CheckReport {
+            current_serial: state.serial,
+            current_snapshot: state.snapshot.clone(),
+            available: match accepted {
+                Accepted::Unchanged => None,
+                Accepted::New(m) => Some(AvailableSnapshot {
+                    serial: m.serial,
+                    withdraws_current: m.withdraws_snapshot(state.snapshot.as_deref()),
+                    snapshot: m.snapshot,
+                    needs_restart: m.needs_restart,
+                }),
+            },
+        }));
+    }
+    let outcome = client::apply_expecting(&source, &device, &mut state, options.expect).map_err(|e| e.to_string())?;
+    Ok(Report::Apply(match outcome {
+        Outcome::UpToDate { serial } => ApplyReport {
+            applied: false,
+            serial,
+            snapshot: state.snapshot.clone(),
+            changed: Vec::new(),
+            restarted: Vec::new(),
+            deferred: Vec::new(),
+            needs_restart: false,
+            withdrew: None,
+        },
+        Outcome::Applied { serial, snapshot, changed, restarted, needs_restart, withdrew } => {
+            save_toml(&store, STATE_FILE, &state).map_err(|e| format!("could not record the update: {e}"))?;
+            ApplyReport {
+                applied: true,
+                serial,
+                snapshot: Some(snapshot),
+                changed,
+                restarted,
+                deferred: device.deferred.take(),
+                needs_restart,
+                withdrew,
             }
         }
-        return Ok(());
-    }
-    let outcome = client::apply(&source, &device, &mut state).map_err(|e| e.to_string())?;
-    match outcome {
-        Outcome::UpToDate { serial } => println!("up to date: serial {serial}"),
-        Outcome::Applied { serial, snapshot, changed, restarted, needs_restart } => {
-            save_toml(&store, STATE_FILE, &state).map_err(|e| format!("could not record the update: {e}"))?;
-            println!("applied snapshot {snapshot} (serial {serial})");
-            for line in &changed {
+    }))
+}
+
+fn print_text(report: &Report) {
+    match report {
+        Report::Check(c) => match &c.available {
+            None => println!("up to date: snapshot {} (serial {})", c.current_snapshot.as_deref().unwrap_or("?"), c.current_serial),
+            Some(m) => {
+                let restart = if m.needs_restart { ", needs a restart" } else { "" };
+                let withdraws = if m.withdraws_current { ", withdraws the snapshot this device is on" } else { "" };
+                println!("snapshot {} (serial {}) is available{restart}{withdraws}", m.snapshot, m.serial);
+            }
+        },
+        Report::Apply(a) if !a.applied => println!("up to date: serial {}", a.serial),
+        Report::Apply(a) => {
+            println!("applied snapshot {} (serial {})", a.snapshot.as_deref().unwrap_or("?"), a.serial);
+            if let Some(withdrawn) = &a.withdrew {
+                println!("  left the withdrawn snapshot {withdrawn}");
+            }
+            for line in &a.changed {
                 println!("  updated {line}");
             }
-            for name in &restarted {
+            for name in &a.restarted {
                 println!("  restarted {name}");
             }
-            if needs_restart {
+            for name in &a.deferred {
+                println!("  not restarted yet: {name}");
+            }
+            if a.needs_restart {
                 println!("restart the device to finish this update");
             }
         }
+        Report::Error(e) => eprintln!("nodo-sysupdate: {e}"),
     }
-    Ok(())
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match main_inner(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+    let options = match parse(&args) {
+        Ok(options) => options,
         Err(e) => {
             eprintln!("nodo-sysupdate: {e}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+    let report = execute(&options).unwrap_or_else(Report::Error);
+    let failed = matches!(report, Report::Error(_));
+    if options.json {
+        match serde_json::to_string(&report) {
+            Ok(line) => println!("{line}"),
+            Err(e) => eprintln!("nodo-sysupdate: {e}"),
+        }
+        if let Report::Error(e) = &report {
+            eprintln!("nodo-sysupdate: {e}");
+        }
+    } else {
+        print_text(&report);
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(text: &str) -> Vec<String> {
+        text.split(' ').map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn options_for_the_helper() {
+        let o = parse(&args("apply --json --expect-serial 7 --keep-running nodo-helper --server http://u.test")).unwrap();
+        assert!(o.json);
+        assert_eq!(o.expect, Some(7));
+        assert_eq!(o.keep, ["nodo-helper"]);
+        assert_eq!(o.server.as_deref(), Some("http://u.test"));
+        let o = parse(&args("check --server http://u.test --json")).unwrap();
+        assert!(o.json && o.command == "check");
+        assert!(parse(&args("apply --expect-serial x")).is_err());
+        assert!(parse(&args("apply --server")).is_err());
+        assert!(parse(&args("remove")).is_err());
+    }
+
+    #[test]
+    fn reports_are_one_line_of_json() {
+        let report = Report::Apply(ApplyReport {
+            applied: true,
+            serial: 6,
+            snapshot: Some("s6".into()),
+            changed: vec!["demo: 1.2_1 -> 1.1_1".into()],
+            restarted: vec![],
+            deferred: vec!["nodo-helper".into()],
+            needs_restart: false,
+            withdrew: Some("s5".into()),
+        });
+        let line = serde_json::to_string(&report).unwrap();
+        assert!(!line.contains('\n'));
+        assert_eq!(serde_json::from_str::<Report>(&line).unwrap(), report);
+        let error = serde_json::to_string(&Report::Error("not signed".into())).unwrap();
+        assert_eq!(error, r#"{"error":"not signed"}"#);
     }
 }

@@ -3,8 +3,9 @@
 //! nodo-snapshot keygen <secret-key-file>
 //! nodo-snapshot pubkey <secret-key-file>
 //! nodo-snapshot manifest <channel> <serial> <snapshot> <valid-days> <needs-restart:yes|no> \
-//!     <arch>[/<repo-name>]=<repo-path>=<repodata-file>... [pkg:<name>=<version>...]
-//!     (the repository name is `void` unless given, and `nodo` for this project's packages)
+//!     <arch>[/<repo-name>]=<repo-path>=<repodata-file>... [pkg:<name>=<version>...] [withdraws:<snapshot>...]
+//!     (the repository name is `void` unless given, and `nodo` for this project's packages;
+//!     withdraws names a pulled snapshot whose devices may move packages back to this one)
 //! nodo-snapshot sign manifest|keys <document> <secret-key-file>
 //! nodo-snapshot verify <manifest> <pins.toml> <arch>
 
@@ -60,7 +61,12 @@ fn manifest(args: &[String]) -> Result<(), String> {
     };
     let mut repo = Vec::new();
     let mut packages = Vec::new();
+    let mut withdraws = Vec::new();
     for arg in rest {
+        if let Some(name) = arg.strip_prefix("withdraws:") {
+            withdraws.push(name.to_owned());
+            continue;
+        }
         if let Some(pin) = arg.strip_prefix("pkg:") {
             let (name, version) = pin.split_once('=').ok_or("pkg:<name>=<version>")?;
             packages.push(PackagePin { name: name.into(), version: version.into() });
@@ -90,6 +96,7 @@ fn manifest(args: &[String]) -> Result<(), String> {
         needs_restart,
         repo,
         packages,
+        withdraws,
     };
     m.validate().map_err(|e| e.to_string())?;
     print!("{}", m.to_toml());

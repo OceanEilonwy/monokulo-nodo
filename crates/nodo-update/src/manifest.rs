@@ -22,6 +22,8 @@ const MAX_SIGNATURES: usize = 16;
 const MAX_KEYS: usize = 16;
 const MAX_NAME_LEN: usize = 64;
 const MAX_PATH_LEN: usize = 200;
+/// How many earlier snapshots one manifest may withdraw.
+const MAX_WITHDRAWN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ManifestError {
@@ -248,6 +250,12 @@ pub struct SnapshotManifest {
     pub repo: Vec<RepoEntry>,
     #[serde(default)]
     pub packages: Vec<PackagePin>,
+    /// Snapshots the publisher pulled, by name. A device recorded on one of them may move
+    /// installed packages back to the versions this snapshot offers; any other device refuses a
+    /// snapshot that would move a package back. Left out of manifests that withdraw nothing, so
+    /// their bytes are what they always were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withdraws: Vec<String>,
 }
 
 fn name_ok(text: &str) -> bool {
@@ -306,7 +314,20 @@ impl SnapshotManifest {
                 return Err(invalid(format!("bad package pin {:?}", package.name)));
             }
         }
+        let withdrawn: BTreeSet<&str> = self.withdraws.iter().map(String::as_str).collect();
+        if self.withdraws.len() > MAX_WITHDRAWN
+            || withdrawn.len() != self.withdraws.len()
+            || !self.withdraws.iter().all(|name| name_ok(name))
+            || withdrawn.contains(self.snapshot.as_str())
+        {
+            return Err(invalid("withdraws lists other snapshots by plain name, each once"));
+        }
         Ok(())
+    }
+
+    /// Whether this manifest withdraws the snapshot a device is on.
+    pub fn withdraws_snapshot(&self, current: Option<&str>) -> bool {
+        current.is_some_and(|name| self.withdraws.iter().any(|w| w == name))
     }
 
     /// Every repository of one architecture, Void's first.
@@ -400,6 +421,7 @@ mod tests {
                 repodata_sha256: hex::encode(Sha256::digest(b"index")),
             }],
             packages: vec![PackagePin { name: "monokulo-base".into(), version: "0.1.0_2".into() }],
+            withdraws: vec![],
         }
     }
 
@@ -477,6 +499,9 @@ mod tests {
             Box::new(|m| m.expires = m.published),
             Box::new(|m| m.channel = "st able".into()),
             Box::new(|m| m.packages[0].version = "1.0-1".into()),
+            Box::new(|m| m.withdraws = vec!["../x".into()]),
+            Box::new(|m| m.withdraws = vec![m.snapshot.clone()]),
+            Box::new(|m| m.withdraws = vec!["2026.11".into(), "2026.11".into()]),
         ];
         assert!(sample().validate().is_ok(), "control: the unmodified sample is valid");
         for (i, case) in cases.iter().enumerate() {
@@ -506,6 +531,18 @@ mod tests {
         let body = sample().to_toml().replace("name = \"void\"\n", "");
         assert!(!body.contains("name = \"void\""), "{body}");
         assert_eq!(SnapshotManifest::parse(body.as_bytes()).unwrap().repo[0].name, "void");
+    }
+
+    #[test]
+    fn withdrawals_are_signed_fields_that_older_manifests_leave_out() {
+        assert!(!sample().to_toml().contains("withdraws"), "a manifest withdrawing nothing keeps its old form");
+        let mut m = sample();
+        m.withdraws = vec!["2026.13".into()];
+        let parsed = SnapshotManifest::parse(m.to_toml().as_bytes()).unwrap();
+        assert_eq!(parsed.withdraws, ["2026.13"]);
+        assert!(parsed.withdraws_snapshot(Some("2026.13")));
+        assert!(!parsed.withdraws_snapshot(Some("2026.11")));
+        assert!(!parsed.withdraws_snapshot(None), "a device that does not know its snapshot is never told it was withdrawn");
     }
 
     #[test]

@@ -40,6 +40,7 @@ fn manifest(serial: u64) -> SnapshotManifest {
             RepoEntry { arch: "x86_64".into(), name: "nodo".into(), path: format!("snapshots/s{serial}/nodo/x86_64"), repodata_sha256: digest },
         ],
         packages: vec![PackagePin { name: "demo".into(), version: "1.1_1".into() }],
+        withdraws: vec![],
     }
 }
 
@@ -141,6 +142,14 @@ impl Machine for Device {
         *self.installed.borrow_mut() = self.after_update.clone();
         Ok(())
     }
+    fn downgrade(&self, urls: &[String], packages: &[String]) -> Result<(), String> {
+        self.log.borrow_mut().push(format!("downgrade {} from {}", packages.join(" "), urls.join(" ")));
+        let mut installed = self.installed.borrow_mut();
+        for name in packages {
+            installed.insert(name.clone(), "1.1_1".into());
+        }
+        Ok(())
+    }
     fn restart_services(&self, packages: &[String]) -> Vec<String> {
         self.log.borrow_mut().push(format!("restart {}", packages.join(" ")));
         packages.to_vec()
@@ -162,6 +171,7 @@ fn a_newer_signed_snapshot_is_applied_and_only_then_recorded() {
             changed: vec!["demo: 1.0_1 -> 1.1_1".into()],
             restarted: vec!["demo".into()],
             needs_restart: false,
+            withdrew: None,
         }
     );
     assert_eq!(
@@ -341,4 +351,105 @@ fn key_files_look_like_the_ones_xbps_writes() {
     assert!(plist.contains("\t<integer>4096</integer>\n"));
     assert!(plist.contains("<string>Void &lt;Linux&gt; &amp; co</string>"));
     assert!(plist.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist"));
+}
+
+/// A device on snapshot s5, whose demo 1.2_1 the publisher pulled. The fixture index offers 1.1_1.
+fn on_pulled_snapshot() -> (Device, TrustState) {
+    let mut st = state();
+    st.serial = 5;
+    st.snapshot = Some("s5".into());
+    st.manifest_sha256 = Some("00".repeat(32));
+    let installed: BTreeMap<String, String> = [("demo".to_owned(), "1.2_1".to_owned()), ("base".to_owned(), "1_1".to_owned())].into();
+    let device = Device { installed: RefCell::new(installed.clone()), after_update: installed, now: 1500, ..Device::default() };
+    (device, st)
+}
+
+#[test]
+fn a_snapshot_that_would_move_a_package_back_is_refused_before_xbps_runs() {
+    let mut server = Server::default();
+    server.publish(&manifest(6), Some(&key(1)));
+    let (device, mut st) = on_pulled_snapshot();
+    let before = st.clone();
+    let e = apply(&server, &device, &mut st).unwrap_err();
+    assert!(
+        matches!(&e, UpdateError::Downgrade { package, installed, offered } if package == "demo" && installed == "1.2_1" && offered == "1.1_1"),
+        "{e}"
+    );
+    assert_eq!(st, before);
+    assert!(device.log().is_empty(), "nothing was handed to xbps: {:?}", device.log());
+    // Withdrawing some other snapshot does not cover this device.
+    let mut m = manifest(6);
+    m.withdraws = vec!["s4".into()];
+    server.publish(&m, Some(&key(1)));
+    assert!(matches!(apply(&server, &device, &mut st), Err(UpdateError::Downgrade { .. })));
+    // Nor does a device that lost its record, which cannot say which snapshot it is on.
+    m.withdraws = vec!["s5".into()];
+    server.publish(&m, Some(&key(1)));
+    let mut lost = state();
+    assert!(matches!(apply(&server, &device, &mut lost), Err(UpdateError::Downgrade { .. })));
+    assert!(device.log().is_empty());
+}
+
+#[test]
+fn a_withdrawal_moves_the_pulled_packages_back_and_records_the_new_serial() {
+    let mut server = Server::default();
+    let mut m = manifest(6);
+    m.withdraws = vec!["s5".into()];
+    server.publish(&m, Some(&key(1)));
+    let (device, mut st) = on_pulled_snapshot();
+    let outcome = apply(&server, &device, &mut st).unwrap();
+    assert_eq!(
+        outcome,
+        Outcome::Applied {
+            serial: 6,
+            snapshot: "s6".into(),
+            changed: vec!["demo: 1.2_1 -> 1.1_1".into()],
+            restarted: vec!["demo".into()],
+            needs_restart: false,
+            withdrew: Some("s5".into()),
+        }
+    );
+    let log = device.log();
+    let update = log.iter().position(|l| l.starts_with("update ")).unwrap();
+    let back = log.iter().position(|l| l.starts_with("downgrade ")).unwrap();
+    assert!(update < back, "{log:?}");
+    assert_eq!(
+        log[back],
+        "downgrade demo from https://updates.example/snapshots/s6/current https://updates.example/snapshots/s6/nodo/x86_64"
+    );
+    assert_eq!((st.serial, st.snapshot.as_deref()), (6, Some("s6")));
+    // The serial rules are untouched: the withdrawal itself cannot be replayed, nor anything older.
+    assert_eq!(apply(&server, &Device::new(), &mut st).unwrap(), Outcome::UpToDate { serial: 6 });
+    let mut old = manifest(5);
+    old.withdraws = vec!["s6".into()];
+    server.publish(&old, Some(&key(1)));
+    assert!(matches!(apply(&server, &Device::new(), &mut st), Err(UpdateError::Refused(TrustError::Downgrade { .. }))));
+}
+
+#[test]
+fn a_withdrawal_below_the_image_floor_is_refused_like_any_old_manifest() {
+    let mut server = Server::default();
+    let mut m = manifest(3);
+    m.withdraws = vec!["s5".into()];
+    server.publish(&m, Some(&key(1)));
+    let (device, _) = on_pulled_snapshot();
+    let mut st = state();
+    st.snapshot = Some("s5".into());
+    assert!(matches!(apply(&server, &device, &mut st), Err(UpdateError::Refused(TrustError::Downgrade { .. }))));
+    assert!(device.log().is_empty());
+}
+
+#[test]
+fn applying_only_the_serial_the_user_saw() {
+    let mut server = Server::default();
+    server.publish(&manifest(4), Some(&key(1)));
+    let device = Device::new();
+    let mut st = state();
+    let e = apply_expecting(&server, &device, &mut st, Some(5)).unwrap_err();
+    assert!(matches!(e, UpdateError::UnexpectedSerial { expected: 5, offered: 4 }), "{e}");
+    assert!(device.log().is_empty());
+    assert!(matches!(apply_expecting(&server, &device, &mut st, Some(4)).unwrap(), Outcome::Applied { serial: 4, .. }));
+    // Once applied, the same serial is simply up to date; another one is not what the user saw.
+    assert_eq!(apply_expecting(&server, &Device::new(), &mut st, Some(4)).unwrap(), Outcome::UpToDate { serial: 4 });
+    assert!(matches!(apply_expecting(&server, &Device::new(), &mut st, Some(7)), Err(UpdateError::UnexpectedSerial { .. })));
 }
