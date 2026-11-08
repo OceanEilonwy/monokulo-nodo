@@ -1,0 +1,5 @@
+monokulo-nodo on \l
+
+  IPv4 address: \4
+  SSH: ssh root@\4
+
