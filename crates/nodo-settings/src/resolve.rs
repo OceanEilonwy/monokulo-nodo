@@ -262,8 +262,9 @@ impl Installed {
         let mut trace = Trace::default();
         let mut values = BTreeMap::new();
 
+        // A value for a setting this version retired is ignored. Anything else unknown is refused.
         for setting in package.values.keys() {
-            if package.schema.setting(setting).is_none() {
+            if package.schema.setting(setting).is_none() && !package.schema.is_retired(setting) {
                 errors.push(ResolveError::UnknownSetting { package: consumer.to_string(), setting: setting.clone() });
             }
         }
@@ -815,7 +816,7 @@ mod tests {
         .unwrap();
         let mut package = InstalledPackage {
             manifest,
-            schema: Schema { api_version: 1, settings },
+            schema: Schema { api_version: 1, settings, retired: Vec::new() },
             values: BTreeMap::new(),
         };
         package.manifest.provides = provides.iter().map(|s| s.to_string()).collect();
@@ -993,6 +994,21 @@ mod tests {
         let mut shop = package("shop", &[], vec![]);
         shop.values.insert("ghost".into(), SettingValue::Literal(Value::Int(1)));
         assert!(matches!(only_error(&world(vec![shop]), "shop"), ResolveError::UnknownSetting { .. }));
+    }
+
+    #[test]
+    fn values_for_retired_settings_are_ignored_and_others_still_refused() {
+        let mut shop = package("shop", &[], vec![int_default(setting("port", INT), 1)]);
+        shop.schema.retired = vec!["old_switch".into()];
+        shop.values.insert("old_switch".into(), SettingValue::Literal(Value::Bool(true)));
+        let resolved = world(vec![shop.clone()]).resolve("shop").unwrap();
+        assert!(!resolved.values.contains_key("old_switch"));
+        assert_eq!(resolved.values["port"], Value::Int(1));
+        shop.values.insert("ghost".into(), SettingValue::Literal(Value::Int(1)));
+        assert_eq!(
+            only_error(&world(vec![shop]), "shop"),
+            ResolveError::UnknownSetting { package: "shop".into(), setting: "ghost".into() }
+        );
     }
 
     #[test]

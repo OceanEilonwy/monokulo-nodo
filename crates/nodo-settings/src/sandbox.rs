@@ -422,6 +422,40 @@ fn read_choices(issues: &mut Issues, field: &str, fields: &BTreeMap<String, LuaV
     choices
 }
 
+/// Names of settings an earlier version declared and this one removed. Each must be a valid
+/// setting name that this file no longer declares, so a retirement can never hide a live setting.
+fn read_retired(issues: &mut Issues, fields: &BTreeMap<String, LuaValue>, declared: &BTreeSet<&str>) -> Vec<String> {
+    let list = match fields.get("retired") {
+        None => return Vec::new(),
+        Some(LuaValue::Table(list)) => list,
+        Some(other) => {
+            issues.add("retired", format!("must be a list of setting names, not {}", other.type_name()));
+            return Vec::new();
+        }
+    };
+    let count = list.raw_len();
+    if count > MAX_SETTINGS {
+        issues.add("retired", format!("has more than {MAX_SETTINGS} entries"));
+        return Vec::new();
+    }
+    let mut retired = Vec::new();
+    for index in 1..=count {
+        let value = list.raw_get::<LuaValue>(index).unwrap_or(LuaValue::Nil);
+        let entry = format!("retired[{index}]");
+        let Some(name) = read_text(issues, &entry, Some(&value)) else { continue };
+        if !is_valid_setting_name(&name) {
+            issues.add(&entry, "is not a valid setting name");
+        } else if declared.contains(name.as_str()) {
+            issues.add(&entry, format!("names '{name}', which is still declared"));
+        } else if retired.contains(&name) {
+            issues.add(&entry, "is a duplicate");
+        } else {
+            retired.push(name);
+        }
+    }
+    retired
+}
+
 fn read_endpoint(issues: &mut Issues, field: &str, ty: &SettingType, value: Option<&LuaValue>) -> Option<Endpoint> {
     let name = read_text(issues, field, value)?;
     let endpoint = match name.as_str() {
@@ -573,7 +607,7 @@ fn read_schema(root: &Table) -> Result<Schema, SettingsError> {
     }
 
     let mut issues = Issues(Vec::new());
-    let fields = read_fields(&mut issues, "file", root, &["api_version", "settings"]);
+    let fields = read_fields(&mut issues, "file", root, &["api_version", "settings", "retired"]);
     let mut settings = Vec::new();
     match fields.get("settings") {
         None => {}
@@ -619,10 +653,12 @@ fn read_schema(root: &Table) -> Result<Schema, SettingsError> {
         }
     }
 
+    let retired = read_retired(&mut issues, &fields, &names);
+
     if !issues.0.is_empty() {
         return Err(SettingsError::Invalid(issues.0));
     }
-    Ok(Schema { api_version: SETTINGS_API_VERSION, settings })
+    Ok(Schema { api_version: SETTINGS_API_VERSION, settings, retired })
 }
 
 /// A settings file that has been run and checked.
@@ -816,6 +852,34 @@ mod tests {
         assert_eq!(port.endpoint, Some(Endpoint::Tcp));
         assert!(schema.setting("key").unwrap().required);
         assert_eq!(schema.setting("mode").unwrap().default, Some(DefaultValue::Text("b".into())));
+    }
+
+    #[test]
+    fn retired_settings_are_listed_by_name() {
+        let schema = load(
+            r#"return { api_version = 1, retired = { "old_switch", "older" },
+                settings = { { name = "port", type = "int", label = "Port", default = 1 } } }"#,
+        )
+        .unwrap()
+        .schema()
+        .clone();
+        assert_eq!(schema.retired, ["old_switch", "older"]);
+        assert!(schema.is_retired("old_switch") && !schema.is_retired("port") && !schema.is_retired("ghost"));
+    }
+
+    #[test]
+    fn a_retired_name_must_be_a_removed_setting() {
+        let source = |retired: &str| {
+            format!(
+                "return {{ api_version = 1, retired = {retired}, settings = {{ \
+                 {{ name = \"port\", type = \"int\", label = \"Port\", default = 1 }} }} }}"
+            )
+        };
+        assert!(invalid(&source(r#"{ "port" }"#))[0].contains("still declared"));
+        assert!(invalid(&source(r#"{ "Bad Name" }"#))[0].contains("not a valid setting name"));
+        assert!(invalid(&source(r#"{ "a", "a" }"#))[0].contains("duplicate"));
+        assert!(invalid(&source(r#""a""#))[0].contains("must be a list"));
+        assert!(invalid(&source("{ 1 }"))[0].contains("retired[1]"));
     }
 
     #[test]

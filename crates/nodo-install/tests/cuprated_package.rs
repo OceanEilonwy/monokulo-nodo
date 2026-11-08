@@ -75,6 +75,8 @@ fn no_setting_can_move_rpc_onto_the_network() {
     let settings = load_settings(&read("nodo-tools/files/cuprated/settings.lua"), Limits::default()).unwrap();
     let schema = settings.schema();
     assert!(schema.setting("restricted_rpc").is_none(), "the old LAN RPC switch is gone");
+    // Retired, so a device that stored a value for it before still resolves after the update.
+    assert!(schema.is_retired("restricted_rpc"));
     let template = read("nodo-tools/files/cuprated/Cuprated.toml.in");
     let table: toml::Table = toml::from_str(&template).unwrap();
     for server in ["restricted", "unrestricted"] {
