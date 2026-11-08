@@ -778,7 +778,14 @@ check "a healthy update installs automatically" sh -c '
 	ctl check-updates >/dev/null && ctl auto-run | tee /tmp/e2e.ok; grep -q Updated /tmp/e2e.ok &&
 	[ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.3_1 ]'
 check "the updated app runs" running_for e2e-pay 3
-check "only the current version's copy is kept" sh -c '[ "$(ls /var/lib/nodo/packages/e2e-pay)" = e2e-pay-1.3_1.x86_64.xbps ]'
+# The current version and the one before it, which a rollback by hand puts back. Never the failed one.
+check "the current and the previous version's copies are kept, nothing else" sh -c '
+	[ "$(ls /var/lib/nodo/packages/e2e-pay | tr "\n" " ")" = "e2e-pay-1.0_1.x86_64.xbps e2e-pay-1.3_1.x86_64.xbps " ]'
+check "the previous version is offered as a rollback" sh -c '
+	ctl rollbacks | tee /tmp/e2e.rbl; grep -q "current: \"1.3_1\"" /tmp/e2e.rbl && grep -q "previous: \"1.0_1\"" /tmp/e2e.rbl &&
+	grep -q "blocked: None" /tmp/e2e.rbl'
+check "a rollback naming another version is refused and changes nothing" sh -c '
+	ctl rollback e2e-pay 1.2_1 2>&1 | grep -q NeedsConfirmation && [ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.3_1 ]'
 check "the auto-update timer service asks the helper" sh -c '
 	[ -L /var/service/nodo-autoupdate ] || ln -s /etc/sv/nodo-autoupdate /var/service/
 	for _ in $(seq 1 20); do grep -q UpdateResults /var/log/nodo-autoupdate/current 2>/dev/null && exit 0; sleep 1; done; exit 1'

@@ -123,6 +123,12 @@ pub(super) fn restore_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Restore(state) = &mut app.screen else {
         return Vec::new();
     };
+    // Leaving the drive list is always safe, even while it is being read again. A late answer
+    // then finds another screen and is dropped.
+    if state.busy && key.code == KeyCode::Esc && state.step == RestoreStep::Drives {
+        pop(app);
+        return Vec::new();
+    }
     if state.busy {
         return Vec::new();
     }
