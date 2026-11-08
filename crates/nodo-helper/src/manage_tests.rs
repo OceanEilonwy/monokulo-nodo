@@ -627,6 +627,108 @@ fn a_failed_health_check_rolls_back_and_holds_that_version() {
     assert!(s.attention.is_empty() && !s.candidates[0].info.held);
 }
 
+mod manual_rollback {
+    use super::*;
+
+    fn update_to(h: &Helper<FakeSystem>, version: &str) {
+        status(h);
+        let updates = vec![UpdateApproval { package: "demo".into(), to: version.into(), approval: None }];
+        let Ok(Response::UpdateResults(results)) = call(h, Request::ApplyUpdates { updates }) else { panic!() };
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+    }
+
+    fn rollbacks(h: &Helper<FakeSystem>) -> Vec<nodo_api::RollbackOption> {
+        match call(h, Request::ListRollbacks) {
+            Ok(Response::Rollbacks(list)) => list,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn roll_back(h: &Helper<FakeSystem>, to: &str) -> Result<Response, ApiError> {
+        call(h, Request::RollbackPackage { package: "demo".into(), to: to.into() })
+    }
+
+    const KEPT_1_0: &str = "/s/packages/demo/demo-1.0_1.x86_64.xbps";
+
+    #[test]
+    fn nothing_to_roll_back_before_an_update() {
+        let (h, _) = installed();
+        assert!(rollbacks(&h).is_empty());
+        assert!(matches!(roll_back(&h, "1.0_1"), Err(ApiError::Failed(_))));
+    }
+
+    #[test]
+    fn an_update_keeps_the_previous_version_which_can_be_put_back_and_held() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        assert!(packages.kept_exists(Path::new(KEPT_1_0)), "the previous version is kept");
+        let list = rollbacks(&h);
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0].current.as_str(), list[0].previous.as_str()), ("1.1_1", "1.0_1"));
+        assert_eq!(list[0].blocked, None);
+
+        assert!(matches!(roll_back(&h, "0.9_1"), Err(ApiError::NeedsConfirmation(_))));
+        assert_eq!(packages.installed().as_deref(), Some("1.1_1"), "a wrong version changes nothing");
+
+        let Ok(Response::UpdateResults(results)) = roll_back(&h, "1.0_1") else { panic!() };
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        let log = packages.log();
+        assert!(log.iter().any(|l| l == "reinstall demo-1.0_1"), "{log:?}");
+        assert!(log.iter().any(|l| l == "copy /var/lib/apps/demo /s/rollback/demo"), "{log:?}");
+        assert!(rollbacks(&h).is_empty(), "one generation only");
+        let s = status(&h);
+        assert!(s.candidates[0].info.held, "1.1 is not reinstalled behind the user's back: {s:?}");
+        assert!(!packages.kept_exists(Path::new("/s/packages/demo/demo-1.1_1.x86_64.xbps")));
+    }
+
+    #[test]
+    fn a_failed_rollback_brings_the_newer_version_back_and_can_be_tried_again() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        h.sys.script_probes(&[false, false, false, false, false]);
+        let Ok(Response::UpdateResults(results)) = roll_back(&h, "1.0_1") else { panic!() };
+        assert!(matches!(&results[0].outcome, UpdateOutcome::RolledBack { recovered: true, .. }), "{results:?}");
+        assert_eq!(packages.installed().as_deref(), Some("1.1_1"));
+        assert!(packages.log().iter().any(|l| l == "reinstall demo-1.1_1"));
+        assert_eq!(rollbacks(&h).len(), 1, "the older version is still offered");
+        assert!(packages.kept_exists(Path::new(KEPT_1_0)));
+    }
+
+    #[test]
+    fn a_second_update_drops_the_oldest_copy() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        packages.publish("1.2_1", &manifest(""));
+        update_to(&h, "1.2_1");
+        assert!(!packages.kept_exists(Path::new(KEPT_1_0)));
+        let list = rollbacks(&h);
+        assert_eq!(list[0].previous, "1.1_1");
+    }
+
+    #[test]
+    fn rollbacks_wait_while_the_disk_is_low() {
+        let (h, packages) = installed();
+        packages.publish("1.1_1", &manifest(""));
+        update_to(&h, "1.1_1");
+        healthy_report(&h.sys, true);
+        assert!(rollbacks(&h)[0].blocked.as_deref().unwrap().contains("low on space"));
+        assert!(matches!(roll_back(&h, "1.0_1"), Err(ApiError::Failed(_))));
+        assert_eq!(packages.installed().as_deref(), Some("1.1_1"));
+    }
+
+    #[test]
+    fn other_users_cannot_roll_back() {
+        let (h, _) = installed();
+        let request = Request::RollbackPackage { package: "demo".into(), to: "1.0_1".into() };
+        assert_eq!(h.handle(1001, request), Err(ApiError::Denied));
+        assert_eq!(h.handle(1001, Request::ListRollbacks), Err(ApiError::Denied));
+    }
+}
+
 mod encrypted_updates {
     use super::*;
     use crate::system::System;
@@ -685,6 +787,31 @@ mod encrypted_updates {
         let log = packages.log();
         assert!(log.iter().any(|l| l == "copy /run/nodo/volumes/demo /run/nodo/volumes/demo/.nodo-rollback"), "{log:?}");
         assert_eq!(h.sys.format_keys().len(), 1, "the volume is kept, never formatted again");
+        // The old version cannot read layout 2, so it is shown but cannot be put back.
+        let Ok(Response::Rollbacks(list)) = call(&h, Request::ListRollbacks) else { panic!() };
+        assert!(list[0].blocked.as_deref().unwrap().contains("layout 2"), "{list:?}");
+        let refused = call(&h, Request::RollbackPackage { package: "demo".into(), to: "1.0_1".into() });
+        assert!(matches!(refused, Err(ApiError::Failed(_))), "{refused:?}");
+        assert_eq!(packages.installed().as_deref(), Some("2.0_1"));
+    }
+
+    #[test]
+    fn same_layout_encrypted_data_rolls_back_inside_the_volume() {
+        let (h, packages) = updating("");
+        assert_eq!(apply(&h, None)[0].outcome, UpdateOutcome::Updated);
+        let Ok(Response::Rollbacks(list)) = call(&h, Request::ListRollbacks) else { panic!() };
+        assert_eq!(list[0].blocked, None, "{list:?}");
+        let Ok(Response::UpdateResults(results)) =
+            call(&h, Request::RollbackPackage { package: "demo".into(), to: "1.0_1".into() })
+        else {
+            panic!()
+        };
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert!(packages
+            .log()
+            .iter()
+            .any(|l| l == "copy /run/nodo/volumes/demo /run/nodo/volumes/demo/.nodo-rollback"));
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
     }
 
     #[test]

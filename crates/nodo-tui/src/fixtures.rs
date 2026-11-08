@@ -62,6 +62,37 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
     match id {
         ScreenId::Main => Screen::Home { selected: 0 },
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
+        ScreenId::Onion => Screen::Onion(OnionState {
+            status: Some(mock.onion_status()),
+            selected: 0,
+            error: None,
+            busy: false,
+        }),
+        ScreenId::Restore => {
+            // A good stick and one that cannot be used, with the focus on the good one.
+            let mut drives = mock.usb_drives().unwrap_or_default();
+            drives.push(nodo_api::UsbDrive {
+                device: "sdb".to_owned(),
+                label: None,
+                model: "Generic Flash Disk".to_owned(),
+                filesystem: None,
+                size_bytes: 8_004_000_000,
+                read_only: false,
+                problem: Some("it has no filesystem".to_owned()),
+            });
+            Screen::Restore(RestoreState { drives, busy: false, ..RestoreState::new() })
+        }
+        ScreenId::Rollbacks => Screen::Rollbacks(RollbacksState {
+            view: Some(RollbackView {
+                options: mock.rollbacks.clone(),
+                events: mock.update_history.clone(),
+                boot_fallback: None,
+            }),
+            selected: 0,
+            error: None,
+            busy: false,
+            result: None,
+        }),
         ScreenId::Backup => {
             let mut state = BackupState::new(true);
             state.busy = false;

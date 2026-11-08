@@ -289,6 +289,13 @@ mod tests {
             Request::SetSystemAutoUpdate { enabled: true },
             Request::RunSystemUpdate,
             Request::UpdateStorageGrowth,
+            Request::OnionStatus,
+            Request::SetNodeOnion { enabled: true },
+            Request::ListRollbacks,
+            Request::RollbackPackage {
+                package: "a".into(),
+                to: "1_1".into(),
+            },
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -574,6 +581,30 @@ mod tests {
                 to: "2.0_1".into(),
                 from_bytes: 256 << 20,
                 to_bytes: 320 << 20,
+            }])),
+            Ok(Response::Onion(OnionStatus {
+                tor_installed: true,
+                tor_running: false,
+                node: Some(NodeOnion {
+                    provider: "cuprated".into(),
+                    enabled: true,
+                    restricted_rpc: true,
+                    port: 18089,
+                    address: Some("abc.onion:18089".into()),
+                }),
+                sites: vec![SiteOnion {
+                    id: site(),
+                    exposure: Exposure::default(),
+                    multi_address: true,
+                    locked: false,
+                    url: None,
+                }],
+            })),
+            Ok(Response::Rollbacks(vec![RollbackOption {
+                package: "a".into(),
+                current: "2_1".into(),
+                previous: "1_1".into(),
+                blocked: Some("no".into()),
             }])),
         ];
         for result in results {

@@ -236,7 +236,72 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let report = backend.apply_updates_with_passphrase(&names, &approvals, &passphrase);
             vec![Event::UpdatesApplied(report), refresh(backend)]
         }
+        Effect::LoadOnion => vec![Event::OnionLoaded(onion_status(backend))],
+        Effect::SetNodeOnion(enabled) => {
+            let result = backend.call(Request::SetNodeOnion { enabled }).map(|_| ()).map_err(|e| e.to_string());
+            vec![Event::OnionChanged(result), Event::OnionLoaded(onion_status(backend)), refresh(backend)]
+        }
+        Effect::SetSiteExposure { site, exposure } => {
+            let request = Request::SetExposure { site, exposure, confirmation: None };
+            let result = backend.call(request).map(|_| ()).map_err(|e| e.to_string());
+            vec![Event::OnionChanged(result), Event::OnionLoaded(onion_status(backend)), refresh(backend)]
+        }
+        Effect::LoadRestoreDrives => vec![Event::RestoreDrives(backend.usb_drives())],
+        Effect::LoadRestoreBackups(device) => vec![Event::RestoreBackups(backend.usb_backups(&device))],
+        Effect::InspectRestore { device, name, passphrase } => {
+            vec![Event::RestoreInspected(backend.inspect_usb_backup(&device, &name, &passphrase))]
+        }
+        Effect::RunRestore { device, name, passphrase, new_device_passphrase, typed } => {
+            let result =
+                backend.restore_usb_backup(&device, &name, &passphrase, Some(&new_device_passphrase), &typed);
+            vec![Event::RestoreFinished(result), refresh(backend)]
+        }
+        Effect::LoadRollbacks => vec![Event::RollbacksLoaded(rollback_view(backend))],
+        Effect::RollBack { package, to } => {
+            let result = match backend.call(Request::RollbackPackage { package, to }) {
+                Ok(Response::UpdateResults(mut results)) if !results.is_empty() => Ok(results.remove(0)),
+                Ok(other) => Err(format!("unexpected reply: {other:?}")),
+                Err(e) => Err(e.to_string()),
+            };
+            vec![Event::RolledBack(result)]
+        }
     }
+}
+
+fn onion_status<T: Backend + ScreenData>(backend: &mut T) -> Result<nodo_api::OnionStatus, String> {
+    match backend.call(Request::OnionStatus) {
+        Ok(Response::Onion(status)) => Ok(status),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Versions that can be put back, failed updates that were rolled back, and a system fallback.
+/// Only the first is needed; the others are left out when the helper cannot say.
+fn rollback_view<T: Backend + ScreenData>(backend: &mut T) -> Result<crate::app::RollbackView, String> {
+    let options = match backend.call(Request::ListRollbacks) {
+        Ok(Response::Rollbacks(list)) => list,
+        Ok(other) => return Err(format!("unexpected reply: {other:?}")),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut events = Vec::new();
+    if let Ok(Response::UpdateStatus(status)) = backend.call(Request::UpdateStatus) {
+        for event in status.attention.into_iter().chain(status.history) {
+            let rolled = matches!(
+                event.kind,
+                nodo_api::UpdateEventKind::RolledBack { .. } | nodo_api::UpdateEventKind::RollbackFailed { .. }
+            );
+            if rolled && !events.contains(&event) {
+                events.push(event);
+            }
+        }
+    }
+    events.sort_by_key(|e: &nodo_api::UpdateEvent| std::cmp::Reverse(e.at));
+    let boot_fallback = match backend.call(Request::Health) {
+        Ok(Response::Health(health)) => health.boot_fallback,
+        _ => None,
+    };
+    Ok(crate::app::RollbackView { options, events, boot_fallback })
 }
 
 /// The first usable USB drive with its backups, or the first drive and why it cannot be used.

@@ -247,6 +247,8 @@ impl<S: System> Helper<S> {
             | Request::CertificateStatus
             | Request::CheckLocalNames
             | Request::LocalSiteStatus) => self.web_request(request),
+            Request::OnionStatus => self.onion_status(),
+            Request::SetNodeOnion { enabled } => self.set_node_onion(enabled),
             // Only root may ask, which is what the nodo-localnet service runs as.
             Request::LocalAddressChanged if uid != 0 => Err(ApiError::Denied),
             Request::LocalAddressChanged => self.check_local_address().map(|_| Response::Ok),

@@ -628,6 +628,20 @@ impl SettingsPolicy for TestPolicy {
             service: Default::default(),
         })
     }
+
+    /// Public values a test put at `/s/public/<package>/<name>`.
+    fn public_value(
+        &self,
+        ctx: &SettingsContext,
+        package: &Package,
+        public_name: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let path = format!("/s/public/{}/{public_name}", package.id());
+        Ok(ctx
+            .sys
+            .read_file(Path::new(&path))?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
 }
 
 /// A helper over `sys` that allows uid 1000, with a KDF cheap enough for tests.

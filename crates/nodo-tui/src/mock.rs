@@ -71,6 +71,13 @@ pub struct MockBackend {
     pub ssh_keys: Vec<nodo_api::SshKey>,
     /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
     pub delay: Option<std::time::Duration>,
+    /// The node's onion service.
+    pub node_onion: nodo_api::NodeOnion,
+    pub rollbacks: Vec<nodo_api::RollbackOption>,
+    /// Update events, including failed updates that were rolled back.
+    pub update_history: Vec<nodo_api::UpdateEvent>,
+    /// Makes a USB restore fail with this reason, as a pulled drive would.
+    pub restore_failure: Option<String>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
 }
@@ -103,9 +110,56 @@ impl MockBackend {
                 fingerprint: s("SHA256:mockmockmockmockmockmockmockmockmockmockmo"),
                 comment: s("laptop"),
             }],
+            node_onion: nodo_api::NodeOnion {
+                provider: s("cuprated"),
+                enabled: true,
+                restricted_rpc: true,
+                port: 18089,
+                address: Some(s("nod…xyz.onion:18089")),
+            },
+            rollbacks: vec![
+                nodo_api::RollbackOption {
+                    package: s("moneropay"),
+                    current: s("2.7.0_1"),
+                    previous: s("2.6.1_1"),
+                    blocked: None,
+                },
+                nodo_api::RollbackOption {
+                    package: s("wallet-relay"),
+                    current: s("0.4.0_1"),
+                    previous: s("0.3.2_1"),
+                    blocked: Some(s("its data is in layout 2")),
+                },
+            ],
+            update_history: vec![nodo_api::UpdateEvent {
+                at: 1_794_009_600,
+                package: s("bell"),
+                from: s("1.2.0_1"),
+                to: s("1.3.0_1"),
+                kind: nodo_api::UpdateEventKind::RolledBack { reason: s("bell did not pass its health check") },
+            }],
+            restore_failure: None,
             reach_attempts: HashMap::new(),
             job: None,
         }
+    }
+
+    /// Onion exposure as the helper would report it, from the sites' saved exposure.
+    pub fn onion_status(&self) -> nodo_api::OnionStatus {
+        let sites = self
+            .web
+            .sites
+            .iter()
+            .map(|site| nodo_api::SiteOnion {
+                id: nodo_api::SiteId { package: site.package.clone(), site: s("web") },
+                exposure: site.exposure,
+                // moneropay is tied to one base URL in the sample data.
+                multi_address: site.package != "moneropay",
+                locked: site.locked,
+                url: site.exposure.onion.then(|| site.onion_url.clone()),
+            })
+            .collect();
+        nodo_api::OnionStatus { tor_installed: true, tor_running: true, node: Some(self.node_onion.clone()), sites }
     }
 
     /// The data drive scenario: the node cannot start and everything else waits for it.
@@ -215,7 +269,7 @@ impl Backend for MockBackend {
                     .web
                     .sites
                     .iter_mut()
-                    .find(|entry| entry.package == site.site)
+                    .find(|entry| entry.package == site.site || (site.site == "web" && entry.package == site.package))
                     .ok_or_else(|| ApiError::NotFound(format!("{}/{}", site.package, site.site)))?;
                 // The helper's rule, so flows that skip the typed host fail here as they would there.
                 if exposure.public && !entry.exposure.public {
@@ -236,6 +290,45 @@ impl Backend for MockBackend {
                 }
                 self.setup_needed = false;
                 Ok(Response::Ok)
+            }
+            Request::OnionStatus => Ok(Response::Onion(self.onion_status())),
+            Request::SetNodeOnion { enabled } => {
+                if enabled && !self.node_onion.restricted_rpc {
+                    return Err(ApiError::Failed(s("turn on restricted RPC in cuprated's settings first")));
+                }
+                self.node_onion.enabled = enabled;
+                self.node_onion.address = enabled.then(|| s("nod…xyz.onion:18089"));
+                Ok(Response::Ok)
+            }
+            Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),
+            Request::UpdateStatus => Ok(Response::UpdateStatus(nodo_api::UpdateStatus {
+                candidates: Vec::new(),
+                last_check: None,
+                attention: Vec::new(),
+                history: self.update_history.clone(),
+                next_window: None,
+            })),
+            Request::RollbackPackage { package, to } => {
+                let index = self
+                    .rollbacks
+                    .iter()
+                    .position(|r| r.package == package)
+                    .ok_or_else(|| ApiError::Failed(format!("{package} has no earlier version kept")))?;
+                let option = self.rollbacks[index].clone();
+                if option.previous != to {
+                    return Err(ApiError::NeedsConfirmation(format!("{package} would go back to {}", option.previous)));
+                }
+                if let Some(reason) = option.blocked {
+                    return Err(ApiError::Failed(format!("{package} cannot roll back now: {reason}")));
+                }
+                self.rollbacks.remove(index);
+                Ok(Response::UpdateResults(vec![nodo_api::UpdateResult {
+                    package,
+                    from: option.current,
+                    to: option.previous,
+                    outcome: nodo_api::UpdateOutcome::Updated,
+                    log: Vec::new(),
+                }]))
             }
             other => Err(ApiError::NotImplemented(format!("{} in the mock", nodo_api::action_name(&other)))),
         }
@@ -346,6 +439,9 @@ impl ScreenData for MockBackend {
         new_device_passphrase: Option<&Secret>,
         typed: &str,
     ) -> Result<nodo_api::RestoreReport, String> {
+        if let Some(reason) = &self.restore_failure {
+            return Err(reason.clone());
+        }
         let report = self.restore_backup(name, passphrase, new_device_passphrase, typed)?;
         self.setup_needed = false;
         Ok(report)

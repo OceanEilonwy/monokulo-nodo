@@ -135,6 +135,7 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
                 ("d", "domains"),
                 ("t", "test reachability"),
                 ("l", "proxy log"),
+                ("n", "onion"),
                 ("o", "take all sites offline"),
             ],
         )))

@@ -4,6 +4,7 @@ mod backup;
 mod certs;
 mod home;
 mod install;
+mod more;
 pub mod layout;
 mod packages;
 mod settings;
@@ -61,6 +62,9 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::WebTrust => certs::trust(app, t),
         Screen::Setup(state) => setup::setup(t, state),
         Screen::Backup(state) => backup::backup(t, state),
+        Screen::Onion(state) => more::onion(t, state),
+        Screen::Restore(state) => more::restore(app, t, state),
+        Screen::Rollbacks(state) => more::rollbacks(t, state),
     };
     if let Some(notice) = &app.notice {
         let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {

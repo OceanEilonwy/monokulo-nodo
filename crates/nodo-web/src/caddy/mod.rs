@@ -398,7 +398,7 @@ pub struct TorHiddenService {
 }
 
 impl TorHiddenService {
-    fn lines(&self) -> [String; 3] {
+    pub fn lines(&self) -> [String; 3] {
         [
             format!("HiddenServiceDir {}", self.dir),
             "HiddenServiceVersion 3".to_owned(),

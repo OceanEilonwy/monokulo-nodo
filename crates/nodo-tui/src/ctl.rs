@@ -59,7 +59,9 @@ nodo-tui --ctl COMMAND [ARGS]
   acme | certs | local-names | local-status
   local-address-changed            (root only, sent by nodo-localnet)
   acme-set EMAIL|- 0|1 [LOCAL_DOMAIN]   (1 is Let's Encrypt staging)
-  dns01 [FIELD...]                 (one value per field on stdin, none removes them)";
+  dns01 [FIELD...]                 (one value per field on stdin, none removes them)
+  onion-status | node-onion 0|1     (the node onion serves only its restricted RPC)
+  rollbacks | rollback PACKAGE TO  (back to the version kept from before its last update)";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -310,6 +312,10 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["certs"] => Request::CertificateStatus,
         ["local-names"] => Request::CheckLocalNames,
         ["local-status"] => Request::LocalSiteStatus,
+        ["onion-status"] => Request::OnionStatus,
+        ["node-onion", on] => Request::SetNodeOnion { enabled: flag(on)? },
+        ["rollbacks"] => Request::ListRollbacks,
+        ["rollback", package, to] => Request::RollbackPackage { package: id(package), to: id(to) },
         ["local-address-changed"] => Request::LocalAddressChanged,
         ["acme-set", email, staging @ ("0" | "1"), rest @ ..] if rest.len() <= 1 => {
             Request::SetAcmeSettings(nodo_api::AcmeSettingsInput {
@@ -378,5 +384,15 @@ mod tests {
         assert!(matches!(parse(&args("system-run")), Ok(Request::RunSystemUpdate)));
         assert!(matches!(parse(&args("system-check")), Ok(Request::CheckSystemUpdate)));
         assert!(matches!(parse(&args("update-storage")), Ok(Request::UpdateStorageGrowth)));
+    }
+
+    #[test]
+    fn parses_onion_and_rollback() {
+        assert!(matches!(parse(&args("onion-status")), Ok(Request::OnionStatus)));
+        assert!(matches!(parse(&args("node-onion 1")), Ok(Request::SetNodeOnion { enabled: true })));
+        assert!(parse(&args("node-onion yes")).is_err());
+        assert!(matches!(parse(&args("rollbacks")), Ok(Request::ListRollbacks)));
+        let Ok(Request::RollbackPackage { package, to }) = parse(&args("rollback demo 1.0_1")) else { panic!() };
+        assert_eq!((package.as_str(), to.as_str()), ("demo", "1.0_1"));
     }
 }

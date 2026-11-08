@@ -583,6 +583,51 @@ pub struct LocalSiteStatus {
     pub records_note: Option<String>,
 }
 
+/// The node's own onion service, which serves only its restricted RPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeOnion {
+    /// The package providing `monero-daemon`.
+    pub provider: String,
+    pub enabled: bool,
+    /// Whether the node serves its restricted RPC, the only RPC an onion address ever reaches.
+    pub restricted_rpc: bool,
+    pub port: u16,
+    /// `host.onion:port`, once Tor has made the address.
+    pub address: Option<String>,
+}
+
+/// One site's onion exposure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteOnion {
+    pub id: SiteId,
+    pub exposure: Exposure,
+    pub multi_address: bool,
+    pub locked: bool,
+    /// `http://host.onion`, once Tor has made the address.
+    pub url: Option<String>,
+}
+
+/// Tor exposure for the node and every site.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnionStatus {
+    pub tor_installed: bool,
+    pub tor_running: bool,
+    /// `None` when no node is installed.
+    pub node: Option<NodeOnion>,
+    pub sites: Vec<SiteOnion>,
+}
+
+/// A package the helper can take back to the version it ran before its last update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RollbackOption {
+    pub package: String,
+    pub current: String,
+    /// The version a rollback installs. Quote it in [`Request::RollbackPackage`].
+    pub previous: String,
+    /// Why the rollback cannot run now, such as data already converted to a newer layout.
+    pub blocked: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     ListServices,
@@ -865,6 +910,21 @@ pub enum Request {
     RunSystemUpdate,
     /// Available package updates that need the device passphrase to grow encrypted storage.
     UpdateStorageGrowth,
+    /// Onion exposure of the node and the sites, with the addresses Tor has made.
+    OnionStatus,
+    /// Serves the node's restricted RPC on an onion address, or stops it. Never the full RPC.
+    SetNodeOnion {
+        enabled: bool,
+    },
+    /// Packages whose previous version is kept and could be put back.
+    ListRollbacks,
+    /// Puts back the version a package ran before its last update. `to` must be the previous
+    /// version. The data is copied first and put back if the old version fails its health check,
+    /// and the version rolled back from is held.
+    RollbackPackage {
+        package: String,
+        to: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -930,6 +990,8 @@ pub enum Response {
     SystemUpdate(SystemUpdateStatus),
     SystemUpdateApplied(SystemUpdateResult),
     StorageGrowth(Vec<StorageGrowth>),
+    Onion(OnionStatus),
+    Rollbacks(Vec<RollbackOption>),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1051,6 +1113,10 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::SetSystemAutoUpdate { .. } => "set-system-auto-update",
         Request::RunSystemUpdate => "run-system-update",
         Request::UpdateStorageGrowth => "update-storage-growth",
+        Request::OnionStatus => "onion-status",
+        Request::SetNodeOnion { .. } => "set-node-onion",
+        Request::ListRollbacks => "list-rollbacks",
+        Request::RollbackPackage { .. } => "rollback-package",
     }
 }
 
