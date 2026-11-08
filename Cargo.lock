@@ -707,6 +707,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodo-backup"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "hex",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "zeroize",
+]
+
+[[package]]
 name = "nodo-feed"
 version = "0.1.0"
 dependencies = [
@@ -724,6 +739,18 @@ dependencies = [
  "nodo-manifest",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "nodo-health"
+version = "0.1.0"
+dependencies = [
+ "rustix 1.1.6",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

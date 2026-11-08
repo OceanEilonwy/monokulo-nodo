@@ -1,0 +1,21 @@
+[package]
+name = "nodo-backup"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Passphrase-encrypted backup and restore of monokulo-nodo settings, secrets and keys"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
+getrandom = "0.3"
+hex = "0.4"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
