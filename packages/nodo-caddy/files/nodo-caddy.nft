@@ -1,0 +1,15 @@
+# Outbound rules for Caddy. Inbound ports come from the generated /etc/nftables.d/nodo-web.nft.
+table inet monokulo {
+	chain output {
+		meta skuid "_caddy" ct state established,related accept
+		# Upstreams listen on loopback.
+		meta skuid "_caddy" oifname "lo" accept
+		# Name lookups for ACME and DNS provider APIs, which the router often answers.
+		meta skuid "_caddy" meta l4proto { tcp, udp } th dport 53 accept
+		meta skuid "_caddy" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
+		meta skuid "_caddy" ip6 daddr { fc00::/7, fe80::/10 } drop
+		# ACME, DNS provider APIs and OCSP responders.
+		meta skuid "_caddy" tcp dport { 80, 443 } accept
+		meta skuid "_caddy" drop
+	}
+}

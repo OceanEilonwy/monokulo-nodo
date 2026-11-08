@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _caddy:_caddy svlogd -tt /var/log/nodo-caddy

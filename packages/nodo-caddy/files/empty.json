@@ -1,0 +1,1 @@
+{"admin": {"listen": "unix//run/nodo-web/caddy-admin.sock", "config": {"persist": false}}}
