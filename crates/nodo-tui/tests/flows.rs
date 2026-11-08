@@ -1174,6 +1174,92 @@ fn updating_with_nothing_selected_explains_itself() {
     assert!(screen_text(&app).contains("Select at least one update first."));
 }
 
+fn reload(app: &mut App, mock: &mut MockBackend) {
+    app.data = load_snapshot(mock).unwrap();
+}
+
+fn passphrase_calls(mock: &MockBackend) -> Vec<String> {
+    mock.calls
+        .iter()
+        .filter_map(|call| match call {
+            Request::ApplyUpdatesWithPassphrase { passphrase, .. } => Some(passphrase.expose().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_update_that_grows_encrypted_storage_asks_for_the_device_passphrase_first() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[0].grows = Some("256 MB to 512 MB of encrypted storage".to_owned());
+    reload(&mut app, &mut mock);
+    assert!(screen_text(&app).contains("◆ Needs the device passphrase"), "{}", screen_text(&app));
+
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::Updates);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Encrypted storage grows"), "{screen}");
+    assert!(screen.contains("moneropay: 256 MB to 512 MB of encrypted storage"), "{screen}");
+    assert!(screen.contains("Device passphrase"), "{screen}");
+    assert!(screen.contains("Esc cancel"), "{screen}");
+    assert_eq!(mock.updates.len(), 4, "nothing is applied before the passphrase");
+
+    // Every key types: q does not quit, and the passphrase never shows.
+    type_text(&mut app, &mut mock, "q");
+    assert!(!app.should_quit);
+    assert!(!screen_text(&app).contains("Device passphrase   q"));
+    key(&mut app, &mut mock, ESC);
+    assert!(!screen_text(&app).contains("Encrypted storage grows"), "Esc cancels the whole batch");
+    assert_eq!(mock.updates.len(), 4);
+    assert!(passphrase_calls(&mock).is_empty());
+
+    key(&mut app, &mut mock, ENTER);
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Enter the device passphrase"), "an empty passphrase is not sent");
+    type_text(&mut app, &mut mock, "wrong horse");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(screen_text(&app).contains("did not unlock"), "{}", screen_text(&app));
+    assert_eq!(mock.updates.len(), 4);
+
+    key(&mut app, &mut mock, ESC);
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(screen_text(&app).contains("✓ system base"), "{}", screen_text(&app));
+    assert_eq!(passphrase_calls(&mock), ["wrong horse", MOCK_PASSPHRASE]);
+}
+
+#[test]
+fn a_reviewed_update_that_grows_storage_still_asks_for_the_passphrase() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[2].grows = Some("256 MB to 320 MB of encrypted storage".to_owned());
+    reload(&mut app, &mut mock);
+    keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE, ENTER]);
+    assert_eq!(app.screen.id(), ScreenId::Review);
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert_eq!(app.screen.id(), ScreenId::Updates, "back on Updates, asking for the passphrase");
+    let screen = screen_text(&app);
+    assert!(screen.contains("wallet-relay: 256 MB to 320 MB of encrypted storage"), "{screen}");
+    assert_eq!(mock.updates.len(), 4);
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    assert!(!mock.updates.iter().any(|item| item.name == "wallet-relay"));
+}
+
+#[test]
+fn a_withdrawn_system_snapshot_is_explained_before_it_is_replaced() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.updates[1].note = UpdateNote::Withdrawal("2026.11".to_owned());
+    reload(&mut app, &mut mock);
+    let screen = text(&draw(&app, 120, 40).0);
+    assert!(screen.contains("▲ Replaces a withdrawn snapshot"), "{screen}");
+    assert!(screen.contains("system base replaces a withdrawn snapshot"), "{screen}");
+    assert!(screen.contains("The publisher withdrew snapshot 2026.11"), "{screen}");
+}
+
 // Auto-update
 
 fn at_auto_update() -> (App, MockBackend) {
@@ -1539,4 +1625,145 @@ fn the_backup_screen_shows_its_copy() {
     ] {
         assert!(screen.contains(needle), "{needle}\n{screen}");
     }
+}
+
+// Onion
+
+fn open_onion() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    assert_eq!(app.screen.id(), ScreenId::Onion);
+    (app, mock)
+}
+
+#[test]
+fn n_on_web_opens_the_onion_screen_with_the_node_and_sites() {
+    let (app, mock) = open_onion();
+    let screen = screen_text(&app);
+    assert!(screen.contains("Web › Onion addresses"), "{screen}");
+    assert!(screen.contains("nod…xyz.onion:18081"), "{screen}");
+    assert!(screen.contains("http://abc…xyz.onion"), "{screen}");
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::OnionStatus)));
+}
+
+#[test]
+fn the_node_onion_turns_off_and_on_through_the_helper() {
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::SetNodeOnion { enabled: false })));
+    assert!(!mock.node_onion.enabled);
+    assert!(screen_text(&app).contains("[ ] cuprated"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ENTER);
+    assert!(mock.node_onion.enabled);
+    assert!(screen_text(&app).contains("nod…xyz.onion:18081"));
+}
+
+#[test]
+fn the_node_onion_is_offered_with_no_setting_to_turn_on_first() {
+    // cuprated always serves restricted RPC, so the node can go on Tor straight away.
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    assert!(!mock.node_onion.enabled);
+    mock.calls.clear();
+    key(&mut app, &mut mock, SPACE);
+    assert!(mock.calls.contains(&Request::SetNodeOnion { enabled: true }), "{:?}", mock.calls);
+    assert!(mock.node_onion.enabled);
+    assert!(!screen_text(&app).contains("settings first"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_node_without_a_restricted_rpc_port_is_never_put_on_tor() {
+    let (mut app, mut mock) = open_onion();
+    key(&mut app, &mut mock, SPACE);
+    mock.node_onion.restricted_rpc = false;
+    key(&mut app, &mut mock, KeyCode::Char('g'));
+    assert!(screen_text(&app).contains("no restricted RPC port to serve"), "{}", screen_text(&app));
+    mock.calls.clear();
+    key(&mut app, &mut mock, SPACE);
+    assert!(screen_text(&app).contains("does not say which port serves its restricted RPC"), "{}", screen_text(&app));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetNodeOnion { .. })), "nothing was asked");
+}
+
+#[test]
+fn a_site_onion_changes_only_the_onion_flag() {
+    let (mut app, mut mock) = open_onion();
+    keys(&mut app, &mut mock, &[DOWN, SPACE]);
+    let sent = exposure_calls(&mock);
+    assert_eq!(sent, vec![Exposure { local: true, onion: false, public: true }], "local and public stay as they were");
+    assert!(!mock.web.sites[0].exposure.onion);
+    assert!(screen_text(&app).contains("[ ] shop"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_single_address_site_cannot_add_an_onion_beside_another_address() {
+    let (mut app, mut mock) = open_onion();
+    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, SPACE]);
+    assert!(screen_text(&app).contains("moneropay works from a single address"), "{}", screen_text(&app));
+    assert!(exposure_calls(&mock).is_empty());
+    keys(&mut app, &mut mock, &[DOWN, SPACE]);
+    assert!(screen_text(&app).contains("wallet-relay is locked"), "{}", screen_text(&app));
+    assert!(exposure_calls(&mock).is_empty());
+    key(&mut app, &mut mock, ESC);
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+// Rollbacks
+
+fn open_rollbacks() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert_eq!(app.screen.id(), ScreenId::Rollbacks);
+    (app, mock)
+}
+
+#[test]
+fn r_on_home_shows_rollbacks_and_failed_updates() {
+    let (app, _) = open_rollbacks();
+    let screen = screen_text(&app);
+    assert!(screen.contains("moneropay       2.7.0_1      → 2.6.1_1"), "{screen}");
+    assert!(screen.contains("bell did not pass its health check"), "{screen}");
+}
+
+#[test]
+fn a_rollback_asks_first_with_the_safe_answer_focused_then_puts_the_version_back() {
+    let (mut app, mut mock) = open_rollbacks();
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.as_ref().expect("asks first");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert!(modal.body.iter().any(|l| l.contains("2.7.0_1 is held")), "{:?}", modal.body);
+    key(&mut app, &mut mock, ENTER);
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::RollbackPackage { .. })), "Enter on Cancel does nothing");
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert!(mock
+        .calls
+        .iter()
+        .any(|c| matches!(c, Request::RollbackPackage { package, to } if package == "moneropay" && to == "2.6.1_1")));
+    let screen = screen_text(&app);
+    assert!(screen.contains("✓ moneropay is back on 2.6.1_1."), "{screen}");
+    assert!(!screen.contains("can roll back"), "moneropay is no longer offered: {screen}");
+}
+
+#[test]
+fn a_blocked_rollback_says_why_and_asks_nothing() {
+    let (mut app, mut mock) = open_rollbacks();
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    assert!(app.modal.is_none());
+    assert!(screen_text(&app).contains("wallet-relay cannot roll back now: its data is in layout 2."));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::RollbackPackage { .. })));
+}
+
+#[test]
+fn nothing_to_roll_back_says_so() {
+    let (mut app, mut mock) = loaded();
+    mock.rollbacks.clear();
+    mock.update_history.clear();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Nothing to roll back."), "{screen}");
+    assert!(screen.contains("No update has failed."), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Nothing can be rolled back now."));
 }

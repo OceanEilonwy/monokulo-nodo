@@ -67,6 +67,8 @@ pub struct Manage {
     pub packages: Box<dyn PackageBackend>,
     /// Removable drives for backups.
     pub media: Box<dyn crate::usb::RemovableMedia>,
+    /// The system snapshot update client.
+    pub snapshots: Box<dyn crate::sysupdate::SnapshotClient>,
     /// Held across a whole install, update or restore, so they never interleave.
     pub(crate) work: Mutex<()>,
     /// Held while the feed or update state is read, changed and written back.
@@ -79,6 +81,7 @@ impl Default for Manage {
             paths: ManagePaths::default(),
             packages: Box::new(RealPackages::default()),
             media: Box::new(crate::usb::RealMedia),
+            snapshots: Box::new(crate::sysupdate::RealSnapshots::default()),
             work: Mutex::new(()),
             state: Mutex::new(()),
         }
@@ -102,6 +105,11 @@ impl<S: System> Helper<S> {
 
     pub fn with_media(mut self, media: Box<dyn crate::usb::RemovableMedia>) -> Self {
         self.manage.media = media;
+        self
+    }
+
+    pub fn with_snapshots(mut self, snapshots: Box<dyn crate::sysupdate::SnapshotClient>) -> Self {
+        self.manage.snapshots = snapshots;
         self
     }
 
@@ -223,6 +231,21 @@ impl<S: System> Helper<S> {
                 updates,
                 passphrase,
             } => self.apply_updates_with(&updates, Some(&passphrase)),
+            Request::SystemUpdateStatus => self.system_update_status().map(Response::SystemUpdate),
+            Request::CheckSystemUpdate => self.check_system_update().map(Response::SystemUpdate),
+            Request::ApplySystemUpdate { serial } => {
+                self.apply_system_update(serial, false).map(Response::SystemUpdateApplied)
+            }
+            Request::SetSystemAutoUpdate { enabled } => self.set_system_auto_update(enabled),
+            Request::RunSystemUpdate => {
+                if uid != 0 {
+                    return Err(ApiError::Denied);
+                }
+                self.run_system_update()
+            }
+            Request::UpdateStorageGrowth => self.update_storage_growth(),
+            Request::ListRollbacks => self.list_rollbacks(),
+            Request::RollbackPackage { package, to } => self.rollback_package(&package, &to),
             other => Err(ApiError::NotImplemented(format!(
                 "{} is not connected yet",
                 nodo_api::action_name(&other)

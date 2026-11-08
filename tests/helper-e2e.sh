@@ -526,6 +526,17 @@ else
 	echo "SKIP onion: tor is not installed"
 	ctl expose e2e-app shop 1 0 0 >/dev/null
 fi
+# cuprated serves only restricted RPC, on 127.0.0.1:18081, so its onion address needs no setting.
+check "the node onion turns on with no setting first, for the restricted RPC port" sh -c '
+	ctl node-onion 1 && ctl onion-status | tr -d " \n" | tee /tmp/e2e.on | grep -q "restricted_rpc:true,port:18081" &&
+	grep -q "enabled = true" /var/lib/nodo/node-onion.toml'
+if [ -d /etc/sv/tor ]; then
+	check "Tor forwards the node onion only to the restricted RPC on loopback" sh -c '
+		[ "$(grep "^HiddenServicePort 18081" /var/lib/nodo-web/torrc)" = "HiddenServicePort 18081 127.0.0.1:18081" ] &&
+		! grep -q "^HiddenServicePort 18089" /var/lib/nodo-web/torrc'
+fi
+check "the node onion turns off again" sh -c 'ctl node-onion 0 && ! grep -q "node-rpc" /var/lib/nodo-web/torrc 2>/dev/null &&
+	grep -q "enabled = false" /var/lib/nodo/node-onion.toml'
 
 check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'
 # The device was unlocked above, so the credentials can be sealed.
@@ -778,7 +789,14 @@ check "a healthy update installs automatically" sh -c '
 	ctl check-updates >/dev/null && ctl auto-run | tee /tmp/e2e.ok; grep -q Updated /tmp/e2e.ok &&
 	[ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.3_1 ]'
 check "the updated app runs" running_for e2e-pay 3
-check "only the current version's copy is kept" sh -c '[ "$(ls /var/lib/nodo/packages/e2e-pay)" = e2e-pay-1.3_1.x86_64.xbps ]'
+# The current version and the one before it, which a rollback by hand puts back. Never the failed one.
+check "the current and the previous version's copies are kept, nothing else" sh -c '
+	[ "$(ls /var/lib/nodo/packages/e2e-pay | tr "\n" " ")" = "e2e-pay-1.0_1.x86_64.xbps e2e-pay-1.3_1.x86_64.xbps " ]'
+check "the previous version is offered as a rollback" sh -c '
+	ctl rollbacks | tee /tmp/e2e.rbl; grep -q "current: \"1.3_1\"" /tmp/e2e.rbl && grep -q "previous: \"1.0_1\"" /tmp/e2e.rbl &&
+	grep -q "blocked: None" /tmp/e2e.rbl'
+check "a rollback naming another version is refused and changes nothing" sh -c '
+	ctl rollback e2e-pay 1.2_1 2>&1 | grep -q NeedsConfirmation && [ "$(xbps-query -p pkgver e2e-pay)" = e2e-pay-1.3_1 ]'
 check "the auto-update timer service asks the helper" sh -c '
 	[ -L /var/service/nodo-autoupdate ] || ln -s /etc/sv/nodo-autoupdate /var/service/
 	for _ in $(seq 1 20); do grep -q UpdateResults /var/log/nodo-autoupdate/current 2>/dev/null && exit 0; sleep 1; done; exit 1'

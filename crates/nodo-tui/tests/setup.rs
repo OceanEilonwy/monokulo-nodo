@@ -36,33 +36,161 @@ fn init_calls(mock: &MockBackend) -> Vec<String> {
         .collect()
 }
 
+/// To the Confirm step of the first-boot restore, with the right backup passphrase.
+fn to_confirm(app: &mut App, mock: &mut MockBackend) {
+    dispatch(app, mock, nodo_tui::fixtures::ctrl('r'));
+    assert_eq!(app.screen.id(), ScreenId::Restore);
+    key(app, mock, KeyCode::Enter);
+    key(app, mock, KeyCode::Enter);
+    type_text(app, mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    key(app, mock, KeyCode::Enter);
+    assert!(screen_text(app).contains("Set up this device from the backup"), "{}", screen_text(app));
+}
+
 #[test]
 fn a_new_device_can_be_restored_from_a_usb_backup_instead_of_set_up() {
     let (mut app, mut mock) = first_boot();
     assert!(screen_text(&app).contains("Ctrl-R restore from a USB backup"), "{}", screen_text(&app));
     dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
-    assert_eq!(app.screen.id(), ScreenId::Backup);
+    assert_eq!(app.screen.id(), ScreenId::Restore);
     let screen = screen_text(&app);
-    assert!(screen.contains("Set up this device › Restore from a backup"), "{screen}");
+    assert!(screen.contains("Set up this device › Restore from a USB backup › Drive"), "{screen}");
+    assert!(screen.contains("SanDisk Ultra Fit, BACKUP"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Backups on sda1"), "{screen}");
     assert!(screen.contains("nodo-1762473600.nodobak"), "{screen}");
-    assert!(screen.contains("Restoring sets up this device"), "{screen}");
     key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Open this backup"));
     type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    assert!(!screen_text(&app).contains(nodo_tui::mock::MOCK_PASSPHRASE), "the passphrase is never drawn");
     key(&mut app, &mut mock, KeyCode::Enter);
     let screen = screen_text(&app);
-    assert!(screen.contains("Set up this device from the backup"), "{screen}");
-    assert!(screen.contains("New device passphrase"), "{screen}");
+    assert!(screen.contains("✓ nodo-1762473600.nodobak verified"), "{screen}");
+    assert!(screen.contains("wallet-relay encrypted storage"), "{screen}");
+    // The word, then the new device passphrase twice.
     type_text(&mut app, &mut mock, "restore");
-    key(&mut app, &mut mock, KeyCode::Enter);
-    assert!(screen_text(&app).contains("Choose a new device passphrase"), "a new device always needs one");
+    key(&mut app, &mut mock, KeyCode::Tab);
+    type_text(&mut app, &mut mock, "a new device passphrase");
+    key(&mut app, &mut mock, KeyCode::Tab);
     type_text(&mut app, &mut mock, "a new device passphrase");
     key(&mut app, &mut mock, KeyCode::Enter);
     assert!(screen_text(&app).contains("✓ Restored"), "{}", screen_text(&app));
     assert!(!mock.setup_needed);
+    let sent = mock.calls.iter().any(|c| matches!(c, Request::InitEncryption { .. }));
+    assert!(!sent, "the backup's key is used, no new one is made");
     key(&mut app, &mut mock, KeyCode::Enter);
     assert_eq!(app.screen.id(), ScreenId::Setup);
     assert!(screen_text(&app).contains("SSH keys"), "{}", screen_text(&app));
-    assert!(init_calls(&mock).is_empty(), "the backup's key is used, no new one is made");
+    assert!(init_calls(&mock).is_empty());
+}
+
+#[test]
+fn the_restore_refuses_a_missing_word_and_mismatched_passphrases_before_asking_the_helper() {
+    let (mut app, mut mock) = first_boot();
+    to_confirm(&mut app, &mut mock);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Type restore to confirm."), "{}", screen_text(&app));
+    type_text(&mut app, &mut mock, "restore");
+    key(&mut app, &mut mock, KeyCode::Tab);
+    type_text(&mut app, &mut mock, "short");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("at least 8 characters"), "{}", screen_text(&app));
+    type_text(&mut app, &mut mock, " but long now");
+    key(&mut app, &mut mock, KeyCode::Tab);
+    type_text(&mut app, &mut mock, "something else");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("The two device passphrases differ"), "{}", screen_text(&app));
+    assert!(mock.setup_needed, "nothing was restored");
+    // Esc is the safe way out, back to the list of backups.
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert!(screen_text(&app).contains("Backups on sda1"));
+}
+
+#[test]
+fn a_wrong_backup_passphrase_is_said_and_can_be_typed_again() {
+    let (mut app, mut mock) = first_boot();
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    key(&mut app, &mut mock, KeyCode::Enter);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Type the backup passphrase."));
+    type_text(&mut app, &mut mock, "not it");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    let screen = screen_text(&app);
+    assert!(screen.contains("did not open this backup"), "{screen}");
+    assert!(screen.contains("Open this backup"), "still asking: {screen}");
+    type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Set up this device from the backup"));
+}
+
+#[test]
+fn a_drive_that_cannot_be_used_says_why_and_a_failed_restore_can_be_retried() {
+    let (mut app, mut mock) = first_boot();
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    if let Screen::Restore(state) = &mut app.screen {
+        state.drives[0].problem = Some("it is read-only".to_owned());
+    }
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("sda1 cannot be used: it is read-only"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, KeyCode::Char('g'));
+    to_confirm_from_drives(&mut app, &mut mock);
+    mock.restore_failure = Some("the drive was removed while reading".to_owned());
+    type_text(&mut app, &mut mock, "restore");
+    key(&mut app, &mut mock, KeyCode::Tab);
+    type_text(&mut app, &mut mock, "a new device passphrase");
+    key(&mut app, &mut mock, KeyCode::Tab);
+    type_text(&mut app, &mut mock, "a new device passphrase");
+    key(&mut app, &mut mock, KeyCode::Enter);
+    let screen = screen_text(&app);
+    assert!(screen.contains("✕ Not restored"), "{screen}");
+    assert!(screen.contains("the drive was removed while reading"), "{screen}");
+    assert!(screen.contains("The device is still not set up"), "{screen}");
+    assert!(mock.setup_needed);
+    mock.restore_failure = None;
+    key(&mut app, &mut mock, KeyCode::Enter);
+    assert!(screen_text(&app).contains("Open this backup"), "retry asks for the passphrase again");
+}
+
+fn to_confirm_from_drives(app: &mut App, mock: &mut MockBackend) {
+    key(app, mock, KeyCode::Enter);
+    key(app, mock, KeyCode::Enter);
+    type_text(app, mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    key(app, mock, KeyCode::Enter);
+}
+
+#[test]
+fn the_restore_shows_progress_while_the_helper_works() {
+    let (mut app, mut mock) = first_boot();
+    to_confirm(&mut app, &mut mock);
+    if let Screen::Restore(state) = &mut app.screen {
+        state.step = RestoreStep::Restoring { device: "sda1".into(), name: "nodo-1.nodobak".into(), started: app.ticks };
+        state.busy = true;
+    }
+    for _ in 0..(TICKS_PER_SECOND * 75) {
+        dispatch(&mut app, &mut mock, Event::Tick);
+    }
+    let screen = screen_text(&app);
+    assert!(screen.contains("Restoring nodo-1.nodobak from sda1"), "{screen}");
+    assert!(screen.contains("1:15 so far"), "{screen}");
+    assert!(screen.contains("Keep the drive plugged in"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::Restore, "keys wait while restoring");
+}
+
+#[test]
+fn esc_leaves_the_drive_list_even_while_it_is_read_again() {
+    let (mut app, mut mock) = first_boot();
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    // g without running its effect, so the screen stays busy as it would during a slow helper call.
+    let effects = nodo_tui::update::update(&mut app, press(KeyCode::Char('g')));
+    assert_eq!(effects, vec![Effect::LoadRestoreDrives]);
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::Setup);
+    // The late answer is dropped.
+    dispatch(&mut app, &mut mock, Event::RestoreDrives(Ok(Vec::new())));
+    assert_eq!(app.screen.id(), ScreenId::Setup);
 }
 
 #[test]

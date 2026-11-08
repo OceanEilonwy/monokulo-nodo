@@ -51,7 +51,7 @@ pub(crate) fn parse_info(provider: &str, body: &[u8]) -> Result<NodeStatus, ApiE
 
 impl<S: System> Helper<S> {
     /// The provider the user chose, or the only one installed.
-    fn node_provider(&self) -> Result<Package, ApiError> {
+    pub(crate) fn node_provider(&self) -> Result<Package, ApiError> {
         let (packages, _) = self.packages()?;
         let bindings = self.load_bindings()?;
         let providers: Vec<&Package> = packages

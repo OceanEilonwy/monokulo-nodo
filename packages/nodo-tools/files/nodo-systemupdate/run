@@ -1,0 +1,10 @@
+#!/bin/sh
+# A timer for system snapshot updates. The helper keeps the schedule and the rules: it checks
+# every six hours (an hour after a failed check) and, unless the owner turned automatic system
+# updates on, only records what it found for the Updates screen. When they are on, a snapshot
+# that needs no restart is applied inside the update window. So this only asks for one run,
+# then sleeps, and runit starts it again when the sleep ends.
+exec 2>&1
+exec </dev/null
+/usr/bin/nodo-tui --ctl system-run >/dev/null
+exec sleep 600

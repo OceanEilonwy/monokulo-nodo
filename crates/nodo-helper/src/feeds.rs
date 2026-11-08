@@ -50,6 +50,9 @@ pub(crate) struct InstalledRecord {
     /// The verified file of this version, which an update rolls back to.
     #[serde(default)]
     pub kept: Option<std::path::PathBuf>,
+    /// The version before this one, which a rollback by hand puts back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<crate::updates::PreviousVersion>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

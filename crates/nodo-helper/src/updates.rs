@@ -239,6 +239,10 @@ fn record(state: &mut UpdateState, at: u64, outcome: auto::Outcome) {
     }
 }
 
+#[path = "updates_manual.rs"]
+mod manual;
+pub(crate) use manual::PreviousVersion;
+
 /// Runs one update on the device. Holds what a rollback needs between the calls.
 struct Updater<'a, S: System> {
     helper: &'a Helper<S>,
@@ -254,6 +258,8 @@ struct Updater<'a, S: System> {
     storage: BTreeMap<String, StorageTarget>,
     /// Given with the request, for growing encrypted volumes.
     passphrase: Option<&'a Secret>,
+    /// Packages going back by hand to their kept previous version, instead of a feed update.
+    downgrade: BTreeMap<String, PreviousVersion>,
 }
 
 /// What a new version asks of its encrypted volume.
@@ -282,6 +288,7 @@ impl<'a, S: System> Updater<'a, S> {
                 })
                 .collect(),
             passphrase,
+            downgrade: BTreeMap::new(),
         }
     }
 }
@@ -350,6 +357,9 @@ impl<S: System> Updater<'_, S> {
 
 impl<S: System> Installer for Updater<'_, S> {
     fn install(&mut self, c: &Candidate) -> Result<(), Failure> {
+        if let Some(previous) = self.downgrade.get(&c.package).cloned() {
+            return self.install_previous(c, &previous);
+        }
         let h = self.helper;
         let id = c.package.as_str();
         let state = h.read_feeds().map_err(fail)?;
@@ -493,6 +503,7 @@ impl<S: System> Installer for Updater<'_, S> {
         let h = self.helper;
         let package = h.package(&c.package).map_err(fail)?;
         let (_, copy, _) = self.data_copy(&c.package, package.manifest.storage.encrypted)?;
+        let old_layout = if package.manifest.storage.encrypted { h.data_layout_of(&c.package) } else { 1 };
         if package.manifest.storage.encrypted {
             // From now on the data is in the new version's layout.
             h.set_data_layout(&c.package, package.manifest.storage.layout())
@@ -502,7 +513,12 @@ impl<S: System> Installer for Updater<'_, S> {
         if let Some(previous) = self.previous.get(&c.package) {
             let current = h.read_feeds().ok().and_then(|s| s.installed.get(&c.package).and_then(|r| r.kept.clone()));
             if current.as_ref() != Some(previous) {
-                h.manage.packages.remove_kept(previous);
+                if self.downgrade.contains_key(&c.package) {
+                    h.manage.packages.remove_kept(previous);
+                } else {
+                    // Kept one generation deep, so the user can roll back by hand.
+                    self.keep_previous(&c.package, &c.from, previous, old_layout);
+                }
             }
         }
         Ok(())
@@ -757,11 +773,35 @@ impl<S: System> Helper<S> {
                 added: added.iter().map(ToString::to_string).collect(),
                 first_install: false,
                 encrypted_storage: manifest.storage.encrypted,
-                needs_passphrase: false,
+                needs_passphrase: candidate.grows,
             })),
             Ok(Reviewed::Blocked(reasons)) => Ok(crate::apps::blocked(package, &reasons)),
             Err(e) => crate::apps::refusal(package, &candidate.to, e),
         }
+    }
+
+    /// Updates that grow encrypted storage, so the screen can ask for the device passphrase
+    /// before applying them.
+    pub(crate) fn update_storage_growth(&self) -> Result<Response, ApiError> {
+        let growth = self
+            .candidates()?
+            .into_iter()
+            .filter(|c| c.grows)
+            .map(|c| {
+                let from_bytes = self
+                    .volume_location(&c.package)
+                    .ok()
+                    .and_then(|l| self.sys.file_size(&l.file))
+                    .unwrap_or(0);
+                nodo_api::StorageGrowth {
+                    to_bytes: c.volume_bytes.unwrap_or(from_bytes),
+                    package: c.package,
+                    to: c.to,
+                    from_bytes,
+                }
+            })
+            .collect();
+        Ok(Response::StorageGrowth(growth))
     }
 
     /// Why one selected update cannot go ahead, or the permissions it was approved with.

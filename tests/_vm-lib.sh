@@ -6,7 +6,8 @@ push_packages() {
 	for p in "$@"; do
 		tar -C "/src/out/feed/$ARCH" -cf - $(cd "/src/out/feed/$ARCH" && ls "$p"-[0-9]*.xbps) | ssh_vm 'tar -C /tmp/feed -xf -'
 	done
-	ssh_vm 'xbps-rindex -a /tmp/feed/*.xbps >/dev/null && xbps-install -yf -R /tmp/feed '"$*"
+	# The install's status is the function's: a package whose dependencies are missing must fail.
+	ssh_vm 'xbps-rindex -a /tmp/feed/*.xbps >/dev/null && xbps-install -yf -R /tmp/feed '"$*" || return 1
 	for p in "$@"; do
 		case $p in *-service) s=${p%-service}; ssh_vm "sv -w 120 restart $s" ;; esac
 	done

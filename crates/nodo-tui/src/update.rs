@@ -10,6 +10,9 @@ use crate::app::*;
 use crate::model::*;
 use crate::secret::{Input, Secret};
 
+#[path = "update_more.rs"]
+mod more;
+
 pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
     match event {
         Event::Key(key) => on_key(app, key),
@@ -70,7 +73,32 @@ fn updates_screen(app: &App) -> Screen {
             .filter(|item| item.preselected && !item.held)
             .map(|item| item.name.clone())
             .collect(),
+        passphrase: None,
     })
+}
+
+/// Applies a batch of updates. When one of them grows encrypted storage, the Updates screen
+/// first asks for the device passphrase, which LUKS needs to resize the volume.
+fn apply_batch(app: &mut App, names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)>) -> Vec<Effect> {
+    let growing: Vec<String> = app
+        .data
+        .updates
+        .iter()
+        .filter(|item| names.contains(&item.name))
+        .filter_map(|item| item.grows.as_ref().map(|grows| format!("{}: {grows}", item.name)))
+        .collect();
+    if growing.is_empty() {
+        return vec![Effect::ApplyUpdates { names, approvals }];
+    }
+    if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
+        pop(app);
+    }
+    let Screen::Updates(state) = &mut app.screen else {
+        // The helper refuses a growing update without the passphrase, and says why.
+        return vec![Effect::ApplyUpdates { names, approvals }];
+    };
+    state.passphrase = Some(UpdatePassphrase { names, approvals, growing, input: Input::secret() });
+    Vec::new()
 }
 
 fn logs_state(selected: usize) -> LogsState {
@@ -135,6 +163,8 @@ fn help_document() -> Document {
             "u                unlock this device",
             "k                SSH keys that may log in",
             "b                backups and restore, from Home",
+            "r                rollbacks, from Home",
+            "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
             "Ctrl-C           quit, from anywhere",
             "",
@@ -217,6 +247,9 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::WebTrust => trust_key(app, key),
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
+        ScreenId::Onion => more::onion_key(app, key),
+        ScreenId::Restore => more::restore_key(app, key),
+        ScreenId::Rollbacks => more::rollbacks_key(app, key),
     }
 }
 
@@ -232,6 +265,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Reference(state) if !state.list_focused => Some(&mut state.query),
         Screen::Logs(state) if state.finding => Some(&mut state.find),
         Screen::AutoUpdate(state) => state.editing_window.as_mut(),
+        Screen::Updates(state) => state.passphrase.as_mut().map(|prompt| &mut prompt.input),
         Screen::WebExposure(state) => state.editing_host.as_mut(),
         Screen::WebProviders(state) => match state.focus {
             ProviderFocus::List => None,
@@ -253,6 +287,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Setup(SetupState { step: SetupStep::Keys { adding, .. }, .. }) => adding.as_mut(),
         Screen::Review(state) => state.passphrase.as_mut(),
         Screen::Backup(state) => backup_input(&mut state.step),
+        Screen::Restore(state) => more::restore_input(&mut state.step),
         _ => None,
     }
 }
@@ -317,6 +352,7 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
             })
             .collect(),
         ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
+        ModalAction::RollBack { package, to } => more::roll_back(app, package, to),
         ModalAction::RemoveSshKey(fingerprint) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;
@@ -421,6 +457,7 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             push(app, Screen::Backup(BackupState::new(device_set_up)));
             return vec![Effect::LoadBackups];
         }
+        KeyCode::Char('r') => return more::open_rollbacks(app),
         _ => {}
     }
     Vec::new()
@@ -520,8 +557,7 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
     }
     if restore {
-        push(app, Screen::Backup(BackupState::fresh()));
-        return vec![Effect::LoadBackups];
+        return more::open_restore(app);
     }
     if leave {
         pop(app);
@@ -710,7 +746,7 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                         approvals.push((state.data.id.name.clone(), approval));
                     }
                     if pending_reviews.is_empty() {
-                        return vec![Effect::ApplyUpdates { names: batch, approvals }];
+                        return apply_batch(app, batch, approvals);
                     }
                     let name = pending_reviews.remove(0);
                     pop(app);
@@ -1081,7 +1117,36 @@ fn apply_failed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
+/// Typing the device passphrase for updates that grow encrypted storage. Every key goes to the
+/// input, so letters such as q never act as shortcuts here.
+fn update_passphrase_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::Updates(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    let Some(prompt) = state.passphrase.as_mut() else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => state.passphrase = None,
+        KeyCode::Enter if prompt.input.is_empty() => {
+            notice(app, NoticeKind::Info, "Enter the device passphrase to grow the encrypted storage.");
+        }
+        KeyCode::Enter => {
+            let passphrase = prompt.input.take_secret();
+            let prompt = state.passphrase.take().expect("prompt checked above");
+            return vec![Effect::ApplyUpdatesWithPassphrase { names: prompt.names, approvals: prompt.approvals, passphrase }];
+        }
+        _ => {
+            edit_input(&mut prompt.input, key);
+        }
+    }
+    Vec::new()
+}
+
 fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if matches!(&app.screen, Screen::Updates(UpdatesState { passphrase: Some(_), .. })) {
+        return update_passphrase_key(app, key);
+    }
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
@@ -1125,7 +1190,7 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 .map(|item| item.name.clone())
                 .collect();
             if pending_reviews.is_empty() {
-                return vec![Effect::ApplyUpdates { names: batch, approvals: Vec::new() }];
+                return apply_batch(app, batch, Vec::new());
             }
             let name = pending_reviews.remove(0);
             return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals: Vec::new() }];
@@ -1247,10 +1312,9 @@ fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 }
                 // A failed version is held, and the helper only retries it once released.
                 1 => {
-                    return vec![
-                        Effect::SetHeld { name: name.clone(), held: false },
-                        Effect::ApplyUpdates { names: vec![name], approvals: Vec::new() },
-                    ]
+                    let mut effects = vec![Effect::SetHeld { name: name.clone(), held: false }];
+                    effects.extend(apply_batch(app, vec![name], Vec::new()));
+                    return effects;
                 }
                 2 => return vec![Effect::CopyReport(format!("{name} update"))],
                 _ => return open_logs(app, &name),
@@ -1386,6 +1450,7 @@ fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Char('l') => return open_logs(app, "System"),
+        KeyCode::Char('n') => return more::open_onion(app),
         KeyCode::Char('o') => {
             app.modal = Some(Modal {
                 title: "Take all sites offline?".to_owned(),
@@ -1837,6 +1902,14 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         | Event::BackupInspected(_)
         | Event::BackupRestored(_)
         | Event::UsbLoaded(_) => return on_backup_result(app, event),
+        Event::OnionLoaded(_)
+        | Event::OnionChanged(_)
+        | Event::RestoreDrives(_)
+        | Event::RestoreBackups(_)
+        | Event::RestoreInspected(_)
+        | Event::RestoreFinished(_)
+        | Event::RollbacksLoaded(_)
+        | Event::RolledBack(_) => return more::on_result(app, event),
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {

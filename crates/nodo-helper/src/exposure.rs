@@ -36,6 +36,8 @@ pub struct WebInput {
     pub sites: Vec<WebSite>,
     /// Present while the device is unlocked. DNS credentials are sealed under it.
     pub secrets: Option<Arc<SecretsKey>>,
+    /// The node's restricted RPC on an onion address, while that is wanted and possible.
+    pub node_onion: Option<crate::onion::NodeOnionTarget>,
 }
 
 fn not_connected() -> ApiError {
@@ -97,6 +99,10 @@ pub trait ExposureApplier: Send + Sync {
     }
     fn local_site_status(&self, _input: &WebInput) -> Result<LocalSiteStatus, ApiError> {
         Err(not_connected())
+    }
+    /// The onion addresses Tor has made. Without a proxy there are none.
+    fn onion_addresses(&self, _input: &WebInput) -> Result<crate::onion::OnionAddresses, ApiError> {
+        Ok(crate::onion::OnionAddresses::default())
     }
 }
 
@@ -201,7 +207,7 @@ impl<S: System> Helper<S> {
                 });
             }
         }
-        Ok(WebInput { sites, secrets: self.secrets_key() })
+        Ok(WebInput { sites, secrets: self.secrets_key(), node_onion: self.node_onion_target() })
     }
 
     /// After an unlock, gives the web side its sealed credentials again. The caller holds the
@@ -219,7 +225,15 @@ impl<S: System> Helper<S> {
         self.exposure.local_address_changed(&input).map_err(ApiError::Failed)
     }
 
-    fn current_web_input(&self) -> Result<WebInput, ApiError> {
+    /// Puts the saved exposure and public hosts into effect, as a restore leaves them. The
+    /// saved state stays as it is either way: it is what the owner chose on the backed-up device.
+    pub(crate) fn apply_saved_exposure(&self) -> Result<(), String> {
+        let _guard = lock(&self.service_lock);
+        let input = self.current_web_input().map_err(|e| e.to_string())?;
+        self.exposure.apply(&input)
+    }
+
+    pub(crate) fn current_web_input(&self) -> Result<WebInput, ApiError> {
         let (state, _): (ExposureState, _) = self.load_toml(&self.paths.exposure_state)?;
         self.web_input(&state)
     }

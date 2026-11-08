@@ -29,4 +29,4 @@ Home  Packages   Web   Feeds  Updates (3)  Logs                                 
 ┌ Ports ───────────────────────────────────────────────────────────────────────────────────────────┐
 │ 80 and 443 are open on this device because shop is public.                           ✓ Reachable │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↵ change exposure  d domains  t test reachability  l proxy log  o take all sites offline
+↵ change exposure  d domains  t test reachability  l proxy log  n onion  o take all sites offline

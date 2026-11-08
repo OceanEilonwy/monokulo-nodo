@@ -6,7 +6,15 @@
 #
 #   it applies a signed snapshot over HTTP, refuses an unsigned, tampered, foreign or expired one,
 #   a tampered index and a tampered package, applies the next one over HTTPS so that a service
-#   updates and comes back, and then refuses the older snapshot and a conflicting one.
+#   updates and comes back, and then refuses the older snapshot and a conflicting one. Then,
+#   through the helper as the Updates screen uses it and through the nodo-systemupdate schedule,
+#   it refuses a newer snapshot that would move a package back without withdrawing anything,
+#   leaves a withdrawal alone while automatic system updates are off, and applies it when the
+#   owner asks, so that the service goes back to the old version.
+#
+# The VM check runs it whenever tests/snapshot-prepare.sh has put snapshots in the VM, after
+# pushing this project's packages so the VM holds the snapshot's versions of them. It can run
+# again on the same VM. By hand:
 #   scripts/dev-vm.sh ssh 'sh /tmp/snapshot-update.sh </dev/null'
 set -u
 ns=updinet
@@ -23,6 +31,8 @@ update() { nodo-sysupdate "$@"; }
 https=https://updates.example.test
 http=http://updates.example.test
 version() { xbps-query -p pkgver nodo-snaptest; }
+ctl() { nodo-tui --ctl "$@"; }
+helper_up() { for _ in $(seq 1 30); do [ -S /run/nodo/helper.sock ] && ctl services >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
 serial() { sed -n 's/^serial = //p' "$state" 2>/dev/null; }
 # Makes snapshot $1's manifest, or the attacker's, the channel's newest.
 offer() {
@@ -36,6 +46,8 @@ offer() {
 unchanged() { [ "$(version)" = "$1" ] && [ "$(serial)" = "$2" ]; }
 
 cleanup() {
+	sv force-stop nodo-systemupdate >/dev/null 2>&1
+	rm -f /var/service/nodo-systemupdate /etc/nodo/system-update.toml /var/service/nodo-snaptest
 	ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null
 	ip netns del "$ns" 2>/dev/null
 	ip link del upd0 2>/dev/null
@@ -76,8 +88,16 @@ echo "$peer updates.example.test # nodo-update-test" >> /etc/hosts
 sleep 2
 
 # The device as an image would ship it: trusted keys with a floor, and nodo-snaptest 1.0 running.
+# What an earlier run left goes first, including xbps's cached copies, which would otherwise
+# stand in for the tampered package below.
+rm -f /var/service/nodo-snaptest /var/service/nodo-systemupdate /etc/nodo/system-update.toml /var/lib/nodo/updates/system.toml
+xbps-query nodo-snaptest >/dev/null 2>&1 && xbps-remove -y nodo-snaptest >/dev/null
+rm -f /var/cache/xbps/nodo-snaptest-*
 install -D -m 644 "$src/pins.toml" "$pins"
 rm -f "$state"
+[ -L /var/service/nodo-helper ] || ln -s /etc/sv/nodo-helper /var/service/
+helper_up
+result "control: the helper answers" "$?"
 xbps-rindex -a "$src"/local/*.xbps >/dev/null
 xbps-install -y -R "$src/local" nodo-snaptest >/dev/null
 ln -sfn /etc/sv/nodo-snaptest /var/service/nodo-snaptest
@@ -141,8 +161,8 @@ grep -q "updated nodo-snaptest: 1.0_1 -> 1.1_1" /tmp/su.applied && grep -q "rest
 result "the update names what changed and which service restarted" "$?"
 for _ in $(seq 1 20); do [ "$(cat /run/nodo-snaptest.version 2>/dev/null)" = 1.1 ] && break; sleep 1; done
 pid_after=$(sv status nodo-snaptest | sed -n 's/^run: [^ ]* (pid \([0-9]*\)).*/\1/p')
-[ "$(cat /run/nodo-snaptest.version)" = 1.1 ] && [ -n "$pid_after" ] && [ "$pid_after" != "$pid_before" ]
-result "the service came back running the new version" "$?"
+if [ "$(cat /run/nodo-snaptest.version)" = 1.1 ] && [ -n "$pid_after" ] && [ "$pid_after" != "$pid_before" ]; then r=0; else r=1; fi
+result "the service came back running the new version" "$r"
 sv status nodo-helper | grep -q '^run:' && nodo-tui --ctl services >/dev/null
 result "the helper still answers after the update" "$?"
 ! grep -q "updated nodo-tools\|updated nodo-caddy" /tmp/su.applied
@@ -165,4 +185,50 @@ result "with the record lost, an older snapshot still cannot move packages back"
 offer test-b
 says "applied snapshot test-b (serial 6)" update apply --server "$https" && [ "$(serial)" = 6 ]
 result "the current snapshot records itself again" "$?"
+
+# Withdrawing test-b. A newer snapshot with older packages that withdraws nothing is refused
+# before xbps runs, as it always was, but now with the reason.
+offer test-e
+says "nodo-snaptest is 1.1_1, but the snapshot says 1.0_1, and it does not withdraw" update apply --server "$https" &&
+	unchanged nodo-snaptest-1.1_1 6
+result "a newer snapshot that would move a package back without withdrawing anything is refused" "$?"
+
+# The helper, as the Updates screen and the schedule use it. It reads the server from the config.
+printf 'server = "%s"\n' "$https" > /etc/nodo/system-update.toml
+offer test-d
+says "automatic: false" ctl system-status
+result "automatic system updates are off by default" "$?"
+sv_pid() { sv status nodo-snaptest | sed -n 's/^run: [^ ]* (pid \([0-9]*\)).*/\1/p'; }
+pid_before=$(sv_pid)
+ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+i=0; until grep -q '^serial = 8$' /var/lib/nodo/updates/system.toml 2>/dev/null || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
+grep -q '^withdraws_current = true$' /var/lib/nodo/updates/system.toml
+result "the nodo-systemupdate schedule checked and found the withdrawal" "$?"
+sleep 3
+unchanged nodo-snaptest-1.1_1 6
+result "with automatic system updates off, the schedule only reported it" "$?"
+sv force-stop nodo-systemupdate >/dev/null 2>&1; rm -f /var/service/nodo-systemupdate
+says "withdraws_current: true" ctl system-run && unchanged nodo-snaptest-1.1_1 6
+result "a scheduled run applies nothing while automatic system updates are off" "$?"
+says "withdraws_current: true" ctl system-check
+result "checking through the helper says the snapshot withdraws this device's" "$?"
+says "NeedsConfirmation" ctl system-apply 9 && unchanged nodo-snaptest-1.1_1 6
+result "the helper applies only the serial the owner was shown" "$?"
+says "SystemUpdateApplied" ctl system-apply 8
+r=$?; cp /tmp/su.out /tmp/su.withdrawn
+if [ "$r" = 0 ] && [ "$(serial)" = 8 ] && [ "$(version)" = nodo-snaptest-1.0_1 ]; then r=0; else r=1; fi
+result "the owner applies the withdrawal through the helper and nodo-snaptest goes back to 1.0" "$r"
+grep -A2 "withdrew: Some" /tmp/su.withdrawn | grep -q test-b && grep -q "nodo-snaptest: 1.1_1 -> 1.0_1" /tmp/su.withdrawn
+result "the result names the withdrawn snapshot and the package that moved back" "$?"
+for _ in $(seq 1 20); do [ "$(cat /run/nodo-snaptest.version 2>/dev/null)" = 1.0 ] && break; sleep 1; done
+pid_after=$(sv_pid)
+if [ "$(cat /run/nodo-snaptest.version)" = 1.0 ] && [ -n "$pid_after" ] && [ "$pid_after" != "$pid_before" ]; then r=0; else r=1; fi
+result "the service came back running the old version" "$r"
+says "available: None" ctl system-status && helper_up
+result "the helper still answers and has nothing left to offer" "$?"
+says "up to date" update apply --server "$https" && unchanged nodo-snaptest-1.0_1 8
+result "the withdrawal is not applied twice" "$?"
+offer test-b
+says "serial 6 is not newer than 8" update apply --server "$https" && unchanged nodo-snaptest-1.0_1 8
+result "the withdrawn snapshot cannot come back" "$?"
 exit "$fail"

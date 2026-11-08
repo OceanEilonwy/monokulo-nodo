@@ -7,7 +7,7 @@
 #   scripts/publish-snapshot.sh nodo   <name> <arch> <xbps-key.pem> [package-dir]
 #                                                                 add this project's packages, signed for xbps
 #   scripts/publish-snapshot.sh test   <name> <board>            build an image from only the snapshot
-#   scripts/publish-snapshot.sh sign   <name> <channel> <serial> <secret-key> [yes|no] [--untested]
+#   scripts/publish-snapshot.sh sign   <name> <channel> <serial> <secret-key> [yes|no] [--untested] [--withdraws <name>]...
 #   scripts/publish-snapshot.sh publish <name> <channel>         make it the channel's newest snapshot
 #
 # The server's files land under $SNAPSHOT_ROOT (default out/):
@@ -25,6 +25,11 @@
 # import is for tests and for snapshots in which no Void package changes: the index is served,
 # but a device that needed a Void package from it would find none. --untested is only for
 # throwaway test keys; it skips the rule that a snapshot is signed only as it was tested.
+#
+# Withdrawing a bad snapshot: sign an older, good snapshot again under a new, higher serial with
+# --withdraws <bad name>, and publish it. Devices recorded on the bad snapshot then move this
+# project's packages back to the good snapshot's versions; every other device refuses a manifest
+# that would move a package back. The serial rules stay as they are, so this is never a replay.
 set -eu
 . "$(dirname "$0")/lib.sh"
 cmd=${1:?usage: publish-snapshot.sh fetch|import|nodo|test|sign|publish <name> ...}
@@ -133,7 +138,17 @@ sign)
 	serial=${2:?serial, higher than any published before}
 	key=${3:?secret key file}
 	restart=${4:-no}
-	untested=${5:-}
+	untested=
+	withdraws=
+	[ $# -ge 4 ] && shift 4 || shift $#
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--untested) untested=--untested ;;
+		--withdraws) plain "${2:?--withdraws takes a snapshot name}" "withdrawn snapshot"; withdraws="$withdraws withdraws:$2"; shift ;;
+		*) echo "unknown sign option: $1" >&2; exit 2 ;;
+		esac
+		shift
+	done
 	plain "$channel" channel
 	if [ "$untested" = --untested ]; then
 		echo "warning: signing $name without a test run, which is only for throwaway test keys" >&2
@@ -161,6 +176,8 @@ sign)
 		set -- "$@" "$repo=${dir#"$out/"}=$index"
 	done
 	[ $# -gt 0 ] || { echo "nothing to sign" >&2; exit 1; }
+	# shellcheck disable=SC2086 # each word is one withdraws:<name> argument, checked by plain above
+	set -- "$@" $withdraws
 	cd "$root"
 	cargo run -q --release -p nodo-update --bin nodo-snapshot -- manifest "$channel" "$serial" "$name" 30 "$restart" "$@" > "$snap/manifest.toml"
 	rm -f "$snap/manifest.toml.sig"

@@ -27,6 +27,10 @@ if [ "$tier" = vm ]; then
 	fi
 	"$root/scripts/dev-vm.sh" up
 	if [ -n "$changed" ]; then "$root/scripts/dev-vm.sh" push $changed; fi
+	# Test snapshots signed with throwaway keys, which the check then updates the VM between. They
+	# carry nodo-tools, whose nodo-sysupdate and helper the test drives.
+	"$root/scripts/build-packages.sh" "$BOARD_ARCH" nodo-tools
+	"$root/tests/snapshot-prepare.sh"
 	exec "$root/scripts/dev-vm.sh" check
 fi
 

@@ -1741,4 +1741,28 @@ settings = "settings.lua"
         );
         assert!(!fragment(&h).contains("18081"));
     }
+
+    /// The shipped cuprated settings export the restricted RPC port, the only port the node's
+    /// onion address may ever reach. RPC is always restricted, so there is no switch for it.
+    #[test]
+    fn shipped_cuprated_exports_its_restricted_rpc_port() {
+        let h = setup();
+        h.sys.put(
+            "/m/sys/cuprated.toml",
+            include_str!("../../../packages/nodo-tools/files/cuprated/manifest.toml").as_bytes(),
+        );
+        h.sys.put(
+            "/p/sys/cuprated/settings.lua",
+            include_str!("../../../packages/nodo-tools/files/cuprated/settings.lua").as_bytes(),
+        );
+        let (packages, _) = h.packages().unwrap();
+        let cuprated = packages.iter().find(|p| p.id() == "cuprated").unwrap();
+        let read = |name: &str| {
+            h.with_settings(&packages, |ctx| h.settings.public_value(ctx, cuprated, name))
+                .unwrap()
+        };
+        assert_eq!(read("restricted-rpc").as_deref(), None);
+        assert_eq!(read("restricted-rpc-port").as_deref(), Some("18081"));
+        assert_eq!(read("rpc-port").as_deref(), Some("18081"));
+    }
 }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Restore from a USB backup</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pa{border-color:#F2A33A}.pe{border-color:#FF8A7A}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Set up this device <span class="d">›</span> Restore from a USB backup <span class="d">›</span> <b>Drive</b></div><div class="d"></div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div class="p pa" style="flex:1"><div class="pt">USB drives</div>
+<div class="r s"><span>▸sda1    SanDisk Ultra Fit, BACKUP</span><span>32.0 GB </span></div>
+<div class="r"><span>  sdb     Generic Flash Disk</span><span class="a">▲ it has no filesystem </span></div>
+</div>
+<div class="p "><div class="pt">Steps</div>
+<div><span class="a">▸</span> Choose the drive</div>
+<div><span class="d">○</span> Choose the backup</div>
+<div><span class="d">○</span> Open it with the backup passphrase</div>
+<div><span class="d">○</span> Confirm and restore</div>
+</div>
+<div class="p "><div class="pt">Restoring sets up this device</div>
+<div><span class="i">●</span> Packages come back from the verified copies in the backup, without their feeds.</div>
+<div><span class="i">●</span> Storage, secrets, certificates, onion keys, feeds and approvals come back.</div>
+<div><span class="i">●</span> The system disk and the blockchain drive are never listed or written.</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">↑↓</span> move  <span class="a">↵</span> choose  <span class="a">g</span> look again  <span class="a">Esc</span> back to setup</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

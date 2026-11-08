@@ -26,6 +26,7 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-helper 0750 root root
  /var/log/nodo-healthd 0750 root root
  /var/log/nodo-autoupdate 0750 root root
+ /var/log/nodo-systemupdate 0750 root root
  /etc/nodo 0755 root root"
 
 do_extract() {
@@ -44,6 +45,9 @@ do_install() {
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate
+	# The schedule for system snapshot updates: it checks and reports, and applies only when
+	# the owner turned automatic system updates on.
+	vsv nodo-systemupdate
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated

@@ -305,7 +305,13 @@ pub enum UpdateNote {
     Skipped,
     /// Always waits for the user, for the reason given: a changed key or failed checks.
     Blocked(String),
+    /// The publisher withdrew the system snapshot this device is on, named here. Updating
+    /// moves this project's packages back to the offered snapshot's versions.
+    Withdrawal(String),
 }
+
+/// The row and auto-update entry for the system snapshot, next to the packages.
+pub const SYSTEM_BASE: &str = "system base";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateItem {
@@ -317,6 +323,9 @@ pub struct UpdateItem {
     pub note: UpdateNote,
     pub held: bool,
     pub preselected: bool,
+    /// The new version needs a larger encrypted volume, as words such as "256 MB to 512 MB".
+    /// Growing it needs the device passphrase, which the screen asks for before applying.
+    pub grows: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -670,6 +679,9 @@ pub struct Snapshot {
     /// Areas whose backing system does not exist yet, with the reason. Their screens say so
     /// instead of showing sample data.
     pub unavailable: Vec<(Area, String)>,
+    /// One line about system snapshot updates for the Updates screen, when there is anything
+    /// to say: the installed snapshot, the last check, or why it failed.
+    pub system_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -727,6 +739,19 @@ pub trait ScreenData {
     fn update_review(&self, name: &str) -> Option<ReviewData>;
     /// `approvals` are the reviews the user confirmed, for updates that ask for more.
     fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport;
+    /// The same, with the device passphrase, for updates that grow encrypted storage.
+    fn apply_updates_with_passphrase(
+        &mut self,
+        names: &[String],
+        approvals: &[(String, nodo_api::PermissionApproval)],
+        _passphrase: &Secret,
+    ) -> UpdateReport {
+        self.apply_updates(names, approvals)
+    }
+    /// The line about system snapshot updates, read with the updates.
+    fn system_note(&self) -> Option<String> {
+        None
+    }
     fn set_held(&mut self, name: &str, held: bool);
     fn auto_update(&self) -> AutoUpdatePrefs;
     fn save_auto_update(&mut self, prefs: &AutoUpdatePrefs) -> Result<(), String>;

@@ -57,9 +57,17 @@ Unknown fields are refused.
   restored. A manifest signed only by unknown keys is reported as "signed by an unknown key" and
   needs the user, who can approve one exact change (`KeyApproval` names the old and new keys).
 - **Withdrawing a bad snapshot** is a new manifest with a higher serial pointing at an older
-  snapshot. That is not a downgrade of trust. Package versions that went backwards then need
-  `xbps-install -f`, which the client does not do yet, so such a manifest is refused by its
-  version pins today.
+  snapshot, naming the pulled one in `withdraws` (`publish-snapshot.sh sign ... --withdraws
+  <name>`). That is not a downgrade of trust: the serial must still be higher than the record and
+  the image's floor, so neither the withdrawal nor anything older can be replayed. A device
+  recorded on a withdrawn snapshot moves this project's packages (the `nodo` repository, every
+  one of them pinned) back to the offered versions; every other device refuses a manifest that
+  would move one of them back, before xbps runs, saying which package and that it does not
+  withdraw this device's snapshot. That includes a device that lost its record, which cannot say
+  which snapshot it is on; it waits for the next snapshot that moves forward. Void's own packages
+  are never moved back: `-u` leaves a newer one as it is, because an older libc or library
+  under newer programs is not a state anyone tested. A bad Void package is fixed by a newer
+  snapshot.
 
 **Device client** (`crates/nodo-update/src/client.rs`, run as root by `nodo-sysupdate check|apply`,
 shipped in nodo-tools). The server comes from `/etc/nodo/system-update.toml` (`server = "..."`) or
@@ -75,11 +83,37 @@ snapshot is `/var/lib/nodo/update/system-trust.toml`. `apply`:
 4. writes the verified indexes where xbps keeps its copy of each repository and runs
    `xbps-install --ignore-conf-repos -R <void> -R <nodo> -yu` without `-S`, so xbps uses exactly
    those indexes. xbps checks every package's hash and `.sig2` before unpacking it, Void's against
-   Void's key. `/etc/xbps.d` still applies its noextract and ignorepkg settings;
+   Void's key. `/etc/xbps.d` still applies its noextract and ignorepkg settings. Before any of
+   this, a snapshot that would move one of this project's packages back is refused unless it
+   withdraws this device's snapshot (see above). For a withdrawal, it then runs `xbps-install --ignore-conf-repos -R <void> -R <nodo> -yf` with
+   exactly the packages that go back, from the same verified indexes;
 5. requires every pinned package that is installed to be at its pinned version;
 6. restarts the enabled, running services of the packages that changed, unless the snapshot needs
    a restart, and only then records the snapshot. A refused or failed update changes no record, so
    it can be retried.
+
+`--json` prints one line (`nodo_update::client::Report`) for the helper, `--expect-serial N`
+applies only the serial the owner was shown, and `--keep-running NAME` leaves a service running
+even if its package changed, listing it as deferred.
+
+**Connected** (`crates/nodo-helper/src/sysupdate.rs`). The helper runs `nodo-sysupdate --json`
+as a child, so the trust rules have one implementation, and keeps the automatic switch, the last
+check and what it found, the last error and the last update in
+`/var/lib/nodo/updates/system.toml` (backed up with the other update choices). Requests:
+`SystemUpdateStatus`, `CheckSystemUpdate`, `ApplySystemUpdate { serial }` (only the serial the
+last check found, which the screen showed), `SetSystemAutoUpdate` and `RunSystemUpdate` (root
+only). An apply waits while the disk is low, holds the same lock as package installs, and passes
+`--keep-running nodo-helper`, so the helper never restarts under its own request; a changed
+helper runs its new version after its next restart, and the result says so. **Automatic system
+updates are off by default.** The `nodo-systemupdate` runit service in nodo-tools asks for one
+run every ten minutes; the helper checks every six hours (an hour after a failed check) and only
+records what it found. Only when the owner turned automatic system updates on does a run apply
+a snapshot, inside the package update window, while the disk has room, and never one that needs
+a restart. The TUI shows the snapshot as the `system base` row of the Updates screen (with
+"Restart needed" or "Replaces a withdrawn snapshot" and what that means), applies it after the
+selected package updates, lists it switched off on the auto-update screen, and adds a line with
+the installed snapshot and the last check. `nodo-tui --ctl system-status|system-check|
+system-apply SERIAL|system-auto 0|1|system-run` reach the same requests.
 
 The server may be `http://` as well as `https://`, for the same reason as feeds: the manifest is
 signed, and everything else is pinned by it. Someone on the network can still withhold updates,
@@ -102,18 +136,27 @@ machine for `nodo` (which needs the builder image there) and `sign`, and the sig
 carried back and uploaded. The tests use throwaway keys made in `build/snapshot-test` by
 `tests/snapshot-prepare.sh`; no real key exists in this repository.
 
-**Checked in the KVM VM** with `tests/snapshot-prepare.sh` and the steps of `tests/snapshot-update.sh`,
-run by hand (the script has not yet run as a whole), with Caddy as the server in a network namespace: a signed snapshot applies over plain HTTP and installs its
+**Checked in the KVM VM** by `tests/snapshot-update.sh`, run as a whole by the VM check
+(`scripts/test.sh vm` runs `tests/snapshot-prepare.sh` first, and `tests/snapshot-checks.sh`
+pushes this project's packages and runs the script whenever the VM holds test snapshots), with
+Caddy as the server in a network namespace: a signed snapshot applies over plain HTTP and installs its
 xbps key; unsigned, tampered, foreign-key and expired manifests, a tampered index and a tampered
 package are refused with nothing changed; the next snapshot applies over HTTPS, updates a test
 service package, and the service comes back on the new version while the helper keeps running;
 the older snapshot and a conflicting one with the same serial are refused; and with the record
-deleted, an older snapshot above the image's floor still cannot move a package back.
+deleted, an older snapshot above the image's floor still cannot move a package back. Then, through
+the helper: a newer snapshot that would move a package back without withdrawing anything is
+refused; with automatic system updates off, the `nodo-systemupdate` schedule finds a withdrawal of
+the current snapshot and applies nothing, nor does a scheduled run; the helper refuses a serial
+the owner was not shown; applying the withdrawal moves the test package back and its service
+comes back on the old version; and the withdrawn snapshot cannot come back.
 
-Not yet: the helper and TUI do not offer system updates and nothing runs `nodo-sysupdate` on a
-schedule; `fetch` and `test` have not been run against a live mirror; no real Void package was
-updated in a test (the test snapshots reuse the VM's own Void index); and a snapshot that needs a
-restart only says so.
+Not yet: `fetch` and `test` have not been run against a live mirror; no real Void package was
+updated in a test (the test snapshots reuse the VM's own Void index); a snapshot that needs a
+restart only says so, and nothing restarts the device for it; automatic system updates turned on
+are unit tested (`sysupdate.rs`) but not run in the VM; and the TUI's `system base` row and
+passphrase prompt are tested against the mock (`crates/nodo-tui/tests/flows.rs`), not yet by a
+journey in `tests/tui-e2e.sh`.
 
 ## 2. Auto-update
 
@@ -146,6 +189,14 @@ a feed signed in the VM: an update asking for internet access is held, one faili
 check is rolled back with its data and held, a held version is not retried, and a healthy one
 installs.
 
+**Rolling back by hand.** A successful update keeps the previous version's verified file one
+generation deep, with the data layout its data was in (`previous` in the feed state). `ListRollbacks`
+offers it, and `RollbackPackage` (the TUI's Home › Rollbacks) puts it back through the same engine:
+the data is copied, the kept file reinstalled, the old version health checked, and on failure the
+newer version and its data come back. The version left is then held. It refuses data already in a
+newer layout than the old version's, a kept file asking for permissions no longer approved, a locked
+device, low disk, and data on the data drive.
+
 **Encrypted packages across updates.** An update never touches the LUKS volume itself: the new
 version starts on the same volume with the same key. Two manifest fields describe what a version
 needs from it. `storage.size_mib` is the volume size (256 MiB when not given, 32 MiB to 1 TiB),
@@ -159,7 +210,9 @@ of the service's reach) when the volume is created and after an update passes it
   so resizing needs the key again, and the helper never keeps the device key after an unlock.
   Such an update therefore needs the device passphrase (`ApplyUpdatesWithPassphrase`), and
   automatic updates leave it waiting for the user ("needs the device passphrase to grow its
-  encrypted storage"). Volumes never shrink; a rollback keeps the larger volume, which holds the
+  encrypted storage"). `UpdateStorageGrowth` lists the updates that grow, so the Updates
+  screen marks them ("Needs the device passphrase") and, when a selected batch holds one, asks
+  for the passphrase before applying it, also after a permission review and on a retry. Volumes never shrink; a rollback keeps the larger volume, which holds the
   old data just as well.
 - A version declaring a newer layout converts the data itself on its first start. A version
   declaring an older layout than the data's is refused before anything is stopped, since it could
@@ -303,7 +356,10 @@ and symlinks are never followed when backing up. All of this is unit tested.
 key needs the device passphrase, checked like an unlock. A restore needs the typed word
 `restore`, verifies the whole file into a staging directory, stops the services whose settings or
 storage it replaces, moves everything into place, renders settings again with this device's
-owners, starts what was running and deletes the staging copy. A device whose volumes already use
+owners, starts what was running and deletes the staging copy. The restored site exposure and
+public host names are applied to Caddy, the firewall, Tor and dynamic DNS as part of the restore
+(on a new device once its packages are back), not at the proxy's next reload; if the proxy
+refuses, the restore stands and its report says why. A device whose volumes already use
 their own key keeps it, since replacing it would lock them for good. Proven in the KVM VM: a
 wrong passphrase, a flipped byte and a missing typed word restore nothing, and a real restore
 brings back settings, secrets and a file inside an encrypted volume. On a device that is already
@@ -351,7 +407,8 @@ the stick, a file in the VM's container, stays. It checks the refusals (system d
 pulled out mid-write), then destroys the first VM, boots the clean image with the same stick,
 restores it and checks that the device is unlocked, the feed key, approval and package version
 are back without the feed, the volume has its declared size, data and layout, the service runs,
-the sealed secret opens, Caddy's files are identical and owned by `_caddy`, and that after a
+the sealed secret opens, Caddy's files are identical and owned by `_caddy`, the package's public
+site and host are in Caddy's configuration straight after the restore, and that after a
 helper restart the new passphrase unlocks the restored storage while the old one does not.
 
 USB recovery plan, in order of what exists today:
@@ -460,12 +517,9 @@ Still open:
 - **nodo-manifest**: a way to ask for a memory limit, so `health.toml` can set one.
 - **nodo-helper**: copying the data of a package kept on the data drive before an update (such an
   update is refused for now). A backup restored onto a device whose volumes keep their own key
-  keeps that key, so sealed secrets from the other device cannot be opened there. A restore onto
-  a new device does not apply the restored site exposure to Caddy until the proxy next reloads.
-- **nodo-tui**: an update that grows encrypted storage is refused on the Updates screen with the
-  reason; the passphrase step for it exists only as `nodo-tui --ctl apply-update-pass`.
-- **System snapshots**: the server side and the `nodo-sysupdate` client exist (section 1), but the
-  helper, the TUI and a timer do not use them yet, and withdrawing a snapshot needs `xbps-install -f`.
+  keeps that key, so sealed secrets from the other device cannot be opened there.
+- **System snapshots**: the remaining gaps are listed at the end of section 1.
 - **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
-  enable the `nodo-healthd` and `nodo-autoupdate` services from nodo-tools, and open the watchdog
-  early.
+  enable the `nodo-healthd`, `nodo-autoupdate` and `nodo-systemupdate` services from nodo-tools,
+  set the update server in `/etc/nodo/system-update.toml` and the keys in
+  `/usr/share/nodo/snapshot-pins.toml`, and open the watchdog early.

@@ -13,6 +13,11 @@ return {
       choices = { "error", "warn", "info", "debug" } },
     { name = "rpc_port", type = "int", label = "Local RPC port", default = 18081, min = 18081, max = 18081,
       public = "rpc-port", endpoint = "tcp", help = "Fixed. Other packages reference it." },
+    -- The port of the restricted RPC, which is the only RPC cuprated serves. The helper forwards
+    -- the node's onion address only to a port a node exports under this name.
+    { name = "restricted_rpc_port", type = "int", label = "Restricted RPC port", default = 18081,
+      min = 18081, max = 18081, public = "restricted-rpc-port",
+      help = "Fixed. RPC is always restricted and on loopback only." },
     -- The node's RPC as a URL, which apps such as Monokulo reference through the role.
     { name = "rpc_url", type = "url", label = "Local RPC address", default = "http://127.0.0.1:18081",
       public = "public_rpc_url", endpoint = "tcp", help = "Fixed. Other packages reference it.",

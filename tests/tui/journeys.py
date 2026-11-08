@@ -7,8 +7,8 @@ session, presses keys and waits for screen text with a timeout. A failed wait pr
 screen, and the remaining journeys still run. tests/tui-e2e.sh copies this directory into the VM
 and starts it.
 
-Journeys follow the design canvas, docs/design/tui/canvas.json: first boot, Home, Packages,
-Feeds, Updates, Web, Logs, Backups, and the error states. At the end, no passphrase may appear
+Journeys follow the design canvas, docs/design/tui/canvas.json: first boot and its USB restore,
+Home, Packages, Feeds, Updates and Rollbacks, Web and Onion, Logs, Backups, and the error states. At the end, no passphrase may appear
 in anything the TUI drew or in any log on the device.
 """
 
@@ -576,15 +576,117 @@ def no_secrets_anywhere():
         check("no log holds the DNS provider token", logged == "", logged)
 
 
+
+def restore_entry():
+    """First boot offers Ctrl-R. Run before first_boot, while the device is not set up."""
+    with Journey("first boot: restore from a USB backup"), Session() as tui:
+        tui.expect("first boot offers the USB restore", "Ctrl-R restore from a USB backup")
+        tui.send("ctrl-r")
+        tui.expect("Ctrl-R opens the restore on its drive step", "Restore from a USB backup › Drive", "USB drives",
+                   "▸ Choose the drive", timeout=30)
+        tui.pump(2)
+        screen = tui.text()
+        if "No USB drive is plugged in" in screen:
+            tui.send("enter")
+            tui.expect("choosing with no drive says what to do", "No USB drive is plugged in. Plug one in and press g.")
+        else:
+            # tests/tui-e2e.sh plugs in a blank stick, which has no filesystem to read.
+            check("a plugged-in drive is listed with why it cannot be used", "▲" in screen, screen)
+            tui.send("enter")
+            tui.expect("a drive that cannot be used is refused in plain words", "cannot be used:")
+        check("the system disk is never offered", not re.search(r"\bvda\d*\b", tui.text()), tui.text())
+        tui.send("g")
+        tui.expect("g looks for drives again", "USB drives", timeout=30, absent=("Working…",))
+        tui.send("esc")
+        tui.expect("Esc goes back to the passphrase setup", "Set up this device", "Device passphrase")
+        tui.quit()
+    with Journey("first boot: restore left nothing behind"):
+        check("the device is still not set up", "encryption: NotSetUp" in ctl("overview"), ctl("overview"))
+
+
+def onion():
+    # cuprated always serves restricted RPC on 127.0.0.1:18081, so the node needs no setting first.
+    tor = os.path.isdir("/etc/sv/tor")
+    with Journey("Onion: node and site on and off"), Session() as tui:
+        tui.send("tab", "tab")
+        tui.wait_for("Sites", timeout=20)
+        tui.send("n")
+        tui.expect("n opens the onion screen with the node and the site", "Web › Onion addresses", "cuprated",
+                   "tui-shop › shop", timeout=30)
+        tui.expect("the node can go on Tor with no setting first", "restricted RPC, port 18081", timeout=30,
+                   absent=("no restricted RPC port",))
+        tui.send("space")
+        # The checkbox follows the stored choice, with or without Tor. Working… is the TUI busy.
+        tui.expect("Space turns the node's onion address on", re.compile(r"\[x\] cuprated"), timeout=90,
+                   absent=("Working…",))
+        if not tor:
+            tui.expect("without Tor the screen says so", "Tor is not installed")
+        stored = sh("cat /var/lib/nodo/node-onion.toml")
+        check("the helper stored the choice", "enabled = true" in stored, stored)
+        if tor:
+            torrc = sh("cat /var/lib/nodo-web/torrc")
+            ports = [line for line in torrc.splitlines() if line.startswith("HiddenServicePort") and "18081" in line]
+            check("Tor forwards only to the restricted RPC on loopback",
+                  ports == ["HiddenServicePort 18081 127.0.0.1:18081"], torrc)
+            tui.expect("the node's onion address is shown", re.compile(r"[a-z2-7]{56}\.onion:18081"), timeout=90)
+        else:
+            say("SKIP Tor side: tor is not installed")
+        tui.send("space")
+        tui.expect("Space turns it off again", re.compile(r"\[ \] cuprated"), timeout=90, absent=("Working…",))
+        if tor:
+            check("Tor no longer serves the node", "node-rpc" not in sh("cat /var/lib/nodo-web/torrc"))
+        before = site_flags()
+        mark, back = ("[ ]", "[x]") if before[1] else ("[x]", "[ ]")
+        tui.send("down", "space")
+        tui.expect("Space flips the site's onion exposure", f"{mark} tui-shop", timeout=90, absent=("Working…",))
+        after = site_flags()
+        check("only the onion flag changed", after[1] != before[1] and after[0] == before[0] and after[2] == before[2],
+              ctl("sites"))
+        tui.send("space")
+        tui.expect("Space flips it back", f"{back} tui-shop", timeout=90, absent=("Working…",))
+        check("the helper has the site as before", site_flags() == before, ctl("sites"))
+        tui.send("esc")
+        tui.expect("Esc goes back to the sites", "Sites")
+        tui.quit()
+
+
+def rollbacks():
+    # The updates journey left 1.1 held. Released and applied, the package keeps 1.0 to go back to.
+    ctl("hold", "tui-shop", "1.1_1", "0")
+    ctl("check-updates")
+    applied = ctl("apply-update", "tui-shop", "1.1_1")
+    with Journey("Rollbacks: put the previous version back"), Session() as tui:
+        check("the update applied", sh("xbps-query -p pkgver tui-shop").strip() == "tui-shop-1.1_1", applied)
+        tui.wait_for("Services", timeout=20)
+        tui.send("r")
+        tui.expect("r opens the rollbacks with the kept version", "Home › Rollbacks",
+                   re.compile(r"tui-shop\s+1\.1_1\s+→ 1\.0_1"), "can roll back", timeout=30)
+        tui.send("enter")
+        tui.expect("rolling back asks first, on Cancel", "Roll tui-shop back?", re.compile(r"▸Cancel\s+Roll back"))
+        tui.send("right", "enter")
+        tui.expect("the old version comes back healthy", "✓ tui-shop is back on 1.0_1.", timeout=240)
+        tui.expect("one generation only, nothing more to roll back", "Nothing to roll back.", timeout=30)
+        tui.quit()
+    with Journey("Rollbacks: the helper side"):
+        check("xbps has the previous version", sh("xbps-query -p pkgver tui-shop").strip() == "tui-shop-1.0_1")
+        # The update made 1.1 the installed version, so it is a candidate again only after a check.
+        status = ctl("check-updates")
+        check("the version rolled back from is held", re.search(r'to: "1\.1_1",[^}]*held: true', status, re.S), status)
+        wait_until("tui-shop to run", lambda: sh("sv status tui-shop", check=False).startswith("run:"), 60)
+        ok("the package runs on the previous version")
+
 JOURNEYS = [
+    ("restore", restore_entry),
     ("first-boot", first_boot),
     ("home", home),
     ("feeds", feeds_add),
     ("install", packages_install),
     ("settings", package_settings),
     ("updates", updates),
+    ("rollbacks", rollbacks),
     ("feed-key", feed_key_changed),
     ("web", web),
+    ("onion", onion),
     ("logs", logs),
     ("backups", backups),
     ("locked", locked),

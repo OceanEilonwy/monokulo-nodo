@@ -34,7 +34,9 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         let source = if item.third_party { t.a(item.source.clone()) } else { t.n(item.source.clone()) };
         let left = Line::from(vec![if item.held { t.d(lead) } else { t.n(lead) }, source]);
         let note = match &item.note {
+            UpdateNote::Ready if item.grows.is_some() => t.a("◆ Needs the device passphrase"),
             UpdateNote::Ready => t.n("Ready"),
+            UpdateNote::Withdrawal(_) => t.a("▲ Replaces a withdrawn snapshot"),
             UpdateNote::RestartNeeded => t.d("Restart needed"),
             UpdateNote::NewPermission(_) => t.a("▲ Asks for new permission"),
             UpdateNote::Skipped => t.d("You skipped this version"),
@@ -55,7 +57,37 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         Line::from(t.d(auto_update_summary(app.data.auto_update.enabled_count()))),
     )
     .panel(Panel::new("Available", items));
+    if let Some(prompt) = &state.passphrase {
+        let mut items: Vec<Item> = prompt
+            .growing
+            .iter()
+            .map(|line| Item::Text(Line::from(vec![t.a("◆"), t.n(format!(" {line}"))])))
+            .collect();
+        items.push(Item::Row(
+            Line::from(t.b("Device passphrase")),
+            Line::from(vec![t.n(prompt.input.display()), t.s(" ")]),
+        ));
+        items.push(Item::Text(Line::from(t.d(
+            "Growing encrypted storage needs the device passphrase. It is used for this and not kept.",
+        ))));
+        page = page.panel(Panel::accent("Encrypted storage grows", items));
+    }
     for item in rows.iter() {
+        if let UpdateNote::Withdrawal(withdrawn) = &item.note {
+            page = page.panel(Panel::accent(
+                format!("{} replaces a withdrawn snapshot", item.name),
+                vec![
+                    Item::Text(Line::from(vec![
+                        t.a("▲"),
+                        t.n(format!(" The publisher withdrew snapshot {withdrawn}, which this device runs.")),
+                    ])),
+                    Item::Text(Line::from(t.d(format!(
+                        "Updating moves this project's packages back to the versions in {}.",
+                        item.to
+                    )))),
+                ],
+            ));
+        }
         if let UpdateNote::NewPermission(permission) = &item.note {
             page = page.panel(Panel::accent(
                 format!("{} asks for more", item.name),
@@ -71,23 +103,21 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             ));
         }
     }
-    page.panel(
-        Panel::new(
-            "How updates apply",
-            vec![
-                Item::Text(Line::from(t.d(
-                    "Each package restarts, then runs its health check. If that fails, its previous version returns.",
-                ))),
-                Item::Text(Line::from(t.d(
-                    "The node restarts last. Encrypted packages stay unlocked unless the system restarts.",
-                ))),
-                Item::Text(Line::from(t.d(app.data.overview.updates_checked.clone()))),
-            ],
-        )
-        .grow(),
-    )
-    .footer(Item::Text(hints(
-        t,
+    let mut how = vec![
+        Item::Text(Line::from(t.d(
+            "Each package restarts, then runs its health check. If that fails, its previous version returns.",
+        ))),
+        Item::Text(Line::from(t.d(
+            "The node restarts last. Encrypted packages stay unlocked unless the system restarts.",
+        ))),
+        Item::Text(Line::from(t.d(app.data.overview.updates_checked.clone()))),
+    ];
+    if let Some(note) = &app.data.system_note {
+        how.push(Item::Text(Line::from(t.d(note.clone()))));
+    }
+    let keys: &[(&str, &str)] = if state.passphrase.is_some() {
+        &[("type", "device passphrase"), ("↵", "update"), ("Esc", "cancel")]
+    } else {
         &[
             ("Space", "select"),
             ("↵", "update selected"),
@@ -95,8 +125,9 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             ("r", "check now"),
             ("h", "hold version"),
             ("a", "auto-update"),
-        ],
-    )))
+        ]
+    };
+    page.panel(Panel::new("How updates apply", how).grow()).footer(Item::Text(hints(t, keys)))
 }
 
 fn lower_first(text: &str) -> String {

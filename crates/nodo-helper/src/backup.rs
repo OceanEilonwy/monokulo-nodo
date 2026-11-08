@@ -45,6 +45,10 @@ const CADDY_SOURCE: &str = "caddy";
 const FEEDS_SOURCE: &str = "feeds";
 /// The auto-update policy and holds.
 const UPDATES_SOURCE: &str = "updates";
+/// The host name the owner brought for each site, which a public site is served under.
+const PUBLIC_HOSTS_SOURCE: &str = "public-hosts";
+/// What a restore reports when it put the site choices back.
+const EXPOSURE_RESTORED: &str = "site exposure";
 /// The verified package files kept for rollback, under the packages category.
 const KEPT_SOURCE: &str = "kept";
 /// The data layout a volume's data is in, at the top of the volume, root-owned.
@@ -251,6 +255,11 @@ impl<S: System> Helper<S> {
                 category: Category::Settings,
                 name: "exposure".into(),
                 path: self.paths.exposure_state.clone(),
+            },
+            Source {
+                category: Category::Settings,
+                name: PUBLIC_HOSTS_SOURCE.into(),
+                path: self.paths.public_hosts.clone(),
             },
             // Role bindings, approved grants and data drive choices.
             Source {
@@ -622,6 +631,9 @@ impl<S: System> Helper<S> {
                 report.restarted.push(id);
             }
         }
+        if outcome.is_ok() {
+            self.apply_restored_exposure(&mut report);
+        }
         if report.restored.iter().any(|r| r == "feeds") {
             report.skipped.push(
                 "feeds, approvals and packages: this device keeps its own, as they match what is installed"
@@ -648,13 +660,17 @@ impl<S: System> Helper<S> {
             self.sys.atomic_write(&self.paths.bindings, &bytes, KEY_FILE)?;
             report.restored.push("role bindings and grants".into());
         }
+        let hosts = staged(&format!("settings/{PUBLIC_HOSTS_SOURCE}"));
+        if hosts.is_file() {
+            let bytes = fs::read(&hosts).map_err(io)?;
+            self.sys.atomic_write(&self.paths.public_hosts, &bytes, KEY_FILE)?;
+            report.restored.push("public host names".into());
+        }
         if staged("settings/exposure").is_file() {
             let bytes = fs::read(staged("settings/exposure")).map_err(io)?;
             self.sys
                 .atomic_write(&self.paths.exposure_state, &bytes, KEY_FILE)?;
-            report
-                .restored
-                .push("site exposure (applies when the proxy next reloads)".into());
+            report.restored.push(EXPOSURE_RESTORED.into());
         }
         if staged("secrets/nodo").exists() {
             tree(&staged("secrets/nodo"), &p.secrets)?;
@@ -860,6 +876,8 @@ impl<S: System> Helper<S> {
             report.skipped.push(format!("some settings could not be written: {problem}"));
         }
         let _ = self.refresh_health_config();
+        // The sites go back on the addresses the owner chose, now that their packages are here.
+        self.apply_restored_exposure(report);
         // Caddy and Tor, when installed, pick up the restored keys and certificates.
         for id in [CADDY, TOR] {
             let running = self
@@ -872,6 +890,21 @@ impl<S: System> Helper<S> {
             }
         }
         Ok(())
+    }
+
+    /// Applies restored site exposure to the proxy, the firewall, Tor and dynamic DNS at once,
+    /// rather than at the proxy's next reload. A failure leaves the restore standing and says
+    /// so, since the files are in place and the next change or unlock applies them.
+    fn apply_restored_exposure(&self, report: &mut RestoreReport) {
+        if !report.restored.iter().any(|r| r == EXPOSURE_RESTORED) {
+            return;
+        }
+        match self.apply_saved_exposure() {
+            Ok(()) => report.restored.push("site exposure applied to the proxy".into()),
+            Err(e) => report.skipped.push(format!(
+                "site exposure is restored but could not be applied yet ({e}); it applies at the proxy's next reload"
+            )),
+        }
     }
 
     /// Puts a package from the backup back on the device: its kept verified file when the

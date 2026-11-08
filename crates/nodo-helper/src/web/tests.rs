@@ -43,6 +43,7 @@ struct Fake {
     resolved: Mutex<BTreeMap<String, Vec<IpAddr>>>,
     removed_dirs: Mutex<Vec<String>>,
     now: u64,
+    tor_installed: bool,
 }
 
 impl Fake {
@@ -93,7 +94,7 @@ impl WebIo for Fake {
         Ok(self.caddy_running)
     }
     fn service_installed(&self, name: &str) -> bool {
-        name != "tor"
+        name != "tor" || self.tor_installed
     }
     fn service_running(&self, name: &str) -> bool {
         self.up(name)
@@ -191,6 +192,7 @@ fn input(local: bool, public: bool) -> WebInput {
             public_host: Some("shop.example.com".into()),
             locked: false,
         }],
+        node_onion: None,
     }
 }
 
@@ -776,4 +778,60 @@ fn local_dot_local_hosts_report_the_device_ca() {
     let host = &report.hosts[0];
     assert_eq!((host.kind, host.state), (HostKind::LocalInternal, CertState::Obtaining));
     assert_eq!(host.host, "shop.local");
+}
+
+const NODE_ONION: &str = "bcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxa.onion";
+
+fn tor_web() -> NodoWeb<Fake> {
+    let web = web(Fake { tor_installed: true, ..Fake::default() });
+    web.io.services.lock().unwrap().insert("tor".into(), true);
+    web
+}
+
+fn with_node(mut input: WebInput) -> WebInput {
+    input.node_onion = Some(crate::onion::NodeOnionTarget { provider: "cuprated".into(), port: 18081 });
+    input
+}
+
+#[test]
+fn the_node_onion_forwards_only_to_the_restricted_rpc() {
+    let web = tor_web();
+    let node = with_node(input(false, false));
+    web.io.put("/tor/node-rpc/hostname", &format!("{NODE_ONION}\n"));
+    web.apply(&node).unwrap();
+    let torrc = web.io.get("/web/torrc").unwrap();
+    assert!(torrc.contains("HiddenServiceDir /tor/node-rpc\n"), "{torrc}");
+    // cuprated's only RPC is the restricted one, on loopback.
+    assert!(torrc.contains("HiddenServicePort 18081 127.0.0.1:18081\n"), "{torrc}");
+    let ports: Vec<&str> = torrc.lines().filter(|l| l.starts_with("HiddenServicePort")).collect();
+    assert_eq!(ports, ["HiddenServicePort 18081 127.0.0.1:18081"], "only that port, only on loopback: {torrc}");
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains(NODE_ONION), "Caddy has no part in it");
+    let found = web.onion_addresses(&node).unwrap();
+    assert!(found.tor_installed && found.tor_running);
+    assert_eq!(found.node.as_deref(), Some(NODE_ONION));
+}
+
+#[test]
+fn turning_every_onion_off_stops_tor_publishing() {
+    let web = tor_web();
+    let mut node = with_node(input(false, false));
+    web.apply(&node).unwrap();
+    assert!(web.io.get("/web/torrc").unwrap().contains("HiddenServiceDir"));
+    node.node_onion = None;
+    web.apply(&node).unwrap();
+    let torrc = web.io.get("/web/torrc").unwrap();
+    assert!(!torrc.contains("HiddenService"), "Tor kept publishing a service that was turned off: {torrc}");
+    assert!(web.io.calls.lock().unwrap().iter().any(|c| c == "down tor"));
+    assert_eq!(web.onion_addresses(&node).unwrap().node, None);
+}
+
+#[test]
+fn a_site_onion_leaves_the_node_out_unless_asked() {
+    let web = tor_web();
+    let mut sites = input(false, false);
+    sites.sites[0].exposure.onion = true;
+    web.apply(&sites).unwrap();
+    let torrc = web.io.get("/web/torrc").unwrap();
+    assert!(torrc.contains("HiddenServiceDir /tor/shop.web"), "{torrc}");
+    assert!(!torrc.contains("node-rpc"), "{torrc}");
 }
