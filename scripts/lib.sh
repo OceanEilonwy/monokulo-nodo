@@ -3,7 +3,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/versions.env"
 tree_hash() { (cd "$root" && find "$@" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
 # A mirror change must not recompile anything, so only the recipe and build system count.
-pkg_hash() { printf '%s %s' "$(tree_hash "packages/$1")" "$VOID_PACKAGES_REV" | sha256sum | cut -c1-16; }
+# A recipe built from this repository names its source paths on a "# monokulo-sources:" line.
+pkg_hash() {
+	extra=$(sed -n 's/^# monokulo-sources: //p' "$root/packages/$1/template")
+	printf '%s %s' "$(tree_hash "packages/$1" $extra)" "$VOID_PACKAGES_REV" | sha256sum | cut -c1-16
+}
 builder_tag() { printf 'monokulo-builder:%s' "$(tree_hash docker/builder.Dockerfile versions.env)"; }
 ensure_builder() {
 	BUILDER=$(builder_tag)

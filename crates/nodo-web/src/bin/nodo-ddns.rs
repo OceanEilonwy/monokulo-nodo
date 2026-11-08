@@ -1,4 +1,8 @@
-//! The dynamic DNS service. Usage: `nodo-ddns --config <path> [--once | --retire-stale]`.
+//! The dynamic DNS service. Usage: `nodo-ddns --config <path> [--once | --list-stale | --retire-stale]`.
+//!
+//! Records this service published for names that are no longer configured are only reported, by every
+//! pass and by `--list-stale`. Deleting them is the separate, explicit `--retire-stale`, so a mistaken
+//! or empty config can never remove DNS records by itself.
 //!
 //! The config holds provider credentials, so it must not be readable by group or others:
 //!
@@ -32,6 +36,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 const MIN_INTERVAL_SECS: u64 = 60;
+/// Void's ca-certificates bundle. It follows system trust updates, unlike roots compiled into the binary.
+const SYSTEM_ROOTS: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 fn default_ttl() -> u32 {
     600
@@ -61,9 +67,33 @@ struct UreqClient {
     agent: ureq::Agent,
 }
 
+/// Falls back to the bundled Mozilla roots when the system bundle is missing or unreadable.
+fn root_certs() -> (ureq::tls::RootCerts, bool) {
+    let certs: Vec<_> = std::fs::read(SYSTEM_ROOTS)
+        .map(|pem| {
+            ureq::tls::parse_pem(&pem)
+                .filter_map(|item| match item {
+                    Ok(ureq::tls::PemItem::Certificate(cert)) => Some(cert),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if certs.is_empty() {
+        (ureq::tls::RootCerts::WebPki, false)
+    } else {
+        (ureq::tls::RootCerts::new_with_certs(&certs), true)
+    }
+}
+
 impl UreqClient {
     fn new() -> Self {
+        let (roots, system) = root_certs();
+        if !system {
+            eprintln!("nodo-ddns: {SYSTEM_ROOTS} is unusable, using the bundled roots");
+        }
         let agent = ureq::Agent::config_builder()
+            .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
             .http_status_as_error(false)
             // A redirect could carry a credential header to another host, and no API here needs one.
             .max_redirects(0)
@@ -122,6 +152,7 @@ fn map_error(error: ureq::Error) -> HttpError {
 enum Mode {
     Forever,
     Once,
+    ListStale,
     RetireStale,
 }
 
@@ -133,11 +164,12 @@ fn parse_args() -> Result<(PathBuf, Mode), String> {
         match arg.as_str() {
             "--config" => config = args.next().map(PathBuf::from),
             "--once" => mode = Mode::Once,
+            "--list-stale" => mode = Mode::ListStale,
             "--retire-stale" => mode = Mode::RetireStale,
             _ => return Err(format!("unknown argument: {}", arg.escape_default())),
         }
     }
-    let config = config.ok_or("usage: nodo-ddns --config <path> [--once | --retire-stale]")?;
+    let config = config.ok_or("usage: nodo-ddns --config <path> [--once | --list-stale | --retire-stale]")?;
     Ok((config, mode))
 }
 
@@ -178,6 +210,10 @@ fn run() -> Result<(), String> {
         eprintln!("nodo-ddns: starting from empty state: {error}");
     }
 
+    if matches!(mode, Mode::ListStale) {
+        println!("{}", serde_json::json!({ "stale": daemon.stale() }));
+        return Ok(());
+    }
     if matches!(mode, Mode::RetireStale) {
         let removed = daemon.retire_stale().map_err(|e| e.to_string())?;
         println!("{}", serde_json::json!({ "removed": removed }));

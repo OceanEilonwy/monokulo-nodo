@@ -1,0 +1,4 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL Caddy through --die-with-parent.
+# Caddy finishes open requests and exits on TERM.
+exec pkill -TERM -u _caddy -x nodo-caddy

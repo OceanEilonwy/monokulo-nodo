@@ -1,0 +1,12 @@
+# Outbound rules for dynamic DNS: HTTPS to IP echo services and the DNS provider, nothing else.
+table inet monokulo {
+	chain output {
+		meta skuid "_nododdns" ct state established,related accept
+		# Name lookups, which the router often answers.
+		meta skuid "_nododdns" meta l4proto { tcp, udp } th dport 53 accept
+		meta skuid "_nododdns" ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } drop
+		meta skuid "_nododdns" ip6 daddr { ::1, fc00::/7, fe80::/10 } drop
+		meta skuid "_nododdns" tcp dport 443 accept
+		meta skuid "_nododdns" drop
+	}
+}

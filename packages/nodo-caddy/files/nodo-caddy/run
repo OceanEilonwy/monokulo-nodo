@@ -1,0 +1,33 @@
+#!/bin/sh
+exec 2>&1
+exec </dev/null
+
+# The helper writes the generated config here and reloads it through the admin socket.
+config=/var/lib/nodo-web/caddy.json
+[ -r "$config" ] || config=/usr/share/nodo-caddy/empty.json
+install -d -o _caddy -g _caddy -m 750 /run/nodo-web
+# Each proxied request holds two sockets. dash, Void's /bin/sh, supports -n.
+# shellcheck disable=SC3045
+ulimit -n 8192
+
+exec chpst -u _caddy:_caddy bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind-try /etc/resolv.conf /etc/resolv.conf \
+	--ro-bind-try /etc/hosts /etc/hosts \
+	--ro-bind-try /etc/ssl /etc/ssl \
+	--ro-bind /var/lib/nodo-web /var/lib/nodo-web \
+	--ro-bind-try /run/apps /run/apps \
+	--bind /run/nodo-web /run/nodo-web \
+	--bind /var/lib/caddy /var/lib/caddy \
+	--proc /proc \
+	--dev /dev \
+	--tmpfs /tmp \
+	--setenv HOME /var/lib/caddy \
+	--setenv XDG_DATA_HOME /var/lib/caddy/data \
+	--setenv XDG_CONFIG_HOME /var/lib/caddy/config \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/usr/bin/nodo-caddy run --config "$config"

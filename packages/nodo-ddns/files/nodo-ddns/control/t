@@ -1,0 +1,4 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL nodo-ddns through --die-with-parent.
+# State is written atomically after each record, so TERM at any point is safe.
+exec pkill -TERM -u _nododdns -x nodo-ddns
