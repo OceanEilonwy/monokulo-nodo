@@ -358,7 +358,7 @@ pub enum RestoreStep {
     },
     /// The helper is restoring. `started` is the tick it began at.
     Restoring { device: String, name: String, started: u64 },
-    /// Nothing was set up. `retry` is the backup to try again.
+    /// Nothing was set up. Enter tries the same backup again.
     Failed { device: String, name: String, reason: String },
     Done(nodo_api::RestoreReport),
 }
