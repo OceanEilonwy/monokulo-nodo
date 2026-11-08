@@ -38,6 +38,7 @@ KEYS = {
     "ctrl-c": "\x03",
     "ctrl-u": "\x15",
     "ctrl-s": "\x13",
+    "ctrl-r": "\x12",
 }
 
 
@@ -246,6 +247,9 @@ class Tui:
     def send(self, *keys, pause=0.15):
         """Sends named keys ("enter", "down", ...) or literal text, one at a time."""
         for key in keys:
+            # A key name missing from KEYS would otherwise be typed as its letters.
+            if key not in KEYS and re.fullmatch(r"(ctrl|alt|shift)-\w+", key):
+                raise ValueError(f"unknown key name {key!r}")
             os.write(self.fd, KEYS.get(key, key).encode())
             self.pump(pause)
 

@@ -180,6 +180,20 @@ fn the_restore_shows_progress_while_the_helper_works() {
 }
 
 #[test]
+fn esc_leaves_the_drive_list_even_while_it_is_read_again() {
+    let (mut app, mut mock) = first_boot();
+    dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
+    // g without running its effect, so the screen stays busy as it would during a slow helper call.
+    let effects = nodo_tui::update::update(&mut app, press(KeyCode::Char('g')));
+    assert_eq!(effects, vec![Effect::LoadRestoreDrives]);
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::Setup);
+    // The late answer is dropped.
+    dispatch(&mut app, &mut mock, Event::RestoreDrives(Ok(Vec::new())));
+    assert_eq!(app.screen.id(), ScreenId::Setup);
+}
+
+#[test]
 fn leaving_the_first_boot_restore_goes_back_to_setup() {
     let (mut app, mut mock) = first_boot();
     dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));

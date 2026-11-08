@@ -596,7 +596,7 @@ def restore_entry():
             tui.expect("a drive that cannot be used is refused in plain words", "cannot be used:")
         check("the system disk is never offered", not re.search(r"\bvda\d*\b", tui.text()), tui.text())
         tui.send("g")
-        tui.expect("g looks for drives again", "USB drives", timeout=30)
+        tui.expect("g looks for drives again", "USB drives", timeout=30, absent=("Working…",))
         tui.send("esc")
         tui.expect("Esc goes back to the passphrase setup", "Set up this device", "Device passphrase")
         tui.quit()
@@ -626,8 +626,11 @@ def onion():
         tui.expect("with restricted RPC on the node can go on Tor", "restricted RPC, port 18089", timeout=30,
                    absent=("restricted RPC is off",))
         tui.send("space")
-        expected = re.compile(r"\[x\] cuprated") if tor else "Tor is not installed"
-        tui.expect("Space turns the node's onion address on", expected, timeout=90)
+        # The checkbox follows the stored choice, with or without Tor. Working… is the TUI busy.
+        tui.expect("Space turns the node's onion address on", re.compile(r"\[x\] cuprated"), timeout=90,
+                   absent=("Working…",))
+        if not tor:
+            tui.expect("without Tor the screen says so", "Tor is not installed")
         stored = sh("cat /var/lib/nodo/node-onion.toml")
         check("the helper stored the choice", "enabled = true" in stored, stored)
         if tor:
@@ -638,16 +641,19 @@ def onion():
         else:
             say("SKIP Tor side: tor is not installed")
         tui.send("space")
-        tui.expect("Space turns it off again", re.compile(r"\[ \] cuprated"), timeout=90)
+        tui.expect("Space turns it off again", re.compile(r"\[ \] cuprated"), timeout=90, absent=("Working…",))
         if tor:
             check("Tor no longer serves the node", "node-rpc" not in sh("cat /var/lib/nodo-web/torrc"))
         before = site_flags()
+        mark, back = ("[ ]", "[x]") if before[1] else ("[x]", "[ ]")
         tui.send("down", "space")
-        wait_until("the site's onion flag to change", lambda: site_flags()[1] != before[1], 90)
-        check("only the onion flag changed", site_flags()[0] == before[0] and site_flags()[2] == before[2], ctl("sites"))
+        tui.expect("Space flips the site's onion exposure", f"{mark} tui-shop", timeout=90, absent=("Working…",))
+        after = site_flags()
+        check("only the onion flag changed", after[1] != before[1] and after[0] == before[0] and after[2] == before[2],
+              ctl("sites"))
         tui.send("space")
-        wait_until("the site's onion flag to change back", lambda: site_flags() == before, 90)
-        ok("the site's onion exposure turns on and off")
+        tui.expect("Space flips it back", f"{back} tui-shop", timeout=90, absent=("Working…",))
+        check("the helper has the site as before", site_flags() == before, ctl("sites"))
         tui.send("esc")
         tui.expect("Esc goes back to the sites", "Sites")
         tui.quit()
@@ -673,8 +679,9 @@ def rollbacks():
         tui.quit()
     with Journey("Rollbacks: the helper side"):
         check("xbps has the previous version", sh("xbps-query -p pkgver tui-shop").strip() == "tui-shop-1.0_1")
-        status = ctl("update-status")
-        check("the version rolled back from is held", "held: true" in status, status)
+        # The update made 1.1 the installed version, so it is a candidate again only after a check.
+        status = ctl("check-updates")
+        check("the version rolled back from is held", re.search(r'to: "1\.1_1",[^}]*held: true', status, re.S), status)
         wait_until("tui-shop to run", lambda: sh("sv status tui-shop", check=False).startswith("run:"), 60)
         ok("the package runs on the previous version")
 
