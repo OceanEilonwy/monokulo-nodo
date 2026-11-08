@@ -154,6 +154,10 @@ pub struct Candidate {
     pub key_changed: bool,
     pub checks: Checks,
     pub needs_restart: bool,
+    /// It asks for a larger encrypted volume, and growing one needs the device passphrase,
+    /// which an unattended run does not have.
+    #[serde(default)]
+    pub needs_passphrase: bool,
 }
 
 /// Versions the user skipped, or that failed and were rolled back.
@@ -199,6 +203,7 @@ pub enum Blocker {
     FailedChecks(String),
     Held,
     RestartNeeded,
+    NeedsPassphrase,
 }
 
 /// Reasons an automatic update waits for conditions to change.
@@ -234,6 +239,9 @@ pub fn blockers(holds: &Holds, c: &Candidate) -> Vec<Blocker> {
     }
     if c.needs_restart {
         out.push(Blocker::RestartNeeded);
+    }
+    if c.needs_passphrase {
+        out.push(Blocker::NeedsPassphrase);
     }
     out
 }
@@ -436,6 +444,7 @@ mod tests {
             key_changed: false,
             checks: Checks::Passed,
             needs_restart: false,
+            needs_passphrase: false,
         }
     }
 

@@ -1,6 +1,8 @@
 //! Encrypted backups of what a device cannot rebuild from its feeds: package settings, secrets,
 //! the device key, the contents of encrypted storage and Tor onion keys. Chain data is never
-//! included; it is large and can always be synced again.
+//! included; it is large and can always be synced again. The verified package files kept for
+//! rollback are included too, so a new device can reinstall exactly the approved versions
+//! without reaching their feeds.
 //!
 //! A lost device passphrase makes encrypted storage unreadable, so the backup holds the device key
 //! itself, protected by the backup passphrase. Restoring then needs only the backup passphrase,
@@ -59,6 +61,8 @@ pub enum Category {
     DeviceKey,
     Storage,
     Onion,
+    /// Verified package files, as kept for rollback.
+    Packages,
 }
 
 impl Category {
@@ -69,11 +73,19 @@ impl Category {
             Category::DeviceKey => "device-key",
             Category::Storage => "storage",
             Category::Onion => "onion",
+            Category::Packages => "packages",
         }
     }
 
     fn from_dir(dir: &str) -> Option<Self> {
-        [Category::Settings, Category::Secrets, Category::DeviceKey, Category::Storage, Category::Onion]
+        [
+            Category::Settings,
+            Category::Secrets,
+            Category::DeviceKey,
+            Category::Storage,
+            Category::Onion,
+            Category::Packages,
+        ]
             .into_iter()
             .find(|c| c.dir() == dir)
     }

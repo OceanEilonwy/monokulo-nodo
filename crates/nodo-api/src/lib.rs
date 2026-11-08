@@ -790,6 +790,39 @@ pub enum Request {
     CertificateStatus,
     /// Whether local names under the owner's domain are published and resolve on this network.
     CheckLocalNames,
+    /// Removable drives a backup could go to. The system disk and the data drive are never listed.
+    ListUsbDrives,
+    /// The backups on a removable drive. The drive is mounted read-only and unmounted again.
+    ListUsbBackups {
+        device: String,
+    },
+    /// Like [`Request::CreateBackup`], written to a removable drive under a temporary name, synced
+    /// and then renamed, so an unplugged drive never holds a half-written backup under a real name.
+    CreateUsbBackup {
+        device: String,
+        device_passphrase: Option<Secret>,
+        backup_passphrase: Secret,
+    },
+    InspectUsbBackup {
+        device: String,
+        name: String,
+        passphrase: Secret,
+    },
+    /// Like [`Request::RestoreBackup`], from a removable drive. On a device that is not set up yet
+    /// this is the whole restore: device key, settings, feeds, packages and their storage.
+    RestoreUsbBackup {
+        device: String,
+        name: String,
+        passphrase: Secret,
+        new_device_passphrase: Option<Secret>,
+        typed: String,
+    },
+    /// Like [`Request::ApplyUpdates`], with the device passphrase, which an update needs when it
+    /// asks for a larger encrypted volume.
+    ApplyUpdatesWithPassphrase {
+        updates: Vec<UpdateApproval>,
+        passphrase: Secret,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -849,6 +882,8 @@ pub enum Response {
     AcmeSettings(AcmeSettingsInfo),
     Certificates(CertificateReport),
     LocalNames(Vec<LocalNameCheck>),
+    UsbDrives(Vec<UsbDrive>),
+    UsbBackups(UsbBackupList),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -956,6 +991,12 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::SetDns01Credentials { .. } => "set-dns01-credentials",
         Request::CertificateStatus => "certificate-status",
         Request::CheckLocalNames => "check-local-names",
+        Request::ListUsbDrives => "list-usb-drives",
+        Request::ListUsbBackups { .. } => "list-usb-backups",
+        Request::CreateUsbBackup { .. } => "create-usb-backup",
+        Request::InspectUsbBackup { .. } => "inspect-usb-backup",
+        Request::RestoreUsbBackup { .. } => "restore-usb-backup",
+        Request::ApplyUpdatesWithPassphrase { .. } => "apply-updates-with-passphrase",
     }
 }
 
@@ -1005,6 +1046,27 @@ mod tests {
             },
             Request::SetDns01Credentials {
                 fields: vec![("api_secret".into(), Secret::new("hunter2"))],
+            },
+            Request::CreateUsbBackup {
+                device: "sdb1".into(),
+                device_passphrase: Some(Secret::new("hunter2")),
+                backup_passphrase: Secret::new("hunter3 long enough"),
+            },
+            Request::InspectUsbBackup {
+                device: "sdb1".into(),
+                name: "b".into(),
+                passphrase: Secret::new("hunter2"),
+            },
+            Request::RestoreUsbBackup {
+                device: "sdb1".into(),
+                name: "b".into(),
+                passphrase: Secret::new("hunter2"),
+                new_device_passphrase: Some(Secret::new("hunter3")),
+                typed: "restore".into(),
+            },
+            Request::ApplyUpdatesWithPassphrase {
+                updates: vec![],
+                passphrase: Secret::new("hunter2"),
             },
             Request::ApplySettings {
                 package: "a".into(),

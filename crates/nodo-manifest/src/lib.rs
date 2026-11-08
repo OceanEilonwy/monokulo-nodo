@@ -85,6 +85,33 @@ pub struct Storage {
     /// Encrypted storage opens with the single device passphrase after a reboot.
     #[serde(default)]
     pub encrypted: bool,
+    /// The encrypted volume's size in MiB, [`DEFAULT_VOLUME_MIB`] when not given. An update that
+    /// asks for more grows the volume in place. A volume never shrinks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_mib: Option<u32>,
+    /// The version of the package's own data layout, 1 when not given. A new version that raises
+    /// it converts the data itself on its first start. The helper records the layout the data is
+    /// in, keeps a copy of the data for a rollback, and never starts a version on data in a newer
+    /// layout than it declares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_layout: Option<u32>,
+}
+
+/// The encrypted volume size of a package that does not ask for one.
+pub const DEFAULT_VOLUME_MIB: u32 = 256;
+/// Bounds for `storage.size_mib`: room for a filesystem, and at most 1 TiB.
+pub const MIN_VOLUME_MIB: u32 = 32;
+pub const MAX_VOLUME_MIB: u32 = 1024 * 1024;
+
+impl Storage {
+    /// The volume size this version asks for, in bytes.
+    pub fn volume_bytes(&self) -> u64 {
+        u64::from(self.size_mib.unwrap_or(DEFAULT_VOLUME_MIB)) * 1024 * 1024
+    }
+
+    pub fn layout(&self) -> u32 {
+        self.data_layout.unwrap_or(1)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +217,24 @@ mod tests {
         assert_eq!(m.network.outbound, Outbound::None);
         assert!(!m.storage.encrypted);
         assert_eq!(m.stop_timeout_secs, 120);
+    }
+
+    #[test]
+    fn storage_size_and_layout_have_defaults_and_bounds() {
+        let parse = |storage: &str| {
+            Manifest::parse(&format!(
+                "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n[storage]\n{storage}"
+            ))
+        };
+        let m = parse("encrypted = true\n").unwrap();
+        assert_eq!(m.storage.volume_bytes(), 256 * 1024 * 1024);
+        assert_eq!(m.storage.layout(), 1);
+        let m = parse("encrypted = true\nsize_mib = 512\ndata_layout = 2\n").unwrap();
+        assert_eq!(m.storage.volume_bytes(), 512 * 1024 * 1024);
+        assert_eq!(m.storage.layout(), 2);
+        for bad in ["size_mib = 512\n", "encrypted = true\nsize_mib = 8\n", "encrypted = true\ndata_layout = 0\n"] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

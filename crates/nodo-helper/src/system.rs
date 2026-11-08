@@ -119,4 +119,10 @@ pub trait System: Send + Sync {
     /// The body of a successful `GET` to a loopback port, at most `limit` bytes. Only ever
     /// loopback, because the port can come from an untrusted package.
     fn http_get_local(&self, port: u16, path: &str, limit: usize) -> SysResult<Vec<u8>>;
+
+    /// The size of a regular file, or `None` when it is missing.
+    fn file_size(&self, path: &Path) -> Option<u64>;
+    /// Grows an open, mounted encrypted volume to `size` bytes: the file, its loop device, the
+    /// LUKS mapping and the filesystem, without unmounting. The volume key goes to stdin.
+    fn luks_grow(&self, file: &Path, name: &str, key: &[u8], size: u64) -> SysResult<()>;
 }

@@ -254,6 +254,33 @@ mod tests {
             },
             Request::CertificateStatus,
             Request::CheckLocalNames,
+            Request::ListUsbDrives,
+            Request::ListUsbBackups { device: "sdb1".into() },
+            Request::CreateUsbBackup {
+                device: "sdb1".into(),
+                device_passphrase: None,
+                backup_passphrase: Secret::new("b"),
+            },
+            Request::InspectUsbBackup {
+                device: "sdb1".into(),
+                name: "nodo-1.nodobak".into(),
+                passphrase: Secret::new("b"),
+            },
+            Request::RestoreUsbBackup {
+                device: "sdb1".into(),
+                name: "nodo-1.nodobak".into(),
+                passphrase: Secret::new("b"),
+                new_device_passphrase: Some(Secret::new("d")),
+                typed: "restore".into(),
+            },
+            Request::ApplyUpdatesWithPassphrase {
+                updates: vec![UpdateApproval {
+                    package: "a".into(),
+                    to: "2_1".into(),
+                    approval: None,
+                }],
+                passphrase: Secret::new("p"),
+            },
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -482,6 +509,25 @@ mod tests {
                 verdict: LocalNameVerdict::Blocked,
                 explanation: "e".into(),
             }])),
+            Ok(Response::UsbDrives(vec![UsbDrive {
+                device: "sdb1".into(),
+                label: Some("BACKUP".into()),
+                model: "SanDisk Ultra".into(),
+                filesystem: Some("vfat".into()),
+                size_bytes: 32_000_000_000,
+                read_only: false,
+                problem: None,
+            }])),
+            Ok(Response::UsbBackups(UsbBackupList {
+                device: "sdb1".into(),
+                backups: vec![BackupInfo {
+                    name: "nodo-1.nodobak".into(),
+                    size_bytes: 9,
+                    created: 1,
+                }],
+                free_bytes: 5,
+                read_only: true,
+            })),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();
