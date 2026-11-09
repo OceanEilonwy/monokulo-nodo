@@ -10,7 +10,7 @@
 # the VM's /usr/lib/modules/<kernel>/extra, never onto the host. The module is unsigned, which the
 # kernel accepts (CONFIG_MODULE_SIG_FORCE is off) and marks as a taint.
 #
-# hostapd, wpa_supplicant, dnsmasq, iw and bluez come from the pinned mirror.
+# hostapd, wpa_supplicant, dnsmasq, iw, bluez and iputils (for ping) come from the pinned mirror.
 #   tests/wifi-prepare.sh, then tests/wifi-hwsim.sh as its header says
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -58,7 +58,7 @@ if [ ! -s "$out/mac80211_hwsim.ko" ] || [ ! -s "$out/mac80211.ko.zst" ]; then
 	' sh "$series" "$kver" "$(id -u):$(id -g)"
 fi
 
-vm mirror hostapd wpa_supplicant dnsmasq iw bluez python3
+vm mirror hostapd wpa_supplicant dnsmasq iw bluez python3 iputils
 tar -C "$out" -cf - mac80211_hwsim.ko cfg80211.ko.zst mac80211.ko.zst libarc4.ko.zst |
 	vm ssh "mkdir -p /usr/lib/modules/$kver/extra && tar -C /usr/lib/modules/$kver/extra -xf - && depmod -a $kver"
 vm ssh 'modinfo -F vermagic mac80211_hwsim'
