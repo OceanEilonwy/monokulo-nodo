@@ -662,4 +662,5 @@ pub fn helper(sys: FakeSystem) -> Helper<FakeSystem> {
         health_attempts: 5,
         ..Timing::default()
     })
+    .with_radios(crate::radio_tests::no_radios())
 }

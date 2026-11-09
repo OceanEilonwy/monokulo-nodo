@@ -85,10 +85,12 @@ pub enum ScreenId {
     Restore,
     /// Rollbacks that happened, and putting a package back to its previous version.
     Rollbacks,
+    /// Wi-Fi and Bluetooth.
+    Network,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 32] = [
+    pub const ALL: [ScreenId; 33] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -121,6 +123,7 @@ impl ScreenId {
         ScreenId::Onion,
         ScreenId::Restore,
         ScreenId::Rollbacks,
+        ScreenId::Network,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -159,6 +162,7 @@ impl ScreenId {
             ScreenId::Onion => "onion",
             ScreenId::Restore => "restore",
             ScreenId::Rollbacks => "rollbacks",
+            ScreenId::Network => "network",
         }
     }
 
@@ -418,6 +422,111 @@ impl RollbacksState {
 }
 
 impl Default for RollbacksState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Which list on the Network screen has the focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkFocus {
+    Wifi,
+    Bluetooth,
+}
+
+/// A row of the Wi-Fi list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiRow {
+    /// An index into the last scan.
+    InRange(usize),
+    /// An index into the saved networks, for one the last scan did not find.
+    Saved(usize),
+}
+
+/// The passphrase for the network being joined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WifiPrompt {
+    pub ssid: String,
+    pub security: nodo_api::WifiSecurity,
+    pub passphrase: Input,
+}
+
+/// Wi-Fi and Bluetooth: both radios, the networks in range and the saved ones, and devices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkState {
+    pub wifi: Option<nodo_api::WifiStatus>,
+    /// The last scan, strongest first.
+    pub networks: Vec<nodo_api::WifiNetwork>,
+    pub bluetooth: Option<nodo_api::BluetoothStatus>,
+    pub focus: NetworkFocus,
+    pub wifi_selected: usize,
+    pub bt_selected: usize,
+    pub prompt: Option<WifiPrompt>,
+    pub error: Option<String>,
+    /// What the helper is doing, while it works.
+    pub busy: Option<String>,
+}
+
+impl NetworkState {
+    pub fn new() -> Self {
+        Self {
+            wifi: None,
+            networks: Vec::new(),
+            bluetooth: None,
+            focus: NetworkFocus::Wifi,
+            wifi_selected: 0,
+            bt_selected: 0,
+            prompt: None,
+            error: None,
+            busy: Some("Reading the radios…".to_owned()),
+        }
+    }
+
+    /// Networks in range, then saved networks the last scan did not find.
+    pub fn wifi_rows(&self) -> Vec<WifiRow> {
+        let mut rows: Vec<WifiRow> = (0..self.networks.len()).map(WifiRow::InRange).collect();
+        if let Some(status) = &self.wifi {
+            for (index, saved) in status.saved.iter().enumerate() {
+                if !self.networks.iter().any(|n| n.ssid == saved.ssid) {
+                    rows.push(WifiRow::Saved(index));
+                }
+            }
+        }
+        rows
+    }
+
+    /// The name, security and saved state of a Wi-Fi row.
+    pub fn wifi_row(&self, row: WifiRow) -> Option<(String, nodo_api::WifiSecurity, bool)> {
+        match row {
+            WifiRow::InRange(i) => self.networks.get(i).map(|n| (n.ssid.clone(), n.security, n.saved || self.is_saved(&n.ssid))),
+            WifiRow::Saved(i) => self.wifi.as_ref()?.saved.get(i).map(|n| (n.ssid.clone(), n.security, true)),
+        }
+    }
+
+    pub fn is_saved(&self, ssid: &str) -> bool {
+        self.wifi.as_ref().is_some_and(|w| w.saved.iter().any(|s| s.ssid == ssid))
+    }
+
+    /// The network the device is joined to, if any.
+    pub fn joined(&self) -> Option<&str> {
+        let wifi = self.wifi.as_ref()?;
+        (wifi.link == nodo_api::WifiLink::Connected).then_some(())?;
+        wifi.ssid.as_deref()
+    }
+
+    pub fn pairing_running(&self) -> bool {
+        self.bluetooth.as_ref().and_then(|b| b.pairing.as_ref()).is_some_and(|p| {
+            matches!(
+                p.stage,
+                nodo_api::PairingStage::Pairing
+                    | nodo_api::PairingStage::TypePasskey(_)
+                    | nodo_api::PairingStage::ComparePasskey(_)
+            )
+        })
+    }
+}
+
+impl Default for NetworkState {
     fn default() -> Self {
         Self::new()
     }
@@ -793,6 +902,7 @@ pub enum Screen {
     Onion(OnionState),
     Restore(RestoreState),
     Rollbacks(RollbacksState),
+    Network(NetworkState),
 }
 
 impl Screen {
@@ -831,6 +941,7 @@ impl Screen {
             Screen::Onion(_) => ScreenId::Onion,
             Screen::Restore(_) => ScreenId::Restore,
             Screen::Rollbacks(_) => ScreenId::Rollbacks,
+            Screen::Network(_) => ScreenId::Network,
         }
     }
 
@@ -870,6 +981,12 @@ pub enum ModalAction {
     RemoveSshKey(String),
     /// Puts a package back to the version given.
     RollBack { package: String, to: String },
+    /// Joins an open network, whose traffic anyone nearby can read.
+    JoinOpenWifi(String),
+    ForgetWifi(String),
+    /// Turns Wi-Fi off while it may be the connection in use.
+    WifiOff,
+    RemoveBluetooth(String),
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -1043,6 +1160,21 @@ pub enum Effect {
     RunRestore { device: String, name: String, passphrase: Secret, new_device_passphrase: Secret, typed: String },
     LoadRollbacks,
     RollBack { package: String, to: String },
+    /// Both radios' status.
+    LoadNetwork,
+    /// Wi-Fi's status alone, quietly, while an address is awaited.
+    PollWifi,
+    SetWifi(bool),
+    ScanWifi,
+    JoinWifi { ssid: String, security: nodo_api::WifiSecurity, passphrase: Option<Secret>, accept_open: bool },
+    ForgetWifi(String),
+    SetBluetooth(bool),
+    ScanBluetooth,
+    PairBluetooth(String),
+    /// Bluetooth's status, quietly, while a pairing runs.
+    PollBluetooth,
+    ConnectBluetooth { address: String, connect: bool },
+    RemoveBluetooth(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1100,6 +1232,14 @@ pub enum Event {
     RestoreFinished(Result<nodo_api::RestoreReport, String>),
     RollbacksLoaded(Result<RollbackView, String>),
     RolledBack(Result<nodo_api::UpdateResult, String>),
+    NetworkLoaded {
+        wifi: Result<nodo_api::WifiStatus, String>,
+        bluetooth: Result<nodo_api::BluetoothStatus, String>,
+    },
+    /// After a Wi-Fi change. `quiet` results come from polling and never raise a notice.
+    WifiChanged { result: Result<nodo_api::WifiStatus, String>, quiet: bool },
+    WifiScanned(Result<Vec<nodo_api::WifiNetwork>, String>),
+    BluetoothChanged { result: Result<nodo_api::BluetoothStatus, String>, quiet: bool },
 }
 
 /// The USB drive the backup screen shows: the first one plugged in, with its backups when it

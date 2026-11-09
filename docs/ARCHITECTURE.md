@@ -154,6 +154,29 @@ codebase, and signed xbps packages from user-added feeds.
   and the name is still served only on the local listener. This publishes the LAN address, and
   routers with DNS rebinding protection can hide it, which a check on the Domains screen detects.
   Tests point the helper at Pebble with `/etc/nodo/acme-test.toml`; nothing else changes.
+- **Radios:** Wi-Fi and Bluetooth are off until the owner turns them on from the TUI's Network
+  screen (Home, `w`), and the helper soft-blocks a radio left off with rfkill at every start,
+  since rfkill state does not survive a reboot. Wi-Fi is wpa_supplicant in nodo-tools' `nodo-wifi`
+  service on the first wireless interface by name, never Void's `wpa_supplicant` service (the
+  helper refuses to manage Wi-Fi while that one is enabled). The helper drives it over its control
+  socket in `/run/nodo/wpa`, never through `wpa_cli` arguments. A network is added to the running
+  wpa_supplicant and selected, and saved only once it connected; a refused passphrase removes it
+  again. Saved networks are in `/var/lib/nodo/wifi` (0700): for WPA2 only the PBKDF2 key derived
+  from the passphrase and the name, for WPA3 the passphrase, which SAE needs. They are not sealed
+  with the device key, because Wi-Fi may be how the owner reaches the device to unlock it, and
+  they are left out of backups. Open networks need the owner to accept that the traffic is not
+  encrypted; WEP, WPA without WPA2 and enterprise networks are refused. dhcpcd, which manages
+  every interface, leases the address. Its default route metric is 1000 plus the interface index,
+  plus 2000 for a wireless interface, so a wired default route always wins and Wi-Fi carries
+  traffic only while the wired link is down; the TUI asks before turning Wi-Fi off, or forgetting
+  the joined network, while the wired link is down. Bluetooth is BlueZ through `bluetoothctl`
+  with checked addresses: on starts D-Bus and bluetoothd, powers the controller and makes it not
+  pairable and not discoverable, so only a pairing the owner starts can happen. Pairing runs on
+  its own thread with a KeyboardDisplay agent, so the TUI shows a passkey to type on a keyboard,
+  then trusts and connects the device. Off powers it down, takes bluetoothd down with a `down`
+  file and blocks it. The VM tests join a WPA2 hostapd access point on a second mac80211_hwsim
+  radio in a network namespace (`tests/wifi-prepare.sh` builds the module, which Void's kernel
+  lacks); Bluetooth is tested with fakes only, as the VM has no virtual controller to pair with.
 
 ## Layout
 

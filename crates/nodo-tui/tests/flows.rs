@@ -1767,3 +1767,227 @@ fn nothing_to_roll_back_says_so() {
     key(&mut app, &mut mock, ENTER);
     assert!(screen_text(&app).contains("Nothing can be rolled back now."));
 }
+
+// Network
+
+fn open_network() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('w'));
+    assert_eq!(app.screen.id(), ScreenId::Network);
+    (app, mock)
+}
+
+fn wifi_calls(mock: &MockBackend) -> Vec<&Request> {
+    mock.calls
+        .iter()
+        .filter(|c| matches!(c, Request::JoinWifi(_) | Request::ForgetWifi { .. } | Request::SetWifiEnabled { .. }))
+        .collect()
+}
+
+#[test]
+fn w_on_home_opens_the_network_screen_from_the_helper() {
+    let (mut app, mut mock) = open_network();
+    let screen = screen_text(&app);
+    assert!(screen.contains("Home › Network"), "{screen}");
+    assert!(screen.contains("● Joined home-5G"), "{screen}");
+    assert!(screen.contains("travel-hotspot"), "{screen}");
+    assert!(screen.contains("K380 Keyboard"), "{screen}");
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::WifiStatus)));
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::BluetoothStatus)));
+    key(&mut app, &mut mock, ESC);
+    assert_eq!(app.screen.id(), ScreenId::Main);
+}
+
+#[test]
+fn scanning_lists_networks_and_a_wrong_passphrase_saves_nothing() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::ScanWifi)));
+    let screen = screen_text(&app);
+    assert!(screen.contains("neighbour") && screen.contains("WPA3"), "{screen}");
+    // The joined network says so instead of joining again.
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("already joined to home-5G"), "{}", screen_text(&app));
+    keys(&mut app, &mut mock, &[DOWN, DOWN, ENTER]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Join neighbour") && screen.contains("Passphrase"), "{screen}");
+    // An empty passphrase never reaches the helper.
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Type the passphrase of neighbour."));
+    type_text(&mut app, &mut mock, "wrong words");
+    let screen = screen_text(&app);
+    assert!(screen.contains("•••••••••••") && !screen.contains("wrong words"), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("neighbour refused the passphrase. Nothing was saved."), "{screen}");
+    assert_eq!(mock.wifi.saved.len(), 2);
+    assert!(!format!("{:?}", app.screen).contains("wrong words"), "no state keeps the passphrase in clear");
+}
+
+#[test]
+fn the_right_passphrase_joins_and_says_the_address() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    keys(&mut app, &mut mock, &[DOWN, DOWN, ENTER]);
+    type_text(&mut app, &mut mock, "not ours at all");
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Joined neighbour. Its address is 192.168.1.57."), "{screen}");
+    assert!(screen.contains("● Joined neighbour"), "{screen}");
+    let Some(Request::JoinWifi(join)) = wifi_calls(&mock).last().copied() else { panic!("{:?}", mock.calls) };
+    assert_eq!(join.ssid, "neighbour");
+    assert_eq!(join.security, nodo_api::WifiSecurity::Wpa3Personal);
+    assert_eq!(join.passphrase.as_ref().map(|p| p.expose()), Some("not ours at all"));
+    assert!(!join.accept_open);
+    assert!(mock.wifi.saved.iter().any(|s| s.ssid == "neighbour"));
+}
+
+#[test]
+fn an_open_network_asks_first_with_cancel_focused() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    let modal = app.modal.clone().expect("a question");
+    assert!(modal.title.contains("open network"), "{modal:?}");
+    assert!(modal.body[0].contains("anyone nearby can read"), "{modal:?}");
+    assert!(!modal.confirm_focused);
+    key(&mut app, &mut mock, ENTER);
+    assert!(wifi_calls(&mock).is_empty(), "Enter on Cancel joins nothing");
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    let Some(Request::JoinWifi(join)) = wifi_calls(&mock).last().copied() else { panic!("{:?}", mock.calls) };
+    assert!(join.accept_open && join.passphrase.is_none());
+    assert!(screen_text(&app).contains("● Joined Cafe Libre"), "{}", screen_text(&app));
+}
+
+#[test]
+fn enterprise_networks_are_refused_without_asking_the_helper() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, ENTER]);
+    assert!(screen_text(&app).contains("WPA Enterprise"), "{}", screen_text(&app));
+    assert!(wifi_calls(&mock).is_empty());
+}
+
+#[test]
+fn forgetting_asks_and_only_saved_networks_can_be_forgotten() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('f')]);
+    assert!(app.modal.is_none());
+    assert!(screen_text(&app).contains("Cafe Libre is not saved."));
+    // travel-hotspot is saved but out of range, at the end of the list.
+    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, KeyCode::Char('f')]);
+    let modal = app.modal.clone().expect("a question");
+    assert_eq!(modal.title, "Forget travel-hotspot?");
+    assert!(!modal.confirm_focused);
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::ForgetWifi { ssid } if ssid == "travel-hotspot")));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Forgot travel-hotspot.") && !screen.contains("saved, not in range"), "{screen}");
+}
+
+#[test]
+fn turning_wifi_off_while_it_may_carry_this_session_asks_first() {
+    let (mut app, mut mock) = open_network();
+    mock.wifi.wired_up = false;
+    key(&mut app, &mut mock, KeyCode::Char('g'));
+    assert!(screen_text(&app).contains("▲ Wired link down"));
+    key(&mut app, &mut mock, KeyCode::Char('o'));
+    let modal = app.modal.clone().expect("a question");
+    assert!(modal.body[0].contains("may cut the connection you are using"), "{modal:?}");
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::SetWifiEnabled { enabled: false })));
+    assert!(screen_text(&app).contains("[ ] off"), "{}", screen_text(&app));
+    // Off asks nothing to turn on again.
+    key(&mut app, &mut mock, KeyCode::Char('o'));
+    assert!(app.modal.is_none());
+    assert!(mock.wifi.enabled);
+}
+
+#[test]
+fn bluetooth_scans_pairs_connects_and_removes() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, RIGHT);
+    assert!(screen_text(&app).contains("↵ pair or connect"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    assert!(screen_text(&app).contains("Kitchen Speaker"), "{}", screen_text(&app));
+    keys(&mut app, &mut mock, &[DOWN, DOWN, ENTER]);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::PairBluetooth { address } if address == "AA:BB:CC:00:00:03")));
+    assert!(
+        screen_text(&app).contains("Paired with Kitchen Speaker. It is trusted and connected."),
+        "{}",
+        screen_text(&app)
+    );
+    // The headphones are paired and not connected: Enter connects them.
+    keys(&mut app, &mut mock, &[UP, ENTER]);
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::ConnectBluetooth { connect: true, .. })));
+    key(&mut app, &mut mock, KeyCode::Char('x'));
+    let modal = app.modal.clone().expect("a question");
+    assert_eq!(modal.title, "Remove WH-1000XM4?");
+    assert!(!modal.confirm_focused);
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert!(mock
+        .calls
+        .iter()
+        .any(|c| matches!(c, Request::RemoveBluetooth { address } if address == "AA:BB:CC:00:00:02")));
+    assert!(!screen_text(&app).contains("WH-1000XM4"));
+}
+
+#[test]
+fn a_pairing_shows_the_passkey_to_type_and_polls_until_done() {
+    let (mut app, mut mock) = open_network();
+    key(&mut app, &mut mock, RIGHT);
+    let mut status = mock.bluetooth.clone();
+    status.pairing = Some(nodo_api::BluetoothPairing {
+        address: "AA:BB:CC:00:00:01".to_owned(),
+        stage: nodo_api::PairingStage::TypePasskey("482913".to_owned()),
+    });
+    dispatch(&mut app, &mut mock, Event::BluetoothChanged { result: Ok(status), quiet: false });
+    let screen = screen_text(&app);
+    assert!(screen.contains("Type 482913 on K380 Keyboard, then press its Enter key."), "{screen}");
+    // Every second the screen asks again while the pairing waits for the owner.
+    let mut polled = false;
+    for _ in 0..TICKS_PER_SECOND {
+        polled |= update(&mut app, Event::Tick).contains(&Effect::PollBluetooth);
+    }
+    assert!(polled);
+}
+
+#[test]
+fn radios_that_are_off_or_missing_say_so() {
+    let (mut app, mut mock) = loaded();
+    mock.wifi = nodo_api::WifiStatus {
+        unavailable: Some("No Wi-Fi hardware was found.".to_owned()),
+        interface: None,
+        enabled: false,
+        link: nodo_api::WifiLink::Off,
+        ssid: None,
+        signal_dbm: None,
+        frequency_mhz: None,
+        security: None,
+        address: None,
+        wired_up: true,
+        saved: Vec::new(),
+    };
+    mock.bluetooth.enabled = false;
+    key(&mut app, &mut mock, KeyCode::Char('w'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("▲ No Wi-Fi hardware was found."), "{screen}");
+    assert!(screen.contains("Nothing can pair with the device while it is off."), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('o'));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetWifiEnabled { .. })));
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::ScanWifi)));
+    key(&mut app, &mut mock, RIGHT);
+    key(&mut app, &mut mock, KeyCode::Char('o'));
+    assert!(mock.bluetooth.enabled);
+    assert!(screen_text(&app).contains("Not discoverable"), "{}", screen_text(&app));
+}
+
+#[test]
+fn the_help_overlay_names_the_network_screen() {
+    let (mut app, mut mock) = loaded();
+    key(&mut app, &mut mock, KeyCode::Char('?'));
+    let overlay = app.overlay.clone().expect("help");
+    assert!(overlay.doc.lines.iter().any(|l| l.contains("Wi-Fi and Bluetooth, from Home")));
+}

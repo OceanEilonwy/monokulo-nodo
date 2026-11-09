@@ -296,6 +296,28 @@ mod tests {
                 package: "a".into(),
                 to: "1_1".into(),
             },
+            Request::WifiStatus,
+            Request::SetWifiEnabled { enabled: true },
+            Request::ScanWifi,
+            Request::JoinWifi(WifiJoin {
+                ssid: "caf\u{e9} \"x\"".into(),
+                security: WifiSecurity::Wpa2Wpa3Personal,
+                passphrase: Some(Secret::new("pass phrase")),
+                accept_open: false,
+            }),
+            Request::JoinWifi(WifiJoin {
+                ssid: "open".into(),
+                security: WifiSecurity::Open,
+                passphrase: None,
+                accept_open: true,
+            }),
+            Request::ForgetWifi { ssid: "home".into() },
+            Request::BluetoothStatus,
+            Request::SetBluetoothEnabled { enabled: false },
+            Request::ScanBluetooth,
+            Request::PairBluetooth { address: "AA:BB:CC:DD:EE:FF".into() },
+            Request::ConnectBluetooth { address: "AA:BB:CC:DD:EE:FF".into(), connect: true },
+            Request::RemoveBluetooth { address: "AA:BB:CC:DD:EE:FF".into() },
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -606,6 +628,50 @@ mod tests {
                 previous: "1_1".into(),
                 blocked: Some("no".into()),
             }])),
+            Ok(Response::Wifi(WifiStatus {
+                unavailable: None,
+                interface: Some("wlan0".into()),
+                enabled: true,
+                link: WifiLink::Connected,
+                ssid: Some("home".into()),
+                signal_dbm: Some(-51),
+                frequency_mhz: Some(2412),
+                security: Some(WifiSecurity::Wpa2Personal),
+                address: Some("192.168.1.20".into()),
+                wired_up: true,
+                saved: vec![SavedWifi {
+                    ssid: "home".into(),
+                    security: WifiSecurity::Wpa3Personal,
+                    added_at: 9,
+                }],
+            })),
+            Ok(Response::WifiNetworks(vec![WifiNetwork {
+                ssid: "home".into(),
+                signal_dbm: -40,
+                frequency_mhz: 5180,
+                security: WifiSecurity::Enterprise,
+                saved: false,
+                connected: false,
+            }])),
+            Ok(Response::Bluetooth(BluetoothStatus {
+                unavailable: Some("no controller".into()),
+                enabled: true,
+                powered: false,
+                controller: Some("00:11:22:33:44:55".into()),
+                devices: vec![BluetoothDevice {
+                    address: "AA:BB:CC:DD:EE:FF".into(),
+                    name: "Keyboard".into(),
+                    kind: Some("input-keyboard".into()),
+                    paired: true,
+                    trusted: true,
+                    connected: false,
+                    rssi: Some(-60),
+                }],
+                pairing: Some(BluetoothPairing {
+                    address: "AA:BB:CC:DD:EE:FF".into(),
+                    stage: PairingStage::TypePasskey("123456".into()),
+                }),
+            })),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();

@@ -61,7 +61,11 @@ nodo-tui --ctl COMMAND [ARGS]
   acme-set EMAIL|- 0|1 [LOCAL_DOMAIN]   (1 is Let's Encrypt staging)
   dns01 [FIELD...]                 (one value per field on stdin, none removes them)
   onion-status | node-onion 0|1     (the node onion serves only its restricted RPC)
-  rollbacks | rollback PACKAGE TO  (back to the version kept from before its last update)";
+  rollbacks | rollback PACKAGE TO  (back to the version kept from before its last update)
+  wifi | wifi-on 0|1 | wifi-scan | wifi-forget SSID
+  wifi-join SSID wpa2|wpa3|wpa2-wpa3   (passphrase on stdin)
+  wifi-join-open SSID              (joins an open network: its traffic is not encrypted)
+  bt | bt-on 0|1 | bt-scan | bt-pair ADDRESS | bt-connect ADDRESS 0|1 | bt-remove ADDRESS";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -316,6 +320,33 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["node-onion", on] => Request::SetNodeOnion { enabled: flag(on)? },
         ["rollbacks"] => Request::ListRollbacks,
         ["rollback", package, to] => Request::RollbackPackage { package: id(package), to: id(to) },
+        ["wifi"] => Request::WifiStatus,
+        ["wifi-on", on] => Request::SetWifiEnabled { enabled: flag(on)? },
+        ["wifi-scan"] => Request::ScanWifi,
+        ["wifi-forget", ssid] => Request::ForgetWifi { ssid: id(ssid) },
+        ["wifi-join", ssid, security] => Request::JoinWifi(nodo_api::WifiJoin {
+            ssid: id(ssid),
+            security: match *security {
+                "wpa2" => nodo_api::WifiSecurity::Wpa2Personal,
+                "wpa3" => nodo_api::WifiSecurity::Wpa3Personal,
+                "wpa2-wpa3" => nodo_api::WifiSecurity::Wpa2Wpa3Personal,
+                other => return Err(format!("expected wpa2, wpa3 or wpa2-wpa3, got {other}")),
+            },
+            passphrase: Some(secret_line()?),
+            accept_open: false,
+        }),
+        ["wifi-join-open", ssid] => Request::JoinWifi(nodo_api::WifiJoin {
+            ssid: id(ssid),
+            security: nodo_api::WifiSecurity::Open,
+            passphrase: None,
+            accept_open: true,
+        }),
+        ["bt"] => Request::BluetoothStatus,
+        ["bt-on", on] => Request::SetBluetoothEnabled { enabled: flag(on)? },
+        ["bt-scan"] => Request::ScanBluetooth,
+        ["bt-pair", address] => Request::PairBluetooth { address: id(address) },
+        ["bt-connect", address, on] => Request::ConnectBluetooth { address: id(address), connect: flag(on)? },
+        ["bt-remove", address] => Request::RemoveBluetooth { address: id(address) },
         ["local-address-changed"] => Request::LocalAddressChanged,
         ["acme-set", email, staging @ ("0" | "1"), rest @ ..] if rest.len() <= 1 => {
             Request::SetAcmeSettings(nodo_api::AcmeSettingsInput {
@@ -384,6 +415,20 @@ mod tests {
         assert!(matches!(parse(&args("system-run")), Ok(Request::RunSystemUpdate)));
         assert!(matches!(parse(&args("system-check")), Ok(Request::CheckSystemUpdate)));
         assert!(matches!(parse(&args("update-storage")), Ok(Request::UpdateStorageGrowth)));
+    }
+
+    #[test]
+    fn parses_radio_commands() {
+        assert!(matches!(parse(&args("wifi")), Ok(Request::WifiStatus)));
+        assert!(matches!(parse(&args("wifi-on 0")), Ok(Request::SetWifiEnabled { enabled: false })));
+        assert!(matches!(parse(&args("wifi-scan")), Ok(Request::ScanWifi)));
+        let Ok(Request::JoinWifi(join)) = parse(&args("wifi-join-open cafe")) else { panic!() };
+        assert!(join.accept_open && join.passphrase.is_none());
+        assert!(parse(&args("wifi-join home wep")).is_err());
+        assert!(matches!(parse(&args("wifi-forget home")), Ok(Request::ForgetWifi { .. })));
+        assert!(matches!(parse(&args("bt-on 1")), Ok(Request::SetBluetoothEnabled { enabled: true })));
+        assert!(matches!(parse(&args("bt-connect AA:BB:CC:DD:EE:FF 0")), Ok(Request::ConnectBluetooth { connect: false, .. })));
+        assert!(matches!(parse(&args("bt-remove AA:BB:CC:DD:EE:FF")), Ok(Request::RemoveBluetooth { .. })));
     }
 
     #[test]

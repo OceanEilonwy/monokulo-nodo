@@ -12,6 +12,8 @@ use crate::secret::{Input, Secret};
 
 #[path = "update_more.rs"]
 mod more;
+#[path = "update_net.rs"]
+mod net;
 
 pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
     match event {
@@ -164,6 +166,7 @@ fn help_document() -> Document {
             "k                SSH keys that may log in",
             "b                backups and restore, from Home",
             "r                rollbacks, from Home",
+            "w                Wi-Fi and Bluetooth, from Home",
             "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
             "Ctrl-C           quit, from anywhere",
@@ -250,6 +253,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::Onion => more::onion_key(app, key),
         ScreenId::Restore => more::restore_key(app, key),
         ScreenId::Rollbacks => more::rollbacks_key(app, key),
+        ScreenId::Network => net::network_key(app, key),
     }
 }
 
@@ -288,6 +292,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Review(state) => state.passphrase.as_mut(),
         Screen::Backup(state) => backup_input(&mut state.step),
         Screen::Restore(state) => more::restore_input(&mut state.step),
+        Screen::Network(state) => net::network_input(state),
         _ => None,
     }
 }
@@ -353,6 +358,10 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
             .collect(),
         ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
         ModalAction::RollBack { package, to } => more::roll_back(app, package, to),
+        action @ (ModalAction::JoinOpenWifi(_)
+        | ModalAction::ForgetWifi(_)
+        | ModalAction::WifiOff
+        | ModalAction::RemoveBluetooth(_)) => net::modal_action(app, action),
         ModalAction::RemoveSshKey(fingerprint) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;
@@ -397,6 +406,7 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
         Screen::Home { .. } if app.ticks % (10 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
         // Caddy works on the certificate in the background, so its progress is read again.
         Screen::WebCertificate(_) if app.ticks % (2 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
+        Screen::Network(_) => net::on_tick(app),
         _ => Vec::new(),
     }
 }
@@ -458,6 +468,7 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             return vec![Effect::LoadBackups];
         }
         KeyCode::Char('r') => return more::open_rollbacks(app),
+        KeyCode::Char('w') => return net::open_network(app),
         _ => {}
     }
     Vec::new()
@@ -1910,6 +1921,10 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         | Event::RestoreFinished(_)
         | Event::RollbacksLoaded(_)
         | Event::RolledBack(_) => return more::on_result(app, event),
+        Event::NetworkLoaded { .. }
+        | Event::WifiChanged { .. }
+        | Event::WifiScanned(_)
+        | Event::BluetoothChanged { .. } => return net::on_result(app, event),
         Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {

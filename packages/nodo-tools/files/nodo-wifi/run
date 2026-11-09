@@ -1,0 +1,23 @@
+#!/bin/sh
+# wpa_supplicant for the owner's Wi-Fi, which the helper turns on and off (Network screen).
+# Off by default: the service is not linked, and the helper keeps the radio blocked with rfkill.
+# The helper writes the configuration, root-only, with the saved networks; the control socket in
+# /run/nodo/wpa is how it scans and joins. dhcpcd leases the address, as on the wired interface.
+exec 2>&1
+exec </dev/null
+conf=/var/lib/nodo/wifi/wpa_supplicant.conf
+# The first wireless interface in name order, which is the one the helper uses too.
+iface=
+for d in /sys/class/net/*/phy80211; do
+	[ -e "$d" ] || continue
+	iface=${d%/phy80211}
+	iface=${iface##*/}
+	break
+done
+if [ -z "$iface" ] || [ ! -r "$conf" ]; then
+	echo "nodo-wifi: no wireless interface or no configuration yet"
+	sleep 5
+	exit 1
+fi
+mkdir -p /run/nodo
+exec wpa_supplicant -i "$iface" -c "$conf" -D nl80211,wext

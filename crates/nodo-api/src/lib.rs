@@ -11,6 +11,7 @@
 pub mod client;
 mod manage;
 pub mod protocol;
+mod radio;
 mod secret;
 mod system;
 
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use manage::*;
+pub use radio::*;
 pub use secret::Secret;
 pub use system::*;
 
@@ -925,6 +927,43 @@ pub enum Request {
         package: String,
         to: String,
     },
+    /// Whether Wi-Fi is on, the network it is joined to with signal and address, and the saved
+    /// networks.
+    WifiStatus,
+    /// Turns the Wi-Fi radio and wpa_supplicant on or off. Off by default; saved networks stay.
+    SetWifiEnabled {
+        enabled: bool,
+    },
+    /// Networks in range. Wi-Fi must be on.
+    ScanWifi,
+    /// Joins a network and saves it only once it accepted the passphrase. An open network needs
+    /// `accept_open`. Answers with the status once an address arrived, or the time ran out.
+    JoinWifi(WifiJoin),
+    /// Removes a saved network and its passphrase, leaving it if joined.
+    ForgetWifi {
+        ssid: String,
+    },
+    BluetoothStatus,
+    /// Turns the Bluetooth controller and BlueZ on or off. Off by default; pairings stay.
+    SetBluetoothEnabled {
+        enabled: bool,
+    },
+    /// Looks for devices for a few seconds. The device itself never becomes discoverable.
+    ScanBluetooth,
+    /// Starts pairing with a device the owner chose, then trusts and connects it. Answers at
+    /// once; `BluetoothStatus` follows the pairing, with a passkey to type when one is needed.
+    PairBluetooth {
+        address: String,
+    },
+    /// Connects or disconnects a paired device.
+    ConnectBluetooth {
+        address: String,
+        connect: bool,
+    },
+    /// Unpairs a device and forgets it.
+    RemoveBluetooth {
+        address: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -992,6 +1031,9 @@ pub enum Response {
     StorageGrowth(Vec<StorageGrowth>),
     Onion(OnionStatus),
     Rollbacks(Vec<RollbackOption>),
+    Wifi(WifiStatus),
+    WifiNetworks(Vec<WifiNetwork>),
+    Bluetooth(BluetoothStatus),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1117,6 +1159,17 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::SetNodeOnion { .. } => "set-node-onion",
         Request::ListRollbacks => "list-rollbacks",
         Request::RollbackPackage { .. } => "rollback-package",
+        Request::WifiStatus => "wifi-status",
+        Request::SetWifiEnabled { .. } => "set-wifi-enabled",
+        Request::ScanWifi => "scan-wifi",
+        Request::JoinWifi(_) => "join-wifi",
+        Request::ForgetWifi { .. } => "forget-wifi",
+        Request::BluetoothStatus => "bluetooth-status",
+        Request::SetBluetoothEnabled { .. } => "set-bluetooth-enabled",
+        Request::ScanBluetooth => "scan-bluetooth",
+        Request::PairBluetooth { .. } => "pair-bluetooth",
+        Request::ConnectBluetooth { .. } => "connect-bluetooth",
+        Request::RemoveBluetooth { .. } => "remove-bluetooth",
     }
 }
 
@@ -1195,6 +1248,12 @@ mod tests {
                     value: SettingInput::Secret(Secret::new("hunter2")),
                 }],
             },
+            Request::JoinWifi(WifiJoin {
+                ssid: "home".into(),
+                security: WifiSecurity::Wpa2Personal,
+                passphrase: Some(Secret::new("hunter2 long")),
+                accept_open: false,
+            }),
         ];
         for request in requests {
             let text = format!("{request:?}");

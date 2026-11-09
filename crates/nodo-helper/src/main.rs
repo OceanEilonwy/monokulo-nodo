@@ -158,6 +158,8 @@ fn main() -> ExitCode {
     if let Err(e) = helper.refresh_health_config() {
         eprintln!("nodo-helper: could not write the health configuration: {e}");
     }
+    // Radios the owner left off are blocked again, since rfkill state does not survive a reboot.
+    helper.apply_radio_state();
     let helper = Arc::new(helper);
     watch_local_address(helper.clone());
     if let Err(e) = server::serve(listener, helper) {

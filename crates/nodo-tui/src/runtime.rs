@@ -265,7 +265,72 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             };
             vec![Event::RolledBack(result)]
         }
+        Effect::LoadNetwork => {
+            vec![Event::NetworkLoaded { wifi: wifi_status(backend), bluetooth: bluetooth_status(backend) }]
+        }
+        Effect::PollWifi => vec![Event::WifiChanged { result: wifi_status(backend), quiet: true }],
+        Effect::SetWifi(enabled) => vec![wifi_changed(backend.call(Request::SetWifiEnabled { enabled }))],
+        Effect::ScanWifi => {
+            let result = match backend.call(Request::ScanWifi) {
+                Ok(Response::WifiNetworks(list)) => Ok(list),
+                Ok(other) => Err(format!("unexpected reply: {other:?}")),
+                Err(e) => Err(e.to_string()),
+            };
+            vec![Event::WifiScanned(result), Event::WifiChanged { result: wifi_status(backend), quiet: true }]
+        }
+        Effect::JoinWifi { ssid, security, passphrase, accept_open } => {
+            let join = nodo_api::WifiJoin {
+                ssid,
+                security,
+                passphrase: passphrase.map(|p| nodo_api::Secret::new(p.expose())),
+                accept_open,
+            };
+            vec![wifi_changed(backend.call(Request::JoinWifi(join)))]
+        }
+        Effect::ForgetWifi(ssid) => vec![wifi_changed(backend.call(Request::ForgetWifi { ssid }))],
+        Effect::SetBluetooth(enabled) => vec![bluetooth_changed(backend.call(Request::SetBluetoothEnabled { enabled }))],
+        Effect::ScanBluetooth => vec![bluetooth_changed(backend.call(Request::ScanBluetooth))],
+        Effect::PairBluetooth(address) => vec![bluetooth_changed(backend.call(Request::PairBluetooth { address }))],
+        Effect::PollBluetooth => vec![Event::BluetoothChanged { result: bluetooth_status(backend), quiet: true }],
+        Effect::ConnectBluetooth { address, connect } => {
+            vec![bluetooth_changed(backend.call(Request::ConnectBluetooth { address, connect }))]
+        }
+        Effect::RemoveBluetooth(address) => vec![bluetooth_changed(backend.call(Request::RemoveBluetooth { address }))],
     }
+}
+
+fn wifi_status<T: Backend + ScreenData>(backend: &mut T) -> Result<nodo_api::WifiStatus, String> {
+    match backend.call(Request::WifiStatus) {
+        Ok(Response::Wifi(status)) => Ok(status),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn bluetooth_status<T: Backend + ScreenData>(backend: &mut T) -> Result<nodo_api::BluetoothStatus, String> {
+    match backend.call(Request::BluetoothStatus) {
+        Ok(Response::Bluetooth(status)) => Ok(status),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn wifi_changed(result: Result<Response, nodo_api::ApiError>) -> Event {
+    let result = match result {
+        Ok(Response::Wifi(status)) => Ok(status),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    };
+    Event::WifiChanged { result, quiet: false }
+}
+
+fn bluetooth_changed(result: Result<Response, nodo_api::ApiError>) -> Event {
+    let result = match result {
+        Ok(Response::Bluetooth(status)) => Ok(status),
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    };
+    Event::BluetoothChanged { result, quiet: false }
 }
 
 fn onion_status<T: Backend + ScreenData>(backend: &mut T) -> Result<nodo_api::OnionStatus, String> {

@@ -123,6 +123,8 @@ pub struct Helper<S: System> {
     pub(crate) manage: crate::manage::Manage,
     /// Opens sealed secrets. Only in memory, from an unlock until the helper exits.
     pub(crate) secrets: Mutex<Option<std::sync::Arc<crate::secrets::SecretsKey>>>,
+    /// Wi-Fi and Bluetooth.
+    pub(crate) radios: crate::radio::Radios,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,6 +158,7 @@ impl<S: System> Helper<S> {
             last_drive_check: Mutex::new(None),
             manage: crate::manage::Manage::default(),
             secrets: Mutex::new(None),
+            radios: crate::radio::Radios::default(),
         }
     }
 
@@ -249,6 +252,17 @@ impl<S: System> Helper<S> {
             | Request::LocalSiteStatus) => self.web_request(request),
             Request::OnionStatus => self.onion_status(),
             Request::SetNodeOnion { enabled } => self.set_node_onion(enabled),
+            Request::WifiStatus => self.wifi_status().map(Response::Wifi),
+            Request::SetWifiEnabled { enabled } => self.set_wifi_enabled(enabled),
+            Request::ScanWifi => self.scan_wifi(),
+            Request::JoinWifi(join) => self.join_wifi(&join),
+            Request::ForgetWifi { ssid } => self.forget_wifi(&ssid),
+            Request::BluetoothStatus => self.bluetooth_status().map(Response::Bluetooth),
+            Request::SetBluetoothEnabled { enabled } => self.set_bluetooth_enabled(enabled),
+            Request::ScanBluetooth => self.scan_bluetooth(),
+            Request::PairBluetooth { address } => self.pair_bluetooth(&address),
+            Request::ConnectBluetooth { address, connect } => self.connect_bluetooth(&address, connect),
+            Request::RemoveBluetooth { address } => self.remove_bluetooth(&address),
             // Only root may ask, which is what the nodo-localnet service runs as.
             Request::LocalAddressChanged if uid != 0 => Err(ApiError::Denied),
             Request::LocalAddressChanged => self.check_local_address().map(|_| Response::Ok),

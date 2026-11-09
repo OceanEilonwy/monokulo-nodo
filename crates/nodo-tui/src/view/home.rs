@@ -96,7 +96,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
     }
     page.footer(Item::Row(
         hints(t, &[("↑↓", "move"), ("↵", "open"), ("s", "start/stop"), ("/", "search"), ("Tab", "next tab"), ("?", "help")]),
-        hints(t, &[("r", "rollbacks"), ("q", "quit")]),
+        hints(t, &[("w", "network"), ("r", "rollbacks"), ("q", "quit")]),
     ))
 }
 
