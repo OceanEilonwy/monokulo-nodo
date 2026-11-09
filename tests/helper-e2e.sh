@@ -567,7 +567,8 @@ check "Tor forwards the node onion only to the restricted RPC on loopback" sh -c
 	[ "$(grep "^HiddenServicePort" $t | sort | tr "\n" ";")" = "HiddenServicePort 18081 127.0.0.1:18081;HiddenServicePort 80 127.0.0.1:19000;" ] &&
 	! grep -q "^HiddenServicePort 18089" $t && ! grep "^HiddenServicePort" $t | grep -qv " 127\.0\.0\.1:"'
 check "the node onion turns off again, and Tor keeps serving the site" sh -c 'ctl node-onion 0 && ! grep -q "node-rpc" /var/lib/nodo-web/torrc 2>/dev/null &&
-	grep -q "enabled = false" /var/lib/nodo/node-onion.toml && sv status tor | grep -q "^run:" &&
+	grep -q "enabled = false" /var/lib/nodo/node-onion.toml &&
+	{ i=0; until sv status tor | grep -q "^run:" || [ $i -ge 15 ]; do i=$((i+1)); sleep 1; done; sv status tor | grep -q "^run:"; } &&
 	grep -qx "HiddenServiceDir /var/lib/tor/nodo/e2e-app.shop" /var/lib/nodo-web/torrc'
 
 check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'

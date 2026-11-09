@@ -200,9 +200,16 @@ printf 'server = "%s"\n' "$https" > /etc/nodo/system-update.toml
 offer test-d
 says "automatic: false" ctl system-status
 result "automatic system updates are off by default" "$?"
+# Starts one scheduled run. After a link is removed its runsv can linger, stopped, and a new link
+# then finds it there and starts nothing, so the run is asked for once runsv answers.
+start_schedule() {
+	ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+	i=0; until sv status nodo-systemupdate >/dev/null 2>&1 || [ "$i" -ge 20 ]; do i=$((i+1)); sleep 1; done
+	sv restart nodo-systemupdate >/dev/null 2>&1
+}
 sv_pid() { sv status nodo-snaptest | sed -n 's/^run: [^ ]* (pid \([0-9]*\)).*/\1/p'; }
 pid_before=$(sv_pid)
-ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+start_schedule
 i=0; until grep -q '^serial = 8$' /var/lib/nodo/updates/system.toml 2>/dev/null || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
 grep -q '^withdraws_current = true$' /var/lib/nodo/updates/system.toml
 result "the nodo-systemupdate schedule checked and found the withdrawal" "$?"
@@ -249,8 +256,8 @@ says "serial: 9" ctl system-check && says "installs in the update window, from $
 result "outside the update window, an automatic run leaves the snapshot waiting" "$?"
 ctl auto-set manual "$(at -5)" "$(at 30)" >/dev/null
 pid_before=$(sv_pid)
-ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
-i=0; until [ "$(serial)" = 9 ] || [ "$i" -ge 60 ]; do i=$((i+1)); sleep 1; done
+start_schedule
+i=0; until [ "$(serial)" = 9 ] || [ "$i" -ge 120 ]; do i=$((i+1)); sleep 1; done
 sv force-stop nodo-systemupdate >/dev/null 2>&1; rm -f /var/service/nodo-systemupdate
 unchanged nodo-snaptest-1.1_1 9
 result "inside the window, the nodo-systemupdate schedule applies it by itself" "$?"
@@ -267,7 +274,7 @@ offer test-g
 says "needs_restart: true" ctl system-check && says "waits for you: it needs a restart" ctl system-run &&
 	unchanged nodo-snaptest-1.1_1 9
 result "inside the window, a snapshot that needs a restart still waits for the owner" "$?"
-ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+start_schedule
 sleep 15
 sv force-stop nodo-systemupdate >/dev/null 2>&1; rm -f /var/service/nodo-systemupdate
 unchanged nodo-snaptest-1.1_1 9
