@@ -748,6 +748,7 @@ def storage_growth():
 def system_update():
     # tests/tui-e2e.sh puts the test snapshots in the VM with tests/snapshot-prepare.sh. The device
     # moves to test-a, and the channel offers test-b, which updates nodo-snaptest.
+    shop = pkgver("tui-shop")
     out = sh(f"sh {HERE}/sysupdate-net.sh up", check=False, timeout=600)
     try:
         with Journey("Updates: the system base row"):
@@ -759,8 +760,9 @@ def system_update():
             tui.send("tab", "tab", "tab", "tab")
             tui.expect("the next system snapshot is a row of its own, from a tested snapshot",
                        re.compile(r"\[x\] system base\s+test-a → test-b\s+tested snapshot"), timeout=60)
+            # The line wraps at this width, so only its start is matched.
             tui.expect("the system line says automatic system updates only notify", "System: snapshot test-a",
-                       "Automatic system updates are off, so checks only notify.")
+                       "Automatic system updates are off")
             tui.send("enter")
             tui.expect("updating applies the snapshot and says what changed", "✓ system base",
                        re.compile(r"Applied, \d+ packages? changed"), timeout=300)
@@ -771,7 +773,7 @@ def system_update():
                   'current_snapshot:Some("test-b")' in status and "available:None" in status, status)
             check("the update is recorded as the owner's, not automatic", "automatic:false,}" in status, status)
             check("nodo-snaptest moved to 1.1", pkgver("nodo-snaptest") == "nodo-snaptest-1.1_1")
-            check("the packages were left alone", pkgver("tui-shop") == "tui-shop-1.2_1")
+            check("the packages were left alone", pkgver("tui-shop") == shop, shop)
     finally:
         sh(f"sh {HERE}/sysupdate-net.sh down", check=False)
 
