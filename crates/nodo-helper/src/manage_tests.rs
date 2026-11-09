@@ -776,6 +776,16 @@ mod manual_rollback {
     }
 
     #[test]
+    fn nothing_is_pruned_while_the_feed_state_is_missing() {
+        let (h, packages) = installed();
+        leave_stray(&packages, "/s/packages/gone/gone-1.0_1.x86_64.xbps");
+        let before = kept_files(&packages);
+        h.sys.remove(h.manage.paths.feeds.to_str().unwrap());
+        h.prune_kept();
+        assert_eq!(kept_files(&packages), before);
+    }
+
+    #[test]
     fn a_failed_first_install_removes_the_file_it_kept() {
         let (h, packages) = setup();
         add_feed(&h);

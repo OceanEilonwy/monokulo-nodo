@@ -147,6 +147,11 @@ impl<S: System> Helper<S> {
     /// version per package stays on the disk, whatever path got it there. The caller holds the
     /// work lock, so no install is part way between keeping a file and recording it.
     pub(crate) fn prune_kept(&self) {
+        // Without the feed state there is no record of what is installed, and pruning against an
+        // empty one would remove every kept file. Keep everything until the state is back.
+        if !matches!(self.sys.read_file(&self.manage.paths.feeds), Ok(Some(_))) {
+            return;
+        }
         let Ok(state) = self.read_feeds() else { return };
         let packages = &self.manage.packages;
         for dir in packages.kept_entries(&self.manage.paths.kept) {
