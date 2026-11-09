@@ -61,6 +61,18 @@ fn settings_design_state(mock: &MockBackend) -> SettingsState {
 fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
     match id {
         ScreenId::Main => Screen::Home { selected: 0 },
+        ScreenId::Network => {
+            // The scan has run, and the speaker the Bluetooth scan found waits to be paired.
+            let mut bluetooth = mock.bluetooth.clone();
+            bluetooth.devices.extend(mock.nearby.iter().cloned());
+            Screen::Network(NetworkState {
+                wifi: Some(mock.wifi.clone()),
+                networks: mock.wifi_networks(),
+                bluetooth: Some(bluetooth),
+                busy: None,
+                ..NetworkState::new()
+            })
+        }
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
         ScreenId::Onion => Screen::Onion(OnionState {
             status: Some(mock.onion_status()),

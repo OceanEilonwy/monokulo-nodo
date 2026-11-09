@@ -5,6 +5,7 @@ mod certs;
 mod home;
 mod install;
 mod more;
+mod network;
 pub mod layout;
 mod packages;
 mod settings;
@@ -65,6 +66,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Onion(state) => more::onion(t, state),
         Screen::Restore(state) => more::restore(app, t, state),
         Screen::Rollbacks(state) => more::rollbacks(t, state),
+        Screen::Network(state) => network::network(t, state),
     };
     if let Some(notice) = &app.notice {
         let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {

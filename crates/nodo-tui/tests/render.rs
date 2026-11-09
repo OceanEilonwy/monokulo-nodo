@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 32, "31 design files plus the auto-update screen");
+    assert_eq!(ScreenId::ALL.len(), 33, "32 design files plus the auto-update screen");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -66,7 +66,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "restarted 3 times, press l for logs", "alternative node",
             "◆ This device is locked. Press u to unlock all waiting services.",
             "✕ bell keeps failing. Press l to read its log.",
-            "↑↓ move", "↵ open", "s start/stop", "/ search", "Tab next tab", "? help", "r rollbacks", "q quit",
+            "↑↓ move", "↵ open", "s start/stop", "/ search", "Tab next tab", "? help", "w network", "r rollbacks", "q quit",
         ],
         ScreenId::Search => &[
             "/ pay", "All feeds · Any status · 3 of 41 results", "moneropay", "official", "Payment gateway for Monero",
@@ -334,6 +334,17 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "▲ bell 1.2.0_1 → 1.3.0_1 stayed on 1.2.0_1: bell did not pass its health check", "2026-11-07", "System",
             "The system runs the version it was updated to. No fallback happened.",
             "↑↓ move", "↵ roll back", "l log", "g look again", "Esc back",
+        ],
+        ScreenId::Network => &[
+            "Home › Network", "● Wired connected", "[x] on", "● Joined home-5G", "-48 dBm", "192.168.1.57", "wlan0",
+            "▸home-5G", "WPA2/WPA3", "▂▄▆█", "saved · joined", "Cafe Libre", "open", "neighbour", "WPA3",
+            "office-staff", "enterprise", "travel-hotspot", "saved, not in range",
+            "Not discoverable, pairs only when you ask", "D8:3A:DD:41:07:2C", "K380 Keyboard", "keyboard",
+            "paired · connected", "WH-1000XM4", "headphones", "Kitchen Speaker", "speaker", "found",
+            "Wired stays the main connection. Wi-Fi carries traffic only while the wired link is down.",
+            "Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept.",
+            "Bluetooth is never discoverable. Only pairings you start here can happen.",
+            "←→ Wi-Fi/Bluetooth", "↑↓ move", "↵ join", "s scan", "o on/off", "f forget", "g look again", "Esc back",
         ],
     }
 }

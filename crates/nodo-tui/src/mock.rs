@@ -78,6 +78,12 @@ pub struct MockBackend {
     pub update_history: Vec<nodo_api::UpdateEvent>,
     /// Makes a USB restore fail with this reason, as a pulled drive would.
     pub restore_failure: Option<String>,
+    pub wifi: nodo_api::WifiStatus,
+    /// Networks in range, with the passphrase each accepts.
+    pub access_points: Vec<(nodo_api::WifiNetwork, String)>,
+    pub bluetooth: nodo_api::BluetoothStatus,
+    /// Devices a Bluetooth scan finds.
+    pub nearby: Vec<nodo_api::BluetoothDevice>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
 }
@@ -139,6 +145,10 @@ impl MockBackend {
                 kind: nodo_api::UpdateEventKind::RolledBack { reason: s("bell did not pass its health check") },
             }],
             restore_failure: None,
+            wifi: sample_wifi(),
+            access_points: sample_access_points(),
+            bluetooth: sample_bluetooth(),
+            nearby: vec![bt_device("AA:BB:CC:00:00:03", "Kitchen Speaker", "audio-card", false, false, -71)],
             reach_attempts: HashMap::new(),
             job: None,
         }
@@ -187,6 +197,119 @@ impl MockBackend {
 
     fn is_locked(&self) -> bool {
         self.services.iter().any(|svc| svc.state == ServiceState::Locked)
+    }
+}
+
+impl MockBackend {
+    /// The networks in range, marked as saved and joined as the helper marks them.
+    pub fn wifi_networks(&self) -> Vec<nodo_api::WifiNetwork> {
+        self.access_points
+            .iter()
+            .map(|(network, _)| {
+                let mut network = network.clone();
+                network.saved = self.wifi.saved.iter().any(|s| s.ssid == network.ssid);
+                network.connected = self.wifi.link == nodo_api::WifiLink::Connected
+                    && self.wifi.ssid.as_deref() == Some(network.ssid.as_str());
+                network
+            })
+            .collect()
+    }
+
+    /// The helper's rules: a passphrase the network accepts, and an open network only when the
+    /// owner accepted that its traffic is not encrypted.
+    fn join_wifi(&mut self, join: nodo_api::WifiJoin) -> Result<Response, ApiError> {
+        if !self.wifi.enabled {
+            return Err(ApiError::Failed(s("Wi-Fi is off. Turn it on first.")));
+        }
+        let (network, accepts) = self
+            .access_points
+            .iter()
+            .find(|(n, _)| n.ssid == join.ssid)
+            .cloned()
+            .ok_or_else(|| ApiError::Failed(format!("{} is not in range. Nothing was saved.", join.ssid)))?;
+        if network.security == nodo_api::WifiSecurity::Open {
+            if !join.accept_open {
+                return Err(ApiError::NeedsConfirmation(format!("{} is an open network", join.ssid)));
+            }
+        } else if join.passphrase.as_ref().map(|p| p.expose()) != Some(accepts.as_str()) {
+            return Err(ApiError::Failed(format!("{} refused the passphrase. Nothing was saved.", join.ssid)));
+        }
+        self.wifi.saved.retain(|n| n.ssid != join.ssid);
+        self.wifi.saved.push(nodo_api::SavedWifi {
+            ssid: join.ssid.clone(),
+            security: network.security,
+            added_at: 1_794_009_600,
+        });
+        self.wifi.link = nodo_api::WifiLink::Connected;
+        self.wifi.ssid = Some(join.ssid);
+        self.wifi.signal_dbm = Some(network.signal_dbm);
+        self.wifi.frequency_mhz = Some(network.frequency_mhz);
+        self.wifi.security = Some(network.security);
+        self.wifi.address = Some(s("192.168.1.57"));
+        Ok(Response::Wifi(self.wifi.clone()))
+    }
+}
+
+fn wifi_network(ssid: &str, signal_dbm: i32, frequency_mhz: u32, security: nodo_api::WifiSecurity) -> nodo_api::WifiNetwork {
+    nodo_api::WifiNetwork { ssid: s(ssid), signal_dbm, frequency_mhz, security, saved: false, connected: false }
+}
+
+/// The design's Wi-Fi: on, joined to the home network, with a travel hotspot saved.
+pub fn sample_wifi() -> nodo_api::WifiStatus {
+    use nodo_api::WifiSecurity::*;
+    nodo_api::WifiStatus {
+        unavailable: None,
+        interface: Some(s("wlan0")),
+        enabled: true,
+        link: nodo_api::WifiLink::Connected,
+        ssid: Some(s("home-5G")),
+        signal_dbm: Some(-48),
+        frequency_mhz: Some(5180),
+        security: Some(Wpa2Wpa3Personal),
+        address: Some(s("192.168.1.57")),
+        wired_up: true,
+        saved: vec![
+            nodo_api::SavedWifi { ssid: s("home-5G"), security: Wpa2Wpa3Personal, added_at: 1_794_009_600 },
+            nodo_api::SavedWifi { ssid: s("travel-hotspot"), security: Wpa2Personal, added_at: 1_794_009_700 },
+        ],
+    }
+}
+
+/// Networks in range, strongest first, with the passphrase each accepts.
+pub fn sample_access_points() -> Vec<(nodo_api::WifiNetwork, String)> {
+    use nodo_api::WifiSecurity::*;
+    vec![
+        (wifi_network("home-5G", -48, 5180, Wpa2Wpa3Personal), s("correct horse battery")),
+        (wifi_network("Cafe Libre", -61, 2437, Open), String::new()),
+        (wifi_network("neighbour", -70, 2412, Wpa3Personal), s("not ours at all")),
+        (wifi_network("office-staff", -79, 5500, Enterprise), String::new()),
+    ]
+}
+
+fn bt_device(address: &str, name: &str, icon: &str, paired: bool, connected: bool, rssi: i16) -> nodo_api::BluetoothDevice {
+    nodo_api::BluetoothDevice {
+        address: s(address),
+        name: s(name),
+        kind: Some(s(icon)),
+        paired,
+        trusted: paired,
+        connected,
+        rssi: Some(rssi),
+    }
+}
+
+/// The design's Bluetooth: on, a keyboard paired and connected, headphones paired.
+pub fn sample_bluetooth() -> nodo_api::BluetoothStatus {
+    nodo_api::BluetoothStatus {
+        unavailable: None,
+        enabled: true,
+        powered: true,
+        controller: Some(s("D8:3A:DD:41:07:2C")),
+        devices: vec![
+            bt_device("AA:BB:CC:00:00:01", "K380 Keyboard", "input-keyboard", true, true, -52),
+            bt_device("AA:BB:CC:00:00:02", "WH-1000XM4", "audio-headset", true, false, -66),
+        ],
+        pairing: None,
     }
 }
 
@@ -301,6 +424,86 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),
+            Request::WifiStatus => Ok(Response::Wifi(self.wifi.clone())),
+            Request::SetWifiEnabled { enabled } => {
+                self.wifi.enabled = enabled;
+                self.wifi.link = if enabled { nodo_api::WifiLink::Disconnected } else { nodo_api::WifiLink::Off };
+                self.wifi.ssid = None;
+                self.wifi.address = None;
+                self.wifi.signal_dbm = None;
+                Ok(Response::Wifi(self.wifi.clone()))
+            }
+            Request::ScanWifi => {
+                if !self.wifi.enabled {
+                    return Err(ApiError::Failed(s("Wi-Fi is off. Turn it on first.")));
+                }
+                Ok(Response::WifiNetworks(self.wifi_networks()))
+            }
+            Request::JoinWifi(join) => self.join_wifi(join),
+            Request::ForgetWifi { ssid } => {
+                let before = self.wifi.saved.len();
+                self.wifi.saved.retain(|n| n.ssid != ssid);
+                if self.wifi.saved.len() == before {
+                    return Err(ApiError::NotFound(ssid));
+                }
+                if self.wifi.ssid.as_deref() == Some(ssid.as_str()) {
+                    self.wifi.link = nodo_api::WifiLink::Disconnected;
+                    self.wifi.ssid = None;
+                    self.wifi.address = None;
+                    self.wifi.signal_dbm = None;
+                }
+                Ok(Response::Wifi(self.wifi.clone()))
+            }
+            Request::BluetoothStatus => Ok(Response::Bluetooth(self.bluetooth.clone())),
+            Request::SetBluetoothEnabled { enabled } => {
+                self.bluetooth.enabled = enabled;
+                self.bluetooth.powered = enabled;
+                Ok(Response::Bluetooth(self.bluetooth.clone()))
+            }
+            Request::ScanBluetooth => {
+                if !self.bluetooth.enabled {
+                    return Err(ApiError::Failed(s("Bluetooth is off. Turn it on first.")));
+                }
+                for device in self.nearby.clone() {
+                    if !self.bluetooth.devices.iter().any(|d| d.address == device.address) {
+                        self.bluetooth.devices.push(device);
+                    }
+                }
+                Ok(Response::Bluetooth(self.bluetooth.clone()))
+            }
+            Request::PairBluetooth { address } => {
+                let device = self
+                    .bluetooth
+                    .devices
+                    .iter_mut()
+                    .find(|d| d.address == address)
+                    .ok_or_else(|| ApiError::NotFound(address.clone()))?;
+                // The mock pairs at once, as a device without a passkey does.
+                device.paired = true;
+                device.trusted = true;
+                device.connected = true;
+                self.bluetooth.pairing =
+                    Some(nodo_api::BluetoothPairing { address, stage: nodo_api::PairingStage::Done });
+                Ok(Response::Bluetooth(self.bluetooth.clone()))
+            }
+            Request::ConnectBluetooth { address, connect } => {
+                let device = self
+                    .bluetooth
+                    .devices
+                    .iter_mut()
+                    .find(|d| d.address == address)
+                    .ok_or_else(|| ApiError::NotFound(address.clone()))?;
+                device.connected = connect;
+                Ok(Response::Bluetooth(self.bluetooth.clone()))
+            }
+            Request::RemoveBluetooth { address } => {
+                let before = self.bluetooth.devices.len();
+                self.bluetooth.devices.retain(|d| d.address != address);
+                if self.bluetooth.devices.len() == before {
+                    return Err(ApiError::NotFound(address));
+                }
+                Ok(Response::Bluetooth(self.bluetooth.clone()))
+            }
             Request::UpdateStatus => Ok(Response::UpdateStatus(nodo_api::UpdateStatus {
                 candidates: Vec::new(),
                 last_check: None,

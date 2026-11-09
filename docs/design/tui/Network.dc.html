@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wi-Fi and Bluetooth</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.d{color:#A3AAB0}.a{color:#F2A33A}.ok{color:#6FD6B3}.err{color:#FF8A7A}.i{color:#86BEFF}.s{background:#F2A33A;color:#101214;font-weight:700}
+.r{display:flex;justify-content:space-between;gap:16px;white-space:pre}
+.p{position:relative;border:1px solid #545C63;padding:14px 16px}
+.pa{border-color:#F2A33A}.pe{border-color:#FF8A7A}
+.pt{position:absolute;top:-10px;left:12px;background:#101214;padding:0 6px;font-weight:700}
+</style>
+</helmet>
+<div style="width:960px;height:640px;box-sizing:border-box;padding:16px;display:flex;flex-direction:column;gap:16px;background:#101214;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:14px;line-height:20px">
+<div class="r"><div>Home <span class="d">›</span> <b>Network</b></div><div class="ok">● Wired connected</div></div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:18px;padding-top:8px">
+<div class="p pa" style="flex:1"><div class="pt">Wi-Fi</div>
+<div class="r"><span>  [x] on   <span class="ok">●</span> Joined home-5G<span class="d">  -48 dBm</span>  192.168.1.57</span><span class="d">wlan0 </span></div>
+<div class="r s"><span>▸home-5G                 WPA2/WPA3  ▂▄▆█  -48 dBm</span><span>saved · joined </span></div>
+<div class="r"><span>  Cafe Libre              <span class="a">open</span>       <span class="i">▂▄▆</span> <span class="d"> -61 dBm</span></span><span></span></div>
+<div class="r"><span>  neighbour               WPA3       <span class="i">▂▄</span>  <span class="d"> -70 dBm</span></span><span></span></div>
+<div class="r"><span>  office-staff            <span class="d">enterprise</span> <span class="i">▂</span>   <span class="d"> -79 dBm</span></span><span></span></div>
+<div class="r"><span>  travel-hotspot          WPA2</span><span class="d">saved, not in range </span></div>
+</div>
+<div class="p "><div class="pt">Bluetooth</div>
+<div class="r"><span>  [x] on   <span class="ok">●</span> Not discoverable, pairs only when you ask</span><span class="d">D8:3A:DD:41:07:2C </span></div>
+<div class="r"><span>  K380 Keyboard           keyboard   <span class="d">  -52 dBm</span></span><span class="ok">paired · connected </span></div>
+<div class="r"><span>  WH-1000XM4              headphones <span class="d">  -66 dBm</span></span><span class="d">paired </span></div>
+<div class="r"><span>  Kitchen Speaker         speaker    <span class="d">  -71 dBm</span></span><span class="d">found </span></div>
+</div>
+<div class="p "><div class="pt">About wireless</div>
+<div><span class="i">●</span> Wired stays the main connection. Wi-Fi carries traffic only while the wired link is down.</div>
+<div><span class="i">●</span> Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept.</div>
+<div><span class="i">●</span> Bluetooth is never discoverable. Only pairings you start here can happen.</div>
+</div>
+</div>
+<div class="r d"><span><span class="a">←→</span> Wi-Fi/Bluetooth  <span class="a">↑↓</span> move  <span class="a">↵</span> join  <span class="a">s</span> scan  <span class="a">o</span> on/off  <span class="a">f</span> forget  <span class="a">g</span> look again  <span class="a">Esc</span> back</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

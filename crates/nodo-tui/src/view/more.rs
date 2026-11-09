@@ -10,7 +10,7 @@ use super::{checkbox, hints, mark, pad};
 use crate::app::{App, OnionRow, OnionState, RestoreState, RestoreStep, RollbacksState, RESTORE_WORD, TICKS_PER_SECOND};
 use crate::theme::Theme;
 
-fn crumbs(t: &Theme, parts: &[&str]) -> Line<'static> {
+pub(super) fn crumbs(t: &Theme, parts: &[&str]) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, part) in parts.iter().enumerate() {
         if index + 1 == parts.len() {
@@ -23,15 +23,15 @@ fn crumbs(t: &Theme, parts: &[&str]) -> Line<'static> {
     Line::from(spans)
 }
 
-fn error_items(t: &Theme, error: &Option<String>) -> Vec<Item> {
+pub(super) fn error_items(t: &Theme, error: &Option<String>) -> Vec<Item> {
     error.iter().map(|e| Item::Text(Line::from(t.e(format!("✕ {e}"))))).collect()
 }
 
-fn bullet(t: &Theme, text: &str) -> Item {
+pub(super) fn bullet(t: &Theme, text: &str) -> Item {
     Item::Text(Line::from(vec![t.i("●"), t.n(format!(" {text}"))]))
 }
 
-fn row(selected: bool, left: Line<'static>, right: Line<'static>) -> Item {
+pub(super) fn row(selected: bool, left: Line<'static>, right: Line<'static>) -> Item {
     if selected {
         Item::Selected(left, right)
     } else {
