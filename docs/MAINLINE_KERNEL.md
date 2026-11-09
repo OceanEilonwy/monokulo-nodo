@@ -1,7 +1,7 @@
 # Mainline kernel for the NanoPC-T6N
 
-There are two T6N images. They differ only in the kernel, its device tree, its modules and the
-console name:
+There are two T6N images. They differ only in the kernel, its device tree, its modules, the
+console name and Vulkan, which needs the mainline kernel's GPU driver:
 
 | | `nanopc-t6n` (fallback) | `nanopc-t6n-mainline` (test first) |
 |---|---|---|
@@ -9,6 +9,7 @@ console name:
 | Device tree | FriendlyElec `rk3588-nanopi6-rev08.dts` | `packages/linux-mainline-rk3588/files/rk3588-nanopc-t6n.dts` |
 | Console | `ttyFIQ0` | `ttyS2` at 1500000 baud |
 | Bootloader, partitions, ramdisk | FriendlyElec sd-fuse 430f0c0, plain mode | the same files, byte for byte |
+| Vulkan | none (kbase cannot run panvk) | `vulkan-loader` and `mesa-panvk` |
 | Userspace, firmware, fstab, overlay | | the same |
 
 The reason for the second image is Landlock scoping (Linux 6.12, Landlock ABI 6), which
@@ -118,15 +119,110 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 - **GPU.** `panthor` for the Mali-G610, with `arm/mali/arch10.8/mali_csffw.bin` from
   linux-firmware. eudev's rules give `/dev/dri/card0` to the `video` group (mode 0660). They would
   make the render node `/dev/dri/renderD128` open to every user (0666); `60-nodo-gpu.rules` in the
-  board overlay limits it to the `video` group too (0660), so service users cannot reach the GPU
-  driver. Void has no `render` group.
+  board overlay gives render nodes to the `gpu` group instead (root:gpu 0660). nodo-tools creates
+  that group and no account is a member, so no service reaches the GPU driver unless the owner
+  approved the GPU for its package (see "Vulkan" below). Void has no `render` group.
   **Unverified:** that panthor probes with FriendlyElec's BL31. It needs the GPU's SCMI clock and
-  power domain, the same interface cpufreq depends on. The images carry no Mesa: Void's
-  `mesa-dri` brings libllvm22 (135 MiB), libz3 (30 MiB), mesa-libgallium (39 MiB), mesa
-  (17 MiB) and X11 libraries, about 235 MiB installed, which would put the root filesystem near
-  750 MiB, over the 650 MiB limit set for it. A panfrost-only Mesa without LLVM would need its
-  own package. The vendor 6.1 kernel's Mali driver is Arm's kbase, which Mesa cannot use and which
-  asks for FriendlyElec's own firmware, not linux-firmware's.
+  power domain, the same interface cpufreq depends on. The vendor 6.1 kernel's Mali driver is
+  Arm's kbase (`/dev/mali0`), which Mesa cannot use and which asks for FriendlyElec's own
+  firmware, not linux-firmware's, so the vendor card has no Vulkan; the same rule is on it but
+  matches nothing there.
+- **Vulkan (mainline card only).** Void's `vulkan-loader` (0.6 MiB, needs only glibc) and
+  `mesa-panvk`, our headless Mesa with only panvk, the Vulkan driver for Mali (see below). Void's
+  own Mesa would bring libllvm22 (135 MiB), libz3 (30 MiB), mesa-libgallium (39 MiB), mesa
+  (17 MiB) and X11 libraries, about 235 MiB, and even its `mesa-vulkan-panfrost` alone links
+  X11, XCB and Wayland. `nodo-gpu-check` (nodo-tools) is the on-board probe, and nodo-report
+  runs it.
+
+## Vulkan: panvk
+
+**Mesa 26.2.5** (`packages/mesa-panvk`), from archive.mesa3d.org. On 2026-11-09 the newest
+stable releases were 26.2.6 (2026-10-28, under two weeks old) and 26.2.5 (2026-10-14); 26.3 is
+still at rc3. The tarball's SHA-256,
+`794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5`, matches the release notes
+(`docs/relnotes/26.2.5.rst`), and its signature checked out against Eric Engestrom's key
+`57551DE15B968F6341C248F68D8E31AFC32428A6` (fetched from keys.openpgp.org).
+
+What Mesa 26.2.5 says about panvk on this GPU, from its own docs and source:
+
+- `docs/drivers/panfrost.rst`: G310 and G610 (Valhall, v10) get **Vulkan 1.4**, and PanVK is
+  **conformant on Mali-G610** (Khronos submission 939), non-conformant elsewhere.
+- `docs/features.txt`: Vulkan 1.1, 1.2, 1.3 and 1.4 are all done for `panvk/v10+`; among the
+  extensions compute uses, `VK_KHR_8bit_storage`, `VK_KHR_shader_float16_int8`,
+  `VK_KHR_buffer_device_address`, `VK_KHR_shader_integer_dot_product`,
+  `VK_KHR_shader_subgroup_rotate`, `VK_KHR_shader_subgroup_extended_types` (v10+) and
+  `VK_EXT_shader_atomic_float` are done; `VK_KHR_cooperative_matrix` is not.
+- `panvk_vX_physical_device.c`: API version 1.4 for v10 and later (1.0 before), an
+  integrated GPU, `maxStorageBufferRange` = UINT32_MAX, `maxPushConstantsSize` = 256,
+  `maxPerStageDescriptorStorageBuffers` = 64, `shaderInt64` on, and
+  `maxComputeWorkGroupInvocations` and `maxComputeWorkGroupSize` from the GPU's own
+  `thread_max_workgroup_size`, which panthor reads from the hardware (1024 on Valhall parts
+  generally; the board will show it).
+- `panvk_physical_device.c`: one device-local heap and memory types DEVICE_LOCAL alone,
+  DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT (always), plus a cached coherent type when the GPU
+  is I/O-coherent and a cached non-coherent type when the kernel offers write-back mappings.
+
+So the Monokulo wallet scanner's needs (monokulo-8ar: a 1.0 instance, 32-bit integer compute,
+`maxStorageBufferRange` of at least 39,321,600 bytes, 64 invocations per workgroup, 20 bytes of
+push constants, 4 storage buffers per stage, DEVICE_LOCAL and HOST_VISIBLE | HOST_COHERENT
+memory) are all within what panvk reports. nodo-gpu-check prints each of those limits with a
+PASS or FAIL against the scanner's threshold.
+
+The build has only `-Dvulkan-drivers=panfrost`, no Gallium driver, `-Dplatforms=` (headless and
+`VK_KHR_display` only, no X11 or Wayland), no OpenGL, GLES, EGL, GLX, GBM or glvnd, no video
+codecs, no layers or tools, no xmlconfig (so no expat), `-Dllvm=disabled`, a release build,
+stripped. panvk's built-in shaders are OpenCL C that Mesa compiles while building with
+`mesa_clc` (LLVM 22, clang and SPIRV-LLVM-Translator) and `panfrost_compile`; those must run on
+the build machine, so the recipe first configures a native build of just those tools, then
+cross-builds the driver with them as system tools (`-Dmesa-clc=system
+-Dprecomp-compiler=system`). LLVM is therefore a build dependency only and never reaches the
+card. The package installs `libvulkan_panfrost.so` (15.2 MiB, all of panvk's per-architecture
+code and compilers) and `panfrost_icd.aarch64.json`, 15.2 MiB in all. It links libdrm, zlib,
+libzstd (shader cache compression), libudev (found in the build root; eudev is on the card
+anyway) and libstdc++, all already on the card or small.
+
+### The GPU permission
+
+GPU access is a package permission the owner approves, like internet access. A manifest asks
+with
+
+```toml
+[devices]
+gpu = true
+```
+
+which shows in the install and update review as "uses the GPU for computation (Vulkan)", marked
+as hardware access. An update that starts asking for it is a new permission, so it never
+installs unattended and waits for the owner's approval like any other. When approved, nodo-gen's
+run script:
+
+- runs the service with `gpu` as a supplementary group (`chpst -u _app:_app:gpu`); chpst sets
+  exactly the groups listed, so without the grant the service has no `gpu` group, and no
+  account is ever added to the group in `/etc/group`;
+- binds each `/dev/dri/renderD*` character device into the sandbox with `--dev-bind`, after
+  `--dev /dev`, and never a card node, which can drive displays;
+- binds, read-only, what the Vulkan loader and Mesa read through libdrm to identify the node:
+  the GPU's device directory in sysfs (for its `uevent`), a `/sys/dev/char/<major>:<minor>`
+  link to it, and an empty directory for its bus, which libdrm resolves the `subsystem` link
+  to. Nothing else of `/sys` appears.
+
+A service without the grant sees no `/dev/dri` and no `/sys` at all. The ICD manifest is in
+`/usr/share/vulkan/icd.d`, which every sandbox already has read-only with `/usr`. Mesa's shader
+cache goes to `$HOME/.cache`, and `HOME` is the service's own writable data directory. The rest
+of the sandbox is unchanged: nodo-confine's seccomp filter refuses only io_uring, foreign ABIs
+and (without a Unix grant) Unix sockets, so DRM ioctls, mmap of buffer objects and fence waits
+pass, and its Landlock domain only scopes abstract sockets and signals, so it does not restrict
+device ioctls. Under the user namespace bwrap creates, the group shows as `nobody` inside the
+sandbox, but the kernel checks the real group on open.
+
+Tests: `crates/nodo-gen/tests/generated.rs` runs the generated script against a fake `/dev/dri`
+and `/sys` (render and card nodes, a platform device) and checks exactly what is bound;
+`tests/gpu-sandbox.sh` (VM tier) installs a granted and an ungranted app through the helper on
+the x86 VM with vgem's render node, or a stand-in device node when the kernel lacks vgem, and
+checks the group, what each sandbox sees and a DRM ioctl from inside the granted one;
+`tests/kernel-checks.sh` shows that under QEMU the loader loads panvk, which finds no Mali.
+What only the board can show: that panthor probes, that panvk finds the G610 through the
+sandbox's sysfs subset, and that the compute shader gives the right answer (nodo-gpu-check).
 - **Sound.** HDMI audio through `i2s5` and `dw-hdmi-qp`'s hdmi-codec, and the RT5616 headphone
   jack and microphone on `i2s0`, both through `simple-audio-card`; USB audio for adapters.
   `nodo-sound` restores the mixer state at boot and saves it at shutdown (`alsactl`); before
@@ -257,7 +353,9 @@ the RTL8125, the NVMe drive, USB, thermal, cpufreq or the MAC address.
 partition layout, that the bootloader files match the 6.1 image byte for byte, the `KRNL`
 header and checksum, the `RSCE` contents, that the device tree decompiles cleanly with the
 needed nodes enabled, and that the root filesystem and package list match the 6.1 image except
-for the kernel.
+for the kernel and Vulkan. `tests/inspect-t6n-platform.sh` checks the GPU's udev rule and group
+on both cards, and the ICD manifest, `libvulkan_panfrost.so` and the loader on the mainline card
+and their absence on the vendor card.
 
 ## Sources
 

@@ -24,6 +24,18 @@ else
 	awk 'NR > 1 && $8 ~ /^@/ && ($4 == "00010000" || $5 == "0002") { print $8, "type " $5, "inode " $7 }' \
 		/proc/net/unix 2>/dev/null | sort -u | grep . || echo "no abstract Unix sockets are listening"
 fi
+# The GPU for apps granted it: its device nodes (render nodes are root:gpu 0660 on the T6N
+# boards), the kernel driver's messages, and nodo-gpu-check (nodo-tools), which lists Vulkan
+# devices and runs a small compute shader.
+section "GPU"
+ls -l /dev/dri 2>/dev/null || echo "no /dev/dri"
+dmesg 2>/dev/null | grep -iE 'panthor|panfrost|mali' | tail -n 20
+if command -v nodo-gpu-check >/dev/null 2>&1; then
+	timeout 60 nodo-gpu-check 2>&1
+	echo "(nodo-gpu-check exit status $?)"
+else
+	echo "nodo-gpu-check is not installed"
+fi
 section "cuprated log"; tail -n 40 /var/log/cuprated/current 2>/dev/null
 section "kernel warnings and errors"; dmesg --level=err,warn 2>/dev/null | tail -n 60
 section "kernel network and storage"; dmesg 2>/dev/null | grep -iE 'r8169|r8125|eth0|nvme|mmc|xfs|firmware' | tail -n 60

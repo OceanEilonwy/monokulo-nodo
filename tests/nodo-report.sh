@@ -45,4 +45,21 @@ grep -qx '(nodo-healthd exit status 1)' "$tmp/section"
 result "with nodo-healthd: its exit status is shown" "$?"
 grep -qx '== cuprated log' "$tmp/with" && grep -qx '== kernel network and storage' "$tmp/with"
 result "with nodo-healthd: the report goes on to the end" "$?"
+
+# The GPU section, with a stand-in nodo-gpu-check and without one.
+sed -n '/^== GPU$/,/^== /p' "$tmp/with" | grep -qx 'nodo-gpu-check is not installed'
+result "without nodo-gpu-check: the GPU section says so" "$?"
+cat > "$tmp/bin/nodo-gpu-check" <<'EOF'
+#!/bin/sh
+echo "Vulkan loader 1.4.363"
+echo "no Vulkan device"
+exit 2
+EOF
+chmod 755 "$tmp/bin/nodo-gpu-check"
+PATH=$tmp/bin:$path sh "$report" > "$tmp/gpu" 2>/dev/null
+sed -n '/^== GPU$/,/^== /p' "$tmp/gpu" > "$tmp/section"
+grep -qx 'no Vulkan device' "$tmp/section" && grep -qx '(nodo-gpu-check exit status 2)' "$tmp/section"
+result "with nodo-gpu-check: its output and exit status are in the GPU section" "$?"
+grep -qx '== cuprated log' "$tmp/gpu"
+result "with nodo-gpu-check: the report goes on after it" "$?"
 exit "$fail"

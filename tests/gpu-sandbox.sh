@@ -98,7 +98,7 @@ r=$?; [ "$r" = 0 ] || cat /tmp/gpu.out
 result "both apps install through the helper" "$r"
 
 grep -q 'exec chpst -u _gpu-yes:_gpu-yes:gpu bwrap' /etc/sv/gpu-yes/run && grep -q 'for node in "$dri"/renderD\*; do' /etc/sv/gpu-yes/run &&
-	grep -q 'exec chpst -u _gpu-no:_gpu-no bwrap' /etc/sv/gpu-no/run && ! grep -q 'dri\|/sys' /etc/sv/gpu-no/run
+	grep -q 'exec chpst -u _gpu-no:_gpu-no bwrap' /etc/sv/gpu-no/run && ! grep -q '/dev/dri\|/sys' /etc/sv/gpu-no/run
 result "generated scripts: the GPU group and render nodes only for gpu-yes" "$?"
 
 for id in gpu-yes gpu-no; do
@@ -124,8 +124,15 @@ if [ -x /usr/bin/python3 ] && [ "$kind" = vgem ]; then
 	result "gpu-yes sees the render node's sysfs link and device, for libdrm" "$?"
 	! grep -q '/sys/class\|/sys/kernel\|/sys/firmware\|/sys/block' "$p"
 	result "gpu-yes sees no other part of /sys" "$?"
+elif [ -x /usr/bin/python3 ]; then
+	# The stand-in is a memory device, which answers any ioctl with ENOTTY. Getting that answer
+	# shows the call reached the driver: the sandbox's filter would have refused it with EACCES
+	# or ENOSYS before.
+	grep -q 'Errno 25\] Inappropriate ioctl for device' "$p"
+	result "gpu-yes's ioctl on the stand-in reaches the device driver under nodo-confine" "$?"
+	echo "SKIP the vgem DRM_IOCTL_VERSION and sysfs checks: this kernel has no vgem"
 else
-	echo "SKIP the DRM ioctl and sysfs checks: they need python3 and vgem ($kind here)"
+	echo "SKIP the ioctl and sysfs checks: they need python3"
 fi
 p=/var/lib/apps/gpu-no/probe.txt
 case " $no_groups " in *" $gpu_gid "*) r=1 ;; *) r=0 ;; esac

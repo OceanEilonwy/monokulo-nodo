@@ -4,10 +4,10 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=5
+revision=6
 archs="aarch64 x86_64"
 build_style=cargo
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check"
 hostmakedepends="pkg-config"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library.
 makedepends="libzstd-devel"
@@ -20,8 +20,10 @@ homepage="https://github.com/OceanEilonwy/monokulo-nodo"
 # shell variable, so it cannot contain a dash.
 system_accounts="_nodo_settings"
 _nodo_settings_homedir="/var/empty"
-# Members of this group may use the helper. Root always may.
-system_groups="nodo"
+# Members of nodo may use the helper (root always may). gpu may open the GPU's render nodes (a
+# udev rule on the T6N boards gives them to it). No account is a member: a service runs with it,
+# through chpst in its generated run script, only when the owner approved the GPU for it.
+system_groups="nodo gpu"
 make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-helper 0750 root root
  /var/log/nodo-healthd 0750 root root
@@ -44,6 +46,9 @@ do_install() {
 	vbin target/${RUST_TARGET}/release/nodo-confine
 	# The system update client. nodo-snapshot, built alongside, is for publishers and stays out.
 	vbin target/${RUST_TARGET}/release/nodo-sysupdate
+	# The hardware test's GPU probe: lists Vulkan devices and runs a small compute shader. It
+	# opens the Vulkan loader at run time, so it needs nothing on boards without one.
+	vbin target/${RUST_TARGET}/release/nodo-gpu-check
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate
