@@ -31,6 +31,13 @@ codebase, and signed xbps packages from user-added feeds.
   `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The
   cuprated run script has both, like every generated one: cuprated-service depends on
   nodo-tools for nodo-confine, and cuprated gets no Unix socket.
+- **GPU:** A package asks for the GPU with `[devices] gpu = true`, a permission the owner approves
+  like any other (a new one on an update waits for the owner). Granted, its service runs with the
+  `gpu` group (render nodes are root:gpu 0660, and no account is a member) and its sandbox gets
+  `/dev/dri/renderD*`, never card nodes, plus the few sysfs entries libdrm reads. Without it a
+  sandbox has no `/dev/dri` and no `/sys`. Only the mainline T6N card has Vulkan (Void's loader
+  and `mesa-panvk`, a headless panvk-only Mesa); [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) has the
+  details, and `nodo-gpu-check` (nodo-tools) probes it.
 - **Node RPC:** cuprated serves only restricted RPC, on `127.0.0.1:18081`; the unrestricted
   server is off and nothing puts RPC on the network. Apps reach it through the role
   (`public_rpc_url` or `rpc-port`), which grants their sandbox that loopback port; the

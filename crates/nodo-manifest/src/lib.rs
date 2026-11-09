@@ -58,6 +58,9 @@ pub struct Manifest {
     pub network: Network,
     #[serde(default)]
     pub web: Vec<WebService>,
+    /// Hardware the package asks to use. Each is a permission the owner approves.
+    #[serde(default, skip_serializing_if = "Devices::is_empty")]
+    pub devices: Devices,
     /// How long a clean stop may take before the supervisor kills the service.
     #[serde(default = "default_stop_timeout")]
     pub stop_timeout_secs: u32,
@@ -122,6 +125,23 @@ pub struct Network {
     /// Outbound internet access. Local dependencies are granted through references.
     #[serde(default)]
     pub outbound: Outbound,
+}
+
+/// Devices a sandbox may reach. Nothing by default: a service's `/dev` holds only the basic
+/// pseudo-devices.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Devices {
+    /// The GPU's render nodes (`/dev/dri/renderD*`), for compute through Vulkan. Never the card
+    /// nodes, which drive displays.
+    #[serde(default)]
+    pub gpu: bool,
+}
+
+impl Devices {
+    pub fn is_empty(&self) -> bool {
+        !self.gpu
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +237,24 @@ mod tests {
         assert_eq!(m.network.outbound, Outbound::None);
         assert!(!m.storage.encrypted);
         assert_eq!(m.stop_timeout_secs, 120);
+        assert!(!m.devices.gpu, "no device unless asked for");
+    }
+
+    #[test]
+    fn the_gpu_is_asked_for_in_devices() {
+        let parse = |extra: &str| {
+            Manifest::parse(&format!("api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n{extra}"))
+        };
+        assert!(parse("[devices]\ngpu = true\n").unwrap().devices.gpu);
+        assert!(!parse("[devices]\ngpu = false\n").unwrap().devices.gpu);
+        assert!(!parse("[devices]\n").unwrap().devices.gpu);
+        // Only known devices, and never a device path of the package's choosing.
+        for bad in ["[devices]\ncard = true\n", "[devices]\ngpu = \"/dev/dri/card0\"\n", "[devices]\npaths = [\"/dev/mem\"]\n"] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        let m = parse("[devices]\ngpu = true\n").unwrap();
+        let text = toml::to_string(&m).unwrap();
+        assert_eq!(Manifest::parse(&text).unwrap(), m);
     }
 
     #[test]

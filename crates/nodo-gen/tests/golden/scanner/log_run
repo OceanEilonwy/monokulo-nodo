@@ -1,0 +1,2 @@
+#!/bin/sh
+exec chpst -u _scanner:_scanner svlogd -tt /var/log/apps/scanner

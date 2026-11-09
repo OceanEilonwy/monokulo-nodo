@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use crate::shell::sh_quote;
-use crate::spec::{volume_mount, ServiceSpec};
+use crate::spec::{volume_mount, ServiceSpec, GPU_GROUP};
 
 /// Runs inside every sandbox, last, before the service. Shipped by nodo-tools.
 pub const CONFINE: &str = "/usr/bin/nodo-confine";
@@ -34,7 +34,17 @@ pub fn run_script(spec: &ServiceSpec) -> String {
         );
     }
 
-    let _ = writeln!(out, "exec chpst -u {user}:{user} bwrap \\");
+    if spec.gpu {
+        gpu_preamble(&mut out);
+    }
+
+    // chpst sets exactly the groups listed, so a service has the GPU group only when granted.
+    let groups = if spec.gpu {
+        format!("{user}:{user}:{GPU_GROUP}")
+    } else {
+        format!("{user}:{user}")
+    };
+    let _ = writeln!(out, "exec chpst -u {groups} bwrap \\");
     let mut line = |text: &str| {
         out.push('\t');
         out.push_str(text);
@@ -71,6 +81,10 @@ pub fn run_script(spec: &ServiceSpec) -> String {
     line(&format!("--bind \"$data\" {}", sh_quote(&layout.data_dir)));
     line("--proc /proc");
     line("--dev /dev");
+    if spec.gpu {
+        // After --dev, which would hide them. Collected by the GPU preamble.
+        line("\"$@\"");
+    }
     line("--tmpfs /tmp");
     line(&format!("--setenv HOME {}", sh_quote(&layout.data_dir)));
     // A user namespace of its own with no room for another, so the service cannot create
@@ -94,6 +108,37 @@ pub fn run_script(spec: &ServiceSpec) -> String {
     }
     let _ = writeln!(out, "\t{command}");
     out
+}
+
+/// Where the GPU preamble looks for render nodes and their sysfs entries. Tests point a copy of
+/// the script elsewhere by replacing these two lines.
+pub const GPU_DRI_LINE: &str = "dri=/dev/dri";
+pub const GPU_SYS_LINE: &str = "sys=/sys";
+
+/// Collects, as positional parameters, the bwrap arguments for the GPU: each render node, and
+/// the sysfs entries the Vulkan loader and Mesa (through libdrm) read to identify it. They look
+/// up `/sys/dev/char/<major>:<minor>`, follow it to the device's directory and its `subsystem`
+/// link, and read the device's `uevent`. Card nodes, which drive displays and can change modes,
+/// are never bound. A node without sysfs entries is still bound, since opening it needs none.
+fn gpu_preamble(out: &mut String) {
+    let _ = write!(
+        out,
+        "# The GPU: render nodes only, never the card nodes that drive displays.\n\
+         {GPU_DRI_LINE}\n\
+         {GPU_SYS_LINE}\n\
+         set --\n\
+         for node in \"$dri\"/renderD*; do\n\
+         \t[ -c \"$node\" ] || continue\n\
+         \tset -- \"$@\" --dev-bind \"$node\" \"$node\"\n\
+         \tclass=$sys/class/drm/${{node##*/}}\n\
+         \tnumber=$(cat \"$class/dev\" 2>/dev/null) || continue\n\
+         \treal=$(readlink -f \"$class\") && device=$(readlink -f \"$class/device\") || continue\n\
+         \tcase $real in \"$device\"/*) ;; *) continue ;; esac\n\
+         \tset -- \"$@\" --ro-bind \"$device\" \"$device\" --symlink \"$real\" \"$sys/dev/char/$number\"\n\
+         \tsubsystem=$(readlink -f \"$device/subsystem\") && set -- \"$@\" --dir \"$subsystem\"\n\
+         done\n\
+         [ $# -gt 0 ] || echo \"no GPU render node: the service starts without one\"\n\n",
+    );
 }
 
 /// A board can move data to another drive through `conf`, written by root at install time.

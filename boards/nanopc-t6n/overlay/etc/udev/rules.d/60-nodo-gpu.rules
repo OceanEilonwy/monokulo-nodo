@@ -1,3 +1,5 @@
-# eudev's default makes GPU render nodes open to every user (0666). Only members of the video
-# group may use the GPU here, so a process running as a service user cannot reach the driver.
-SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="video", MODE="0660"
+# eudev's default makes GPU render nodes open to every user (0666). Here only the gpu group may
+# open them (mode 0660). No account is a member: a service runs with the group only when the
+# owner approved the GPU permission for its package (nodo-gen adds it through chpst), and its
+# sandbox then gets the render nodes, never the card nodes, which stay root:video.
+SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="gpu", MODE="0660"

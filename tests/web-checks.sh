@@ -18,6 +18,9 @@ if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0
 		ssh_vm 'sh /tmp/dhcpcd-block.sh </dev/null' || fail=1
 		ssh_vm 'cat > /tmp/localnet-dhcp.sh' < /src/tests/localnet-dhcp.sh
 		ssh_vm 'sh /tmp/localnet-dhcp.sh </dev/null' || fail=1
+		# GPU grants: a render node (vgem or a stand-in) only in the granted sandbox, with the group.
+		ssh_vm 'cat > /tmp/gpu-sandbox.sh' < /src/tests/gpu-sandbox.sh
+		ssh_vm 'sh /tmp/gpu-sandbox.sh </dev/null' || fail=1
 		if ls "/src/out/feed/$ARCH"/nodo-ddns-[0-9]*.xbps >/dev/null 2>&1; then
 			if push_packages nodo-ddns >/dev/null; then echo "PASS nodo-ddns installed"; else echo "FAIL nodo-ddns installed"; fail=1; fi
 			ssh_vm 'cat > /tmp/ddns-service.sh' < /src/tests/ddns-service.sh

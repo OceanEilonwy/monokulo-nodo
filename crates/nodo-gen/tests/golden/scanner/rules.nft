@@ -1,0 +1,6 @@
+# Loaded after /etc/nftables.conf, which sets the default-deny input policy.
+table inet monokulo {
+	chain output {
+		meta skuid "_scanner" drop
+	}
+}

@@ -22,6 +22,9 @@ pub enum Permission {
     /// A path that was admin only in an approved version and no longer is.
     AdminPathOpened { web: String, path: String },
     UnencryptedStorage,
+    /// The GPU's render nodes, for compute through Vulkan. The service joins the `gpu` group and
+    /// its sandbox gets `/dev/dri/renderD*`, never the display's card nodes.
+    Gpu,
     /// A system package the package needs installed, without its version constraint.
     SystemPackage { name: String },
 }
@@ -44,6 +47,7 @@ impl fmt::Display for Permission {
             }
             Permission::AdminPathOpened { web, path } => write!(f, "no longer keeps {path} of '{web}' admin only"),
             Permission::UnencryptedStorage => f.write_str("keeps its data unencrypted"),
+            Permission::Gpu => f.write_str("uses the GPU for computation (Vulkan)"),
             Permission::SystemPackage { name } => write!(f, "needs the system package {name}"),
         }
     }
@@ -114,6 +118,9 @@ impl Permissions {
         }
         if !manifest.storage.encrypted {
             granted.insert(Permission::UnencryptedStorage);
+        }
+        if manifest.devices.gpu {
+            granted.insert(Permission::Gpu);
         }
         for dependency in run_depends {
             granted.insert(Permission::SystemPackage { name: dependency_name(dependency) });
@@ -202,6 +209,20 @@ mod tests {
             ]
         );
         assert!(old.added_since(&grown).is_empty(), "going back to the old version asks for nothing new");
+    }
+
+    #[test]
+    fn the_gpu_is_a_permission_and_asking_for_it_later_is_new() {
+        let without = Permissions::of(&manifest("[storage]\nencrypted = true\n"), &[]);
+        let with = Permissions::of(&manifest("[storage]\nencrypted = true\n[devices]\ngpu = true\n"), &[]);
+        assert!(without.summary().is_empty());
+        assert_eq!(with.summary(), ["uses the GPU for computation (Vulkan)"]);
+        assert_eq!(with.added_since(&without), [Permission::Gpu]);
+        assert!(without.added_since(&with).is_empty(), "giving the GPU up asks for nothing");
+        assert!(with.added_since(&with).is_empty());
+        let text = toml::to_string(&with).unwrap();
+        assert!(text.contains("kind = \"gpu\""), "{text}");
+        assert_eq!(toml::from_str::<Permissions>(&text).unwrap(), with);
     }
 
     #[test]

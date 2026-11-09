@@ -1,0 +1,7 @@
+api_version = 1
+id = "scanner"
+version = "1.0"
+exec = ["bin/scan"]
+
+[devices]
+gpu = true
