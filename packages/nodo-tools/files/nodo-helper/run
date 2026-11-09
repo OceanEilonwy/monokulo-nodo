@@ -3,6 +3,31 @@ exec 2>&1
 exec </dev/null
 # Optional: DRIVE and DRIVE_MOUNT name a data drive from /etc/fstab that the helper may check.
 [ -r ./conf ] && . ./conf
+# Otherwise the data drive is the one /etc/fstab mounts by the NODO_BLOCKCHAIN partition label or
+# filesystem label, as the T6N images do. They have no udev, so no /dev/disk/by-partlabel link:
+# the device is the one mounted there, or the partition whose GPT name or filesystem label blkid
+# reads from the device itself, for each one in /proc/partitions. A drive missing
+# at start keeps its mount point, so the health daemon still guards it, and reports it unmounted
+# instead of counting the node against the system disk.
+if [ -z "${DRIVE:-}" ] && [ -z "${DRIVE_MOUNT:-}" ]; then
+	tag=$(awk '$1 ~ /^(PART)?LABEL=NODO_BLOCKCHAIN$/ && $2 ~ /^\// { print $1 " " $2; exit }' /etc/fstab 2>/dev/null)
+	if [ -n "$tag" ]; then
+		DRIVE_MOUNT=${tag#* }
+		tag=${tag%% *}
+		DRIVE=$(awk -v m="$DRIVE_MOUNT" '$2 == m && $1 ~ /^\/dev\// { d = $1 } END { print d }' /proc/self/mounts)
+		if [ -z "$DRIVE" ]; then
+			case $tag in PARTLABEL=*) field=PART_ENTRY_NAME ;; *) field=LABEL ;; esac
+			for dev in $(awk 'NR > 2 && $4 != "" { print "/dev/" $4 }' /proc/partitions); do
+				[ "$(blkid -p -o value -s "$field" "$dev" 2>/dev/null)" = NODO_BLOCKCHAIN ] && { DRIVE=$dev; break; }
+			done
+		fi
+		case $tag in
+		PARTLABEL=*) [ -n "$DRIVE" ] || DRIVE=/dev/disk/by-partlabel/NODO_BLOCKCHAIN ;;
+		*) [ -n "$DRIVE" ] || DRIVE=/dev/disk/by-label/NODO_BLOCKCHAIN ;;
+		esac
+		echo "nodo-helper: data drive $DRIVE at $DRIVE_MOUNT, from /etc/fstab"
+	fi
+fi
 
 # Root may always use the helper. Members of the nodo group may too; the list is read at start,
 # so restart the helper after changing the group.
