@@ -6,6 +6,8 @@ git -C "$sd" checkout -q "$BOARD_SDFUSE_COMMIT"
 pre=$sd/prebuilt
 boot=$rootfs/usr/share/monokulo/boot
 [ -s "$boot/kernel.img" ] && [ -s "$boot/resource.img" ] || { echo "kernel package is missing its boot images" >&2; exit 1; }
+# tests/size-check.sh holds the kernel the card boots to the board's budget.
+stat -c %s "$boot/kernel.img" > "$out/kernel-bytes.txt"
 
 root_sectors=$(($(stat -c %s /work/root.ext4) / 512))
 rootfs_start=$((0x46000))

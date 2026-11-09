@@ -19,9 +19,18 @@ mkdir -p "$rootfs$keys" /work/local /work/stage1$keys "$rootfs/etc/xbps.d"
 # nftables only needs Python for its optional bindings, which nothing here uses.
 for f in python3 ${BOARD_FIRMWARE_IGNORE:-}; do echo "ignorepkg=$f"; done > "$rootfs/etc/xbps.d/10-monokulo-firmware.conf"
 # Skip files a headless appliance never reads. This also applies to later updates.
+# - ICU's data (32 MiB): only SQLite links ICU, for util-linux's lastlog2, and it reads the data
+#   only for ICU collations, which nothing here asks for.
+# - glibc's gconv modules (8 to 20 MiB) convert legacy character sets. UTF-8, ASCII, Latin-1,
+#   UTF-16 and UTF-32 are built into glibc, and no service here uses iconv.
+# - iptables' extensions: iproute2 depends on iptables for tc's xt action, which nothing uses;
+#   the firewall is nftables.
+# - udev's hardware database (17 MiB with the hwdb.bin built from it), on the boards with udev:
+#   it names devices and maps keys, and no rule here matches on it.
 # Patterns are for xbps, so the shell must not expand them against this container.
 set -f
-for f in /usr/share/man/* /usr/share/doc/* /usr/share/info/* /usr/share/locale/* /usr/share/i18n/* /boot/System.map-* /boot/config-* ${BOARD_NOEXTRACT:-}; do
+for f in /usr/share/man/* /usr/share/doc/* /usr/share/info/* /usr/share/locale/* /usr/share/i18n/* /boot/System.map-* /boot/config-* \
+	/usr/share/icu/* /usr/lib/gconv/* /usr/lib/xtables/* /usr/lib/udev/hwdb.d/* ${BOARD_NOEXTRACT:-}; do
 	echo "noextract=$f"
 done > "$rootfs/etc/xbps.d/20-monokulo-noextract.conf"
 set +f
