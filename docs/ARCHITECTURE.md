@@ -49,7 +49,9 @@ codebase, and signed xbps packages from user-added feeds.
   marker lines on every install, upgrade and re-install, replacing an older copy, including the
   unmarked one images appended before, and REMOVE takes it out. The image builder runs the same
   script, so devices updated in place and new images agree. The `nodo-local` lease brings only an
-  address, with no routes, DNS, hostname, IPv6 or 169.254 fallback. Images leave out files nothing
+  address, with no routes, DNS, hostname, IPv6 or 169.254 fallback. nodo-localnet reads that address
+  from the kernel, not with `dhcpcd -U`: dhcpcd's control socket serves only a client of the running
+  daemon's version, and an update replaces the client before the daemon restarts. Images leave out files nothing
   here reads (`scripts/_build-image-inner.sh` lists them and why), and `scripts/build-image.sh`
   fails a board over its size budget (`tests/size-check.sh`). The T6N images carry the platform (nodo-tools,
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
@@ -189,5 +191,10 @@ codebase, and signed xbps packages from user-added feeds.
 
 - `packages/`: xbps recipes.
 - `boards/`, `scripts/`, `tests/`: image builds and test tiers (`scripts/test.sh fast|vm|full`).
+  Images take Void's packages from the live mirror (`VOID_MIRROR`), and xbps-src builds ours
+  against the void-packages recipes at `VOID_PACKAGES_REV`. A Void dependency whose mirror version
+  differs from its pinned recipe stops a package build, since xbps-src would otherwise compile the
+  old recipe; the fix is a `VOID_PACKAGES_REV` with the mirror's versions. Image builds list every
+  such difference in `out/images/<board>/void-drift.txt` (`scripts/_void-drift.sh`).
 - `crates/`: the Rust workspace.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

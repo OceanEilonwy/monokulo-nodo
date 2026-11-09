@@ -80,13 +80,14 @@ trap 'exit 0' TERM
 started=$(date +%s)
 last=
 while :; do
-	lease=$(dhcpcd -U -4 "$iface" 2>/dev/null)
-	address=
-	# Without a DHCP server, dhcpcd falls back to a 169.254 link-local address. That is not a lease
-	# the router knows, and LAN devices could not reach it, so it never counts.
-	if printf '%s\n' "$lease" | grep -qx 'protocol=dhcp'; then
-		address=$(printf '%s\n' "$lease" | sed -n 's/^ip_address=//p')
-	fi
+	# The leased address, as the kernel has it: dhcpcd adds it once it holds a lease, with the
+	# lease's lifetime, and removes it when the lease ends. Asking dhcpcd (dhcpcd -U) goes through
+	# its control socket, which only a client of the daemon's own version can use: after an update
+	# that moves dhcpcd from 10.3 to 10.5, the running daemon is still the old one, and every
+	# answer failed until a reboot. A 169.254 link-local fallback, which the router does not know
+	# and LAN devices could not reach, has link scope and never counts; the dhcpcd block turns it
+	# off anyway.
+	address=$(ip -4 -o addr show dev "$iface" scope global dynamic | awk '{ sub("/.*", "", $4); print $4; exit }')
 	# The lease is only for an address. Outbound traffic must never leave from it.
 	ip -4 route show default dev "$iface" | grep -q . && ip -4 route del default dev "$iface"
 	if [ -n "$address" ]; then
