@@ -34,8 +34,11 @@ unproven on the T6N:
 
 Card 1 adds its own unknowns: whether FriendlyElec's bootloader accepts a mainline kernel and
 device tree, whether the board keeps its usual MAC address (and so its usual IP address), and
-the USB ports. HDMI shows only the boot logo on card 1, because the mainline kernel is built
-without display drivers. On card 2 the screen may show a login prompt with the IP address.
+the USB ports. The cards in `out/hardware-test-1/` have no display drivers on card 1, so HDMI
+shows only the boot logo there. Images built since then drive HDMI, the GPU, sound and Wi-Fi
+on the mainline kernel and show a login prompt with the IP address on the screen
+([MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) lists what is still unproven). On card 2 the screen
+may show that prompt too.
 
 ## Before you start
 

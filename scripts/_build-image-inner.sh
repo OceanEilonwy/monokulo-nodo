@@ -50,6 +50,8 @@ if [ -f /keys ]; then
 	install -d -m 700 "$rootfs/root/.ssh"
 	install -m 600 /keys "$rootfs/root/.ssh/authorized_keys"
 fi
+# The board's files go in before services are enabled, so a board can add its own services.
+[ ! -d "/src/boards/$BOARD/overlay" ] || cp -a "/src/boards/$BOARD/overlay/." "$rootfs/"
 sv="$rootfs/etc/runit/runsvdir/default"
 mkdir -p "$sv"
 for s in sshd dhcpcd chronyd nftables cuprated monokulo-diag ${BOARD_SERVICES:-}; do
@@ -70,9 +72,18 @@ cp "$rootfs/usr/share/monokulo/issue" "$rootfs/etc/issue"
 sh "$rootfs/usr/libexec/monokulo/dhcpcd-nodo-local" install "$rootfs"
 for d in ${BOARD_MKDIRS:-}; do mkdir -p "$rootfs$d"; done
 if [ -n "${BOARD_DECOMPRESS_FIRMWARE:-}" ]; then
-	find "$rootfs/usr/lib/firmware" -name '*.zst' -exec zstd -dqk {} +
+	# Each file is kept once, uncompressed, which both kernels load. A package update adds the
+	# new .zst files beside these, and the kernel keeps loading the plain file, as it did when
+	# the image kept both copies.
+	find "$rootfs/usr/lib/firmware" -type f -name '*.zst' -exec zstd -dq --rm {} +
+	# zstd skips symbolic links, and linux-firmware names many files through them (Mali's
+	# arch10.8 is a link to arch10.10), so each link is replaced by one to the plain file.
+	find "$rootfs/usr/lib/firmware" -type l -name '*.zst' | while read -r link; do
+		target=$(readlink "$link")
+		ln -sfn "${target%.zst}" "${link%.zst}"
+		rm -f "$link"
+	done
 fi
-[ ! -d "/src/boards/$BOARD/overlay" ] || cp -a "/src/boards/$BOARD/overlay/." "$rootfs/"
 
 cat > "$rootfs/monokulo-configure" <<'CONF'
 #!/bin/sh

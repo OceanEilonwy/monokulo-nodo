@@ -118,6 +118,25 @@ for n in "/pcie@fe150000 pcie3x4 (NVMe)" "/pcie@fe190000 pcie2x1l2 (2.5GbE)" "/p
 done
 if node_ok /pcie@fe180000; [ "$?" = 1 ]; then r=0; else r=1; fi
 result "disabled: pcie2x1l1, which the T6N does not wire" "$r"
+for n in "/gpu@fb000000 gpu (Mali-G610, panthor)" "/vop@fdd90000 vop (VOP2)" "/iommu@fdd97e00 vop_mmu" \
+	"/hdmi@fde80000 hdmi0" "/phy@fed60000 hdptxphy0 (HDMI PHY)" "/i2s@fddf0000 i2s5 (HDMI audio)" \
+	"/hdmi0-sound hdmi0 sound card" "/i2s@fe470000 i2s0 (RT5616)" "/i2c@fec90000/codec@1b RT5616 codec" "/sound RT5616 sound card" \
+	"/video-codec@fdb50000 vpu121 (hantro decoder)" "/video-codec@fdc70000 av1d (hantro AV1)" "/rga@fdb80000 rga" \
+	"/ir-receiver IR receiver" "/i2c@fec80000/rtc@51 HYM8563 RTC"; do
+	node_ok "${n%% *}"
+	result "enabled: ${n#* }" "$?"
+done
+for n in "/hdmi@fdea0000 hdmi1" "/phy@fed70000 hdptxphy1" "/hdmi1-sound hdmi1 sound card" "/i2s@fddf4000 i2s6" "/hdmi_receiver@fdee0000 HDMI input"; do
+	if node_ok "${n%% *}"; [ "$?" = 1 ]; then r=0; else r=1; fi
+	result "disabled: ${n#* }, which the T6N does not have" "$r"
+done
+fdtget -t x "$dtb" /gpu@fb000000 mali-supply >/dev/null && fdtget -t x "$dtb" /gpu@fb000000 sram-supply >/dev/null
+result "the GPU has its mali and sram supplies" "$?"
+gpio4=$(fdtget -t x "$dtb" "$(fdtget "$dtb" /__symbols__ gpio4)" phandle)
+if [ "$(fdtget -t x "$dtb" /hdmi@fde80000 enable-gpios)" = "$gpio4 9 0" ]; then r=0; else r=1; fi
+result "hdmi0's level shifter switch is GPIO4_B1, as in FriendlyElec's T6N tree" "$r"
+fdtget "$dtb" /chosen bootargs | grep -q 'console=tty0 console=ttyS2'
+result "kernel messages go to the HDMI console and the serial port" "$?"
 fdtget "$dtb" /pcie@fe190000/pcie@0,0/ethernet@0,0 compatible | grep -q pci10ec,8125
 result "the RTL8125 node is where the ethernet0 alias points" "$?"
 if [ "$(fdtget "$dtb" /aliases ethernet0)" = /pcie@fe190000/pcie@0,0/ethernet@0,0 ]; then r=0; else r=1; fi
@@ -147,6 +166,33 @@ show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep -q '^6\.18\.'
 result "modules for 6.18 are installed" "$?"
 ! show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep -q '^6\.1\.'
 result "no vendor 6.1 modules" "$?"
+kver=$(show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep '^6\.18\.' | head -1)
+show "cat /usr/lib/modules/$kver/modules.dep" | cut -d: -f1 > "$tmp/modules"
+echo "$(wc -l < "$tmp/modules") modules in modules.dep"
+r=0
+for m in panthor rockchipdrm phy-rockchip-samsung-hdptx phy-rockchip-samsung-dcphy dw-hdmi-qp display-connector \
+	snd-soc-rt5616 snd-soc-rockchip-i2s-tdm snd-soc-simple-card snd-soc-hdmi-codec snd-usb-audio \
+	hantro-vpu rockchip-rga gpio-ir-recv ir-nec-decoder goodix_ts edt-ft5x06 adc-keys \
+	cfg80211 mac80211 rtw88_8822ce rtw88_8822cu rtw89_8852ce mt7921e mt7925u iwlwifi iwlmvm ath11k_pci ath12k \
+	bluetooth btusb hci_uart btrtl; do
+	grep -q "/$m\.ko" "$tmp/modules" || { echo "  missing module: $m"; r=1; }
+done
+result "GPU, display, sound, codec, IR, touch, Wi-Fi and Bluetooth modules are installed" "$r"
+r=0
+for d in /net/can/ /net/nfc/ /infiniband/ /drivers/staging/ /fs/nfs/ /fs/btrfs/ /arch/arm64/kvm/ /drivers/xen/; do
+	grep -q "$d" "$tmp/modules" && { echo "  unexpected modules under $d"; r=1; }
+done
+result "no CAN, NFC, InfiniBand, staging, NFS, Btrfs, KVM or Xen modules" "$r"
+show 'cat /usr/share/monokulo/boot/kernel.config' > "$tmp/kconfig"
+r=0
+for s in CAN NFC INFINIBAND STAGING BPF_SYSCALL BPF_JIT ACPI XEN VIRTUALIZATION NFS_FS BTRFS_FS; do
+	grep -qx "# CONFIG_$s is not set" "$tmp/kconfig" || { echo "  not off: CONFIG_$s"; r=1; }
+done
+for s in DRM_PANTHOR=m DRM_ROCKCHIP=m ROCKCHIP_VOP2=y ROCKCHIP_DW_HDMI_QP=y DRM_FBDEV_EMULATION=y FRAMEBUFFER_CONSOLE=y \
+	SND_SOC_RT5616=m VIDEO_HANTRO=m CFG80211=m BT=m RTC_DRV_HYM8563=y IR_GPIO_CIR=m SECURITY_LANDLOCK=y; do
+	grep -qx "CONFIG_$s" "$tmp/kconfig" || { echo "  not set: CONFIG_$s"; r=1; }
+done
+result "kernel.config: the hardware drivers are on, the excluded subsystems off" "$r"
 show 'ls /usr/lib/firmware/rtl_nic' | tr -s ' \t' '\n' | grep -q '^rtl8125b-2.fw$'
 result "rtl8125b-2.fw is there, uncompressed" "$?"
 ! show 'ls /boot' | grep -q vmlinuz

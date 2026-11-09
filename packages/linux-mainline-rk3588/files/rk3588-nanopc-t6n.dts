@@ -38,7 +38,11 @@
 	 * replaces bootargs_ext with the same root, so this copy only matters if it cannot.
 	 */
 	chosen: chosen {
-		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=ttyS2,1500000n8 coherent_pool=1m";
+		/*
+		 * Kernel messages go to the HDMI text console too. The last console= stays the
+		 * serial port, so /dev/console is still ttyS2.
+		 */
+		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=tty0 console=ttyS2,1500000n8 coherent_pool=1m";
 		bootargs_ext = "root=/dev/mmcblk0p8 rw rootfstype=ext4 rootwait";
 	};
 
@@ -54,6 +58,49 @@
 		regulator-max-microvolt = <5000000>;
 		vin-supply = <&vcc5v0_sys>;
 	};
+};
+
+/*
+ * Display, GPU and audio. The T6 dtsi already enables the GPU, VOP2, both HDMI outputs with
+ * their HDPTX PHYs and I2S audio, the RT5616 headphone codec on i2s0 and the HDMI receiver.
+ * FriendlyElec's T6N tree has one HDMI output (hdmi0 on VOP2 port 0) and no HDMI input, so
+ * the second output, its audio and the receiver, with its 160 MiB CMA reservation, are off.
+ */
+&gpu {
+	/* FriendlyElec's mem-supply. On this board it is the same RK806 rail as mali-supply. */
+	sram-supply = <&vdd_gpu_mem_s0>;
+};
+
+/*
+ * GPIO4_B1 is the HDMI 2.1 FRL/TMDS level shifter switch in FriendlyElec's T6N tree (the T6
+ * uses another pin). Mainline's dw-hdmi-qp driver drives "enable" high for TMDS.
+ */
+&hdmi0 {
+	enable-gpios = <&gpio4 RK_PB1 GPIO_ACTIVE_HIGH>;
+};
+
+&hdmi1 {
+	status = "disabled";
+};
+
+&hdmi1_sound {
+	status = "disabled";
+};
+
+&hdptxphy1 {
+	status = "disabled";
+};
+
+&i2s6_8ch {
+	status = "disabled";
+};
+
+&hdmi_receiver {
+	status = "disabled";
+};
+
+&hdmi_receiver_cma {
+	status = "disabled";
 };
 
 /* Only the system LED exists on the T6N. */

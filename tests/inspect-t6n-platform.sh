@@ -115,4 +115,67 @@ grep -q 'section "abstract Unix sockets"' "$tmp/nodo-report" && grep -q 'nodo-he
 result "nodo-report lists abstract sockets, and copes without nodo-healthd" "$?"
 show 'stat /usr/bin/nodo-healthd' | grep -q 'Type: regular'
 result "nodo-healthd is installed for it" "$?"
+
+echo "== the board's hardware: devices, console, clock, sound, GPU, radios"
+r=0
+for p in eudev alsa-utils wpa_supplicant bluez dbus v4l-utils; do
+	grep -q "^$p " "$tmp/pkgs" || { echo "  not installed: $p"; r=1; }
+done
+result "eudev, alsa-utils, wpa_supplicant, bluez, dbus and v4l-utils are installed" "$r"
+if grep -q '^mesa-dri ' "$tmp/pkgs"; then echo "  Mesa: $(grep -E '^(mesa|mesa-dri|libllvm[0-9]*) ' "$tmp/pkgs" | cut -d' ' -f2 | tr '\n' ' ')"; else echo "  Mesa: not installed"; fi
+r=0
+for s in udevd nodo-sound agetty-tty1; do
+	case " $links " in *" $s "*) ;; *) echo "  not started: $s"; r=1 ;; esac
+	show "stat /etc/sv/$s/run" | grep -qE 'Type: (regular|symlink)' || { echo "  no run script: $s"; r=1; }
+done
+result "udevd (module and firmware loading, hotplug), the mixer service and the tty1 login start at boot" "$r"
+r=0
+for s in wpa_supplicant bluetoothd dbus alsa; do
+	case " $links " in *" $s "*) echo "  started at boot: $s"; r=1 ;; esac
+done
+show 'stat /etc/sv/wpa_supplicant/run' | grep -q 'Type: regular' && show 'stat /etc/sv/bluetoothd/run' | grep -q 'Type: regular' || r=1
+result "Wi-Fi and Bluetooth services are installed but not started" "$r"
+show 'cat /etc/udev/rules.d/70-nodo-radios-off.rules' | grep -q 'SUBSYSTEM=="rfkill", ATTR{type}=="wlan|bluetooth", ATTR{soft}="1"'
+result "every Wi-Fi and Bluetooth radio is soft-blocked when it appears" "$?"
+show 'stat /etc/udev/rules.d/80-net-name-slot.rules' | grep -q 'Fast link dest: "/dev/null"'
+result "udev keeps the kernel's interface names (eth0, wlan0), which nothing in the firewall depends on" "$?"
+show 'stat /etc/udev/hwdb.bin' | grep -q 'Type: regular'
+result "the udev hardware database is compiled" "$?"
+show 'cat /usr/lib/udev/rules.d/50-udev-default.rules' | grep -q 'SUBSYSTEM=="drm", KERNEL=="renderD\*", GROUP="video", MODE="0666"'
+result "GPU nodes: /dev/dri/card* for the video group, render nodes open to all" "$?"
+show 'cat /etc/rc.conf' | grep -qx 'HARDWARECLOCK="UTC"' && show 'cat /etc/runit/shutdown.d/40-hwclock.sh' | grep -q 'hwclock --systohc' &&
+	show 'cat /etc/runit/core-services/05-nodo-rtc.sh' | grep -q 'hwclock --hctosys --utc'
+result "the RTC sets the clock at boot and is written back at shutdown" "$?"
+show 'cat /etc/sv/nodo-sound/run' | grep -q 'alsactl -f "$state" restore' && show 'cat /etc/sv/nodo-sound/finish' | grep -q 'alsactl -f /var/lib/alsa/asound.state store'
+result "the mixer state is restored at boot and saved at shutdown" "$?"
+show 'stat /usr/bin/ir-keytable' | grep -q 'Type: regular' && show 'stat /usr/bin/wpa_supplicant' | grep -q 'Type: regular' && show 'stat /usr/bin/bluetoothctl' | grep -q 'Type: regular'
+result "ir-keytable, wpa_supplicant and bluetoothctl are there" "$?"
+# Firmware: what the hardware asks for, uncompressed for the vendor kernel, and nothing else.
+fw() { show "stat /usr/lib/firmware/$1" | grep -qE 'Type: (regular|symlink)'; }
+r=0
+for f in rtl_nic/rtl8125b-2.fw arm/mali/arch10.8/mali_csffw.bin arm/mali/arch10.10/mali_csffw.bin \
+	rtw88/rtw8822c_fw.bin rtw89/rtw8852c_fw.bin rtl_bt/rtl8822cu_fw.bin rtl_bt/rtl8852cu_config.bin \
+	mediatek/WIFI_RAM_CODE_MT7961_1.bin mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
+	iwlwifi-cc-a0-77.ucode intel/iwlwifi/iwlwifi-ty-a0-gf-a0-89.ucode intel/ibt-0041-0041.sfi \
+	ath11k/WCN6855/hw2.0/amss.bin ath12k/WCN7850/hw2.0/amss.bin qca/hpbtfw21.tlv; do
+	fw "$f" || { echo "  missing firmware: $f"; r=1; }
+done
+result "firmware for the NIC, the Mali GPU and the Wi-Fi/Bluetooth chip families" "$r"
+show 'stat /usr/lib/firmware/arm/mali/arch10.8/mali_csffw.bin' | grep -qE 'Fast link dest: "(/usr/lib/firmware/arm/mali|\.\.)/arch10\.10/mali_csffw\.bin"'
+result "Mali's arch10.8 name links to the uncompressed arch10.10 file" "$?"
+r=0
+for f in iwlwifi-cc-a0-50.ucode brcm amdgpu nvidia ath10k mediatek/mt7996 intel/ibt-0180-0041.sfi \
+	ath12k/WCN7850/hw2.0/ncm865 rtw89/rtw8922a_fw.bin rtw88/rtw8822c_fw.bin.zst arm/mali/arch10.8/mali_csffw.bin.zst \
+	arm/mali/arch10.10/mali_csffw.bin.zst; do
+	fw "$f" && { echo "  unexpected firmware: $f"; r=1; }
+	show "stat /usr/lib/firmware/$f" | grep -q 'Type: directory' && { echo "  unexpected firmware: $f"; r=1; }
+done
+result "no firmware beyond the allow-list, and each file once, uncompressed" "$r"
+echo "  firmware files: $(show 'ls -p /usr/lib/firmware' | wc -l) entries at the top level"
+kver=$(show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep -E '^[0-9]+\.[0-9]+\.' | sort -V | tail -1)
+show "cat /usr/lib/modules/$kver/modules.dep" | cut -d: -f1 > "$tmp/modules"
+if grep -q '^kernel/sound/' "$tmp/modules" && grep -q '^kernel/drivers/media/' "$tmp/modules"; then r=0; else r=1; fi
+result "sound and media modules are on the card ($kver)" "$r"
+grep -q '/btusb\.ko' "$tmp/modules"
+result "btusb is there" "$?"
 exit "$fail"

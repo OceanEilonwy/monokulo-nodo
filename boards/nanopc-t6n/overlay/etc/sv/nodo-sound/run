@@ -1,0 +1,23 @@
+#!/bin/sh
+# monokulo-nodo: restores the sound cards' mixer settings at boot, and ./finish saves them at
+# shutdown, so the owner's changes stay. Until a state has been saved, it unmutes the RT5616
+# headphone output at a moderate level. HDMI audio has no mixer controls to set.
+# Void's own alsa service is not used: it exits, and runit restarts it every second, when
+# there is no saved state or no sound card yet.
+exec 2>&1
+exec </dev/null
+state=/var/lib/alsa/asound.state
+if [ -s "$state" ]; then
+	alsactl -f "$state" restore >/dev/null 2>&1 || echo "alsactl restore reported a problem"
+else
+	for card in $(sed -n 's/^ *\([0-9][0-9]*\) \[.*/\1/p' /proc/asound/cards 2>/dev/null); do
+		# The RT5616's playback path: I2S in, the stereo DAC, the headphone mixer and amp.
+		for ctl in 'DAC MIXL INF1' 'DAC MIXR INF1' 'Stereo DAC MIXL DAC L1' 'Stereo DAC MIXR DAC R1' 'HPO MIX DAC1'; do
+			amixer -q -c "$card" sset "$ctl" on 2>/dev/null
+		done
+		amixer -q -c "$card" sset DAC1 80% 2>/dev/null
+		amixer -q -c "$card" sset HP 70% unmute 2>/dev/null
+		amixer -q -c "$card" sset HPVOL unmute 2>/dev/null
+	done
+fi
+exec chpst -b nodo-sound pause

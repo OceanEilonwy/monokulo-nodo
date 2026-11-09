@@ -46,8 +46,11 @@ codebase, and signed xbps packages from user-added feeds.
   here reads (`scripts/_build-image-inner.sh` lists them and why), and `scripts/build-image.sh`
   fails a board over its size budget (`tests/size-check.sh`). The T6N images carry the platform (nodo-tools,
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
-  nodo-autoupdate at boot; the helper starts the web services when sites need them. They have
-  no udev, so the helper's run script takes the data drive from the `NODO_BLOCKCHAIN` line in
+  nodo-autoupdate at boot; the helper starts the web services when sites need them. They also
+  start udevd, which loads the board's driver modules and firmware and handles USB hotplug, and
+  `nodo-sound` for the mixer state; [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) lists the hardware
+  setup. The helper's run script does not rely on udev's `/dev/disk` links: it takes the data
+  drive from the `NODO_BLOCKCHAIN` line in
   `/etc/fstab` (the device mounted there, or the partition `blkid` finds by probing) unless its
   `conf` names one, and the health daemon guards the node's writes on that drive. Monokulo
   is a feed app and is installed through the helper, never baked into an image.
