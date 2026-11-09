@@ -17,3 +17,5 @@ docker run --rm \
 	-e "BOARD=$board" -e "VOID_MIRROR=$VOID_MIRROR" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 	-v "$root:/src" "$@" \
 	"$BUILDER" /src/scripts/_build-image-inner.sh
+# Every board has size budgets, and a build over them fails here, when the growth appears.
+"$root/tests/size-check.sh" "$board"

@@ -37,11 +37,19 @@ codebase, and signed xbps packages from user-added feeds.
   helper reads `get_info` from it for Home, since the TUI may not. The firewall opens only P2P
   (18080) inbound. cuprated-service's default `Cuprated.toml` and the helper's template in
   nodo-tools must agree, which `crates/nodo-install/tests/cuprated_package.rs` checks.
-- **Images:** Every image appends monokulo-base's `dhcpcd-nodo-local.conf` to `/etc/dhcpcd.conf`
-  (dhcpcd owns that file): the `nodo-local` lease brings only an address, with no routes, DNS,
-  hostname, IPv6 or 169.254 fallback. The T6N images carry the platform (nodo-tools,
+- **Images:** monokulo-base keeps its `dhcpcd-nodo-local.conf` at the end of `/etc/dhcpcd.conf`
+  (dhcpcd owns that file and has no include): its INSTALL script puts the block there between
+  marker lines on every install, upgrade and re-install, replacing an older copy, including the
+  unmarked one images appended before, and REMOVE takes it out. The image builder runs the same
+  script, so devices updated in place and new images agree. The `nodo-local` lease brings only an
+  address, with no routes, DNS, hostname, IPv6 or 169.254 fallback. Images leave out files nothing
+  here reads (`scripts/_build-image-inner.sh` lists them and why), and `scripts/build-image.sh`
+  fails a board over its size budget (`tests/size-check.sh`). The T6N images carry the platform (nodo-tools,
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
-  nodo-autoupdate at boot; the helper starts the web services when sites need them. Monokulo
+  nodo-autoupdate at boot; the helper starts the web services when sites need them. They have
+  no udev, so the helper's run script takes the data drive from the `NODO_BLOCKCHAIN` line in
+  `/etc/fstab` (the device mounted there, or the partition `blkid` finds by probing) unless its
+  `conf` names one, and the health daemon guards the node's writes on that drive. Monokulo
   is a feed app and is installed through the helper, never baked into an image.
 - **Service rules:** Run scripts must `exec </dev/null`, because a console stdin makes cuprated flood its
   log. bwrap does not forward signals and `--die-with-parent` would SIGKILL the child, so `control/t`

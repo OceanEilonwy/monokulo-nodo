@@ -10,6 +10,12 @@ if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0
 		tar -C /src/crates/nodo-web/tests/fixtures/vm -cf - . | ssh_vm 'tar -C /tmp/web -xf -'
 		ssh_vm 'cat > /tmp/web-routing.sh' < /src/tests/web-routing.sh
 		ssh_vm 'sh /tmp/web-routing.sh </dev/null' || fail=1
+		# nodo-localnet's dhcpcd block through xbps: re-install, removal and an in-place upgrade.
+		base=$(cd "/src/out/feed/$ARCH" && ls monokulo-base-[0-9]*.xbps | sort -V | tail -n 1)
+		ssh_vm 'rm -rf /tmp/base-feed && mkdir -p /tmp/base-feed'
+		tar -C "/src/out/feed/$ARCH" -cf - "$base" | ssh_vm 'tar -C /tmp/base-feed -xf -'
+		ssh_vm 'cat > /tmp/dhcpcd-block.sh' < /src/tests/dhcpcd-block.sh
+		ssh_vm 'sh /tmp/dhcpcd-block.sh </dev/null' || fail=1
 		ssh_vm 'cat > /tmp/localnet-dhcp.sh' < /src/tests/localnet-dhcp.sh
 		ssh_vm 'sh /tmp/localnet-dhcp.sh </dev/null' || fail=1
 		if ls "/src/out/feed/$ARCH"/nodo-ddns-[0-9]*.xbps >/dev/null 2>&1; then

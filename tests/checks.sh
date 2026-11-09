@@ -46,6 +46,12 @@ ssh_vm 'cat > /tmp/fw.sh' < /src/tests/firewall-traffic.sh
 ssh_vm 'sh /tmp/fw.sh </dev/null' || fail=1
 check "service restarts" 'sv -w 60 start cuprated | grep -q "^ok: run"'
 . /src/tests/web-checks.sh
+# The data drive found from fstab without udev, and a full one stopping the node. Needs nodo-tools,
+# which the web checks install.
+if ssh_vm 'command -v nodo-helper >/dev/null'; then
+	ssh_vm 'cat > /tmp/data-drive.sh' < /src/tests/data-drive.sh
+	ssh_vm 'sh /tmp/data-drive.sh </dev/null' || fail=1
+fi
 . /src/tests/snapshot-checks.sh
 if [ "${SKIP_REBOOT:-}" != 1 ]; then
 ssh_vm 'for n in $(seq 1 60); do grep -q ":46A1 00000000:0000 0A" /proc/net/tcp && break; sleep 2; done'

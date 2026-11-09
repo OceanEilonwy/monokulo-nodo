@@ -1,0 +1,7 @@
+# dhcpcd owns /etc/dhcpcd.conf, so nodo-localnet's block is put into it, or replaced, on every
+# install, upgrade and re-install. Paths are relative, as xbps runs this from the root directory.
+case "${ACTION}" in
+post)
+	./usr/libexec/monokulo/dhcpcd-nodo-local install .
+	;;
+esac

@@ -62,8 +62,13 @@ result "dhcpcd.conf has the nodo-local block" "$r"
 grep -qx 'duid' "$tmp/dhcpcd.conf" && grep -qx 'controlgroup wheel' "$tmp/dhcpcd.conf"
 result "dhcpcd's own settings before it are kept" "$?"
 show 'cat /usr/share/monokulo/dhcpcd-nodo-local.conf' > "$tmp/block"
-[ -s "$tmp/block" ] && tail -c "$(wc -c < "$tmp/block")" "$tmp/dhcpcd.conf" | cmp -s - "$tmp/block"
-result "the block is monokulo-base's file, appended once at the end" "$?"
+[ -s "$tmp/block" ] && [ "$(tail -n 1 "$tmp/dhcpcd.conf")" = '# END nodo-local' ] &&
+	sed -n '/^# BEGIN nodo-local/,/^# END nodo-local/p' "$tmp/dhcpcd.conf" | sed '1d;$d' | cmp -s - "$tmp/block"
+result "the block is monokulo-base's file, between its markers at the end" "$?"
+if [ "$(grep -c '^# BEGIN nodo-local' "$tmp/dhcpcd.conf")" = 1 ]; then r=0; else r=1; fi
+result "the marked block appears once" "$r"
+show 'stat /usr/libexec/monokulo/dhcpcd-nodo-local' | grep -q 'Type: regular'
+result "the script that keeps it there on updates is installed" "$?"
 if [ "$(grep -cx 'interface nodo-local' "$tmp/dhcpcd.conf")" = 1 ]; then r=0; else r=1; fi
 result "the block appears once" "$r"
 
@@ -91,6 +96,17 @@ show 'stat /usr/bin/nodo-confine' | grep -q 'Type: regular'
 result "nodo-confine is installed" "$?"
 show 'cat /etc/sv/cuprated/conf' | grep -qx 'DATA_MOUNT=/media/monero'
 result "cuprated still waits for the data drive" "$?"
+
+echo "== data drive"
+# No udev on the card, so no /dev/disk/by-partlabel link: the helper takes the drive from fstab
+# and finds the partition itself (tests/data-drive.sh runs that in the VM).
+show 'cat /etc/fstab' | grep -qx 'PARTLABEL=NODO_BLOCKCHAIN /media/monero xfs defaults,noatime,nofail 0 0'
+result "fstab mounts the NODO_BLOCKCHAIN partition at /media/monero" "$?"
+show 'cat /etc/sv/nodo-helper/run' > "$tmp/helper-run"
+grep -q 'LABEL=NODO_BLOCKCHAIN' "$tmp/helper-run" && grep -q 'blkid -p -o value -s "$field"' "$tmp/helper-run" &&
+	! show 'cat /etc/sv/nodo-helper/conf' | grep -q '^DRIVE'
+result "the helper finds the data drive from fstab, with no conf overriding it" "$?"
+show 'stat /usr/bin/udevd' | grep -q 'Type: regular' && echo "  note: the image has udevd, so /dev/disk links may exist too"
 
 echo "== nodo-report"
 show 'cat /usr/bin/nodo-report' > "$tmp/nodo-report"
