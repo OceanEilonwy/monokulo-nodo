@@ -1,0 +1,5 @@
+# monokulo-nodo: Wi-Fi and Bluetooth start switched off. Every radio is soft-blocked when it
+# appears, at boot or when a USB adapter is plugged in, so nothing transmits until the owner
+# turns it on (rfkill unblock, through the helper). wpa_supplicant, dbus and bluetoothd are
+# installed but not started at boot either.
+ACTION=="add", SUBSYSTEM=="rfkill", ATTR{type}=="wlan|bluetooth", ATTR{soft}="1"

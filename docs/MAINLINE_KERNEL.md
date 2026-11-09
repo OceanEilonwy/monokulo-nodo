@@ -49,7 +49,7 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 | PCIe 3.0 x4, NVMe | `pcie3x4`, reset GPIO4_B6, power GPIO2_C5 | same | unchanged |
 | 2.5GbE, RTL8125 | `pcie2x1l2`, reset GPIO4_A4 | same, plus a child node for the NIC with `ethernet0` alias | adds the NIC node and alias, so the bootloader can write the MAC address |
 | Second 2.5GbE | `pcie2x1l1`, reset GPIO4_A2, power GPIO4_C2 | disabled; those pins go to `pcie2x1l0` | disabled |
-| M.2 E-key (Wi-Fi) | `pcie2x1l0`, reset GPIO4_B3 | reset GPIO4_A2, power GPIO4_C2 | as FriendlyElec. No Wi-Fi driver is built |
+| M.2 E-key (Wi-Fi) | `pcie2x1l0`, reset GPIO4_B3 | reset GPIO4_A2, power GPIO4_C2 | as FriendlyElec, with Wi-Fi and Bluetooth drivers for common cards |
 | microSD | `sdmmc`, alias `mmc1` | `sdmmc`, alias `mmc0` | alias `mmc0`, so the card is `mmcblk0` on both kernels |
 | eMMC | `sdhci`, alias `mmc0` | `sdhci`, alias `mmc2` | alias `mmc2` |
 | Card power | GPIO4_A5 active low, I/O voltage from RK806 PLDO5 | same | unchanged |
@@ -64,7 +64,13 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 | USB-A 3.0 | `usb_host1_xhci` on USBDP PHY1 | `usbhost3_0` on combphy2, power GPIO3_A5 | `usb_host2_xhci` on combphy2, power GPIO3_A5 |
 | User LED, SPI flash | present | absent | removed |
 | Console | `serial2:1500000n8` | FIQ debugger on UART2 | UART2 as `ttyS2` |
-| Display, audio, camera, HDMI in | enabled | enabled | left in the tree; the drivers are not built |
+| GPU | Mali-G610 `gpu` with `mali-supply` | the same, plus `mem-supply` (the same rail) | enabled, with `sram-supply` for that rail |
+| HDMI out | `hdmi0` and `hdmi1`, both HDPTX PHYs, both I2S audio links | `hdmi0` only, with `enable-gpios` GPIO4_B1 (T6: another pin) | `hdmi0` with GPIO4_B1; `hdmi1`, `hdptxphy1`, `i2s6` and its sound card off |
+| HDMI in | `hdmi_receiver` with a 160 MiB CMA pool | absent | off, with its pool |
+| Headphone jack | RT5616 on I2C7, `i2s0`, jack detect GPIO1_C4 | the same | unchanged |
+| IR receiver | `gpio-ir-receiver` on GPIO0_D4 | the same pin, as a PWM remote input | unchanged |
+| DisplayPort over Type-C | none | `dp0`/`dp1` alt mode on both ports | not wired up (driver built, nodes off) |
+| MIPI-DSI, MIPI-CSI | connectors only | DSI0/DSI1 (an AMOLED panel overlay, Goodix touch on I2C5), CSI0/CSI1 | nodes off: no panel or camera is declared |
 
 ### Per subsystem
 
@@ -94,11 +100,56 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
   the SCMI requests mainline makes. Mainline rk3588 trees are written for Rockchip's rkbin BL31,
   which is what FriendlyElec ships (the running system reports `bl31-v1.46`).
 - **Watchdog.** `dw_wdt`, built in. Nothing opens it, which is the same as on the 6.1 image.
-- **RTC.** `rtc-hym8563`, built in.
+- **RTC.** `rtc-hym8563`, built in, so the kernel sets the clock from it at boot
+  (`RTC_HCTOSYS`). Both images also run `hwclock --hctosys` early in boot
+  (`/etc/runit/core-services/05-nodo-rtc.sh`, for a driver that was late) and set
+  `HARDWARECLOCK="UTC"` in `/etc/rc.conf`, so Void's shutdown writes the clock back, and chrony's
+  `rtcsync` keeps it right while the node runs. The time survives a reboot without network.
 - **Console.** On mainline the debug UART is `ttyS2`, 1500000 8N1, where the vendor kernel has
   the FIQ debugger's `ttyFIQ0`. Void has no `agetty-ttyS2` or `agetty-ttyFIQ0` service, so
-  neither image starts a login prompt on it, and root's password is locked on both anyway. The
-  serial port only shows kernel messages. HDMI shows the bootloader's logo and nothing after.
+  neither image starts a login prompt on it. The serial port shows kernel messages.
+- **HDMI and the text console.** VOP2, `dw-hdmi-qp` and the HDPTX PHY drive `hdmi0`, and DRM's
+  fbdev emulation puts a text console on it once `rockchipdrm` loads (udev loads it from the root
+  filesystem, so the screen shows the boot logo until then). `console=tty0` sends kernel messages
+  there too. Void starts `agetty` on tty1 to tty6, so with a USB keyboard the screen shows the
+  login prompt with the address from `/etc/issue` (`ssh root@<address>`). Logging in there is not
+  possible: root's password stays locked, as on SSH, and no default password is added. The
+  prompt is for reading the address; the owner manages the node over SSH and the TUI.
+- **GPU.** `panthor` for the Mali-G610, with `arm/mali/arch10.8/mali_csffw.bin` from
+  linux-firmware. eudev's rules give `/dev/dri/card0` to the `video` group (mode 0660) and make
+  the render node `/dev/dri/renderD128` mode 0666 in that group; Void has no `render` group.
+  **Unverified:** that panthor probes with FriendlyElec's BL31. It needs the GPU's SCMI clock and
+  power domain, the same interface cpufreq depends on. The images carry no Mesa: Void's
+  `mesa-dri` brings libllvm22 (135 MiB), libz3 (30 MiB), mesa-libgallium (39 MiB), mesa
+  (17 MiB) and X11 libraries, about 235 MiB installed, which would put the root filesystem near
+  750 MiB, over the 650 MiB limit set for it. A panfrost-only Mesa without LLVM would need its
+  own package. The vendor 6.1 kernel's Mali driver is Arm's kbase, which Mesa cannot use and which
+  asks for FriendlyElec's own firmware, not linux-firmware's.
+- **Sound.** HDMI audio through `i2s5` and `dw-hdmi-qp`'s hdmi-codec, and the RT5616 headphone
+  jack and microphone on `i2s0`, both through `simple-audio-card`; USB audio for adapters.
+  `nodo-sound` restores the mixer state at boot and saves it at shutdown (`alsactl`); before
+  the first save it turns on the RT5616's DAC-to-headphone path at about 70 %. HDMI audio has no
+  mixer controls. Void's own `alsa` service is not used, because it restarts every second
+  while there is no saved state or no card.
+- **Video codecs.** `hantro` for the VPU121 decoder (H.264, MPEG-2, VP8), the four VEPU121 JPEG
+  encoders and the AV1 decoder, and `rockchip-rga` for the 2D engine. The RKVDEC2 H.265/VP9
+  decoder has no driver in 6.18. No camera: 6.18 has no RK3588 ISP or VICAP driver.
+- **IR receiver.** `gpio-ir-recv` with the common protocol decoders; `ir-keytable` (v4l-utils)
+  loads keymaps.
+- **MIPI-DSI.** The DSI2 host and the Samsung DC-PHY are built, with Goodix and FocalTech touch
+  drivers, for FriendlyElec's panels. The DSI nodes stay off until a panel is declared.
+- **Wi-Fi and Bluetooth.** Drivers for M.2 (PCIe) and USB cards: Realtek rtw88/rtw89, MediaTek
+  MT7921/MT7922/MT7925, Intel AX200/AX210/BE200 and Qualcomm WCN6855/WCN7850, with Bluetooth
+  over USB (`btusb`) and UART (`hci_uart`), and the matching firmware. wpa_supplicant, bluez and
+  dbus are installed but not started, and a udev rule soft-blocks every Wi-Fi and Bluetooth radio
+  when it appears, so both are off until the owner turns them on (`rfkill unblock`, then the
+  service). A udev rule keeps the kernel's interface names: the wired port is `eth0`, the first
+  Wi-Fi card `wlan0`, Bluetooth `hci0`. dhcpcd manages every interface, so `wlan0` gets an
+  address once it is associated, with a higher route metric than `eth0`, and the firewall has no
+  per-interface rules, so `wlan0` is treated exactly like the wired LAN.
+- **Devices.** eudev's `udevd` runs from early boot (Void's core service) and is then supervised
+  as a service. It loads modules by modalias at boot and on hotplug, loads firmware, and keeps
+  the hardware database (`/etc/udev/hwdb.bin`).
 
 ## Bootloader
 
@@ -159,8 +210,13 @@ behaving with a mainline tree.
 arm64 `defconfig` plus `packages/linux-mainline-rk3588/files/monokulo.config`. The build fails
 if `olddefconfig` drops or changes any line of the fragment. In short:
 
-- Only `ARCH_ROCKCHIP` among SoC families. No ACPI, KVM, DRM, sound, media, Wi-Fi, Bluetooth,
-  CAN, NFC, staging, NFS or Btrfs. The Image is about 22 MB, inside the 40 MiB kernel partition.
+- Only `ARCH_ROCKCHIP` among SoC families. No ACPI, KVM, Xen, CAN, NFC, InfiniBand, staging,
+  NFS or Btrfs. The RK3588's CAN controllers have no transceiver or connector on the T6N
+  (FriendlyElec's tree enables none), and the video decoder 6.18 has for it (hantro) is not in
+  staging. `kernel.img` is 21.8 MiB (22,876,684 bytes), inside the 40 MiB kernel partition and
+  64 KiB more than before the hardware drivers below were added, since they are modules.
+- Display, GPU, sound, video codecs, IR, touch, Wi-Fi and Bluetooth as modules, as listed
+  above. defconfig's drivers for other SoCs' display, sound and Wi-Fi blocks are turned off.
 - `CONFIG_LSM="landlock,lockdown,yama"` with Landlock, seccomp filters, and user, PID, network,
   IPC and UTS namespaces. `BPF_SYSCALL` is off: nothing on the appliance loads eBPF, and seccomp
   uses classic BPF.

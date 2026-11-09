@@ -30,3 +30,11 @@ mkfs.xfs -q /dev/mapper/kcheck; mkdir -p /mnt/kcheck; mount /dev/mapper/kcheck /
 echo ok > /mnt/kcheck/t; umount /mnt/kcheck; cryptsetup close kcheck; losetup -d $d; rm -f $f'
 check "overlayfs mounts" 'set -e; b=/var/tmp/ovl; mkdir -p $b/l $b/u $b/w $b/m
 mount -t overlay overlay -o lowerdir=$b/l,upperdir=$b/u,workdir=$b/w $b/m; umount $b/m; rm -rf $b'
+# QEMU has none of the T6N's display, GPU, sound or radio hardware, so this only shows that the
+# board's modules are installed and indexed, and that the generic ones load on this kernel.
+check "the T6N's GPU, display, sound, codec, IR and radio modules are installed" 'set -e
+for m in panthor rockchipdrm phy-rockchip-samsung-hdptx snd-soc-rt5616 snd-soc-rockchip-i2s-tdm snd-soc-simple-card \
+	snd-soc-hdmi-codec hantro-vpu rockchip-rga gpio-ir-recv cfg80211 mac80211 rtw88_8822ce rtw89_8852ce mt7921e \
+	iwlwifi ath11k_pci btusb hci_uart; do modinfo -F filename $m >/dev/null; done'
+check "cfg80211, mac80211, Bluetooth, USB audio and panthor load" \
+	'modprobe -a cfg80211 mac80211 bluetooth btusb snd-usb-audio panthor && grep -q "^panthor " /proc/modules'
