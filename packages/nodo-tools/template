@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=4
+revision=5
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update"
@@ -27,6 +27,8 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-healthd 0750 root root
  /var/log/nodo-autoupdate 0750 root root
  /var/log/nodo-systemupdate 0750 root root
+ /var/log/nodo-wifi 0750 root root
+ /var/lib/nodo/wifi 0700 root root
  /etc/nodo 0755 root root"
 
 do_extract() {
@@ -48,6 +50,9 @@ do_install() {
 	# The schedule for system snapshot updates: it checks and reports, and applies only when
 	# the owner turned automatic system updates on.
 	vsv nodo-systemupdate
+	# wpa_supplicant for the owner's Wi-Fi. Not enabled: the helper links it when the owner turns
+	# Wi-Fi on. wpa_supplicant itself comes with the board's image.
+	vsv nodo-wifi
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated

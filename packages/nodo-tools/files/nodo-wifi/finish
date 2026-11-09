@@ -1,0 +1,9 @@
+#!/bin/sh
+# Takes the interface down when wpa_supplicant stops, so dhcpcd drops the Wi-Fi lease and route.
+for d in /sys/class/net/*/phy80211; do
+	[ -e "$d" ] || continue
+	iface=${d%/phy80211}
+	ip link set "${iface##*/}" down 2>/dev/null
+	break
+done
+exit 0

@@ -8,6 +8,7 @@
 mod apps;
 mod backup;
 mod apply;
+pub mod bluetooth;
 mod catalog;
 mod drive;
 mod exposure;
@@ -25,6 +26,9 @@ pub mod pkgsys;
 mod node;
 mod onion;
 mod policy;
+pub mod radio;
+#[cfg(test)]
+mod radio_tests;
 pub mod real;
 pub mod secrets;
 pub mod server;
@@ -38,7 +42,9 @@ mod updates;
 pub mod usb;
 mod volumes;
 pub mod web;
+pub mod wifi;
 pub mod worker;
+mod wpa;
 
 pub use catalog::Package;
 pub use exposure::{ExposureApplier, ExposureState, NoCaddyYet, PublicHosts, WebInput, WebSite};
