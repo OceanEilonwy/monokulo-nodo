@@ -8,7 +8,7 @@ screen, and the remaining journeys still run. tests/tui-e2e.sh copies this direc
 and starts it.
 
 Journeys follow the design canvas, docs/design/tui/canvas.json: first boot and its USB restore,
-Home, Packages, Feeds, Updates and Rollbacks, Web and Onion, Logs, Backups, and the error states. At the end, no passphrase may appear
+Home, Packages, Feeds, Updates and Rollbacks, Web and Onion, Network, Logs, Backups, and the error states. At the end, no passphrase may appear
 in anything the TUI drew or in any log on the device.
 """
 
@@ -674,6 +674,82 @@ def onion():
         tui.quit()
 
 
+WIFI_SSID = "NodoTest"
+
+
+def network():
+    # tests/tui-e2e.sh runs tests/wifi-prepare.sh, which builds mac80211_hwsim for the VM kernel.
+    # wifi-ap.sh then makes two virtual radios and an access point in a network namespace, whose
+    # passphrase is the device passphrase, so the final check also covers it. The VM has no
+    # Bluetooth controller (Void's kernel has no virtual one the helper could pair with), so that
+    # panel only says so.
+    if sh("modinfo -n mac80211_hwsim", check=False).strip().startswith("modinfo"):
+        with Journey("Network: no radios"), Session() as tui:
+            tui.send("w")
+            tui.expect("the Network screen says this VM has no Wi-Fi", "Home › Network", "No Wi-Fi hardware was found.",
+                       "No Bluetooth controller was found.", timeout=30)
+            tui.quit()
+        return
+    try:
+        with Journey("Network: Wi-Fi"):
+            sh(f"sh {HERE}/wifi-ap.sh radios")
+            # The helper blocks a radio the owner left off when it starts, so it starts again now
+            # that there are radios. The access point then unblocks its own.
+            restart_helper()
+            out = sh(f"printf '%s\\n' '{PASSPHRASE}' | sh {HERE}/wifi-ap.sh up {WIFI_SSID}", check=False)
+            check("the virtual access point is up", "ready" in out.splitlines(), out)
+        with Journey("Network: Wi-Fi"), Session() as tui:
+            tui.send("w")
+            tui.expect("Wi-Fi is off until the owner turns it on", "Home › Network", "Off. Press o to turn it on.",
+                       "No Bluetooth controller was found.", timeout=30)
+            check("the helper blocked the radio", "1" in sh("cat /sys/class/rfkill/*/soft"))
+            tui.send("o")
+            tui.expect("o turns Wi-Fi on", "Not joined to any network", timeout=60, absent=("Turning Wi-Fi on",))
+            tui.send("s")
+            tui.expect("s finds the access point with its security and signal",
+                       re.compile(WIFI_SSID + r"\s+WPA2\s+\S+\s+-\d+ dBm"), timeout=60)
+            tui.send("enter")
+            tui.expect("Enter asks for the passphrase", f"Join {WIFI_SSID}", "Passphrase")
+            tui.type(WRONG_PASSPHRASE)
+            tui.expect("the passphrase shows as bullets", "•" * len(WRONG_PASSPHRASE))
+            tui.send("enter")
+            tui.expect("a wrong passphrase is refused and nothing is saved",
+                       f"{WIFI_SSID} refused the passphrase. Nothing was saved.", timeout=90)
+            check("the helper saved no network", not os.path.exists("/var/lib/nodo/wifi/networks.toml"))
+            tui.send("enter")
+            tui.wait_for(f"Join {WIFI_SSID}")
+            tui.type(PASSPHRASE, enter=True)
+            tui.expect("the right passphrase joins and shows the address from DHCP",
+                       re.compile(rf"Joined {WIFI_SSID}\. Its address is 192\.168\.77\.5\d\."), timeout=120)
+            tui.expect("the network is saved and joined", "saved · joined", "● Joined " + WIFI_SSID)
+            check("the device has the address on its wireless interface",
+                  "inet 192.168.77.5" in sh("ip -4 addr show wlan0"))
+            routes = sh("ip route")
+            wired = [int(m) for m in re.findall(r"dev eth0 .*metric (\d+)", routes)]
+            wifi = [int(m) for m in re.findall(r"dev wlan0 .*metric (\d+)", routes)]
+            check("wired keeps the lower route metric", wired and wifi and min(wifi) > max(wired), routes)
+            tui.send("f")
+            tui.expect("forgetting asks first", f"Forget {WIFI_SSID}?")
+            tui.send("right", "enter")
+            tui.expect("forgetting leaves the network", f"Forgot {WIFI_SSID}.", "Not joined to any network",
+                       timeout=60)
+            tui.send("o")
+            tui.expect("o turns Wi-Fi off again", "Off. Press o to turn it on.", timeout=60,
+                       absent=("Turning Wi-Fi off",))
+            tui.send("esc")
+            tui.expect("Esc goes back to Home", "Services")
+            tui.quit()
+        with Journey("Network: Wi-Fi, helper side"):
+            check("wpa_supplicant stopped", sh("pgrep -x wpa_supplicant", check=False).strip() == "")
+            check("the radio is blocked again", "0" not in sh("cat /sys/class/rfkill/*/soft").split())
+            check("no Wi-Fi file holds the passphrase", "horse" not in sh("cat /var/lib/nodo/wifi/*", check=False))
+            check("the files are root-only",
+                  sh("stat -c '%a %U' /var/lib/nodo/wifi /var/lib/nodo/wifi/wpa_supplicant.conf").split()
+                  == ["700", "root", "600", "root"])
+    finally:
+        sh(f"sh {HERE}/wifi-ap.sh down", check=False)
+
+
 def rollbacks():
     # The updates journey left 1.1 held. Released and applied, the package keeps 1.0 to go back to.
     ctl("hold", "tui-shop", "1.1_1", "0")
@@ -792,6 +868,7 @@ JOURNEYS = [
     ("feed-key", feed_key_changed),
     ("web", web),
     ("onion", onion),
+    ("network", network),
     ("logs", logs),
     ("backups", backups),
     ("locked", locked),
