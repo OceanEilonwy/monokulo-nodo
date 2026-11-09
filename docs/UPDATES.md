@@ -149,14 +149,20 @@ the helper: a newer snapshot that would move a package back without withdrawing 
 refused; with automatic system updates off, the `nodo-systemupdate` schedule finds a withdrawal of
 the current snapshot and applies nothing, nor does a scheduled run; the helper refuses a serial
 the owner was not shown; applying the withdrawal moves the test package back and its service
-comes back on the old version; and the withdrawn snapshot cannot come back.
+comes back on the old version; and the withdrawn snapshot cannot come back. Last, with automatic
+system updates turned on: a run leaves a snapshot waiting outside the package update window, the
+`nodo-systemupdate` schedule applies it by itself inside the window and records it as automatic,
+and a snapshot that needs a restart waits for the owner even inside the window.
+
+The TUI journeys (`tests/tui-e2e.sh`, `grow` and `system`) drive the Updates screen against the
+real helper: an update that grows `tui-shop`'s encrypted volume from 256 to 320 MiB asks for the
+device passphrase first, Esc cancels, a wrong passphrase changes and holds nothing, and the right
+one grows the volume in place and updates; and with the test snapshots served in the VM, the
+`system base` row offers test-b, says automatic system updates only notify, and applies it.
 
 Not yet: `fetch` and `test` have not been run against a live mirror; no real Void package was
-updated in a test (the test snapshots reuse the VM's own Void index); a snapshot that needs a
-restart only says so, and nothing restarts the device for it; automatic system updates turned on
-are unit tested (`sysupdate.rs`) but not run in the VM; and the TUI's `system base` row and
-passphrase prompt are tested against the mock (`crates/nodo-tui/tests/flows.rs`), not yet by a
-journey in `tests/tui-e2e.sh`.
+updated in a test (the test snapshots reuse the VM's own Void index); and a snapshot that needs a
+restart only says so, and nothing restarts the device for it.
 
 ## 2. Auto-update
 
@@ -413,8 +419,10 @@ pulled out mid-write), then destroys the first VM, boots the clean image with th
 restores it and checks that the device is unlocked, the feed key, approval and package version
 are back without the feed, the volume has its declared size, data and layout, the service runs,
 the sealed secret opens, Caddy's files are identical and owned by `_caddy`, the package's public
-site and host are in Caddy's configuration straight after the restore, and that after a
-helper restart the new passphrase unlocks the restored storage while the old one does not.
+site and host are in Caddy's configuration straight after the restore, that the node's onion
+address is back on with the same address (Tor from the pinned mirror runs on the restored keys),
+and that after a helper restart the new passphrase unlocks the restored storage while the old one
+does not.
 
 USB recovery plan, in order of what exists today:
 

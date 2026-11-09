@@ -4,6 +4,7 @@
 # (users, volumes, cuprated settings), so run it on a disposable VM. The web part also needs the web
 # packages, curl, and tor for onion addresses:
 #   scripts/dev-vm.sh push nodo-tools nodo-caddy nodo-localnet nodo-ddns
+#   scripts/dev-vm.sh mirror curl tor             (from the pinned Void mirror; the onion checks need Tor)
 #   scripts/build-packages.sh x86_64 monokulo     (optional: Monokulo installs from the test feed)
 #   scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.xbps' < out/feed/x86_64/monokulo-<version>.x86_64.xbps
 #   echo monokulo-<version>.x86_64.xbps | scripts/dev-vm.sh ssh 'cat > /tmp/monokulo.name'
@@ -98,6 +99,24 @@ check "an out of range value is refused before anything changes" refused "betwee
 check "a typed reference lookalike is not a number, so it is refused" refused "whole number" ctl set cuprated outbound_peers text '$(cuprated.rpc_port)'
 check "refusals left Cuprated.toml untouched" cmp /etc/cuprated/Cuprated.toml /tmp/Cuprated.mid
 check "the settings store is root only" sh -c '[ "$(stat -c "%a %U" /var/lib/nodo/settings/cuprated.toml)" = "600 root" ]'
+# A device that stored the old restricted_rpc switch, which cuprated retired: the next write drops
+# it with a line in the log. A value for a setting cuprated never declared nor retired is refused.
+printf '\n[values.restricted_rpc]\nliteral = "true"\n' >> /var/lib/nodo/settings/cuprated.toml
+mark=$(wc -l < /var/log/nodo-helper/current)
+check "a stored value for the retired restricted_rpc is dropped at the next change, with a log line" sh -c '
+	ctl form cuprated | grep -q outbound_peers && ctl set cuprated outbound_peers int 41 &&
+	grep -qx "outbound_connections = 41" /etc/cuprated/Cuprated.toml && ! grep -q restricted_rpc /var/lib/nodo/settings/cuprated.toml &&
+	sleep 1 && tail -n "+$(($0 + 1))" /var/log/nodo-helper/current | grep -q "cuprated: dropping the stored value of retired setting restricted_rpc"' "$mark"
+cp /var/lib/nodo/settings/cuprated.toml /tmp/cuprated-store.mid
+printf '\n[values.ghost_setting]\nliteral = "1"\n' >> /var/lib/nodo/settings/cuprated.toml
+check "a stored value for a setting neither declared nor retired is refused, and nothing changes" sh -c '
+	cp /etc/cuprated/Cuprated.toml /tmp/Cuprated.ghost
+	! ctl set cuprated outbound_peers int 42 >/tmp/e2e.ghost 2>&1 && cat /tmp/e2e.ghost &&
+	grep -q "unknown setting .ghost_setting" /tmp/e2e.ghost && cmp /etc/cuprated/Cuprated.toml /tmp/Cuprated.ghost &&
+	grep -q ghost_setting /var/lib/nodo/settings/cuprated.toml'
+cp /tmp/cuprated-store.mid /var/lib/nodo/settings/cuprated.toml
+check "cuprated is back on its stored settings" sh -c 'ctl set cuprated outbound_peers int 40'
+check "cuprated's RPC is up again" rpc_up
 
 # An app installed by id: its own user, sandbox, firewall fragment and enabled service
 
@@ -513,30 +532,43 @@ check "the helper's own check applies a change it missed" sh -c '
 printf '%s\n' "$PASS2" | nodo-tui --ctl unlock >/dev/null
 check "dynamic DNS stays off while nothing is public" sh -c '! sv status nodo-ddns 2>/dev/null | grep -q "^run:"'
 
-if [ -d /etc/sv/tor ]; then
-	check "onion exposure starts Tor and serves the onion address" sh -c '
-		ctl expose e2e-app shop 1 1 0 && ctl web-status | tr -d " \n" | tee /tmp/e2e.ws | grep -q "onion_url:Some(\"http://"'
-	onion_host=$(grep -o 'onion_url:Some("http://[a-z2-7]*\.onion"' /tmp/e2e.ws | head -1 | sed 's|.*http://||; s|"$||')
-	check "the onion listener answers for the onion host only" sh -c '
-		. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
-		grep -q "e2e shop /" /tmp/e2e.body &&
-		is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52 &&
-		is "$(web_get host -H "Host: nodo.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
-else
-	echo "SKIP onion: tor is not installed"
-	ctl expose e2e-app shop 1 0 0 >/dev/null
-fi
+# Tor comes from the pinned Void mirror (scripts/dev-vm.sh mirror tor). The VM is offline, but Tor
+# makes each onion address's keys and hostname file at start without the network.
+check "Tor is installed" test -d /etc/sv/tor
+check "onion exposure starts Tor and serves the onion address" sh -c '
+	ctl expose e2e-app shop 1 1 0 && ctl web-status | tr -d " \n" | tee /tmp/e2e.ws | grep -q "onion_url:Some(\"http://"'
+onion_host=$(grep -o 'onion_url:Some("http://[a-z2-7]*\.onion"' /tmp/e2e.ws | head -1 | sed 's|.*http://||; s|"$||')
+check "Tor made the site's onion address itself, with its keys kept by the tor user" sh -c '
+	echo "$0" | grep -Eqx "[a-z2-7]{56}\.onion" && [ "$(cat /var/lib/tor/nodo/e2e-app.shop/hostname)" = "$0" ] &&
+	[ -s /var/lib/tor/nodo/e2e-app.shop/hs_ed25519_secret_key ] &&
+	[ "$(stat -c "%a %U" /var/lib/tor/nodo)" = "700 tor" ] && [ "$(stat -c %U /var/lib/tor/nodo/e2e-app.shop)" = tor ]' "$onion_host"
+check "the torrc is the helper's, runs Tor with no SOCKS port and serves only the site" sh -c '
+	t=/var/lib/nodo-web/torrc; cat $t
+	[ "$(sed -n 2,4p $t | tr "\n" ";")" = "User tor;DataDirectory /var/lib/tor;SocksPort 0;" ] &&
+	grep -qx "HiddenServiceDir /var/lib/tor/nodo/e2e-app.shop" $t && grep -qx "HiddenServiceVersion 3" $t &&
+	[ "$(grep "^HiddenServicePort" $t)" = "HiddenServicePort 80 127.0.0.1:19000" ] &&
+	grep -qF -- "-f /var/lib/nodo-web/torrc" /etc/sv/tor/conf && sv status tor | grep -q "^run:" &&
+	pgrep -u tor -x tor >/dev/null'
+check "the onion listener answers for the onion host only" sh -c '
+	. /tmp/e2e-web-lib.sh; is "$(web_get host -H "Host: $0" http://127.0.0.1:19000/)" 200 &&
+	grep -q "e2e shop /" /tmp/e2e.body &&
+	is "$(web_get host -H "Host: shop.local" http://127.0.0.1:19000/)" ERR52 &&
+	is "$(web_get host -H "Host: nodo.local" http://127.0.0.1:19000/)" ERR52' "$onion_host"
 # cuprated serves only restricted RPC, on 127.0.0.1:18081, so its onion address needs no setting.
 check "the node onion turns on with no setting first, for the restricted RPC port" sh -c '
 	ctl node-onion 1 && ctl onion-status | tr -d " \n" | tee /tmp/e2e.on | grep -q "restricted_rpc:true,port:18081" &&
 	grep -q "enabled = true" /var/lib/nodo/node-onion.toml'
-if [ -d /etc/sv/tor ]; then
-	check "Tor forwards the node onion only to the restricted RPC on loopback" sh -c '
-		[ "$(grep "^HiddenServicePort 18081" /var/lib/nodo-web/torrc)" = "HiddenServicePort 18081 127.0.0.1:18081" ] &&
-		! grep -q "^HiddenServicePort 18089" /var/lib/nodo-web/torrc'
-fi
-check "the node onion turns off again" sh -c 'ctl node-onion 0 && ! grep -q "node-rpc" /var/lib/nodo-web/torrc 2>/dev/null &&
-	grep -q "enabled = false" /var/lib/nodo/node-onion.toml'
+check "Tor made the node's own onion address, and the helper reports it" sh -c '
+	h=$(cat /var/lib/tor/nodo/node-rpc/hostname); echo "$h" | grep -Eqx "[a-z2-7]{56}\.onion" && [ "$h" != "$0" ] &&
+	ctl onion-status | tr -d " \n" | grep -q "address:Some(\"$h:18081\""' "$onion_host"
+check "Tor forwards the node onion only to the restricted RPC on loopback" sh -c '
+	t=/var/lib/nodo-web/torrc; cat $t
+	grep -qx "HiddenServiceDir /var/lib/tor/nodo/node-rpc" $t &&
+	[ "$(grep "^HiddenServicePort" $t | sort | tr "\n" ";")" = "HiddenServicePort 18081 127.0.0.1:18081;HiddenServicePort 80 127.0.0.1:19000;" ] &&
+	! grep -q "^HiddenServicePort 18089" $t && ! grep "^HiddenServicePort" $t | grep -qv " 127\.0\.0\.1:"'
+check "the node onion turns off again, and Tor keeps serving the site" sh -c 'ctl node-onion 0 && ! grep -q "node-rpc" /var/lib/nodo-web/torrc 2>/dev/null &&
+	grep -q "enabled = false" /var/lib/nodo/node-onion.toml && sv status tor | grep -q "^run:" &&
+	grep -qx "HiddenServiceDir /var/lib/tor/nodo/e2e-app.shop" /var/lib/nodo-web/torrc'
 
 check "an unknown DNS provider is refused" refused "not a supported provider" sh -c 'echo x | nodo-tui --ctl set-dns example.com namecheap api_key'
 # The device was unlocked above, so the credentials can be sealed.
@@ -549,6 +581,8 @@ check "going public without the typed host is refused" refused "NeedsConfirmatio
 check "going public with the wrong host is refused" refused "NeedsConfirmation" ctl expose e2e-app shop 1 0 1 evil.example.com
 check "refused attempts left the firewall closed" sh -c '! nft list ruleset | grep -q "redirect to :10443"'
 check "going public with the typed host works" ctl expose e2e-app shop 1 0 1 shop.example.com
+check "with every onion address off, Tor is stopped and its torrc lists no service" sh -c '
+	! grep -q "HiddenService" /var/lib/nodo-web/torrc && ! sv status tor | grep -q "^run:" && ! pgrep -u tor -x tor'
 check "the site lists as public" sh -c 'ctl sites | grep -A6 "site: \"shop\"" | grep -q "public: true"'
 check "the public ports are redirected to Caddy" sh -c 'nft list ruleset | grep -q "redirect to :10443" && nft list ruleset | grep -q "redirect to :10080"'
 # The VM is offline, so no public certificate can be issued. Port 80 shows the public listener routes.

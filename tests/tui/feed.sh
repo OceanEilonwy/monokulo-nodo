@@ -1,7 +1,8 @@
 #!/bin/sh
 # A signed test feed for tests/tui/journeys.py, built in the VM with xbps-create and xbps-rindex.
 #   feed.sh init                 new keys and an empty feed at /srv/tui-feed
-#   feed.sh pkg VERSION [MODE]   builds and publishes tui-shop at VERSION; MODE "crash" fails its health check
+#   feed.sh pkg VERSION [MODE]   builds and publishes tui-shop at VERSION; MODE "crash" fails its health
+#                                check, MODE "grow" asks for 320 MiB of encrypted storage instead of 256
 #   feed.sh resign               signs the feed again with the second key, as a key change would
 set -eu
 FEED=/srv/tui-feed
@@ -41,6 +42,7 @@ pkg)
 
 	[storage]
 	encrypted = true
+	$([ "$mode" = grow ] && echo "size_mib = 320")
 
 	[network]
 	outbound = "internet"
@@ -59,7 +61,7 @@ pkg)
 	    validate = function(v) return #v <= 12, "must be 12 characters or fewer" end },
 	} }
 	EOF
-	if [ "$mode" = good ]; then
+	if [ "$mode" != crash ]; then
 		printf '#!/bin/sh\necho "tui-shop %s running"\nwhile :; do sleep 1; done\n' "$ver" > "$app/bin/run"
 	else
 		printf '#!/bin/sh\necho "migration 7: column already exists" >&2\nexit 1\n' > "$app/bin/run"

@@ -8,6 +8,8 @@
 #   test-c  serial 6 again, with different contents: a conflicting manifest
 #   test-e  serial 7: test-a's packages again, withdrawing nothing, which would move a package back
 #   test-d  serial 8: test-a's packages again, withdrawing test-b
+#   test-f  serial 9: test-b's packages again, for automatic system updates turned on
+#   test-g  serial 10: test-b's packages again, marked as needing a restart, which never applies by itself
 #   attacker/  test-b's manifest signed by a key the device does not trust
 #
 # Void's index is the one the VM was built from, read back from its xbps cache, so nothing is
@@ -59,12 +61,14 @@ cp "$work/packages/nodo-snaptest-1.0_1.$arch.xbps" "$work/a/"
 cp "$work/packages/nodo-snaptest-1.1_1.$arch.xbps" "$work/b/"
 cp "$work/packages/nodo-snaptest-1.0_1.$arch.xbps" "$work/local/"
 
-for s in a b c d e; do publish import "test-$s" "$arch" "$work/void-repodata"; done
+for s in a b c d e f g; do publish import "test-$s" "$arch" "$work/void-repodata"; done
 publish nodo test-a "$arch" "$work/keys/xbps.pem" "$work/a"
 publish nodo test-b "$arch" "$work/keys/xbps.pem" "$work/b"
 publish nodo test-c "$arch" "$work/keys/xbps.pem" "$work/b"
 publish nodo test-d "$arch" "$work/keys/xbps.pem" "$work/a"
 publish nodo test-e "$arch" "$work/keys/xbps.pem" "$work/a"
+publish nodo test-f "$arch" "$work/keys/xbps.pem" "$work/b"
+publish nodo test-g "$arch" "$work/keys/xbps.pem" "$work/b"
 publish sign test-a test 5 "$work/keys/snapshot.key" no --untested
 publish sign test-b test 7 "$work/keys/attacker.key" no --untested
 mkdir -p "$work/server/attacker"
@@ -74,8 +78,10 @@ publish sign test-c test 6 "$work/keys/snapshot.key" yes --untested
 publish sign test-e test 7 "$work/keys/snapshot.key" no --untested
 # The publisher pulls test-b: test-a's packages again, under a newer serial, withdrawing it.
 publish sign test-d test 8 "$work/keys/snapshot.key" no --untested --withdraws test-b
+publish sign test-f test 9 "$work/keys/snapshot.key" no --untested
+publish sign test-g test 10 "$work/keys/snapshot.key" yes --untested
 publish publish test-a test
 
 printf 'channel = "test"\nkeys = ["%s"]\nthreshold = 1\nmin_serial = 4\n' "$(cat "$work/keys/snapshot.pub")" > "$work/pins.toml"
 tar -C "$work" -cf - server local pins.toml | vm ssh 'rm -rf /srv/snapshot-test && mkdir -p /srv/snapshot-test && tar -C /srv/snapshot-test -xf -'
-echo "snapshots test-a to test-e are in the VM at /srv/snapshot-test"
+echo "snapshots test-a to test-g are in the VM at /srv/snapshot-test"
