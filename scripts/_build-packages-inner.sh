@@ -6,15 +6,45 @@ vp=/work/void-packages
 cp -r /src/packages/* "$vp/srcpkgs/"
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
-# xbps-src builds a dependency from the pinned srcpkgs when the mirror's version differs (dhcpcd,
-# for monokulo-base, since the mirror moved to 10.5). That needs what a Void build root normally
-# has, a native C compiler, make and patch, and the builder image has none of them.
-command -v cc >/dev/null && command -v make >/dev/null && command -v patch >/dev/null ||
-	xbps-install -Sy gcc make patch >/dev/null
 export HOME=/work
 # xbps-src cross-compiles only when the target differs from this machine.
 cross=
 [ "$ARCH" = "$(xbps-uhelper arch)" ] || cross="-a $ARCH"
+own=$(ls /src/packages)
+# The hostdir is a local repository that xbps-src prefers to the mirror. A Void package in it can
+# only be a dependency xbps-src once compiled from an older recipe, which would hide the mirror's
+# version from every later build, so only this project's packages stay.
+hostrepo=/src/build/hostdir/binpkgs
+stray=
+for f in "$hostrepo"/*.xbps; do
+	[ -e "$f" ] || continue
+	pkgver=$(basename "$f" .xbps)
+	printf '%s\n' "$own" | grep -qxF "$(xbps-uhelper getpkgname "${pkgver%.*}")" && continue
+	echo "removing ${pkgver%.*} from the hostdir: it is not one of this project's packages"
+	rm -f "$f"
+	stray=1
+done
+if [ -n "$stray" ]; then
+	for index in "$hostrepo"/*-repodata; do
+		[ -e "$index" ] || continue
+		a=$(basename "$index" -repodata)
+		XBPS_TARGET_ARCH=$a xbps-rindex -c "$hostrepo" >/dev/null
+	done
+fi
+# xbps-src takes a dependency from the mirror only at the pinned recipe's exact version, and
+# otherwise compiles the old recipe from source, for a package images then install at the
+# mirror's version anyway. So a Void dependency that moved on in the mirror stops the build here.
+deps=$(for pkg in $PKGS; do ./xbps-src $cross show-build-deps "$pkg"; done | grep -vxF "$own" | sort -u)
+[ -z "$cross" ] || deps="$deps cross-$(./xbps-src -a "$ARCH" show-var XBPS_CROSS_TRIPLET)"
+rc=0
+drift=$(/src/scripts/_void-drift.sh repo "$ARCH" $deps) || rc=$?
+if [ "$rc" != 0 ]; then
+	[ "$rc" = 3 ] || exit "$rc"
+	echo "Void's mirror and the void-packages recipes at VOID_PACKAGES_REV disagree on:" >&2
+	printf '%s\n' "$drift" | awk '{ printf "  %s: mirror %s, recipe %s\n", $1, $2, $3 }' >&2
+	echo "Set VOID_PACKAGES_REV in versions.env to a void-packages commit with the mirror's versions." >&2
+	exit 1
+fi
 for pkg in $PKGS; do
 	./xbps-src -H /src/build/hostdir $cross -f pkg "$pkg"
 done

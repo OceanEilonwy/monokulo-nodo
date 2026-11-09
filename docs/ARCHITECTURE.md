@@ -191,5 +191,10 @@ codebase, and signed xbps packages from user-added feeds.
 
 - `packages/`: xbps recipes.
 - `boards/`, `scripts/`, `tests/`: image builds and test tiers (`scripts/test.sh fast|vm|full`).
+  Images take Void's packages from the live mirror (`VOID_MIRROR`), and xbps-src builds ours
+  against the void-packages recipes at `VOID_PACKAGES_REV`. A Void dependency whose mirror version
+  differs from its pinned recipe stops a package build, since xbps-src would otherwise compile the
+  old recipe; the fix is a `VOID_PACKAGES_REV` with the mirror's versions. Image builds list every
+  such difference in `out/images/<board>/void-drift.txt` (`scripts/_void-drift.sh`).
 - `crates/`: the Rust workspace.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

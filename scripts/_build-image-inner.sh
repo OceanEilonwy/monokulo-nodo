@@ -33,6 +33,17 @@ cp "$keys"/* "/work/stage1$keys/"
 
 XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "${NODO_REPO:-/src/out/feed/$BOARD_ARCH}" -R "$repo" \
 	monokulo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
+# Void's packages come from the live mirror, which moves on from the pinned void-packages recipes
+# that this project's packages are built against. Each difference is listed, here and in
+# void-drift.txt next to the image, so a mirror change is seen before it surprises a test.
+rc=0
+/src/scripts/_void-drift.sh root "$rootfs" > "$out/void-drift.txt" || rc=$?
+case $rc in
+0) ;;
+3) echo "warning: the mirror's version differs from the recipe at VOID_PACKAGES_REV for:" >&2
+	awk '{ printf "  %s: image %s, recipe %s\n", $1, $2, $3 }' "$out/void-drift.txt" >&2 ;;
+*) exit "$rc" ;;
+esac
 
 # Offline configuration.
 mkdir -p "$rootfs/etc/dracut.conf.d"
