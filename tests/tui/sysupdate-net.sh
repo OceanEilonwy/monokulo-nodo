@@ -65,7 +65,7 @@ up() {
 	rm -f /var/lib/nodo/update/system-trust.toml /var/lib/nodo/updates/system.toml
 	xbps-query nodo-snaptest >/dev/null 2>&1 && xbps-remove -y nodo-snaptest >/dev/null
 	rm -f /var/cache/xbps/nodo-snaptest-*
-	xbps-rindex -a "$src"/local/*.xbps >/dev/null
+	xbps-rindex -a "$src"/local/*.xbps >/dev/null 2>&1
 	xbps-install -y -R "$src/local" nodo-snaptest >/dev/null || { echo "nodo-snaptest 1.0 did not install"; exit 1; }
 	ln -sfn /etc/sv/nodo-snaptest /var/service/nodo-snaptest
 	sleep 2

@@ -752,7 +752,7 @@ def system_update():
     out = sh(f"sh {HERE}/sysupdate-net.sh up", check=False, timeout=600)
     try:
         with Journey("Updates: the system base row"):
-            check("the test update server serves the snapshots", out.strip().endswith("ready"), out)
+            check("the test update server serves the snapshots", "ready" in out.splitlines(), out)
             # Checked before the session, so the row is there, and ticked, when the tab opens.
             ctl("system-check")
             ctl("check-updates")
@@ -770,7 +770,7 @@ def system_update():
         with Journey("Updates: the system base, helper side"):
             status = re.sub(r"\s", "", ctl("system-status"))
             check("the device is on test-b with nothing more to offer",
-                  'current_snapshot:Some("test-b")' in status and "available:None" in status, status)
+                  re.search(r'current_snapshot:Some\("test-b",?\)', status) and "available:None" in status, status)
             check("the update is recorded as the owner's, not automatic", "automatic:false,}" in status, status)
             check("nodo-snaptest moved to 1.1", pkgver("nodo-snaptest") == "nodo-snaptest-1.1_1")
             check("the packages were left alone", pkgver("tui-shop") == shop, shop)
