@@ -604,10 +604,20 @@ def restore_entry():
         check("the device is still not set up", "encryption: NotSetUp" in ctl("overview"), ctl("overview"))
 
 
+TORRC = "/var/lib/nodo-web/torrc"
+NODE_HOSTNAME = "/var/lib/tor/nodo/node-rpc/hostname"
+
+
+def tor_running():
+    return sh("sv status tor", check=False).startswith("run:")
+
+
 def onion():
     # cuprated always serves restricted RPC on 127.0.0.1:18081, so the node needs no setting first.
-    tor = os.path.isdir("/etc/sv/tor")
+    # Tor comes from the pinned mirror (tests/tui-e2e.sh installs it). The VM is offline, but Tor
+    # makes the onion address's keys and hostname file at start without the network.
     with Journey("Onion: node and site on and off"), Session() as tui:
+        check("Tor is installed", os.path.isdir("/etc/sv/tor"))
         tui.send("tab", "tab")
         tui.wait_for("Sites", timeout=20)
         tui.send("n")
@@ -616,35 +626,49 @@ def onion():
         tui.expect("the node can go on Tor with no setting first", "restricted RPC, port 18081", timeout=30,
                    absent=("no restricted RPC port",))
         tui.send("space")
-        # The checkbox follows the stored choice, with or without Tor. Working… is the TUI busy.
+        # Working… is the TUI busy.
         tui.expect("Space turns the node's onion address on", re.compile(r"\[x\] cuprated"), timeout=90,
                    absent=("Working…",))
-        if not tor:
-            tui.expect("without Tor the screen says so", "Tor is not installed")
         stored = sh("cat /var/lib/nodo/node-onion.toml")
         check("the helper stored the choice", "enabled = true" in stored, stored)
-        if tor:
-            torrc = sh("cat /var/lib/nodo-web/torrc")
-            ports = [line for line in torrc.splitlines() if line.startswith("HiddenServicePort") and "18081" in line]
-            check("Tor forwards only to the restricted RPC on loopback",
-                  ports == ["HiddenServicePort 18081 127.0.0.1:18081"], torrc)
-            tui.expect("the node's onion address is shown", re.compile(r"[a-z2-7]{56}\.onion:18081"), timeout=90)
-        else:
-            say("SKIP Tor side: tor is not installed")
+        torrc = sh(f"cat {TORRC}")
+        lines = torrc.splitlines()
+        check("the torrc is the helper's and runs Tor with no SOCKS port",
+              lines[1:4] == ["User tor", "DataDirectory /var/lib/tor", "SocksPort 0"], torrc)
+        check("the torrc names the node's onion service",
+              "HiddenServiceDir /var/lib/tor/nodo/node-rpc" in lines and "HiddenServiceVersion 3" in lines, torrc)
+        ports = [line for line in lines if line.startswith("HiddenServicePort") and "18081" in line]
+        check("Tor forwards only to the restricted RPC on loopback",
+              ports == ["HiddenServicePort 18081 127.0.0.1:18081"] and "18089" not in torrc, torrc)
+        wait_until("Tor to make the node's onion address", lambda: sh(f"cat {NODE_HOSTNAME}", check=False).strip()
+                   .endswith(".onion"), 60)
+        host = sh(f"cat {NODE_HOSTNAME}").strip()
+        check("Tor made a real onion address offline", re.fullmatch(r"[a-z2-7]{56}\.onion", host) is not None, host)
+        check("Tor runs as its own user", tor_running() and sh("pgrep -u tor -x tor", check=False).strip() != "")
+        tui.expect("the screen shows the address Tor made", f"{host}:18081", timeout=90)
         tui.send("space")
         tui.expect("Space turns it off again", re.compile(r"\[ \] cuprated"), timeout=90, absent=("Working…",))
-        if tor:
-            check("Tor no longer serves the node", "node-rpc" not in sh("cat /var/lib/nodo-web/torrc"))
+        check("Tor no longer serves the node", "node-rpc" not in sh(f"cat {TORRC}"))
         before = site_flags()
+        if not before[1]:
+            # The site was not on Tor either, so nothing is left for Tor to publish.
+            check("with every onion address off, Tor is stopped and lists no service",
+                  not tor_running() and "HiddenService" not in sh(f"cat {TORRC}"), sh("sv status tor", check=False))
         mark, back = ("[ ]", "[x]") if before[1] else ("[x]", "[ ]")
         tui.send("down", "space")
         tui.expect("Space flips the site's onion exposure", f"{mark} tui-shop", timeout=90, absent=("Working…",))
         after = site_flags()
         check("only the onion flag changed", after[1] != before[1] and after[0] == before[0] and after[2] == before[2],
               ctl("sites"))
+        if after[1]:
+            check("Tor serves the site's onion address", tor_running() and
+                  "HiddenServiceDir /var/lib/tor/nodo/tui-shop.shop" in sh(f"cat {TORRC}"), sh(f"cat {TORRC}"))
         tui.send("space")
         tui.expect("Space flips it back", f"{back} tui-shop", timeout=90, absent=("Working…",))
         check("the helper has the site as before", site_flags() == before, ctl("sites"))
+        if not before[1]:
+            check("turning the last onion address off stops Tor again",
+                  not tor_running() and "HiddenService" not in sh(f"cat {TORRC}"), sh("sv status tor", check=False))
         tui.send("esc")
         tui.expect("Esc goes back to the sites", "Sites")
         tui.quit()
@@ -675,6 +699,85 @@ def rollbacks():
         wait_until("tui-shop to run", lambda: sh("sv status tui-shop", check=False).startswith("run:"), 60)
         ok("the package runs on the previous version")
 
+def pkgver(name):
+    return sh(f"xbps-query -p pkgver {name}", check=False).strip()
+
+
+def storage_growth():
+    # 1.2 asks for 320 MiB of encrypted storage instead of the 256 MiB tui-shop's volume has, and
+    # LUKS needs the key to resize it, so the update needs the device passphrase.
+    volume = "/var/lib/nodo/volumes/tui-shop.luks"
+    sh(f"sh {HERE}/feed.sh pkg 1.2 grow")
+    ctl("check-updates")
+    size_before = int(sh(f"stat -c %s {volume}").strip())
+    with Journey("Updates: growing encrypted storage asks for the device passphrase"), Session() as tui:
+        tui.send("tab", "tab", "tab", "tab")
+        tui.expect("the update says it needs the device passphrase", re.compile(r"tui-shop\s+1\.0_1 → 1\.2_1"),
+                   "◆ Needs the device passphrase", timeout=60)
+        tui.send("enter")
+        tui.expect("Enter asks for the passphrase first, saying what grows", "Encrypted storage grows",
+                   re.compile(r"tui-shop: \d+ MB to 320 MB of encrypted storage"), "Device passphrase", "Esc cancel")
+        check("nothing changed before the passphrase", pkgver("tui-shop") == "tui-shop-1.0_1")
+        tui.send("esc")
+        tui.expect("Esc cancels the whole batch", "How updates apply", absent=("Encrypted storage grows",))
+        tui.send("enter")
+        tui.wait_for("Encrypted storage grows")
+        tui.type(WRONG_PASSPHRASE, enter=True)
+        tui.expect("a wrong passphrase is refused in plain words", "did not unlock", timeout=90)
+        status = ctl("update-status")
+        check("a wrong passphrase changed nothing and held nothing",
+              pkgver("tui-shop") == "tui-shop-1.0_1" and int(sh(f"stat -c %s {volume}").strip()) == size_before
+              and not re.search(r'to: "1\.2_1",[^}]*held: true', status, re.S), status)
+        tui.send("esc")
+        tui.wait_for(re.compile(r"tui-shop\s+1\.0_1 → 1\.2_1"), timeout=20)
+        tui.send("enter")
+        tui.wait_for("Encrypted storage grows")
+        tui.type(PASSPHRASE, enter=True)
+        tui.expect("the right passphrase grows the storage and updates", "✓ tui-shop", timeout=240,
+                   absent=("did not unlock",))
+        tui.quit()
+    with Journey("Updates: growing encrypted storage, helper side"):
+        check("the package is on 1.2", pkgver("tui-shop") == "tui-shop-1.2_1")
+        size = int(sh(f"stat -c %s {volume}").strip())
+        check("the volume grew in place to 320 MiB", size == 320 << 20, f"{size_before} -> {size}")
+        check("the volume is still open", "is a mountpoint" in sh("mountpoint /run/nodo/volumes/tui-shop", check=False))
+        wait_until("tui-shop to run", lambda: sh("sv status tui-shop", check=False).startswith("run:"), 60)
+        ok("the package runs on the larger volume")
+
+
+def system_update():
+    # tests/tui-e2e.sh puts the test snapshots in the VM with tests/snapshot-prepare.sh. The device
+    # moves to test-a, and the channel offers test-b, which updates nodo-snaptest.
+    shop = pkgver("tui-shop")
+    out = sh(f"sh {HERE}/sysupdate-net.sh up", check=False, timeout=600)
+    try:
+        with Journey("Updates: the system base row"):
+            check("the test update server serves the snapshots", "ready" in out.splitlines(), out)
+            # Checked before the session, so the row is there, and ticked, when the tab opens.
+            ctl("system-check")
+            ctl("check-updates")
+        with Journey("Updates: the system base row"), Session() as tui:
+            tui.send("tab", "tab", "tab", "tab")
+            tui.expect("the next system snapshot is a row of its own, from a tested snapshot",
+                       re.compile(r"\[x\] system base\s+test-a → test-b\s+tested snapshot"), timeout=60)
+            # The line wraps at this width, so only its start is matched.
+            tui.expect("the system line says automatic system updates only notify", "System: snapshot test-a",
+                       "Automatic system updates are off")
+            tui.send("enter")
+            tui.expect("updating applies the snapshot and says what changed", "✓ system base",
+                       re.compile(r"Applied, \d+ packages? changed"), timeout=300)
+            tui.quit()
+        with Journey("Updates: the system base, helper side"):
+            status = re.sub(r"\s", "", ctl("system-status"))
+            check("the device is on test-b with nothing more to offer",
+                  re.search(r'current_snapshot:Some\("test-b",?\)', status) and "available:None" in status, status)
+            check("the update is recorded as the owner's, not automatic", "automatic:false,}" in status, status)
+            check("nodo-snaptest moved to 1.1", pkgver("nodo-snaptest") == "nodo-snaptest-1.1_1")
+            check("the packages were left alone", pkgver("tui-shop") == shop, shop)
+    finally:
+        sh(f"sh {HERE}/sysupdate-net.sh down", check=False)
+
+
 JOURNEYS = [
     ("restore", restore_entry),
     ("first-boot", first_boot),
@@ -684,6 +787,8 @@ JOURNEYS = [
     ("settings", package_settings),
     ("updates", updates),
     ("rollbacks", rollbacks),
+    ("grow", storage_growth),
+    ("system", system_update),
     ("feed-key", feed_key_changed),
     ("web", web),
     ("onion", onion),

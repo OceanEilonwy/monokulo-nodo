@@ -873,6 +873,13 @@ impl<S: System> Helper<S> {
         passphrase: Option<&Secret>,
     ) -> Result<Response, ApiError> {
         let _work = lock(&self.manage.work);
+        // Checked before anything starts: a mistyped passphrase must neither roll an update back
+        // nor hold its version, it only asks again.
+        if let Some(passphrase) = passphrase {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            self.verify_passphrase(&mut failures, passphrase, &file)?;
+        }
         let candidates = self.candidates()?;
         let mut updates = self.update_state()?;
         let mut results = Vec::new();
@@ -915,6 +922,9 @@ impl<S: System> Helper<S> {
             record(&mut updates, now, outcome.clone());
             let log = updater.logs.remove(&c.package).unwrap_or_default();
             results.push(result_of(&outcome, log));
+        }
+        if !run.is_empty() {
+            self.prune_kept();
         }
         {
             let _guard = lock(&self.manage.state);
@@ -1020,6 +1030,9 @@ impl<S: System> Helper<S> {
         let candidates: Vec<Candidate> = records.iter().map(CandidateRecord::candidate).collect();
         let mut updater = Updater::new(self, &records, None);
         let outcomes = auto::run(&policy, &mut updates, &candidates, &Live(self), &mut updater, now);
+        if !outcomes.is_empty() {
+            self.prune_kept();
+        }
         {
             let _guard = lock(&self.manage.state);
             self.save_update_state(&updates)?;

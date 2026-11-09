@@ -57,6 +57,10 @@ codebase, and signed xbps packages from user-added feeds.
 - **Privilege:** The TUI is unprivileged. A small root helper performs a fixed action list (`nodo-api`).
 - **Settings:** Packages describe settings in sandboxed Lua with no io, os or network access, plus memory
   and instruction limits. It never runs as root. Settings are declarative, and the API is versioned.
+  A package removes a setting by listing it under `retired`: a value a device stored for it is
+  dropped, with a line in the helper's log, at the next write of that package's settings. A stored
+  value for a setting neither declared nor retired is refused, so an update that loses a setting by
+  accident fails its install check and rolls back. cuprated retires `restricted_rpc`.
 - **References:** Public settings are referenced as `$(package.setting)`. Only Rust resolves them, inserting
   typed, escaped values, and never through a shell. Secrets are never public and need an explicit grant
   approved by the user. A reference implies the dependency and the sandbox and firewall access.

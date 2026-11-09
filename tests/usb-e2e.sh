@@ -33,7 +33,8 @@ TOKEN='usb-restore-token-42'
 # The helper, the ctl wrapper and a finder for the USB disk, on a VM that may be brand new.
 prepare_vm() {
 	vm push nodo-tools nodo-caddy nodo-localnet nodo-ddns >/dev/null 2>&1
-	vm mirror dosfstools >/dev/null 2>&1
+	# Tor from the pinned mirror, so the node's onion address and its keys are real.
+	vm mirror dosfstools tor >/dev/null 2>&1
 	v 'mkdir -p /tmp/e2e-bin
 		printf "#!/bin/sh\nexec nodo-tui --ctl \"\$@\"\n" > /tmp/e2e-bin/ctl
 		cat > /tmp/e2e-bin/usbdisk <<"EOF"
@@ -149,6 +150,10 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 
 	-keyout "$c/pki/authorities/local/root.key" -out "$c/pki/authorities/local/root.crt" 2>/dev/null
 chown -R _caddy: /var/lib/caddy/data
 sv start nodo-caddy >/dev/null
+# The node's own onion address, which Tor makes offline, and which a restore must bring back on.
+nodo-tui --ctl node-onion 1 >/dev/null
+grep -q "enabled = true" /var/lib/nodo/node-onion.toml
+for _ in $(seq 1 30); do [ -s /var/lib/tor/nodo/node-rpc/hostname ] && break; sleep 1; done
 SETUP
 check "the first device is set up with a feed, an encrypted package, a secret and a public site" v "sh /tmp/usb-setup.sh '$PASS1' '$TOKEN'"
 # The files the setup gave Caddy, which a running Caddy leaves as they are. Caddy adds files of
@@ -157,6 +162,8 @@ CADDY_FILES='/var/lib/caddy/data/caddy/certificates/acme-test /var/lib/caddy/dat
 # What the restored device must have again.
 v "cat /run/nodo/volumes/e2e-notes/data/notes.txt; cat /run/nodo/secrets/e2e-notes/env; find $CADDY_FILES -type f | sort | xargs sha256sum; nodo-tui --ctl feeds | sed -n 's/.*fingerprint: \"\\([^\"]*\\)\".*/\\1/p'" > "$root/build/usb-before.txt" 2>&1
 check "the secret was rendered for the package" grep -q "$TOKEN" "$root/build/usb-before.txt"
+v 'cat /var/lib/tor/nodo/node-rpc/hostname' > "$root/build/usb-onion-before.txt" 2>&1
+check "Tor made the node's onion address" grep -Eqx '[a-z2-7]{56}\.onion' "$root/build/usb-onion-before.txt"
 
 check "a backup to the stick needs the device passphrase" refused "NeedsConfirmation" "printf '\n%s\n' '$BPASS' | nodo-tui --ctl usb-backup $DEV"
 check "a backup is written to the stick and the stick is unmounted again" sh -c "
@@ -250,6 +257,15 @@ check "the restore applied the public site to Caddy at once, without another cha
 	\"$root/scripts/dev-vm.sh\" ssh 'grep -q notes.example.com /var/lib/nodo-web/caddy.json && sv status nodo-caddy | grep -q \"^run:\"' &&
 	\"$root/scripts/dev-vm.sh\" ssh 'nodo-tui --ctl sites' | grep -A8 'site: \"notes\"' | grep -q 'public: true'"
 check "the public host name came back with it" v "grep -q notes.example.com /var/lib/nodo/public-hosts.toml"
+ONION=$(cat "$root/build/usb-onion-before.txt")
+check "the node onion came back on, with the same onion address, served by Tor" sh -c "
+	grep -q 'node onion address choice' $root/build/usb-restore.txt &&
+	\"$root/scripts/dev-vm.sh\" ssh 'grep -qx \"enabled = true\" /var/lib/nodo/node-onion.toml &&
+		grep -qx \"HiddenServiceDir /var/lib/tor/nodo/node-rpc\" /var/lib/nodo-web/torrc &&
+		grep -qx \"HiddenServicePort 18081 127.0.0.1:18081\" /var/lib/nodo-web/torrc &&
+		[ \"\$(cat /var/lib/tor/nodo/node-rpc/hostname)\" = $ONION ] &&
+		for _ in 1 2 3 4 5 6 7 8 9 10; do sv status tor | grep -q ^run: && exit 0; sleep 1; done; exit 1' &&
+	\"$root/scripts/dev-vm.sh\" ssh 'nodo-tui --ctl onion-status' | tr -d ' \\n' | grep -q 'address:Some(\"$ONION:18081\"'"
 check "after a restart of the helper, as after a reboot, the new passphrase unlocks the restored storage" v "
 	sv -w 30 restart nodo-helper >/dev/null; sleep 1; for _ in \$(seq 1 30); do nodo-tui --ctl services >/dev/null 2>&1 && break; sleep 1; done
 	sv -w 30 stop e2e-notes e2e-notes/log >/dev/null; umount /run/nodo/volumes/e2e-notes && cryptsetup close nodo-e2e-notes &&

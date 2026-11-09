@@ -279,12 +279,17 @@ pub struct SettingDef {
 pub struct Schema {
     pub api_version: u32,
     pub settings: Vec<SettingDef>,
+    /// Settings an earlier version declared and this one removed on purpose. A value stored
+    /// for one of them is dropped rather than refused; a value for a setting that is neither
+    /// declared nor retired is still an error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<String>,
 }
 
 impl Schema {
     /// An empty schema for packages with no settings file.
     pub fn empty() -> Self {
-        Schema { api_version: SETTINGS_API_VERSION, settings: Vec::new() }
+        Schema { api_version: SETTINGS_API_VERSION, settings: Vec::new(), retired: Vec::new() }
     }
 
     pub fn setting(&self, name: &str) -> Option<&SettingDef> {
@@ -293,6 +298,11 @@ impl Schema {
 
     pub fn exported(&self, public_name: &str) -> Option<&SettingDef> {
         self.settings.iter().find(|s| s.public.as_deref() == Some(public_name))
+    }
+
+    /// Whether this version removed the setting on purpose, so a stored value for it is dropped.
+    pub fn is_retired(&self, name: &str) -> bool {
+        self.setting(name).is_none() && self.retired.iter().any(|r| r == name)
     }
 }
 
@@ -437,7 +447,7 @@ mod tests {
         number.default = Some(DefaultValue::Int(4));
         let mut key = def(SettingType::Secret);
         key.generate = Some(Generate::Hex { bytes: 32 });
-        let schema = Schema { api_version: 1, settings: vec![enumerated, number, key] };
+        let schema = Schema { api_version: 1, settings: vec![enumerated, number, key], retired: Vec::new() };
         let text = toml::to_string(&schema).unwrap();
         assert_eq!(toml::from_str::<Schema>(&text).unwrap(), schema);
     }

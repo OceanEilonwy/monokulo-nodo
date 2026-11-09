@@ -7,16 +7,24 @@
 #   tests/acme-prepare.sh          (optional: the Certificate screen then follows a real Pebble order)
 #   tests/tui-e2e.sh [journey...]
 # The journeys are in tests/tui/journeys.py. Naming some runs only those, for a quick loop on a
-# VM that is already past first boot. The driver needs python3 and the Web journey curl, which
-# come from the pinned mirror.
+# VM that is already past first boot. The driver needs python3, the Web journey curl and the Onion
+# journey tor, which come from the pinned mirror. The Updates journey for the system base row needs
+# the test snapshots, which tests/snapshot-prepare.sh makes when the VM has none.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 vm() { "$root/scripts/dev-vm.sh" "$@"; }
-vm ssh 'command -v python3 >/dev/null && command -v curl >/dev/null' || vm mirror python3 curl
+# Tor too, so the Onion journey checks the torrc and an onion address Tor really made.
+vm ssh 'command -v python3 >/dev/null && command -v curl >/dev/null && [ -d /etc/sv/tor ]' || vm mirror python3 curl tor
 tar -C "$root/tests" -cf - tui acme/fake-dns.py |
 	vm ssh 'rm -rf /tmp/tui && mkdir -p /tmp/tui-src && tar -C /tmp/tui-src -xf - && mv /tmp/tui-src/tui /tmp/tui && mv /tmp/tui-src/acme/fake-dns.py /tmp/tui/ && rm -rf /tmp/tui-src'
 args=
-for a in "$@"; do args="$args '$a'"; done
+want_system=1
+[ $# -gt 0 ] && want_system=
+for a in "$@"; do args="$args '$a'"; [ "$a" = system ] && want_system=1; done
+# The Updates journey's system base row needs the test snapshots, signed with throwaway keys.
+if [ -n "$want_system" ] && ! vm ssh '[ -s /srv/snapshot-test/server/snapshots/test-b/manifest.toml.sig ]'; then
+	"$root/tests/snapshot-prepare.sh"
+fi
 # TUI_E2E_USB=1 plugs in a blank virtual stick (a file in the VM's container, never a host device),
 # so the first-boot restore journey also sees a drive it must refuse. Without it, it sees none.
 if [ "${TUI_E2E_USB:-}" = 1 ]; then

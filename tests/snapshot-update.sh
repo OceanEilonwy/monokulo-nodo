@@ -10,7 +10,9 @@
 #   through the helper as the Updates screen uses it and through the nodo-systemupdate schedule,
 #   it refuses a newer snapshot that would move a package back without withdrawing anything,
 #   leaves a withdrawal alone while automatic system updates are off, and applies it when the
-#   owner asks, so that the service goes back to the old version.
+#   owner asks, so that the service goes back to the old version. Last, with automatic system
+#   updates turned on, a run leaves a snapshot waiting outside the package update window, the
+#   schedule applies it by itself inside it, and a snapshot that needs a restart still waits.
 #
 # The VM check runs it whenever tests/snapshot-prepare.sh has put snapshots in the VM, after
 # pushing this project's packages so the VM holds the snapshot's versions of them. It can run
@@ -231,4 +233,45 @@ result "the withdrawal is not applied twice" "$?"
 offer test-b
 says "serial 6 is not newer than 8" update apply --server "$https" && unchanged nodo-snaptest-1.0_1 8
 result "the withdrawn snapshot cannot come back" "$?"
+
+# Automatic system updates turned on: a scheduled run applies a snapshot that needs no restart,
+# but only inside the package update window, and never one that needs a restart.
+at() { date -d "@$(( $(date +%s) + $1 * 60 ))" +%H:%M; }
+policy=/var/lib/nodo/updates/policy.toml
+if [ -f "$policy" ]; then cp "$policy" /tmp/su.policy; else rm -f /tmp/su.policy; fi
+says "Ok" ctl system-auto 1 && says "automatic: true" ctl system-status
+result "automatic system updates turn on" "$?"
+later=$(at 60) end=$(at 120)
+ctl auto-set manual "$later" "$end" >/dev/null
+offer test-f
+says "serial: 9" ctl system-check && says "installs in the update window, from $later" ctl system-run &&
+	unchanged nodo-snaptest-1.0_1 8
+result "outside the update window, an automatic run leaves the snapshot waiting" "$?"
+ctl auto-set manual "$(at -5)" "$(at 30)" >/dev/null
+pid_before=$(sv_pid)
+ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+i=0; until [ "$(serial)" = 9 ] || [ "$i" -ge 60 ]; do i=$((i+1)); sleep 1; done
+sv force-stop nodo-systemupdate >/dev/null 2>&1; rm -f /var/service/nodo-systemupdate
+unchanged nodo-snaptest-1.1_1 9
+result "inside the window, the nodo-systemupdate schedule applies it by itself" "$?"
+ctl system-status | tr -d ' \n' > /tmp/su.status
+grep -q 'last_applied:Some(SystemUpdateResult{at:[0-9]*,serial:9,snapshot:"test-f"' /tmp/su.status &&
+	grep -q 'automatic:true,}' /tmp/su.status
+r=$?; [ "$r" = 0 ] || head -c 1500 /tmp/su.status
+result "the status records the update as automatic" "$r"
+for _ in $(seq 1 20); do [ "$(cat /run/nodo-snaptest.version 2>/dev/null)" = 1.1 ] && break; sleep 1; done
+pid_after=$(sv_pid)
+if [ "$(cat /run/nodo-snaptest.version)" = 1.1 ] && [ -n "$pid_after" ] && [ "$pid_after" != "$pid_before" ]; then r=0; else r=1; fi
+result "the service came back on the new version after the automatic update" "$r"
+offer test-g
+says "needs_restart: true" ctl system-check && says "waits for you: it needs a restart" ctl system-run &&
+	unchanged nodo-snaptest-1.1_1 9
+result "inside the window, a snapshot that needs a restart still waits for the owner" "$?"
+ln -sfn /etc/sv/nodo-systemupdate /var/service/nodo-systemupdate
+sleep 15
+sv force-stop nodo-systemupdate >/dev/null 2>&1; rm -f /var/service/nodo-systemupdate
+unchanged nodo-snaptest-1.1_1 9
+result "the schedule leaves it alone too" "$?"
+ctl system-auto 0 >/dev/null
+if [ -f /tmp/su.policy ]; then cp /tmp/su.policy "$policy"; else rm -f "$policy"; fi
 exit "$fail"

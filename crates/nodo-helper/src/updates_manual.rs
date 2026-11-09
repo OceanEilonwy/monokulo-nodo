@@ -141,6 +141,36 @@ impl<S: System> Updater<'_, S> {
 }
 
 impl<S: System> Helper<S> {
+    /// Removes kept package files nothing refers to any more: every file of a package that is no
+    /// longer installed, and for an installed one anything beyond the copy of its installed
+    /// version and of the one previous version a rollback puts back. So at most one previous
+    /// version per package stays on the disk, whatever path got it there. The caller holds the
+    /// work lock, so no install is part way between keeping a file and recording it.
+    pub(crate) fn prune_kept(&self) {
+        let Ok(state) = self.read_feeds() else { return };
+        let packages = &self.manage.packages;
+        for dir in packages.kept_entries(&self.manage.paths.kept) {
+            let Some(id) = dir.file_name().and_then(|n| n.to_str()) else { continue };
+            let Some(record) = state.installed.get(id) else {
+                eprintln!("nodo-helper: removing the kept package files of {id}, which is not installed");
+                let _ = packages.remove_tree(&dir);
+                continue;
+            };
+            let wanted: Vec<&std::path::Path> = record
+                .kept
+                .iter()
+                .map(PathBuf::as_path)
+                .chain(record.previous.iter().map(|p| p.kept.as_path()))
+                .collect();
+            for file in packages.kept_entries(&dir) {
+                if !wanted.contains(&file.as_path()) {
+                    eprintln!("nodo-helper: removing {}, which no rollback uses", file.display());
+                    packages.remove_kept(&file);
+                }
+            }
+        }
+    }
+
     /// Why a rollback cannot run now, if it cannot.
     fn rollback_blocked(&self, id: &str, previous: &PreviousVersion) -> Option<String> {
         if !self.manage.packages.kept_exists(&previous.kept) {
@@ -242,6 +272,7 @@ impl<S: System> Helper<S> {
                 Ok(())
             });
         }
+        self.prune_kept();
         super::record(&mut updates, self.manage.packages.now(), outcome.clone());
         {
             let _guard = lock(&self.manage.state);

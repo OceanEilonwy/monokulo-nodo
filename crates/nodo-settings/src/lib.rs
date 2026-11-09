@@ -26,6 +26,13 @@
 //! `generate` asks the device to create a secret's value from fresh random bytes when the package
 //! is installed and no value is set. It is created once and never regenerated.
 //!
+//! `retired = { "old_name", ... }` lists settings an earlier version declared and this one removed
+//! on purpose. A value a device stored for a retired setting is ignored by resolution and dropped
+//! by the helper, with a log line, the next time it writes the package's settings. A stored value
+//! for a setting that is neither declared nor retired is still refused, so an update that removes
+//! a setting by accident fails its install check and rolls back instead of losing the choice.
+//! A retired name must not also be declared.
+//!
 //! Lua's own pattern functions are not available because their backtracking cannot be interrupted
 //! by the instruction limit. Validators use `nodo.matches(text, regex)`, which runs in linear time.
 //!

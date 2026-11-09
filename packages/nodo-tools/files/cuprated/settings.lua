@@ -3,6 +3,10 @@
 -- only, so there is no setting to put it on the network.
 return {
   api_version = 1,
+  -- Removed settings. A value a device stored for one of them is dropped, with a line in the
+  -- helper's log, instead of stopping the settings from resolving. restricted_rpc put RPC on
+  -- the network; RPC is now always restricted and on loopback.
+  retired = { "restricted_rpc" },
   settings = {
     { name = "outbound_peers", type = "int", label = "Outbound peers", default = 32, min = 1, max = 128,
       help = "Connections this node opens to other nodes." },

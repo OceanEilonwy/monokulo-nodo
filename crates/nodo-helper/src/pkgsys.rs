@@ -71,6 +71,11 @@ pub trait PackageBackend: Send + Sync {
     /// Whether a kept package file is still there.
     fn kept_exists(&self, path: &Path) -> bool;
     fn remove_kept(&self, path: &Path);
+    /// What a directory of kept packages holds, without following links: the per-package
+    /// directories under the root, the files under a package's directory. Empty when missing.
+    fn kept_entries(&self, _dir: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// Lets the generic installer run on a trait object.
@@ -368,6 +373,10 @@ impl PackageBackend for RealPackages {
 
     fn remove_kept(&self, path: &Path) {
         let _ = fs::remove_file(path);
+    }
+
+    fn kept_entries(&self, dir: &Path) -> Vec<PathBuf> {
+        entries(dir, None).unwrap_or_default()
     }
 
     fn tree_size(&self, path: &Path) -> u64 {

@@ -18,7 +18,8 @@ use nodo_gen::{service_user, Profile, ResolvedGrants};
 use nodo_manifest::is_valid_package_path;
 use nodo_settings::{
     env_file, is_valid_setting_name, parse_template, toml_file, Access, DefaultValue, Grant,
-    Installed, InstalledPackage, NetworkGrant, Part, PortProtocol, Resolved, Schema, SettingDef,
+    Installed, InstalledPackage, NetworkGrant, Part, PortProtocol, ResolveError, Resolved, Schema,
+    SettingDef,
     SettingType, SettingValue, Value,
 };
 use serde::{Deserialize, Serialize};
@@ -293,6 +294,8 @@ struct World {
     schemas: BTreeMap<String, Result<Schema, String>>,
     /// Packages with sealed values that could not be opened, because the device is locked.
     locked: BTreeSet<String>,
+    /// Stored values for settings a package neither declares nor retired, by package.
+    unknown: BTreeMap<String, Vec<String>>,
 }
 
 impl World {
@@ -324,6 +327,7 @@ impl World {
             ..Installed::default()
         };
         let mut locked = BTreeSet::new();
+        let mut unknown: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for package in ctx.packages {
             let schema = match response.schemas.get(package.id()) {
                 Some(Ok(schema)) => schema.clone(),
@@ -335,6 +339,10 @@ impl World {
             let mut values = BTreeMap::new();
             for (name, stored) in &store.values {
                 let Some(def) = schema.setting(name) else {
+                    // A retired setting's value is left for the next write of the store to drop.
+                    if !schema.is_retired(name) {
+                        unknown.entry(package.id().to_owned()).or_default().push(name.clone());
+                    }
                     continue;
                 };
                 match stored_value(ctx.secrets, package.id(), def, stored) {
@@ -360,6 +368,7 @@ impl World {
             installed,
             schemas: response.schemas,
             locked,
+            unknown,
         })
     }
 
@@ -373,6 +382,9 @@ impl World {
 
     /// Resolution, with a locked device reported as such rather than as missing values.
     fn resolve(&self, ctx: &SettingsContext, id: &str) -> Result<Resolved, ApiError> {
+        if let Some(names) = self.unknown.get(id) {
+            return Err(failed(unknown_settings(id, names)));
+        }
         match self.installed.resolve(id) {
             Ok(resolved) => {
                 if let Some(grant) = resolved
@@ -390,6 +402,21 @@ impl World {
             },
         }
     }
+}
+
+/// Why stored values for settings a package neither declares nor retired are refused.
+fn unknown_settings(id: &str, names: &[String]) -> String {
+    let errors: Vec<ResolveError> = names
+        .iter()
+        .map(|name| ResolveError::UnknownSetting {
+            package: id.to_owned(),
+            setting: name.escape_debug().to_string(),
+        })
+        .collect();
+    format!(
+        "{}. This version of {id} neither declares nor retires it",
+        join_errors(&errors)
+    )
 }
 
 fn join_errors<E: std::fmt::Display>(errors: &[E]) -> String {
@@ -577,11 +604,28 @@ impl SettingsPolicy for NodoSettings {
                 None => store.values.remove(&change.name),
             };
         }
-        // Stored values that no longer fit the schema, such as after an update, are dropped
-        // rather than blocking every future change.
-        store
+        // A value for a setting this version retired, such as after an update, is dropped and
+        // the store written without it. A value for a setting it neither declares nor retired
+        // is refused, so an update cannot silently lose a choice the owner made.
+        let stale: Vec<String> = store
             .values
-            .retain(|name, _| schema.setting(name).is_some());
+            .keys()
+            .filter(|name| schema.setting(name).is_none())
+            .cloned()
+            .collect();
+        let unknown: Vec<String> = stale
+            .iter()
+            .filter(|name| !schema.is_retired(name))
+            .cloned()
+            .collect();
+        if !unknown.is_empty() {
+            return Err(failed(unknown_settings(id, &unknown)));
+        }
+        for name in stale {
+            store.values.remove(&name);
+            eprintln!("nodo-helper: {id}: dropping the stored value of retired setting {name}");
+        }
+        world.unknown.remove(id);
         // A secret the package asks the device to generate is made once, the first time its
         // settings are written, and then kept like any other value. Resetting it makes a new one.
         let to_generate: Vec<&SettingDef> = schema
@@ -842,7 +886,7 @@ name = "Cuprated.toml"
 port = 18081
 "#;
 
-    const LUA: &str = r#"return { api_version = 1, settings = {
+    const LUA: &str = r#"return { api_version = 1, retired = { "restricted_rpc" }, settings = {
         { name = "outbound_peers", type = "int", label = "Outbound peers", default = 32, min = 1, max = 128 },
         { name = "inbound", type = "bool", label = "Accept inbound peers", default = true },
         { name = "log_level", type = "enum", label = "Log level", default = "info",
@@ -1140,6 +1184,47 @@ settings = "settings.lua"
         assert!(!shown.contains("s3cret"), "{shown}");
         apply(&h, "cuprated", vec![change("token", SettingInput::Reset)]).unwrap();
         assert_eq!(field(&h).current, SettingCurrent::SecretUnset);
+    }
+
+    const CUPRATED_STORE: &str = "/s/settings/cuprated.toml";
+
+    #[test]
+    fn a_stored_value_for_a_retired_setting_is_dropped_at_the_next_write() {
+        let h = setup();
+        h.sys.put(
+            CUPRATED_STORE,
+            b"[values]\nrestricted_rpc = { literal = \"true\" }\noutbound_peers = { literal = \"40\" }\n",
+        );
+        // Read paths ignore it: the form and the node's public values still resolve.
+        assert_eq!(
+            form(&h, "cuprated")
+                .fields
+                .iter()
+                .find(|f| f.name == "outbound_peers")
+                .map(|f| f.current.clone()),
+            Some(SettingCurrent::Literal(SettingLiteral::Int(40)))
+        );
+        apply(&h, "cuprated", vec![change("log_level", text("warn"))]).unwrap();
+        let store = stored(&h, "cuprated");
+        assert!(!store.contains("restricted_rpc"), "{store}");
+        assert!(store.contains("outbound_peers"), "other values stay: {store}");
+        assert_eq!(output(&h)["p2p"]["clear_net"]["outbound_connections"].as_integer(), Some(40));
+    }
+
+    #[test]
+    fn a_stored_value_for_a_setting_neither_declared_nor_retired_is_refused() {
+        let h = setup();
+        let before = b"[values]\nghost = { literal = \"1\" }\n".to_vec();
+        h.sys.put(CUPRATED_STORE, &before);
+        let Err(ApiError::Failed(message)) =
+            apply(&h, "cuprated", vec![change("log_level", text("warn"))])
+        else {
+            panic!("an unknown stored value must be refused")
+        };
+        assert!(message.contains("unknown setting 'ghost'"), "{message}");
+        assert!(message.contains("neither declares nor retires"), "{message}");
+        assert_eq!(h.sys.get(CUPRATED_STORE).unwrap(), before, "nothing written");
+        assert_eq!(h.sys.get(OUT), None);
     }
 
     #[test]
