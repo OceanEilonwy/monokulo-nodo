@@ -19,8 +19,15 @@ service_down() {
 	touch "/etc/sv/$1/down"
 	sv -w 15 down "$1" >/dev/null 2>&1
 }
+sock=/run/dhcpcd/sock
+restore_sock() {
+	[ -n "${fake_pid:-}" ] && kill "$fake_pid" 2>/dev/null
+	fake_pid=
+	if [ -e "$sock.real" ]; then rm -f "$sock"; mv "$sock.real" "$sock"; fi
+}
 cleanup() {
 	[ -n "${dhcpd_pid:-}" ] && kill "$dhcpd_pid" 2>/dev/null
+	restore_sock
 	service_down nodo-localnet
 	rm -f /etc/sv/nodo-localnet/conf
 	ip link del lnhost 2>/dev/null
@@ -75,6 +82,27 @@ result "stopping removes the local interface" "$?"
 run_with MODE=dhcp PARENT=eth0 LEASE_WAIT=30
 wait_status ready 60 && [ "$(sed -n 's/^address=//p' "$state")" = "$address" ]
 result "the same lease comes back after a restart" "$?"
+# An update replaces the dhcpcd client while the old daemon keeps running, and the daemon's control
+# socket then refuses the new client: from 10.3 to 10.5, every dhcpcd -U failed until a reboot. A
+# socket that drops every connection stands in for that daemon. The lease must still be reported.
+if command -v python3 >/dev/null; then
+	sv -w 20 down nodo-localnet >/dev/null 2>&1
+	mv "$sock" "$sock.real"
+	python3 -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(8)
+while True:
+    s.accept()[0].close()' "$sock" </dev/null >/dev/null 2>&1 &
+	fake_pid=$!
+	i=0; until [ -S "$sock" ] || [ "$i" -ge 20 ]; do i=$((i+1)); sleep 0.5; done
+	! dhcpcd -U -4 eth0 >/dev/null 2>&1 && run_with MODE=dhcp PARENT=eth0 LEASE_WAIT=30 &&
+		wait_status ready 60 && [ "$(sed -n 's/^address=//p' "$state")" = "$address" ]
+	result "the lease is reported while dhcpcd's control socket refuses the client" "$?"
+	restore_sock
+else
+	echo "SKIP the lease behind a refusing control socket needs python3: scripts/dev-vm.sh mirror python3"
+fi
 
 # A LAN with no DHCP server: the lease is reported as refused, never as ready.
 ip netns add lnpeer
