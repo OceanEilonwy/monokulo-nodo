@@ -96,6 +96,8 @@ printf '\n[devices]\ngpu = true\n' >> /var/lib/nodo/manifests/gpu-yes.toml
 ctl install gpu-yes > /tmp/gpu.out 2>&1 && ctl install gpu-no >> /tmp/gpu.out 2>&1
 r=$?; [ "$r" = 0 ] || cat /tmp/gpu.out
 result "both apps install through the helper" "$r"
+# On a VM that ran this before, the services were left down; start them again.
+for id in gpu-yes gpu-no; do sv -w 30 up "$id" >/dev/null 2>&1; done
 
 grep -q 'exec chpst -u _gpu-yes:_gpu-yes:gpu bwrap' /etc/sv/gpu-yes/run && grep -q 'for node in "$dri"/renderD\*; do' /etc/sv/gpu-yes/run &&
 	grep -q 'exec chpst -u _gpu-no:_gpu-no bwrap' /etc/sv/gpu-no/run && ! grep -q '/dev/dri\|/sys' /etc/sv/gpu-no/run
