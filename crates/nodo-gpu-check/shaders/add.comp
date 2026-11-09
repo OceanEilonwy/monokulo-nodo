@@ -1,0 +1,13 @@
+// c = a + b over unsigned integers, one invocation per element. add.spv is this file compiled with
+//   glslc -O --target-env=vulkan1.1 -o add.spv add.comp
+// and checked with spirv-val. The element count is a multiple of the workgroup size.
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer A { uint a[]; };
+layout(std430, binding = 1) readonly buffer B { uint b[]; };
+layout(std430, binding = 2) writeonly buffer C { uint c[]; };
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    c[i] = a[i] + b[i];
+}

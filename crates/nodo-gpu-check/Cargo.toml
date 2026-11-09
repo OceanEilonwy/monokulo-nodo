@@ -1,0 +1,17 @@
+[package]
+name = "nodo-gpu-check"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Lists Vulkan devices and runs a small compute shader on the first one, for hardware tests"
+
+[[bin]]
+name = "nodo-gpu-check"
+path = "src/bin/nodo-gpu-check.rs"
+
+[dependencies]
+# `loaded` opens libvulkan.so.1 at run time, so the binary runs, and says so, on a system
+# without the Vulkan loader.
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }

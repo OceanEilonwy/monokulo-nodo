@@ -6,6 +6,11 @@ vp=/work/void-packages
 cp -r /src/packages/* "$vp/srcpkgs/"
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
+# xbps-src builds a dependency from the pinned srcpkgs when the mirror's version differs (dhcpcd,
+# for monokulo-base, since the mirror moved to 10.5). That needs what a Void build root normally
+# has, a native C compiler, make and patch, and the builder image has none of them.
+command -v cc >/dev/null && command -v make >/dev/null && command -v patch >/dev/null ||
+	xbps-install -Sy gcc make patch >/dev/null
 export HOME=/work
 # xbps-src cross-compiles only when the target differs from this machine.
 cross=

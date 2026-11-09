@@ -138,14 +138,18 @@ pub fn available_detail(b: &HelperBackend, id: &PackageId) -> Option<PackageDeta
 }
 
 fn ask_for(line: &str, new: bool) -> Ask {
+    // The GPU opens the graphics driver to the package, a large part of the kernel.
+    let hardware = line.contains("the GPU");
     let risky = ["internet", "accepts", "no longer keeps", "unencrypted", "provides"];
-    let level = if risky.iter().any(|r| line.contains(r)) { AskLevel::Caution } else { AskLevel::Normal };
+    let level =
+        if hardware || risky.iter().any(|r| line.contains(r)) { AskLevel::Caution } else { AskLevel::Normal };
     let mut text = line.to_owned();
     if let Some(first) = text.get(..1) {
         text = first.to_uppercase() + &text[1..];
     }
     let note = match (new, level) {
         (true, _) => "New".to_owned(),
+        (false, AskLevel::Caution) if hardware => "Hardware access".to_owned(),
         (false, AskLevel::Caution) => "Broad access".to_owned(),
         _ => "Standard".to_owned(),
     };
@@ -986,6 +990,25 @@ mod tests {
         assert!(data.needs_passphrase);
         assert_eq!(data.asks[1].level, AskLevel::Caution);
         assert_eq!(data.asks.last().unwrap().level, AskLevel::Encrypted);
+    }
+
+    #[test]
+    fn the_gpu_is_shown_with_caution_and_new_on_an_update() {
+        let mut r = review(true);
+        r.permissions.push("uses the GPU for computation (Vulkan)".into());
+        let data = review_data(&PackageId::new("f", "demo"), &r, false);
+        let gpu = data.asks.iter().find(|a| a.text.contains("GPU")).unwrap();
+        assert_eq!(gpu.text, "Uses the GPU for computation (Vulkan)");
+        assert_eq!(gpu.level, AskLevel::Caution);
+        assert_eq!(gpu.note, "Hardware access");
+        assert!(data.approval.unwrap().permissions.contains(&"uses the GPU for computation (Vulkan)".to_string()));
+
+        r.first_install = false;
+        r.added = vec!["uses the GPU for computation (Vulkan)".into()];
+        let data = review_data(&PackageId::new("f", "demo"), &r, true);
+        assert_eq!(data.asks.len(), 1);
+        assert_eq!(data.asks[0].note, "New");
+        assert_eq!(data.approval.unwrap().permissions.len(), 3);
     }
 
     #[test]

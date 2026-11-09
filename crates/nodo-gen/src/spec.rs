@@ -19,6 +19,11 @@ pub const SECRETS_ROOT: &str = "/run/nodo/secrets";
 /// Root-only resolved settings of packages whose settings may live on the system disk.
 pub const ENV_ROOT: &str = "/var/lib/nodo/env";
 
+/// The group that may open GPU render nodes, created by nodo-tools. A udev rule gives
+/// `/dev/dri/renderD*` to it, mode 0660, and a service granted the GPU runs with it as a
+/// supplementary group.
+pub const GPU_GROUP: &str = "gpu";
+
 /// How much a package is trusted. It comes from where the manifest was found, never from the
 /// manifest itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +224,7 @@ pub struct ServiceSpec {
     pub(crate) loopback_udp: BTreeSet<u16>,
     pub(crate) lan: Vec<LanGrant>,
     pub(crate) has_listener: bool,
+    pub(crate) gpu: bool,
 }
 
 impl ServiceSpec {
@@ -337,6 +343,7 @@ impl ServiceSpec {
             loopback_tcp,
             loopback_udp,
             lan: grants.lan.clone(),
+            gpu: manifest.devices.gpu,
         })
     }
 
@@ -356,6 +363,12 @@ impl ServiceSpec {
     /// Without one, its sandbox cannot create Unix sockets at all.
     pub fn unix_sockets(&self) -> bool {
         self.own_socket_dir.is_some() || !self.dep_socket_dirs.is_empty()
+    }
+
+    /// Whether the service was granted the GPU: it runs with the [`GPU_GROUP`] as a supplementary
+    /// group and its sandbox gets the render nodes.
+    pub fn gpu(&self) -> bool {
+        self.gpu
     }
 
     /// An encrypted package's directories are inside its volume, so the helper creates them

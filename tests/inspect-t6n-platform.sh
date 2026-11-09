@@ -2,7 +2,8 @@
 # Reads a finished T6N card image (either kernel) as plain files, with no loop devices and no
 # root, and checks what the image adds on top of the boot path: the platform packages and the
 # services started at boot, nodo-localnet's dhcpcd block, restricted RPC on loopback, cuprated
-# under nodo-confine, and nodo-report's abstract socket list. The image is only read.
+# under nodo-confine, nodo-report's abstract socket list, and the GPU's group, udev rule and
+# (on the mainline card only) Vulkan. The image is only read.
 #   tests/inspect-t6n-platform.sh out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
 # Needs sfdisk, debugfs and python3 (3.11 or later) on the machine running it.
 set -u
@@ -122,7 +123,6 @@ for p in eudev alsa-utils wpa_supplicant bluez dbus v4l-utils; do
 	grep -q "^$p " "$tmp/pkgs" || { echo "  not installed: $p"; r=1; }
 done
 result "eudev, alsa-utils, wpa_supplicant, bluez, dbus and v4l-utils are installed" "$r"
-if grep -q '^mesa-dri ' "$tmp/pkgs"; then echo "  Mesa: $(grep -E '^(mesa|mesa-dri|libllvm[0-9]*) ' "$tmp/pkgs" | cut -d' ' -f2 | tr '\n' ' ')"; else echo "  Mesa: not installed"; fi
 r=0
 for s in udevd nodo-sound agetty-tty1; do
 	case " $links " in *" $s "*) ;; *) echo "  not started: $s"; r=1 ;; esac
@@ -141,8 +141,42 @@ show 'stat /etc/udev/rules.d/80-net-name-slot.rules' | grep -q 'Fast link dest: 
 result "udev keeps the kernel's interface names (eth0, wlan0), which nothing in the firewall depends on" "$?"
 show 'stat /etc/udev/hwdb.bin' | grep -q 'Type: regular'
 result "the udev hardware database is compiled" "$?"
-show 'cat /etc/udev/rules.d/60-nodo-gpu.rules' | grep -q 'SUBSYSTEM=="drm", KERNEL=="renderD\*", GROUP="video", MODE="0660"'
-result "GPU nodes: card and render nodes only for the video group" "$?"
+show 'cat /etc/udev/rules.d/60-nodo-gpu.rules' | grep -v '^#' > "$tmp/gpu.rules"
+if [ "$(cat "$tmp/gpu.rules")" = 'SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="gpu", MODE="0660"' ]; then r=0; else r=1; fi
+result "GPU render nodes belong to the gpu group (0660); card nodes keep eudev's video group" "$r"
+show 'cat /etc/group' > "$tmp/group"
+gpu_line=$(grep '^gpu:' "$tmp/group")
+echo "  $gpu_line"
+if [ -n "$gpu_line" ] && [ -z "$(echo "$gpu_line" | cut -d: -f4)" ]; then r=0; else r=1; fi
+result "the gpu group exists and has no members; a service gets it only with the owner's approval" "$r"
+show 'stat /usr/bin/nodo-gpu-check' | grep -q 'Type: regular' && grep -q 'nodo-gpu-check' "$tmp/nodo-report"
+result "nodo-gpu-check is installed and nodo-report runs it" "$?"
+# Vulkan through panvk needs panthor, which only the mainline kernel has.
+icd=/usr/share/vulkan/icd.d/panfrost_icd.aarch64.json
+if grep -q '^linux-mainline-rk3588 ' "$tmp/pkgs"; then
+	echo "  Vulkan: $(grep -E '^(vulkan-loader|mesa-panvk) ' "$tmp/pkgs" | cut -d' ' -f2 | tr '\n' ' ')"
+	grep -q '^vulkan-loader ' "$tmp/pkgs" && grep -q '^mesa-panvk ' "$tmp/pkgs"
+	result "the mainline card has the Vulkan loader and panvk" "$?"
+	show "cat $icd" > "$tmp/icd.json"
+	python3 -I - "$tmp/icd.json" <<'PY'
+import json, sys
+icd = json.load(open(sys.argv[1]))["ICD"]
+print(f"  ICD: {icd['library_path']}, API {icd['api_version']}")
+assert icd["library_path"] == "/usr/lib/libvulkan_panfrost.so" and icd["api_version"].startswith("1.4.")
+PY
+	result "panvk's ICD manifest points the loader at libvulkan_panfrost.so" "$?"
+	show 'stat /usr/lib/libvulkan_panfrost.so' | grep -q 'Type: regular' && show 'stat /usr/lib/libvulkan.so.1' | grep -qE 'Type: (regular|symlink)'
+	result "libvulkan_panfrost.so and libvulkan.so.1 are installed" "$?"
+else
+	r=0
+	for p in vulkan-loader mesa-panvk; do grep -q "^$p " "$tmp/pkgs" && { echo "  installed: $p"; r=1; }; done
+	show "stat $icd" | grep -q 'Type:' && { echo "  present: $icd"; r=1; }
+	show 'stat /usr/lib/libvulkan_panfrost.so' | grep -q 'Type:' && { echo "  present: libvulkan_panfrost.so"; r=1; }
+	result "the vendor card has no Vulkan: its kernel's Mali driver is kbase, which panvk cannot use" "$r"
+fi
+r=0
+for p in mesa mesa-dri mesa-vulkan-panfrost libllvm22 libX11 wayland; do grep -q "^$p " "$tmp/pkgs" && { echo "  installed: $p"; r=1; }; done
+result "no Void Mesa, LLVM, X11 or Wayland on the card" "$r"
 show 'cat /etc/rc.conf' | grep -qx 'HARDWARECLOCK="UTC"' && show 'cat /etc/runit/shutdown.d/40-hwclock.sh' | grep -q 'hwclock --systohc' &&
 	show 'cat /etc/runit/core-services/05-nodo-rtc.sh' | grep -q 'hwclock --hctosys --utc'
 result "the RTC sets the clock at boot and is written back at shutdown" "$?"

@@ -213,9 +213,14 @@ for k in sorted(d):
 	echo "packages: $(wc -l < "$tmp/pkgs") here, $(wc -l < "$tmp/ref-pkgs") on the vendor card"
 	diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^[<>]' | sed 's/^</  vendor only:/; s/^>/  mainline only:/'
 	r=1
+	# Besides the kernel, only this card has Vulkan (panvk needs panthor): the loader, panvk and
+	# the libraries panvk links that the vendor card lacks.
+	vulkan='vulkan-loader-\|mesa-panvk-\|libdrm-\|libpciaccess-'
 	if [ -s "$tmp/pkgs" ] && [ -s "$tmp/ref-pkgs" ] &&
-		[ "$(diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^[<>]' | grep -cv 'linux-nanopc-t6n-\|linux-mainline-rk3588-')" = 0 ]; then r=0; fi
-	result "the only package difference is the kernel" "$r"
+		[ "$(diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^<' | grep -cv 'linux-nanopc-t6n-')" = 0 ] &&
+		[ "$(diff "$tmp/ref-pkgs" "$tmp/pkgs" | grep '^>' | grep -v 'linux-mainline-rk3588-' | grep -cv "$vulkan")" = 0 ] &&
+		grep -q '^mesa-panvk-' "$tmp/pkgs" && grep -q '^vulkan-loader-' "$tmp/pkgs"; then r=0; fi
+	result "the only package differences are the kernel and Vulkan (the loader and panvk)" "$r"
 	if [ -n "$(show 'cat /root/.ssh/authorized_keys')" ] && [ "$(show 'cat /root/.ssh/authorized_keys' | sha256sum)" = "$(debugfs -R 'cat /root/.ssh/authorized_keys' "$tmp/ref.ext4" 2>/dev/null | sha256sum)" ]; then r=0; else r=1; fi
 	result "the same authorized_keys as the vendor card" "$r"
 fi

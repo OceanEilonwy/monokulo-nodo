@@ -119,6 +119,13 @@ cat /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq
 dmesg | grep -iE 'error|fail|scmi|pcie|r8169|mmc|usb|fusb' | tail -n 80
 ```
 
+`nodo-report` includes a GPU section: the `/dev/dri` nodes, panthor's kernel messages and the
+output of `nodo-gpu-check`, which lists Vulkan devices, checks the limits the Monokulo wallet
+scanner needs, and adds two buffers of 4 Mi integers with a compute shader on the Mali-G610,
+checking every element and timing it. On card 1 it should end with `compute result: ok` and
+`wallet scanner requirements: all met` (exit status 0). On card 2 it says `no Vulkan loader`
+(exit status 2), since that card has no Vulkan.
+
 If card 1 works, power off and test card 2 the same way too, so the two can be compared.
 
 ## If you cannot log in

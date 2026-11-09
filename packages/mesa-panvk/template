@@ -1,0 +1,78 @@
+# Template file for 'mesa-panvk'
+# Mesa with only panvk, the Vulkan driver for Mali GPUs (the NanoPC-T6N's Mali-G610 is Valhall,
+# v10, driven by the kernel's panthor). Headless: no OpenGL, EGL, GLX, GBM, X11 or Wayland, no
+# video codecs and no LLVM at run time, so apps get Vulkan compute without Void's mesa, which
+# brings LLVM and X11 (about 235 MiB). docs/MAINLINE_KERNEL.md has the details.
+#
+# panvk's built-in shaders are OpenCL C, compiled while building by Mesa's mesa_clc (LLVM, clang
+# and SPIRV-LLVM-Translator) and panfrost_compile. Those must run on the build machine, so a
+# first, native configure builds just them, and the cross build uses them as system tools. LLVM
+# is a build dependency only.
+pkgname=mesa-panvk
+version=26.2.5
+revision=1
+archs="aarch64"
+build_style=meson
+_llvmver=22
+hostmakedepends="gcc xz pkg-config flex bison python3-Mako python3-yaml python3-pycparser
+ llvm${_llvmver}-devel clang${_llvmver}-devel SPIRV-LLVM-Translator${_llvmver}-devel
+ SPIRV-Tools-devel libxml2-devel libdrm-devel zlib-devel libzstd-devel"
+makedepends="libdrm-devel zlib-devel libzstd-devel"
+depends="vulkan-loader"
+short_desc="Mesa's panvk Vulkan driver for Mali GPUs, headless, for monokulo-nodo"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="MIT"
+homepage="https://www.mesa3d.org/"
+# The release's SHA-256 is in its notes (docs/relnotes/26.2.5.rst), and the tarball's signature
+# checks out against Eric Engestrom's key 57551DE15B968F6341C248F68D8E31AFC32428A6.
+distfiles="https://archive.mesa3d.org/mesa-${version}.tar.xz"
+checksum=794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5
+wrksrc="mesa-${version}"
+
+# Everything but panvk off. -Dplatforms= leaves only headless and VK_KHR_display surfaces; the
+# driver is for compute. zstd compresses the shader cache, as on Void's mesa.
+_options="-Dvulkan-drivers=panfrost -Dgallium-drivers= -Dplatforms= -Dglx=disabled -Degl=disabled
+ -Dgbm=disabled -Dopengl=false -Dgles1=disabled -Dgles2=disabled -Dglvnd=disabled
+ -Dvideo-codecs= -Dvulkan-layers= -Dtools= -Dlmsensors=disabled -Dlibunwind=disabled
+ -Dvalgrind=disabled -Ddisplay-info=disabled -Dxmlconfig=disabled -Dexpat=disabled
+ -Dzlib=enabled -Dzstd=enabled -Dbuild-tests=false -Dhtml-docs=disabled -Dperfetto=false
+ -Dbuildtype=release -Db_ndebug=true -Db_lto=false"
+
+do_configure() {
+	# The native build tools, with the build machine's compiler, libraries and LLVM.
+	local native=() v
+	for v in CFLAGS CXXFLAGS CPPFLAGS LDFLAGS PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_PATH \
+		PKG_CONFIG_LIBDIR PKG_CONFIG AR CC CXX LD; do
+		native+=(-u "$v")
+	done
+	env "${native[@]}" CC="${BUILD_CC:-cc}" CXX="${BUILD_CXX:-c++}" \
+		CFLAGS="${BUILD_CFLAGS:--O2}" CXXFLAGS="${BUILD_CXXFLAGS:--O2}" \
+		PKG_CONFIG=/usr/bin/pkg-config PKG_CONFIG_LIBDIR=/usr/lib/pkgconfig:/usr/share/pkgconfig \
+		meson setup --wrap-mode=nodownload --auto-features=disabled ${_options} \
+		-Dllvm=enabled -Dshared-llvm=enabled -Dspirv-tools=enabled -Dmesa-clc=enabled -Dprecomp-compiler=enabled \
+		-Dmesa-clc-bundle-headers=enabled . build-tools
+	env "${native[@]}" ninja -C build-tools ${makejobs} \
+		src/compiler/clc/mesa_clc src/compiler/spirv/vtn_bindgen2 \
+		src/panfrost/clc/panfrost_compile
+	local tools="$(pwd)/build-tools/src"
+	printf "[binaries]\nmesa_clc = '%s'\nvtn_bindgen2 = '%s'\npanfrost_compile = '%s'\n" \
+		"${tools}/compiler/clc/mesa_clc" "${tools}/compiler/spirv/vtn_bindgen2" \
+		"${tools}/panfrost/clc/panfrost_compile" > native-tools.ini
+
+	local cross=()
+	[ -z "$CROSS_BUILD" ] || cross=(--cross-file="${XBPS_WRAPPERDIR}/meson/xbps_meson.cross")
+	export AR="gcc-ar"
+	meson setup --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/libexec --bindir=/usr/bin \
+		--sbindir=/usr/bin --includedir=/usr/include --datadir=/usr/share --sysconfdir=/etc \
+		--localstatedir=/var --wrap-mode=nodownload --auto-features=disabled \
+		-Dpkgconfig.relocatable=false -Db_staticpic=true \
+		"${cross[@]}" --native-file=native-tools.ini ${_options} \
+		-Dllvm=disabled -Dmesa-clc=system -Dprecomp-compiler=system \
+		-Dshader-cache=enabled . build
+}
+
+post_install() {
+	vlicense docs/license.rst
+	# Headers and the like for other Mesa builds have no use on the device.
+	rm -rf "${DESTDIR}/usr/include" "${DESTDIR}/usr/lib/pkgconfig"
+}

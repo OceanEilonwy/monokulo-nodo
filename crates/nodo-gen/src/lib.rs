@@ -14,7 +14,7 @@ pub use nft::nft_fragment;
 pub use runit::{control_t, log_run, run_script, CONFINE};
 pub use shell::sh_quote;
 pub use spec::{
-    mapper_name, secrets_dir, service_user, volume_directories, volume_mount, Directory, LanGrant,
+    mapper_name, secrets_dir, service_user, volume_directories, volume_mount, Directory, LanGrant, GPU_GROUP,
     Layout, Profile, Resolution, ResolvedGrants, ServiceSpec, ENV_ROOT, SECRETS_ROOT, VOLUME_ROOT,
 };
 pub use validate::GenError;

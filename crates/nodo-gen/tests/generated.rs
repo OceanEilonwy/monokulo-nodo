@@ -67,7 +67,7 @@ fn golden_grants(name: &str) -> (Profile, ResolvedGrants) {
                 ..Default::default()
             },
         ),
-        "vault" => (Profile::App, ResolvedGrants::default()),
+        "vault" | "scanner" => (Profile::App, ResolvedGrants::default()),
         other => panic!("unknown golden {other}"),
     }
 }
@@ -84,7 +84,7 @@ fn golden_artifacts(name: &str) -> Artifacts {
 /// Set `UPDATE_GOLDEN=1` to rewrite the expected files, then review the diff.
 #[test]
 fn golden_files() {
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/golden")
             .join(name);
@@ -409,7 +409,7 @@ fn outbound_is_denied_by_default() {
 
 #[test]
 fn final_output_rule_is_always_a_drop() {
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         let nft = golden_artifacts(name).nft;
         let last = nft
             .lines()
@@ -910,7 +910,7 @@ fn granted_udp_ports_open_only_on_loopback() {
 
 #[test]
 fn sandbox_always_links_lib64_and_detaches_stdin() {
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         let run = golden_artifacts(name).run;
         assert!(run.contains("--symlink usr/lib /lib64"), "{name}");
         assert!(run.contains("exec </dev/null\n"), "{name}");
@@ -919,7 +919,7 @@ fn sandbox_always_links_lib64_and_detaches_stdin() {
 
 #[test]
 fn every_sandbox_has_a_user_namespace_with_no_room_for_another() {
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         let run = golden_artifacts(name).run;
         assert!(run.contains("\t--unshare-user --disable-userns \\\n"), "{name}: {run}");
     }
@@ -959,7 +959,7 @@ fn services_without_outbound_do_not_see_resolver_config() {
 #[ignore = "requires nft and unprivileged user namespaces"]
 fn nft_accepts_generated_rules() {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         // nft resolves user names while parsing, and these service users do not exist here.
         let nft = golden_artifacts(name)
             .nft
@@ -984,7 +984,7 @@ fn nft_accepts_generated_rules() {
 #[ignore = "requires shellcheck"]
 fn shellcheck_accepts_generated_scripts() {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["cuprated", "shop", "vault"] {
+    for name in ["cuprated", "shop", "vault", "scanner"] {
         let artifacts = golden_artifacts(name);
         for (file, text) in [
             ("run", &artifacts.run),
@@ -1029,4 +1029,150 @@ fn internet_access_does_not_open_loopback() {
         drop < accept,
         "loopback must be dropped before the internet accept"
     );
+}
+
+fn with_gpu(id: &str) -> Manifest {
+    Manifest::parse_system(&format!(
+        "api_version = 1\nid = \"{id}\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[devices]\ngpu = true\n"
+    ))
+    .unwrap()
+}
+
+/// A fake `/dev/dri` and `/sys` laid out like the T6N's: card and render nodes of the Mali GPU
+/// as a platform device, and a render node of a second device with no sysfs entry. Device nodes
+/// are links to `/dev/null`, a character device the tests can reach without root.
+fn fake_gpu_tree(root: &std::path::Path) {
+    use std::os::unix::fs::symlink;
+    let dri = root.join("dev/dri");
+    fs::create_dir_all(&dri).unwrap();
+    for node in ["card0", "card1", "renderD128", "renderD129"] {
+        symlink("/dev/null", dri.join(node)).unwrap();
+    }
+    // Not a character device.
+    fs::write(dri.join("renderD130"), "").unwrap();
+    let sys = root.join("sys");
+    let gpu = sys.join("devices/platform/fb000000.gpu");
+    for node in ["card0", "renderD128"] {
+        let dir = gpu.join("drm").join(node);
+        fs::create_dir_all(&dir).unwrap();
+        symlink("../../../fb000000.gpu", dir.join("device")).unwrap();
+    }
+    fs::write(gpu.join("drm/card0/dev"), "226:0\n").unwrap();
+    fs::write(gpu.join("drm/renderD128/dev"), "226:128\n").unwrap();
+    fs::write(gpu.join("uevent"), "OF_FULLNAME=/gpu@fb000000\n").unwrap();
+    fs::create_dir_all(sys.join("bus/platform")).unwrap();
+    symlink("../../../bus/platform", gpu.join("subsystem")).unwrap();
+    fs::create_dir_all(sys.join("class/drm")).unwrap();
+    for node in ["card0", "renderD128"] {
+        symlink(
+            format!("../../devices/platform/fb000000.gpu/drm/{node}"),
+            sys.join("class/drm").join(node),
+        )
+        .unwrap();
+    }
+}
+
+/// The arguments a stubbed run logged, one per line, without the brackets.
+fn logged_args(log: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| line.strip_prefix('[').and_then(|l| l.strip_suffix(']')))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The GPU preamble pointed at a fake tree instead of `/dev/dri` and `/sys`.
+fn gpu_run_in(root: &std::path::Path) -> String {
+    let run = generate(&with_gpu("scanner"), Profile::App, &ResolvedGrants::default())
+        .unwrap()
+        .run;
+    let root = root.display();
+    let pointed = run
+        .replace("\ndri=/dev/dri\n", &format!("\ndri={root}/dev/dri\n"))
+        .replace("\nsys=/sys\n", &format!("\nsys={root}/sys\n"));
+    assert_ne!(pointed, run, "the test must move the preamble to the fake tree");
+    pointed
+}
+
+#[test]
+fn gpu_grant_binds_render_nodes_and_never_card_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_gpu_tree(dir.path());
+    let root = dir.path().display().to_string();
+    let (out, canary) = run_stubbed(&gpu_run_in(dir.path()), &Scenario { conf: None, mounted: false });
+    assert!(!canary);
+    assert_eq!(out.code, Some(0), "{out:?}");
+    let args = logged_args(&out.log);
+    let has = |seq: &[&str]| {
+        args.windows(seq.len())
+            .any(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
+    };
+    let r128 = format!("{root}/dev/dri/renderD128");
+    let r129 = format!("{root}/dev/dri/renderD129");
+    let gpu = format!("{root}/sys/devices/platform/fb000000.gpu");
+    assert!(has(&["-u", "_scanner:_scanner:gpu", "bwrap"]), "{}", out.log);
+    assert!(has(&["--dev-bind", &r128, &r128]), "{}", out.log);
+    assert!(
+        has(&["--dev-bind", &r129, &r129]),
+        "a render node without sysfs is still bound: {}",
+        out.log
+    );
+    assert!(has(&["--ro-bind", &gpu, &gpu]), "{}", out.log);
+    let link = format!("{gpu}/drm/renderD128");
+    let char_dev = format!("{root}/sys/dev/char/226:128");
+    assert!(has(&["--symlink", &link, &char_dev]), "{}", out.log);
+    assert!(has(&["--dir", &format!("{root}/sys/bus/platform")]), "{}", out.log);
+    assert!(!out.log.contains("dri/card"), "card nodes never reach the sandbox: {}", out.log);
+    assert!(!out.log.contains("226:0"), "{}", out.log);
+    assert!(!out.log.contains("renderD130"), "{}", out.log);
+    // After --dev, which would otherwise hide them, and before the program.
+    let dev = args.iter().position(|a| a == "--dev").unwrap();
+    let first = args.iter().position(|a| a == "--dev-bind").unwrap();
+    let confine = args.iter().position(|a| a == "/usr/bin/nodo-confine").unwrap();
+    assert!(dev < first && first < confine, "{args:?}");
+    // Nothing else of /sys: the GPU device bound once, its link and its bus.
+    let sys_args: Vec<&String> = args.iter().filter(|a| a.contains("/sys/")).collect();
+    assert_eq!(sys_args.len(), 5, "{sys_args:?}");
+}
+
+#[test]
+fn gpu_grant_without_a_gpu_still_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let (out, _) = run_stubbed(&gpu_run_in(dir.path()), &Scenario { conf: None, mounted: false });
+    assert_eq!(out.code, Some(0), "{out:?}");
+    assert!(out.stdout.contains("no GPU render node"), "{out:?}");
+    assert!(!out.log.contains("--dev-bind"), "{}", out.log);
+    assert!(out.log.contains("[_scanner:_scanner:gpu]\n[bwrap]\n"), "{}", out.log);
+}
+
+#[test]
+fn without_the_gpu_grant_the_sandbox_has_no_dri_and_no_gpu_group() {
+    for name in ["cuprated", "shop", "vault"] {
+        let run = golden_artifacts(name).run;
+        assert!(!run.contains("/dev/dri"), "{name}: {run}");
+        assert!(!run.contains("/sys"), "{name}: {run}");
+        assert!(!run.contains(":gpu"), "{name}: {run}");
+        assert!(!run.contains("\"$@\""), "{name}: {run}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    fake_gpu_tree(dir.path());
+    let run = generate(&app("plain"), Profile::App, &ResolvedGrants::default())
+        .unwrap()
+        .run;
+    let (out, _) = run_stubbed(&run, &Scenario { conf: None, mounted: false });
+    assert_eq!(out.code, Some(0), "{out:?}");
+    assert!(out.log.contains("[_plain:_plain]\n[bwrap]\n"), "{}", out.log);
+    assert!(!out.log.contains("/dev/dri"), "{}", out.log);
+    assert!(!out.log.contains("/sys"), "{}", out.log);
+}
+
+#[test]
+fn a_gpu_grant_is_only_the_gpu() {
+    let gpu = generate(&with_gpu("a"), Profile::App, &ResolvedGrants::default()).unwrap();
+    let plain = generate(&manifest("a", &["bin/a"]), Profile::App, &ResolvedGrants::default()).unwrap();
+    // The firewall, logger and stop script do not change, nor the hardening.
+    assert_eq!(gpu.nft, plain.nft);
+    assert_eq!(gpu.log_run, plain.log_run);
+    assert_eq!(gpu.control_t, plain.control_t);
+    assert!(gpu.run.contains("/usr/bin/nodo-confine -- /opt/nodo/apps/a/bin/a"), "{}", gpu.run);
+    assert!(gpu.run.contains("\t--unshare-user --disable-userns \\\n"), "{}", gpu.run);
 }

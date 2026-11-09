@@ -1,0 +1,50 @@
+#!/bin/sh
+exec 2>&1
+# With a console as stdin, a service can run a command prompt and flood the log.
+exec </dev/null
+
+# A board can keep data on a separate drive. Never fall back to the system disk.
+data=/var/lib/apps/scanner
+[ -r ./conf ] && . ./conf
+if [ -n "${DATA_MOUNT:-}" ]; then
+	if ! mountpoint -q "$DATA_MOUNT"; then
+		echo "refusing to start: $DATA_MOUNT is not mounted"
+		sleep 30
+		exit 1
+	fi
+	data=$DATA_MOUNT/scanner
+	install -d -o _scanner -g _scanner -m 750 "$data"
+fi
+
+# The GPU: render nodes only, never the card nodes that drive displays.
+dri=/dev/dri
+sys=/sys
+set --
+for node in "$dri"/renderD*; do
+	[ -c "$node" ] || continue
+	set -- "$@" --dev-bind "$node" "$node"
+	class=$sys/class/drm/${node##*/}
+	number=$(cat "$class/dev" 2>/dev/null) || continue
+	real=$(readlink -f "$class") && device=$(readlink -f "$class/device") || continue
+	case $real in "$device"/*) ;; *) continue ;; esac
+	set -- "$@" --ro-bind "$device" "$device" --symlink "$real" "$sys/dev/char/$number"
+	subsystem=$(readlink -f "$device/subsystem") && set -- "$@" --dir "$subsystem"
+done
+[ $# -gt 0 ] || echo "no GPU render node: the service starts without one"
+
+exec chpst -u _scanner:_scanner:gpu bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind /opt/nodo/apps/scanner /opt/nodo/apps/scanner \
+	--bind "$data" /var/lib/apps/scanner \
+	--proc /proc \
+	--dev /dev \
+	"$@" \
+	--tmpfs /tmp \
+	--setenv HOME /var/lib/apps/scanner \
+	--unshare-user --disable-userns \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/usr/bin/nodo-confine -- /opt/nodo/apps/scanner/bin/scan

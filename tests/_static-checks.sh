@@ -26,6 +26,15 @@ step "T6N boards carry the platform" sh -c 'for b in nanopc-t6n nanopc-t6n-mainl
 		[ -d "packages/nodo-tools/files/$s" ] || { echo "nodo-tools has no $s service"; exit 1; }
 	done ) || exit 1
 done'
+# panvk needs the mainline kernel's panthor; the vendor kernel's Mali driver is kbase.
+step "Vulkan only on the mainline boards" sh -c 'for b in nanopc-t6n-mainline qemu-virt-mainline; do
+	( . "boards/$b/board.env"; case " $BOARD_PACKAGES " in *" vulkan-loader mesa-panvk "*) ;; *) echo "$b: no Vulkan"; exit 1 ;; esac ) || exit 1
+done
+for b in nanopc-t6n qemu-virt x86-kvm; do
+	( . "boards/$b/board.env"; case " $BOARD_PACKAGES " in *mesa*|*vulkan*) echo "$b: has Mesa or Vulkan"; exit 1 ;; esac ) || exit 1
+done
+grep -qx "SUBSYSTEM==\"drm\", KERNEL==\"renderD\*\", GROUP=\"gpu\", MODE=\"0660\"" boards/nanopc-t6n/overlay/etc/udev/rules.d/60-nodo-gpu.rules &&
+	grep -q "^system_groups=\".*\bgpu\b" packages/nodo-tools/template'
 # Rules need the service users to exist, as they do on a real device.
 for t in packages/*/template; do
 	for u in $(sed -n 's/^system_accounts="\(.*\)"/\1/p' "$t"); do useradd -r "$u" 2>/dev/null; done

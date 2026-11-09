@@ -608,6 +608,46 @@ fn an_update_asking_for_more_always_waits_for_the_user() {
     assert_eq!(packages.installed().as_deref(), Some("1.1_1"));
 }
 
+/// The GPU is a permission like any other: an update that starts asking for it never installs
+/// unattended, and only the approved version's sandbox gets the render nodes and the group.
+#[test]
+fn an_update_asking_for_the_gpu_waits_and_only_then_gets_it() {
+    let (h, packages) = installed();
+    let run = |h: &Helper<FakeSystem>| String::from_utf8(h.sys.get("/sv/demo/run").unwrap()).unwrap();
+    assert!(!run(&h).contains("/dev/dri"), "{}", run(&h));
+    assert!(run(&h).contains("exec chpst -u _demo:_demo bwrap"), "{}", run(&h));
+    auto_on(&h);
+    packages.publish("1.1_1", &manifest("[devices]\ngpu = true\n"));
+    packages.0.lock().unwrap().minute = 4 * 60;
+    let s = status(&h);
+    assert_eq!(s.candidates[0].added, ["uses the GPU for computation (Vulkan)"]);
+    assert!(s.candidates[0].verdict.contains("new permissions"), "{}", s.candidates[0].verdict);
+    assert!(run_auto(&h).is_empty());
+    assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+    assert!(!run(&h).contains("/dev/dri"));
+
+    let Ok(Response::InstallReview(delta)) = call(&h, Request::ReviewUpdate { package: "demo".into() }) else {
+        panic!()
+    };
+    assert_eq!(delta.added, ["uses the GPU for computation (Vulkan)"]);
+    assert!(delta.permissions.contains(&"uses the GPU for computation (Vulkan)".to_string()));
+    // The fake package backend does not unpack files, so put the new manifest where xbps would.
+    h.sys.put("/opt/nodo/apps/demo/manifest.toml", manifest("[devices]\ngpu = true\n").as_bytes());
+    let Ok(Response::UpdateResults(r)) = call(
+        &h,
+        Request::ApplyUpdates {
+            updates: vec![UpdateApproval { package: "demo".into(), to: "1.1_1".into(), approval: Some(approve(&delta)) }],
+        },
+    ) else {
+        panic!()
+    };
+    assert_eq!(r[0].outcome, UpdateOutcome::Updated, "{r:?}");
+    let script = run(&h);
+    assert!(script.contains("exec chpst -u _demo:_demo:gpu bwrap"), "{script}");
+    assert!(script.contains("for node in \"$dri\"/renderD*; do"), "{script}");
+    assert!(!script.contains("dri/card"), "{script}");
+}
+
 #[test]
 fn a_failed_health_check_rolls_back_and_holds_that_version() {
     let (h, packages) = installed();

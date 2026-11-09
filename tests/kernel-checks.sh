@@ -38,3 +38,11 @@ for m in panthor rockchipdrm phy-rockchip-samsung-hdptx snd-soc-rt5616 snd-soc-r
 	iwlwifi ath11k_pci btusb hci_uart; do modinfo -F filename $m >/dev/null; done'
 check "cfg80211, mac80211, Bluetooth, USB audio and panthor load" \
 	'modprobe -a cfg80211 mac80211 bluetooth btusb snd-usb-audio panthor && grep -q "^panthor " /proc/modules'
+# QEMU has no Mali, so panvk finds no device. This shows the loader finds the ICD manifest, loads
+# libvulkan_panfrost.so on this userspace without a missing symbol, and that nodo-gpu-check says
+# plainly that there is no device (exit status 2) rather than failing.
+check "the Vulkan loader loads panvk, which finds no Mali under QEMU" 'out=$(VK_LOADER_DEBUG=driver nodo-gpu-check 2>&1); r=$?
+	echo "$out" | grep -E "^(Vulkan loader|no Vulkan)" | sed "s/^/  /"
+	[ "$r" = 2 ] && echo "$out" | grep -q "^no Vulkan device" && echo "$out" | grep -q "libvulkan_panfrost.so" &&
+	! echo "$out" | grep -qi "dlopen\|failed to open\|undefined symbol\|ERROR |" && exit 0
+	echo "exit $r"; echo "$out" | tail -n 20; exit 1'

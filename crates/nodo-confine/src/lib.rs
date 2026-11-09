@@ -316,4 +316,30 @@ mod tests {
             assert_eq!(run(&prog, AUDIT_ARCH_NATIVE, nr(libc::SYS_read), 0), SECCOMP_RET_ALLOW);
         }
     }
+
+    /// A service granted the GPU drives it through its render node: DRM ioctls (panthor's
+    /// `DRM_IOCTL_PANTHOR_*`, syncobjs, PRIME), mapping buffer objects and waiting on fences.
+    /// The filter must leave all of that alone, whatever the ioctl number.
+    #[test]
+    fn gpu_work_through_a_render_node_is_allowed() {
+        for unix in [false, true] {
+            let prog = filter(Options { unix });
+            let calls = [
+                libc::SYS_openat,
+                libc::SYS_ioctl,
+                libc::SYS_mmap,
+                libc::SYS_munmap,
+                libc::SYS_ppoll,
+                libc::SYS_eventfd2,
+                libc::SYS_memfd_create,
+                libc::SYS_close,
+            ];
+            for call in calls {
+                // DRM_IOCTL_VERSION, DRM_IOCTL_SYNCOBJ_WAIT and a panthor driver ioctl.
+                for arg in [0xc040_6400_u32, 0xc028_64c3, 0xc010_6440] {
+                    assert_eq!(run(&prog, AUDIT_ARCH_NATIVE, nr(call), arg), SECCOMP_RET_ALLOW, "{call}");
+                }
+            }
+        }
+    }
 }
