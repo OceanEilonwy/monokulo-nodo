@@ -6,6 +6,10 @@ vp=/work/void-packages
 cp -r /src/packages/* "$vp/srcpkgs/"
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
+# xbps-src builds a dependency from the pinned srcpkgs when the mirror's version differs (dhcpcd,
+# for monokulo-base, since the mirror moved to 10.5), which needs patch and make; the
+# builder image lacks both.
+command -v make >/dev/null && command -v patch >/dev/null || xbps-install -y make patch >/dev/null
 export HOME=/work
 # xbps-src cross-compiles only when the target differs from this machine.
 cross=
