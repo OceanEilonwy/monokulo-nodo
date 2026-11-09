@@ -1,0 +1,41 @@
+#!/bin/sh
+# Keeps nodo-localnet's interface block in dhcpcd's own configuration, which dhcpcd owns and has no
+# include directive for. Run by monokulo-base's INSTALL and REMOVE scripts on every install,
+# upgrade and re-install, and by the image builder against the new root.
+#   dhcpcd-nodo-local install|remove [root]
+# install puts /usr/share/monokulo/dhcpcd-nodo-local.conf at the end of /etc/dhcpcd.conf between
+# marker lines, replacing an earlier copy: a marked one, or the unmarked block images appended
+# before the markers existed. The end is the only safe place, since a dhcpcd interface block runs
+# to the next interface line or the end of the file; lines added after the block move above it.
+# remove takes the block out. Everything else in the file is kept. A file that would not change
+# is not written.
+set -eu
+action=${1:?usage: dhcpcd-nodo-local install|remove [root]}
+root=${2:-}
+conf=$root/etc/dhcpcd.conf
+block=$root/usr/share/monokulo/dhcpcd-nodo-local.conf
+begin='# BEGIN nodo-local (monokulo-base replaces this block on every update; do not edit it)'
+end='# END nodo-local'
+case $action in install|remove) ;; *) echo "dhcpcd-nodo-local: unknown action: $action" >&2; exit 2 ;; esac
+# dhcpcd is a dependency, so its file is there. Without it there is nothing to add to.
+[ -f "$conf" ] || exit 0
+[ "$action" = remove ] || [ -f "$block" ] || { echo "dhcpcd-nodo-local: $block is missing" >&2; exit 1; }
+new=$conf.nodo-local.new
+trap 'rm -f "$new"' EXIT
+# The unmarked block starts with its comment or its interface line, and runs over comments and
+# indented lines. Blank lines are held back until something follows, so none pile up at the end,
+# and the one before a block goes with it.
+awk '
+	/^# BEGIN nodo-local/ { marked = 1; held = ""; next }
+	marked { if ($0 ~ /^# END nodo-local/) marked = 0; next }
+	/^# nodo-localnet: the second LAN address/ || /^interface[ \t]+nodo-local[ \t]*$/ { legacy = 1; held = ""; next }
+	legacy { if ($0 ~ /^[#\t ]/) next; legacy = 0 }
+	/^[ \t]*$/ { held = held $0 "\n"; next }
+	{ printf "%s%s\n", held, $0; held = "" }
+' "$conf" > "$new"
+if [ "$action" = install ]; then
+	{ printf '\n%s\n' "$begin"; cat "$block"; printf '%s\n' "$end"; } >> "$new"
+fi
+if cmp -s "$new" "$conf"; then exit 0; fi
+chmod 644 "$new"
+mv -f "$new" "$conf"

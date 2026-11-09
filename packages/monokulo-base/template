@@ -1,7 +1,7 @@
 # Template file for 'monokulo-base'
 pkgname=monokulo-base
 version=0.1.0
-revision=3
+revision=4
 archs="aarch64 x86_64"
 depends="base-minimal iproute2 openssh dhcpcd chrony nftables bubblewrap e2fsprogs"
 short_desc="Minimal base system for monokulo-nodo appliances"
@@ -15,8 +15,10 @@ do_install() {
 	vinstall ${FILESDIR}/10-monokulo.conf 644 etc/ssh/sshd_config.d
 	vinstall ${FILESDIR}/05-service-timeout.sh 644 etc/runit/shutdown.d
 	vinstall ${FILESDIR}/issue 644 usr/share/monokulo
-	# dhcpcd owns /etc/dhcpcd.conf, so the image builder appends this block for nodo-localnet.
+	# dhcpcd owns /etc/dhcpcd.conf, so this block for nodo-localnet goes into it through INSTALL,
+	# on every install and upgrade, and the image builder runs the same script.
 	vinstall ${FILESDIR}/dhcpcd-nodo-local.conf 644 usr/share/monokulo
+	vinstall ${FILESDIR}/dhcpcd-nodo-local 755 usr/libexec/monokulo
 	vbin ${FILESDIR}/nodo-report
 	vsv monokulo-diag
 }

@@ -60,8 +60,11 @@ fi
 [ -z "${BOARD_FSTAB_EXTRA:-}" ] || printf '%s\n' "$BOARD_FSTAB_EXTRA" >> "$rootfs/etc/fstab"
 # base-files owns /etc/issue, so the console banner showing the IP is copied in here.
 cp "$rootfs/usr/share/monokulo/issue" "$rootfs/etc/issue"
-# dhcpcd owns /etc/dhcpcd.conf, so nodo-localnet's interface block is appended here too.
-cat "$rootfs/usr/share/monokulo/dhcpcd-nodo-local.conf" >> "$rootfs/etc/dhcpcd.conf"
+# dhcpcd owns /etc/dhcpcd.conf. monokulo-base's INSTALL puts nodo-localnet's block into it, and
+# updates replace it the same way; the same script runs here so the image never depends on
+# whether xbps could run it for a foreign architecture. Configuring the image runs it again,
+# which changes nothing.
+sh "$rootfs/usr/libexec/monokulo/dhcpcd-nodo-local" install "$rootfs"
 for d in ${BOARD_MKDIRS:-}; do mkdir -p "$rootfs$d"; done
 if [ -n "${BOARD_DECOMPRESS_FIRMWARE:-}" ]; then
 	find "$rootfs/usr/lib/firmware" -name '*.zst' -exec zstd -dqk {} +
