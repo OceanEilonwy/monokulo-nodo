@@ -873,6 +873,13 @@ impl<S: System> Helper<S> {
         passphrase: Option<&Secret>,
     ) -> Result<Response, ApiError> {
         let _work = lock(&self.manage.work);
+        // Checked before anything starts: a mistyped passphrase must neither roll an update back
+        // nor hold its version, it only asks again.
+        if let Some(passphrase) = passphrase {
+            let mut failures = lock(&self.failed_unlocks);
+            let file = self.read_keystore()?;
+            self.verify_passphrase(&mut failures, passphrase, &file)?;
+        }
         let candidates = self.candidates()?;
         let mut updates = self.update_state()?;
         let mut results = Vec::new();

@@ -906,6 +906,19 @@ mod encrypted_updates {
     }
 
     #[test]
+    fn a_wrong_passphrase_changes_nothing_and_holds_nothing() {
+        let (h, packages) = updating("size_mib = 512\n");
+        let updates = vec![UpdateApproval { package: "demo".into(), to: "2.0_1".into(), approval: None }];
+        let wrong = call(&h, Request::ApplyUpdatesWithPassphrase { updates, passphrase: Secret::new("wrong horse battery") });
+        assert_eq!(wrong, Err(ApiError::BadPassphrase));
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("luks grow")));
+        let s = status(&h);
+        assert!(!s.candidates[0].info.held, "a typo must not hold the version: {s:?}");
+        assert_eq!(apply(&h, Some(DEVICE))[0].outcome, UpdateOutcome::Updated);
+    }
+
+    #[test]
     fn the_screen_learns_which_updates_need_the_passphrase_before_applying() {
         let (h, _) = updating("size_mib = 512\n");
         let Ok(Response::StorageGrowth(growth)) = call(&h, Request::UpdateStorageGrowth) else { panic!() };

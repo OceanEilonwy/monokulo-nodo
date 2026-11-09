@@ -95,7 +95,7 @@ impl<S: System> Helper<S> {
             .min(self.timing.unlock_backoff_max)
     }
 
-    fn read_keystore(&self) -> Result<Vec<u8>, ApiError> {
+    pub(crate) fn read_keystore(&self) -> Result<Vec<u8>, ApiError> {
         self.sys
             .read_file(&self.paths.keystore)?
             .ok_or(ApiError::NotSetUp)
