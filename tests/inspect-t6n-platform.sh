@@ -141,8 +141,8 @@ show 'stat /etc/udev/rules.d/80-net-name-slot.rules' | grep -q 'Fast link dest: 
 result "udev keeps the kernel's interface names (eth0, wlan0), which nothing in the firewall depends on" "$?"
 show 'stat /etc/udev/hwdb.bin' | grep -q 'Type: regular'
 result "the udev hardware database is compiled" "$?"
-show 'cat /usr/lib/udev/rules.d/50-udev-default.rules' | grep -q 'SUBSYSTEM=="drm", KERNEL=="renderD\*", GROUP="video", MODE="0666"'
-result "GPU nodes: /dev/dri/card* for the video group, render nodes open to all" "$?"
+show 'cat /etc/udev/rules.d/60-nodo-gpu.rules' | grep -q 'SUBSYSTEM=="drm", KERNEL=="renderD\*", GROUP="video", MODE="0660"'
+result "GPU nodes: card and render nodes only for the video group" "$?"
 show 'cat /etc/rc.conf' | grep -qx 'HARDWARECLOCK="UTC"' && show 'cat /etc/runit/shutdown.d/40-hwclock.sh' | grep -q 'hwclock --systohc' &&
 	show 'cat /etc/runit/core-services/05-nodo-rtc.sh' | grep -q 'hwclock --hctosys --utc'
 result "the RTC sets the clock at boot and is written back at shutdown" "$?"

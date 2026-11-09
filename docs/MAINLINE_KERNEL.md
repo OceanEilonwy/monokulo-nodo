@@ -116,8 +116,10 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
   possible: root's password stays locked, as on SSH, and no default password is added. The
   prompt is for reading the address; the owner manages the node over SSH and the TUI.
 - **GPU.** `panthor` for the Mali-G610, with `arm/mali/arch10.8/mali_csffw.bin` from
-  linux-firmware. eudev's rules give `/dev/dri/card0` to the `video` group (mode 0660) and make
-  the render node `/dev/dri/renderD128` mode 0666 in that group; Void has no `render` group.
+  linux-firmware. eudev's rules give `/dev/dri/card0` to the `video` group (mode 0660). They would
+  make the render node `/dev/dri/renderD128` open to every user (0666); `60-nodo-gpu.rules` in the
+  board overlay limits it to the `video` group too (0660), so service users cannot reach the GPU
+  driver. Void has no `render` group.
   **Unverified:** that panthor probes with FriendlyElec's BL31. It needs the GPU's SCMI clock and
   power domain, the same interface cpufreq depends on. The images carry no Mesa: Void's
   `mesa-dri` brings libllvm22 (135 MiB), libz3 (30 MiB), mesa-libgallium (39 MiB), mesa

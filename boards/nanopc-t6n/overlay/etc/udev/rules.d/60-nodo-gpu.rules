@@ -1,0 +1,3 @@
+# eudev's default makes GPU render nodes open to every user (0666). Only members of the video
+# group may use the GPU here, so a process running as a service user cannot reach the driver.
+SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="video", MODE="0660"
