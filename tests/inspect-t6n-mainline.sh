@@ -139,6 +139,8 @@ if [ "$(fdtget -t x "$dtb" /hdmi@fde80000 enable-gpios)" = "$gpio4 9 0" ]; then 
 result "hdmi0's level shifter switch is GPIO4_B1, as in FriendlyElec's T6N tree" "$r"
 [ "$(fdtget "$dtb" /dsi@fde30000/panel@0 compatible)" = zhot,zh055oe041 ]
 result "the panel is the ZHOT ZH055OE041 the original Nodo system drives" "$?"
+[ "$(fdtget "$dtb" /dsi@fde30000/panel@0 rotation)" = 270 ]
+result "the panel is turned to sit left side up in the case (rotation 270)" "$?"
 vp3_ep=$(fdtget "$dtb" /__symbols__ vp3_out_dsi1 2>/dev/null)
 [ -n "$vp3_ep" ] && [ "$(fdtget "$dtb" "$vp3_ep" reg)" = 6 ]
 result "VOP2 video port 3 feeds dsi1 (ROCKCHIP_VOP2_EP_MIPI1)" "$?"

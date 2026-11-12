@@ -7,7 +7,10 @@
  * ZH055OE041 support from FriendlyElec's panel-raydium-rm67191.c (kernel-rockchip, nanopi6-v6.1.y
  * at commit 30d3e1c2470a7282f37b96fdd4354314dda69aa3): its manufacturer command table
  * (mcs_zh055oe), its power-on sequence (rm67199_enable) and the display timing from FriendlyElec's
- * rk3588-nanopi6-mipi-55amoled.dtsi, written for mainline's panel and DSI APIs.
+ * rk3588-nanopi6-mipi-55amoled.dtsi, written for mainline's panel and DSI APIs. The pixel clock is
+ * 132 MHz, not FriendlyElec's 133.711 MHz: the RK3588 makes 132 MHz exactly for VOP2's DSI video
+ * port, and when the clock it gives differs from the mode, mainline's DSI host times each line for
+ * the wrong rate and the picture shakes sideways (seen on the Nodo, 2026-11-12).
  *
  * Based on panel-raydium-rm67191.c, Copyright 2019 NXP.
  */
@@ -133,9 +136,9 @@ static const u32 zh_bus_formats[] = {
 static const u32 zh_bus_flags = DRM_BUS_FLAG_DE_LOW |
 				DRM_BUS_FLAG_PIXDATA_SAMPLE_POSEDGE;
 
-/* FriendlyElec's dsi_timing1: 133.711 MHz, 1144 x 1948 total, 60 Hz. */
+/* FriendlyElec's dsi_timing1 porches, 1144 x 1948 total, at 132 MHz (59.2 Hz); see the top. */
 static const struct drm_display_mode zh_mode = {
-	.clock = 133711,
+	.clock = 132000,
 	.hdisplay = 1080,
 	.hsync_start = 1080 + 26,
 	.hsync_end = 1080 + 26 + 4,
@@ -157,6 +160,7 @@ struct zh_panel {
 	struct backlight_device *backlight;
 
 	struct regulator_bulk_data supplies[2];
+	enum drm_panel_orientation orientation;
 
 	bool prepared;
 };
@@ -340,7 +344,19 @@ static int zh_get_modes(struct drm_panel *panel, struct drm_connector *connector
 
 	drm_display_info_set_bus_formats(&connector->display_info, zh_bus_formats,
 					 ARRAY_SIZE(zh_bus_formats));
+
+	/*
+	 * drm_connector_set_panel_orientation() only takes effect before the device is registered;
+	 * .get_orientation below covers the rest.
+	 */
+	drm_connector_set_panel_orientation(connector, to_zh_panel(panel)->orientation);
+
 	return 1;
+}
+
+static enum drm_panel_orientation zh_get_orientation(struct drm_panel *panel)
+{
+	return to_zh_panel(panel)->orientation;
 }
 
 /* An AMOLED panel has no backlight; brightness is the DCS display brightness. */
@@ -372,6 +388,7 @@ static const struct drm_panel_funcs zh_panel_funcs = {
 	.enable = zh_enable,
 	.disable = zh_disable,
 	.get_modes = zh_get_modes,
+	.get_orientation = zh_get_orientation,
 };
 
 static int zh_probe(struct mipi_dsi_device *dsi)
@@ -403,6 +420,11 @@ static int zh_probe(struct mipi_dsi_device *dsi)
 	zh->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(zh->reset))
 		return dev_err_probe(dev, PTR_ERR(zh->reset), "Failed to get reset GPIO\n");
+
+	/* How the panel sits in the case, from the device tree's rotation property. */
+	ret = of_drm_get_panel_orientation(dev->of_node, &zh->orientation);
+	if (ret)
+		return dev_err_probe(dev, ret, "Invalid rotation property\n");
 
 	zh->supplies[0].supply = "v3p3";
 	zh->supplies[1].supply = "v1p8";

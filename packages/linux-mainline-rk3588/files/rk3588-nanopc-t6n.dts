@@ -263,7 +263,9 @@
  * rk3588-nanopi6-rev08.dtb with rk3588-nanopi6-mipi-55amoled.dtsi): dsi1 on vp3, four lanes,
  * burst video mode, panel reset on GPIO3_A6 (active low), touch interrupt on GPIO3_C0 and touch
  * reset on GPIO3_C1, i2c5 on its m0 pins at 200 kHz. The panel is an AMOLED, so it has no
- * backlight; the panel driver offers its DCS brightness as one.
+ * backlight; the panel driver offers its DCS brightness as one. The panel is portrait and sits in
+ * the case on its side, its left edge at the top (rotation 270, DRM's "left side up"), so the
+ * console and any display client turn the picture to read the right way up.
  */
 &dsi1 {
 	#address-cells = <1>;
@@ -277,6 +279,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&lcd_rst0_gpio>;
 		reset-gpios = <&gpio3 RK_PA6 GPIO_ACTIVE_LOW>;
+		rotation = <270>;
 
 		port {
 			panel_in_dsi1: endpoint {
