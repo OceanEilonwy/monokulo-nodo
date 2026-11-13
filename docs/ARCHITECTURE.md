@@ -186,6 +186,14 @@ codebase, and signed xbps packages from user-added feeds.
   file and blocks it. The VM tests join a WPA2 hostapd access point on a second mac80211_hwsim
   radio in a network namespace (`tests/wifi-prepare.sh` builds the module, which Void's kernel
   lacks); Bluetooth is tested with fakes only, as the VM has no virtual controller to pair with.
+- **Screen:** The NanoPC-T6N's built-in 1920x1080 touchscreen shows package widgets as terminal
+  panels (design H3, chosen on 2026-11-13; `docs/design/tui/ScreenHybridPanels*.dc.html`): the
+  TUI's boxed panels with the title set into the border, on a pure black background so unlit
+  OLED pixels stay off, in JetBrains Mono with the TUI's amber accent, and with bars and
+  sparklines drawn in block characters. Panels sit on an 8x4 grid; the owner adds, hides, moves
+  and resizes them by touch or keys (`hjkl` move, `HJKL` resize), and packages offer the panels,
+  each in a range of sizes. How a manifest declares its panels and feeds them data is not yet
+  decided.
 
 ## Layout
 
