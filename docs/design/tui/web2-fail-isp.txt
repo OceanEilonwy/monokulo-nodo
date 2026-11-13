@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet                                                                ✕ Blocked by your provider
+┌ This connection can't take visitors ─────────────────────────────────────────────────────────────────────────────────┐
+│ Step 3 of 4   ✓ Address  ›  ✓ Provider  ›  Checks  ›  Confirm                                                        │
+│                                                                                                                      │
+│ ✓ Porkbun accepted the key                                                                                           │
+│ ✕ The internet can't reach your Nodo                                                                                 │
+│                                                                                                                      │
+│ Your internet provider shares one address between many homes, so visitors from the                                   │
+│ internet stop at the provider and never reach your router. Router settings can't fix this.                           │
+│                                                                                                                      │
+│ You can:                                                                                                             │
+│ ▸ Use a private link through Tor instead (works on any connection)                                                   │
+│   Ask your provider for your own public IPv4 address, then check again                                               │
+│                                                                                                                      │
+│ Press d for the technical details.                                                                                   │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ choose  ↵ go  c check again  d details  Esc back

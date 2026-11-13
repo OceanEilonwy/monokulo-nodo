@@ -1,0 +1,36 @@
+Web › mk-pay                                                                                                   ✓ Working
+┌ Where mk-pay can be opened ──────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ Devices at home                                                                               https://mk-pay.local │
+│ ✓ Anyone on the internet                                                                     https://pay.example.com │
+│ ○ Private link through Tor                                                                                       off │
+│                                                                                                                      │
+│ Visitors from the internet can see your home's internet address. mk-pay has its own login.                           │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Recent visits ───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Today                                                                            38 from home, 112 from the internet │
+│ Last problem                                                                                                    none │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↵ change who can open it  x take offline  l log  Esc back

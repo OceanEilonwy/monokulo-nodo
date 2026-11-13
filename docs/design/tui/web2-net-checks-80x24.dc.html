@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>8 · Internet, step 3: checks as plain progress</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.term{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:14px;line-height:18px;white-space:pre}
+.row{height:18px;overflow:hidden}
+.row span{display:inline-block;overflow:hidden;vertical-align:top}
+</style>
+</helmet>
+<div style="width:720px;height:556px;box-sizing:border-box;padding:24px;background:#0B0C0D;color:#D7DADC;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;flex-direction:column;gap:4px">
+<div style="font-size:18px;font-weight:700;color:#F2A33A">8 · Internet, step 3: checks as plain progress</div>
+<div style="font-size:13px;color:#A3AAB0">Rendered by nodo-tui (ratatui) at 80×24 — exactly what a terminal shows; your terminal's font and colours may vary slightly. Try it: <code>nodo-tui --mock --screen web2-net-checks</code></div>
+</div>
+<div class="term" style="width:672px;height:432px;background:#101214">
+<div class="row"><span style="width:3ch;color:#D7DADC;background:#101214">Web</span><span style="width:3ch;color:#A3AAB0;background:#101214"> › </span><span style="width:6ch;color:#D7DADC;background:#101214">mk-pay</span><span style="width:3ch;color:#A3AAB0;background:#101214"> › </span><span style="width:15ch;color:#D7DADC;background:#101214;font-weight:700">On the internet</span><span style="width:40ch;color:#D7DADC;background:#101214">                                        </span><span style="width:10ch;color:#F2A33A;background:#101214">◆ Checking</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">┌</span><span style="width:24ch;color:#D7DADC;background:#101214;font-weight:700"> Anyone on the internet </span><span style="width:55ch;color:#545C63;background:#101214">──────────────────────────────────────────────────────┐</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:14ch;color:#A3AAB0;background:#101214">Step 3 of 4   </span><span style="width:9ch;color:#6FD6B3;background:#101214">✓ Address</span><span style="width:5ch;color:#A3AAB0;background:#101214">  ›  </span><span style="width:10ch;color:#6FD6B3;background:#101214">✓ Provider</span><span style="width:5ch;color:#A3AAB0;background:#101214">  ›  </span><span style="width:6ch;color:#F2A33A;background:#101214">Checks</span><span style="width:12ch;color:#A3AAB0;background:#101214">  ›  Confirm</span><span style="width:16ch;color:#D7DADC;background:#101214">                </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:2ch;color:#6FD6B3;background:#101214">✓ </span><span style="width:75ch;color:#D7DADC;background:#101214">Porkbun accepted the key                                                   </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:2ch;color:#6FD6B3;background:#101214">✓ </span><span style="width:62ch;color:#D7DADC;background:#101214">Found your home's internet address                            </span><span style="width:12ch;color:#A3AAB0;background:#101214">203.0.113.42</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:2ch;color:#6FD6B3;background:#101214">✓ </span><span style="width:75ch;color:#D7DADC;background:#101214">pay.example.com points to your home                                        </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:2ch;color:#F2A33A;background:#101214">◆ </span><span style="width:65ch;color:#D7DADC;background:#101214">The internet can reach your Nodo                                 </span><span style="width:9ch;color:#F2A33A;background:#101214">checking…</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:19ch;color:#A3AAB0;background:#101214">○ Secure connection</span><span style="width:58ch;color:#D7DADC;background:#101214">                                                          </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:1ch;color:#D7DADC;background:#101214"> </span><span style="width:49ch;color:#A3AAB0;background:#101214">This takes about a minute. Nothing is public yet.</span><span style="width:28ch;color:#D7DADC;background:#101214">                            </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:1ch;color:#545C63;background:#101214">│</span><span style="width:78ch;color:#D7DADC;background:#101214">                                                                              </span><span style="width:1ch;color:#545C63;background:#101214">│</span></div>
+<div class="row"><span style="width:80ch;color:#545C63;background:#101214">└──────────────────────────────────────────────────────────────────────────────┘</span></div>
+<div class="row"><span style="width:1ch;color:#F2A33A;background:#101214">d</span><span style="width:10ch;color:#A3AAB0;background:#101214"> details  </span><span style="width:3ch;color:#F2A33A;background:#101214">Esc</span><span style="width:5ch;color:#A3AAB0;background:#101214"> stop</span><span style="width:61ch;color:#D7DADC;background:#101214">                                                             </span></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":720,"height":556}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
