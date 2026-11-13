@@ -192,6 +192,10 @@ if [ "$tty1" = nodo-screen ]; then
 	done
 	show 'cat /etc/sv/nodo-screen/run' | grep -q /run/nodo-splash.pid || { echo "  nodo-screen does not stop the splash"; r=1; }
 	result "the boot splash shows the logo from early boot until the panels, and again at shutdown" "$r"
+	r=0
+	show "cat /etc/profile.d/nodo-tui.sh" | grep -q SSH_TTY || { echo "  missing: /etc/profile.d/nodo-tui.sh"; r=1; }
+	show "cat /etc/profile" | grep -q "/etc/profile.d/" || { echo "  /etc/profile does not read /etc/profile.d"; r=1; }
+	result "an interactive SSH login opens nodo-tui" "$r"
 	# This card takes base updates as system snapshots; the timer only checks unless the owner
 	# turns automatic system updates on.
 	case " $links " in *" nodo-systemupdate "*) r=0 ;; *) r=1 ;; esac

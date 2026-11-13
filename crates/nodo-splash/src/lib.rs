@@ -346,4 +346,26 @@ mod tests {
         assert!(s.contains("\x1b[31;57H\x1b[22;35;40mn o d o"));
         assert!(s.contains("\x1b[32;55H\x1b[1;37;40mstarting up…"));
     }
+
+    #[test]
+    fn the_logo_is_centred_on_the_t6n_console() {
+        // Bounding box of the logo's lit pixels, in its own 56 x 56 grid.
+        let logo = logo();
+        let lit: Vec<(usize, usize)> = (0..SIZE)
+            .flat_map(|y| (0..SIZE).map(move |x| (x, y)))
+            .filter(|&(x, y)| logo[y][x] != 0)
+            .collect();
+        let (min_x, max_x) = (lit.iter().map(|p| p.0).min().unwrap(), lit.iter().map(|p| p.0).max().unwrap());
+        let min_y = lit.iter().map(|p| p.1).min().unwrap();
+        let l = Layout::new(120, 33);
+        // Horizontally, in columns: the box's centre is the screen's within half a cell.
+        let centre_x = l.logo_left as f64 + (min_x + max_x) as f64 / 2.0;
+        assert!((centre_x - 59.5).abs() <= 0.5, "logo centre column {centre_x}");
+        // Vertically, in half rows (one logo pixel each): the logo, the gap and the two text
+        // lines together sit in the middle of the 33 rows within half a row.
+        let top = (l.logo_top * 2 + min_y) as f64 / 2.0;
+        let bottom = l.status_row as f64 + 1.0;
+        let block_centre = (top + bottom) / 2.0;
+        assert!((block_centre - 16.5).abs() <= 0.5, "block centre row {block_centre}");
+    }
 }
