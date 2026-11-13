@@ -365,6 +365,119 @@ impl Manifest {
             None => {}
         }
 
+        self.check_panels(&mut c);
+
         c.issues
     }
+
+    /// Ports this package's own service listens on, so a panel can only read its own package.
+    fn own_ports(&self) -> BTreeSet<u16> {
+        let mut ports: BTreeSet<u16> = self.network.inbound.iter().map(|inbound| inbound.port).collect();
+        for web in &self.web {
+            if let Some(port) = web.upstream.strip_prefix("127.0.0.1:").and_then(parse_port) {
+                ports.insert(port);
+            }
+        }
+        match &self.health {
+            Some(HealthCheck::Http { url }) => ports.extend(loopback_port(url)),
+            Some(HealthCheck::Tcp { port }) => {
+                ports.insert(*port);
+            }
+            None => {}
+        }
+        ports
+    }
+
+    fn check_panels(&self, c: &mut Checker) {
+        if self.panels.len() > crate::MAX_PANELS {
+            c.add("panels", format!("has more than {} entries", crate::MAX_PANELS));
+        }
+        let own = self.own_ports();
+        let mut ids = BTreeSet::new();
+        for (index, panel) in self.panels.iter().enumerate() {
+            let field = |name: &str| format!("panels[{index}].{name}");
+            if !is_token(&panel.id, MAX_ID_LEN) {
+                c.add(field("id"), "must be lowercase letters, digits and single hyphens");
+            } else if !ids.insert(panel.id.as_str()) {
+                c.add(field("id"), "is a duplicate");
+            }
+            if !is_display_text(&panel.title, crate::MAX_PANEL_TITLE_LEN) {
+                c.add(
+                    field("title"),
+                    format!("must be 1 to {} printable characters on one line", crate::MAX_PANEL_TITLE_LEN),
+                );
+            }
+            if !is_valid_package_path(&panel.script) || !panel.script.ends_with(".lua") {
+                c.add(field("script"), "must be a canonical relative .lua path inside the package");
+            }
+            if !(crate::MIN_PANEL_REFRESH_SECS..=crate::MAX_PANEL_REFRESH_SECS).contains(&panel.refresh_secs) {
+                c.add(
+                    field("refresh_secs"),
+                    format!("must be from {} to {}", crate::MIN_PANEL_REFRESH_SECS, crate::MAX_PANEL_REFRESH_SECS),
+                );
+            }
+            c.check(field("min_size"), check_panel_size(panel.min_size));
+            c.check(field("max_size"), check_panel_size(panel.max_size));
+            if !fits_within(panel.min_size, panel.max_size) {
+                c.add(field("max_size"), "must be at least min_size in both directions");
+            }
+            if let Some(size) = panel.default_size {
+                if !fits_within(panel.min_size, size) || !fits_within(size, panel.max_size) {
+                    c.add(field("default_size"), "must be from min_size to max_size");
+                }
+            }
+            match &panel.source {
+                crate::PanelSource::Http { url } => c.check(field("source.http.url"), check_panel_url(url, &own)),
+                crate::PanelSource::Jsonrpc { url, method } => {
+                    c.check(field("source.jsonrpc.url"), check_panel_url(url, &own));
+                    if !is_method_name(method) {
+                        c.add(field("source.jsonrpc.method"), "must be 1 to 64 letters, digits, '_' or '.'");
+                    }
+                }
+                // Only the base system's signed manifests, parsed without validation, may read the
+                // device directly.
+                crate::PanelSource::Device {} => c.add(field("source"), "device is for the base system only"),
+            }
+        }
+    }
+}
+
+/// The port of a loopback URL that passes [`check_health_url`].
+fn loopback_port(url: &str) -> Option<u16> {
+    check_health_url(url).ok()?;
+    let authority = url.strip_prefix("http://")?.split('/').next()?;
+    parse_port(authority.rsplit_once(':')?.1)
+}
+
+fn check_panel_url(url: &str, own: &BTreeSet<u16>) -> Result<(), String> {
+    check_health_url(url)?;
+    let port = loopback_port(url).ok_or("has an invalid port")?;
+    if !own.contains(&port) {
+        return Err(format!(
+            "port {port} is not one of this package's own (network.inbound, web upstreams or health)"
+        ));
+    }
+    Ok(())
+}
+
+fn check_panel_size([columns, rows]: [u8; 2]) -> Result<(), String> {
+    let [max_columns, max_rows] = crate::PANEL_GRID;
+    if !(1..=max_columns).contains(&columns) || !(1..=max_rows).contains(&rows) {
+        return Err(format!("must be [columns, rows] within [1, 1] to [{max_columns}, {max_rows}]"));
+    }
+    Ok(())
+}
+
+fn fits_within(small: [u8; 2], large: [u8; 2]) -> bool {
+    small[0] <= large[0] && small[1] <= large[1]
+}
+
+fn is_method_name(method: &str) -> bool {
+    (1..=64).contains(&method.len()) && method.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.'))
+}
+
+/// One line of printable text: no control characters, so it cannot draw over the screen.
+fn is_display_text(text: &str, max_chars: usize) -> bool {
+    let count = text.chars().count();
+    (1..=max_chars).contains(&count) && !text.chars().any(char::is_control) && text.trim() == text
 }

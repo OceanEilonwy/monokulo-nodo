@@ -4,10 +4,10 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=6
+revision=7
 archs="aarch64 x86_64"
 build_style=cargo
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen"
 hostmakedepends="pkg-config"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library.
 makedepends="libzstd-devel"
@@ -18,8 +18,12 @@ license="GPL-3.0-or-later"
 homepage="https://github.com/OceanEilonwy/monokulo-nodo"
 # Package settings code runs as this account, never as root. xbps turns the name into a
 # shell variable, so it cannot contain a dash.
-system_accounts="_nodo_settings"
+system_accounts="_nodo_settings _nodo_screen"
 _nodo_settings_homedir="/var/empty"
+# The screen's panels (docs/SCREEN.md) run as this account. Its only extra group is input, for the
+# touchscreen; its run script hands it tty1.
+_nodo_screen_homedir="/var/lib/nodo-screen"
+_nodo_screen_groups="input"
 # Members of nodo may use the helper (root always may). gpu may open the GPU's render nodes (a
 # udev rule on the T6N boards gives them to it). No account is a member: a service runs with it,
 # through chpst in its generated run script, only when the owner approved the GPU for it.
@@ -30,6 +34,7 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-autoupdate 0750 root root
  /var/log/nodo-systemupdate 0750 root root
  /var/log/nodo-wifi 0750 root root
+ /var/log/nodo-screen 0750 root root
  /var/lib/nodo/wifi 0700 root root
  /etc/nodo 0755 root root"
 
@@ -49,6 +54,9 @@ do_install() {
 	# The hardware test's GPU probe: lists Vulkan devices and runs a small compute shader. It
 	# opens the Vulkan loader at run time, so it needs nothing on boards without one.
 	vbin target/${RUST_TARGET}/release/nodo-gpu-check
+	# Package panels on the built-in screen. Not enabled here: boards with a screen enable it in
+	# place of tty1's login prompt.
+	vbin target/${RUST_TARGET}/release/nodo-screen
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate
@@ -58,9 +66,11 @@ do_install() {
 	# wpa_supplicant for the owner's Wi-Fi. Not enabled: the helper links it when the owner turns
 	# Wi-Fi on. wpa_supplicant itself comes with the board's image.
 	vsv nodo-wifi
+	vsv nodo-screen
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated
 	vinstall ${FILESDIR}/cuprated/Cuprated.toml.in 644 usr/share/nodo/packages/cuprated
+	vinstall ${FILESDIR}/cuprated/panels/sync.lua 644 usr/share/nodo/packages/cuprated/panels
 	vlicense LICENSE
 }

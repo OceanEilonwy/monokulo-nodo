@@ -20,3 +20,14 @@ port = 18081
 port = 18081
 protocol = "tcp"
 scope = "local"
+
+# The node's sync progress on the device's screen (docs/SCREEN.md), from its own loopback RPC.
+[[panels]]
+id = "sync"
+title = "Monero node"
+script = "panels/sync.lua"
+refresh_secs = 10
+min_size = [2, 1]
+max_size = [4, 2]
+default_size = [4, 2]
+source = { jsonrpc = { url = "http://127.0.0.1:18081/json_rpc", method = "get_info" } }

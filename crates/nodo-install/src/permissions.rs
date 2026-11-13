@@ -60,6 +60,16 @@ pub struct Permissions {
     /// Admin paths per site. Kept apart because removing one widens access.
     #[serde(default)]
     pub admin_paths: BTreeMap<String, BTreeSet<String>>,
+    /// Panels the package shows on the device's screen. Shown in the review but not a permission:
+    /// a panel only reads what the package's own service already serves on loopback
+    /// (docs/SCREEN.md), so a version that adds one needs no new approval. Left out of the stored
+    /// file when there are none, and ignored by helpers that predate panels.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub panels: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// The package name of an xbps dependency such as `glibc>=2.41_1` or `libfoo-1.2_1`.
@@ -125,7 +135,7 @@ impl Permissions {
         for dependency in run_depends {
             granted.insert(Permission::SystemPackage { name: dependency_name(dependency) });
         }
-        Permissions { granted, admin_paths }
+        Permissions { granted, admin_paths, panels: manifest.panels.len() }
     }
 
     /// What `self` asks for beyond `approved`. Empty means no new approval is needed.
@@ -148,6 +158,11 @@ impl Permissions {
                 let list: Vec<&str> = paths.iter().map(String::as_str).collect();
                 lines.push(format!("keeps {} of '{web}' admin only", list.join(", ")));
             }
+        }
+        match self.panels {
+            0 => {}
+            1 => lines.push("shows a panel on the screen, reading its own service".to_string()),
+            n => lines.push(format!("shows {n} panels on the screen, reading its own service")),
         }
         lines
     }
@@ -223,6 +238,21 @@ mod tests {
         let text = toml::to_string(&with).unwrap();
         assert!(text.contains("kind = \"gpu\""), "{text}");
         assert_eq!(toml::from_str::<Permissions>(&text).unwrap(), with);
+    }
+
+    #[test]
+    fn panels_are_listed_but_need_no_approval() {
+        let base = "health = { tcp = { port = 8081 } }\n[storage]\nencrypted = true\n";
+        let panel = "[[panels]]\nid = \"a\"\ntitle = \"A\"\nscript = \"a.lua\"\nrefresh_secs = 10\n\
+            min_size = [2, 1]\nmax_size = [2, 1]\nsource = { http = { url = \"http://127.0.0.1:8081/\" } }\n";
+        let with = Permissions::of(&manifest(&format!("{base}{panel}")), &[]);
+        let without = Permissions::of(&manifest(base), &[]);
+        assert_eq!(with.summary(), ["shows a panel on the screen, reading its own service"]);
+        assert!(with.added_since(&without).is_empty(), "adding a panel asks for nothing");
+        // Approvals stored without panels still read, and none are written when there are none.
+        let stored = toml::to_string(&without).unwrap();
+        assert!(!stored.contains("panels"), "{stored}");
+        assert_eq!(toml::from_str::<Permissions>(&toml::to_string(&with).unwrap()).unwrap(), with);
     }
 
     #[test]

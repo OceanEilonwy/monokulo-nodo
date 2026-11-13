@@ -67,7 +67,57 @@ pub struct Manifest {
     /// Local URL or command used to decide whether the service is healthy.
     #[serde(default)]
     pub health: Option<HealthCheck>,
+    /// Panels the package offers for the device's screen (docs/SCREEN.md).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panels: Vec<Panel>,
 }
+
+/// A panel for the device's screen: where its data comes from and the Lua file that turns the data
+/// into the panel's values. The screen fetches and draws; the package only computes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Panel {
+    /// Unique within the package.
+    pub id: String,
+    /// Shown in the panel's border.
+    pub title: String,
+    /// Path of the Lua file, relative to the package directory.
+    pub script: String,
+    pub refresh_secs: u32,
+    /// `[columns, rows]` on the screen's grid.
+    pub min_size: [u8; 2],
+    pub max_size: [u8; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_size: Option<[u8; 2]>,
+    pub source: PanelSource,
+}
+
+impl Panel {
+    /// The size a panel takes when the screen first places it.
+    pub fn initial_size(&self) -> [u8; 2] {
+        self.default_size.unwrap_or(self.min_size)
+    }
+}
+
+/// Where a panel's data comes from. Always the package's own service on loopback, except
+/// `Device`, which only the base system may use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
+pub enum PanelSource {
+    /// A GET whose response is JSON.
+    Http { url: String },
+    /// A JSON-RPC 2.0 call without parameters; the panel gets its `result`.
+    Jsonrpc { url: String, method: String },
+    /// The device's own temperature, storage and memory, read by the screen.
+    Device {},
+}
+
+/// The screen's grid, in columns and rows.
+pub const PANEL_GRID: [u8; 2] = [8, 4];
+pub const MAX_PANELS: usize = 8;
+pub const MIN_PANEL_REFRESH_SECS: u32 = 2;
+pub const MAX_PANEL_REFRESH_SECS: u32 = 3600;
+pub const MAX_PANEL_TITLE_LEN: usize = 24;
 
 fn default_stop_timeout() -> u32 {
     120
@@ -227,6 +277,83 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PANEL_BASE: &str = "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n\
+        health = { http = { url = \"http://127.0.0.1:8081/status\" } }\n";
+
+    fn panel(body: &str) -> Result<Manifest, ManifestError> {
+        Manifest::parse(&format!("{PANEL_BASE}[[panels]]\n{body}"))
+    }
+
+    const GOOD_PANEL: &str = "id = \"sales\"\ntitle = \"Sales today\"\nscript = \"panels/sales.lua\"\n\
+        refresh_secs = 10\nmin_size = [2, 1]\nmax_size = [4, 2]\n";
+
+    #[test]
+    fn panels_parse_with_a_source_of_the_packages_own() {
+        let m = panel(&format!("{GOOD_PANEL}source = {{ http = {{ url = \"http://127.0.0.1:8081/stats\" }} }}\n")).unwrap();
+        let p = &m.panels[0];
+        assert_eq!(p.initial_size(), [2, 1]);
+        assert_eq!(p.source, PanelSource::Http { url: "http://127.0.0.1:8081/stats".into() });
+        let m = panel(&format!(
+            "{GOOD_PANEL}default_size = [4, 2]\n[panels.source.jsonrpc]\nurl = \"http://localhost:8081/json_rpc\"\nmethod = \"get_info\"\n"
+        ))
+        .unwrap();
+        assert_eq!(m.panels[0].initial_size(), [4, 2]);
+        // It survives serializing, as the helper stores manifests.
+        assert_eq!(Manifest::parse(&toml::to_string(&m).unwrap()).unwrap(), m);
+        assert!(Manifest::parse(PANEL_BASE).unwrap().panels.is_empty(), "no panels unless declared");
+    }
+
+    #[test]
+    fn a_panel_reads_only_its_own_package_on_loopback() {
+        for url in [
+            "http://127.0.0.1:18081/json_rpc", // another package's port
+            "http://10.0.0.5:8081/stats",       // not loopback
+            "https://127.0.0.1:8081/stats",     // not plain http
+            "http://127.0.0.1/stats",           // no explicit port
+            "http://127.0.0.1:80/stats",        // below the package range
+            "http://127.0.0.1:8081/../x",       // not a clean path
+        ] {
+            let body = format!("{GOOD_PANEL}source = {{ http = {{ url = \"{url}\" }} }}\n");
+            assert!(panel(&body).is_err(), "{url}");
+        }
+        // The base system's device source is refused from a feed manifest.
+        assert!(panel(&format!("{GOOD_PANEL}source = {{ device = {{}} }}\n")).is_err());
+        let system = Manifest::parse_system(&format!("{PANEL_BASE}[[panels]]\n{GOOD_PANEL}source = {{ device = {{}} }}\n"));
+        assert_eq!(system.unwrap().panels[0].source, PanelSource::Device {});
+    }
+
+    #[test]
+    fn panel_fields_have_bounds() {
+        let source = "source = { http = { url = \"http://127.0.0.1:8081/stats\" } }\n";
+        let bad = [
+            GOOD_PANEL.replace("id = \"sales\"", "id = \"Sales!\""),
+            GOOD_PANEL.replace("Sales today", "\\u001b[2Jclear"),
+            GOOD_PANEL.replace("Sales today", "a title that is far too long to fit"),
+            GOOD_PANEL.replace("panels/sales.lua", "../sales.lua"),
+            GOOD_PANEL.replace("panels/sales.lua", "panels/sales.sh"),
+            GOOD_PANEL.replace("refresh_secs = 10", "refresh_secs = 1"),
+            GOOD_PANEL.replace("max_size = [4, 2]", "max_size = [9, 2]"),
+            GOOD_PANEL.replace("min_size = [2, 1]", "min_size = [0, 1]"),
+            GOOD_PANEL.replace("max_size = [4, 2]", "max_size = [1, 1]"),
+            format!("{GOOD_PANEL}default_size = [8, 4]\n"),
+        ];
+        for body in bad {
+            assert!(panel(&format!("{body}{source}")).is_err(), "{body}");
+        }
+        let method = |m: &str| {
+            panel(&format!("{GOOD_PANEL}[panels.source.jsonrpc]\nurl = \"http://127.0.0.1:8081/rpc\"\nmethod = \"{m}\"\n"))
+        };
+        assert!(method("get_info").is_ok());
+        assert!(method("get info; rm").is_err());
+        assert!(method("").is_err());
+        let twice = format!("{GOOD_PANEL}{source}[[panels]]\n{GOOD_PANEL}{source}");
+        assert!(panel(&twice).is_err(), "duplicate ids");
+        let many: String = (0..9)
+            .map(|i| format!("[[panels]]\n{}{source}", GOOD_PANEL.replace("\"sales\"", &format!("\"p{i}\""))))
+            .collect();
+        assert!(Manifest::parse(&format!("{PANEL_BASE}{many}")).is_err(), "more than 8 panels");
+    }
 
     #[test]
     fn parses_minimal_manifest_with_safe_defaults() {

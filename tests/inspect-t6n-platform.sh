@@ -123,12 +123,26 @@ for p in eudev alsa-utils wpa_supplicant bluez dbus v4l-utils; do
 	grep -q "^$p " "$tmp/pkgs" || { echo "  not installed: $p"; r=1; }
 done
 result "eudev, alsa-utils, wpa_supplicant, bluez, dbus and v4l-utils are installed" "$r"
+# A card with the screen's panels gives them tty1; any other keeps tty1's login prompt.
+case " $links " in *" nodo-screen "*) tty1=nodo-screen ;; *) tty1=agetty-tty1 ;; esac
 r=0
-for s in udevd nodo-sound agetty-tty1; do
+for s in udevd nodo-sound $tty1; do
 	case " $links " in *" $s "*) ;; *) echo "  not started: $s"; r=1 ;; esac
 	show "stat /etc/sv/$s/run" | grep -qE 'Type: (regular|symlink)' || { echo "  no run script: $s"; r=1; }
 done
-result "udevd (module and firmware loading, hotplug), the mixer service and the tty1 login start at boot" "$r"
+result "udevd (module and firmware loading, hotplug), the mixer service and tty1 ($tty1) start at boot" "$r"
+if [ "$tty1" = nodo-screen ]; then
+	r=0
+	case " $links " in *" agetty-tty1 "*) echo "  tty1's login prompt also starts"; r=1 ;; esac
+	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/kbd/consolefonts/ter-v32n.psf.gz \
+		/usr/share/nodo/packages/cuprated/panels/sync.lua; do
+		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
+	done
+	show 'cat /etc/passwd' | grep -q '^_nodo_screen:' || { echo "  no _nodo_screen account"; r=1; }
+	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
+	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
+	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
+fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do
 	case " $links " in *" $s "*) echo "  started at boot: $s"; r=1 ;; esac

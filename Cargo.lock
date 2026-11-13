@@ -884,6 +884,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodo-panels"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "nodo-manifest",
+ "nodo-settings",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "nodo-screen"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "libc",
+ "nodo-manifest",
+ "nodo-panels",
+ "ratatui",
+ "serde",
+ "signal-hook",
+ "toml",
+]
+
+[[package]]
 name = "nodo-settings"
 version = "0.1.0"
 dependencies = [

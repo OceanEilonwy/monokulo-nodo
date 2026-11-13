@@ -69,6 +69,10 @@ for s in sshd dhcpcd chronyd nftables cuprated monokulo-diag ${BOARD_SERVICES:-}
 	[ -d "$rootfs/etc/sv/$s" ] || { echo "missing service: $s" >&2; exit 1; }
 	ln -sfn "/etc/sv/$s" "$sv/$s"
 done
+# A board can take a service's place, as the screen's panels take tty1 from its login prompt.
+for s in ${BOARD_DISABLE_SERVICES:-}; do
+	rm -f "$sv/$s"
+done
 if [ -d "$rootfs/etc/sv/agetty-$BOARD_CONSOLE" ]; then
 	ln -sfn "/etc/sv/agetty-$BOARD_CONSOLE" "$sv/agetty-$BOARD_CONSOLE"
 fi

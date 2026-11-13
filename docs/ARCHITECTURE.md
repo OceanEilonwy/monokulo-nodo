@@ -192,8 +192,11 @@ codebase, and signed xbps packages from user-added feeds.
   OLED pixels stay off, in JetBrains Mono with the TUI's amber accent, and with bars and
   sparklines drawn in block characters. Panels sit on an 8x4 grid; the owner adds, hides, moves
   and resizes them by touch or keys (`hjkl` move, `HJKL` resize), and packages offer the panels,
-  each in a range of sizes. How a manifest declares its panels and feeds them data is not yet
-  decided.
+  each in a range of sizes. A manifest declares its panels (`[[panels]]`); the screen fetches each
+  one's data from the package's own service on loopback, runs the package's Lua `panel` function in
+  the settings sandbox to compute the values, checks them against a fixed schema and draws them
+  itself, so a package never draws or reaches beyond its own service. `nodo-screen` runs as
+  `_nodo_screen` on tty1 in place of its login prompt. [SCREEN.md](SCREEN.md) is the contract.
 
 ## Layout
 
