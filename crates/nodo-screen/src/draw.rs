@@ -3,7 +3,7 @@
 //! pure black, so that unlit OLED pixels stay off; only the values, bars and outlines are lit.
 //!
 //! Every glyph drawn here is in the screen's console font, nodo-screen-16x32 (Terminus with the
-//! missing ones added by `packages/nodo-tools/files/screen-font/make-font.py`); [`GLYPHS`] lists
+//! missing ones added by `nodo-screen-font`); [`GLYPHS`] lists
 //! the added ones and a test keeps the two in step.
 
 use std::time::Instant;
@@ -18,7 +18,7 @@ use crate::app::{cells_rect, grid_area, grip_rect, tile_rect, App, Button, DragK
 use crate::bigtext;
 
 /// The glyphs this module draws beyond plain ASCII and what Terminus ter-v32n already has. A test
-/// checks that make-font.py draws each of them.
+/// checks that nodo-screen-font draws each of them.
 #[cfg_attr(not(test), allow(dead_code))]
 pub const GLYPHS: &str = "╭╮╰╯┄┆━┃┏┓┗┛▀▄▁▂▃▅▆▇●⇲⏻✓☰▸";
 
@@ -814,11 +814,10 @@ pub(crate) mod tests {
 
     #[test]
     fn every_glyph_drawn_is_in_the_console_font() {
-        // The font script adds exactly these; everything else drawn must be ASCII or already in
-        // Terminus ter-v32n (box lines, █, ·, …, ×, °).
-        let script = include_str!("../../../packages/nodo-tools/files/screen-font/make-font.py");
+        // nodo-screen-font adds these; everything else drawn must be ASCII or already in Terminus
+        // ter-v32n (box lines, █, ·, …, ×, °).
         for c in GLYPHS.chars() {
-            assert!(script.contains(&format!("\"{c}\":")), "make-font.py does not draw {c}");
+            assert!(nodo_screen_font::ADDED.contains(c) && nodo_screen_font::glyph(c).is_some(), "nodo-screen-font does not draw {c}");
         }
         let terminus = "─│┌┐└┘█·…×°";
         let mut app = demo();

@@ -9,7 +9,7 @@ install -d -m 0750 -o _nodo_screen -g _nodo_screen /var/lib/nodo-screen
 # the kernel log and the serial port.
 dmesg -n 1
 # Terminus 16x32 with the glyphs the screen draws (rounded and dashed corners, blocks, its button
-# icons) added; make-font.py builds it when the package is built. The kernel's built-in Terminus
+# icons) added; nodo-screen-font builds it when the package is built. The kernel's built-in Terminus
 # has the same size but none of those glyphs.
 setfont -C /dev/tty1 /usr/share/nodo/nodo-screen-16x32.psf.gz ||
 	setfont -C /dev/tty1 /usr/share/kbd/consolefonts/ter-v32n.psf.gz ||

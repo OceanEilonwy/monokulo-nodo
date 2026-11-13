@@ -30,7 +30,7 @@ console's colours to the TUI's. The same program runs in any terminal, which is 
 
 Terminus's 512-glyph console font (`ter-v32n`) has straight box lines and full blocks but none of the
 rounded or dashed corners, heavy lines, half and eighth blocks, dot or icons the screen draws.
-`packages/nodo-tools/files/screen-font/make-font.py` builds `nodo-screen-16x32` when the package is
+`nodo-screen-font` (`crates/nodo-screen-font`) builds `nodo-screen-16x32` when the package is
 built: it draws those 28 glyphs to match Terminus's line positions and puts them in place of Greek
 and Cyrillic glyphs the screen never shows. Terminus is under the SIL Open Font License, which
 requires a modified font to take another name; the licence ships as
