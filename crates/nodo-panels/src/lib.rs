@@ -193,7 +193,7 @@ impl PanelState {
 /// One complete refresh of a panel: fetch, then run its function. Run off the drawing thread.
 pub fn refresh(panel: &Offered, history: &[f64], device_root: &Path) -> Result<PanelOutput, String> {
     let script = panel.script.as_ref().map_err(Clone::clone)?;
-    let data = fetch(&panel.source, device_root).map_err(|e| format!("the service {e}"))?;
+    let data = fetch(&panel.source, device_root).map_err(|e| format!("{} {e}", panel.key.package))?;
     let name = format!("{}/{}", panel.key.package, panel.key.panel);
     run_panel(script, &name, &data, history).map_err(|e| format!("the panel {e}"))
 }
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(state.history.len(), MAX_HISTORY);
         assert_eq!(state.history.front(), Some(&5.0), "oldest dropped first");
         assert!(!state.is_stale());
-        state.record(Err("the service timed out".into()), t0 + Duration::from_secs(20), refresh);
+        state.record(Err("cuprated timed out".into()), t0 + Duration::from_secs(20), refresh);
         assert!(state.is_stale(), "keeps the last output, dimmed");
         assert_eq!(state.last.as_ref().unwrap().big.as_deref(), Some(&*format!("{}", (MAX_HISTORY + 4) as f64)));
         assert_eq!(state.next_due, t0 + Duration::from_secs(30));

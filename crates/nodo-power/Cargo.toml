@@ -1,0 +1,18 @@
+[package]
+name = "nodo-power"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Safe shutdown for monokulo-nodo: a root service that does one thing, asked over a unix socket"
+
+[[bin]]
+name = "nodo-power"
+path = "src/bin/nodo-power.rs"
+
+[dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

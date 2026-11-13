@@ -1,4 +1,5 @@
-//! `/etc/nodo/screen.toml`: how the touchscreen's axes map onto the console.
+//! `/etc/nodo/screen.toml`: how the touchscreen's axes map onto the console, and when the
+//! backlight dims.
 
 use serde::Deserialize;
 
@@ -25,11 +26,37 @@ impl Default for Touch {
     }
 }
 
+/// `[backlight]`: dim to `dim_percent` after `dim_after_secs` without input; 0 seconds never dims.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Backlight {
+    #[serde(default = "two_minutes")]
+    pub dim_after_secs: u64,
+    #[serde(default = "twenty")]
+    pub dim_percent: u8,
+}
+
+fn two_minutes() -> u64 {
+    120
+}
+
+fn twenty() -> u8 {
+    20
+}
+
+impl Default for Backlight {
+    fn default() -> Self {
+        Backlight { dim_after_secs: two_minutes(), dim_percent: twenty() }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub touch: Touch,
+    #[serde(default)]
+    pub backlight: Backlight,
 }
 
 impl Config {
@@ -72,5 +99,13 @@ mod tests {
         assert_eq!(t.map(0.0, 1.0), (0.0, 0.0));
         assert_eq!(toml::from_str::<Config>("[touch]\nswap_xy = false\n").unwrap().touch.map(0.25, 0.5), (0.75, 0.5));
         assert!(toml::from_str::<Config>("[touch]\nrotate = 90\n").is_err());
+    }
+
+    #[test]
+    fn backlight_settings_default_to_two_minutes_and_twenty_percent() {
+        assert_eq!(Config::default().backlight, Backlight { dim_after_secs: 120, dim_percent: 20 });
+        let c: Config = toml::from_str("[backlight]\ndim_after_secs = 0\n").unwrap();
+        assert_eq!(c.backlight, Backlight { dim_after_secs: 0, dim_percent: 20 });
+        assert!(toml::from_str::<Config>("[backlight]\ndim_percent = 300\n").is_err(), "not a u8");
     }
 }

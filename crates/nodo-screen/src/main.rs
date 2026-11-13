@@ -1,10 +1,12 @@
 //! nodo-screen: package panels on the device's built-in screen (docs/SCREEN.md).
 //!
-//! Runs on tty1 as `_nodo_screen`. Draws with ratatui, reads keys from the terminal and touches
-//! from the touchscreen's evdev device, and refreshes panels on a worker thread so that a slow
-//! service never stalls the screen.
+//! Runs on tty1 as `_nodo_screen`. Draws with ratatui, reads keys and the mouse from the terminal
+//! and touches from the touchscreen's evdev device, and refreshes panels on a worker thread so that
+//! a slow service never stalls the screen. Another copy can run over SSH (`--no-touch`, with the
+//! mouse); each picks up the layout the other saves.
 
 mod app;
+mod backlight;
 mod bigtext;
 mod config;
 mod draw;
@@ -19,7 +21,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use nodo_panels::{Layout, Offered, PanelKey, PanelOutput, Roots};
@@ -27,7 +29,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::App;
+use crate::app::{App, Effect, Mode};
 use crate::config::Config;
 use crate::draw::Theme;
 
@@ -83,6 +85,33 @@ fn worker(jobs: Receiver<Job>, done: Sender<Done>) {
 
 enum Input {
     Touch(touch::Touch),
+    Power(nodo_power::Event),
+    /// The connection to nodo-power ended, with the error if it failed.
+    PowerClosed(Option<String>),
+}
+
+/// Asks nodo-power to shut the device down, passing its progress to the main loop.
+fn power_off(input: Sender<Input>) {
+    thread::spawn(move || {
+        let result = nodo_power::request_poweroff(std::path::Path::new(nodo_power::SOCKET), |e| {
+            let _ = input.send(Input::Power(e));
+        });
+        let error = result.err().map(|e| format!("cannot reach the shutdown service ({e})"));
+        if let Some(error) = &error {
+            log(error);
+        }
+        let _ = input.send(Input::PowerClosed(error));
+    });
+}
+
+fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Puts the terminal back as it was: for a normal exit and for a panic.
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen, crossterm::cursor::Show);
 }
 
 fn log(line: &str) {
@@ -180,6 +209,7 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
         match touch::find_device(std::path::Path::new("/")) {
             Some(device) => {
                 let stop = Arc::clone(&stop);
+                let input_tx = input_tx.clone();
                 thread::spawn(move || {
                     let result = touch::run(&device, |t| input_tx.send(Input::Touch(t)).is_ok() && !stop.load(Ordering::Relaxed));
                     if let Err(e) = result {
@@ -196,13 +226,35 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
     if console {
         stdout.write_all(draw::palette_sequence().as_bytes())?;
     }
-    execute!(stdout, EnterAlternateScreen, crossterm::cursor::Hide)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, crossterm::cursor::Hide)?;
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        default_hook(info);
+    }));
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     terminal.clear()?;
 
     let host = hostname();
     let mut app = App::new(offered, layout, Instant::now());
+    // The backlight dims when nobody uses the screen; over SSH there is none to dim.
+    let backlight = if options.touch { backlight::Device::find(std::path::Path::new("/sys/class/backlight")) } else { None };
+    let mut dimmer = backlight::Dimmer::new(&config.backlight, Instant::now());
+    let set_backlight = |level: backlight::Level, percent: u8| {
+        if let Some(device) = &backlight {
+            if let Err(e) = device.set(level, percent) {
+                log(&format!("backlight: {e}"));
+            }
+        }
+    };
+    set_backlight(backlight::Level::Full, dimmer.percent);
+    // A touch that woke the screen is ignored until the finger lifts.
+    let mut waking_touch = false;
     let mut in_flight = std::collections::BTreeSet::new();
+    let rules = nodo_panels::size_rules(&app.offered);
+    // Another copy of the screen (over SSH, say) may save the layout: take it up when it changes.
+    let mut layout_seen = modified(&options.layout);
+    let mut layout_checked = Instant::now();
     let result = (|| -> io::Result<()> {
         while !stop.load(Ordering::Relaxed) {
             let now = Instant::now();
@@ -225,41 +277,101 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
                     state.record(done.result, Instant::now(), refresh);
                 }
             }
+            if app.mode == Mode::View && now.duration_since(layout_checked) >= Duration::from_secs(1) {
+                layout_checked = now;
+                let seen = modified(&options.layout);
+                if seen != layout_seen {
+                    layout_seen = seen;
+                    let (layout, dropped) = Layout::load(&options.layout, &rules);
+                    for line in &dropped {
+                        log(&format!("layout: {line}"));
+                    }
+                    app.replace_layout(layout);
+                }
+            }
 
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
-            let mut save = false;
-            while let Ok(Input::Touch(t)) = input_rx.try_recv() {
+            let mut effects = Vec::new();
+            while let Ok(input) = input_rx.try_recv() {
                 let to_cell = |x: f64, y: f64| {
                     let (u, v) = config.touch.map(x, y);
                     let column = ((u * f64::from(area.width)) as u16).min(area.width.saturating_sub(1));
                     let row = ((v * f64::from(area.height)) as u16).min(area.height.saturating_sub(1));
                     (column, row)
                 };
-                match t {
-                    touch::Touch::Down(x, y) => {
+                match input {
+                    Input::Touch(touch::Touch::Down(x, y)) => {
+                        if let Some(level) = dimmer.input(Instant::now()) {
+                            set_backlight(level, dimmer.percent);
+                            waking_touch = true;
+                            continue;
+                        }
                         let (c, r) = to_cell(x, y);
-                        save |= app.touch_down(area, c, r, Instant::now());
+                        effects.push(app.touch_down(area, c, r, Instant::now()));
                     }
-                    touch::Touch::Move(x, y) => {
-                        let (c, r) = to_cell(x, y);
-                        app.touch_move(area, c, r);
+                    Input::Touch(touch::Touch::Move(x, y)) => {
+                        if !waking_touch {
+                            let (c, r) = to_cell(x, y);
+                            app.touch_move(area, c, r);
+                        }
                     }
-                    touch::Touch::Up => app.touch_up(),
+                    Input::Touch(touch::Touch::Up) => {
+                        if !std::mem::take(&mut waking_touch) {
+                            app.touch_up();
+                        }
+                    }
+                    Input::Power(event) => app.power_event(event),
+                    Input::PowerClosed(error) => app.power_closed(error),
                 }
             }
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        save |= app.key(key.code, key.modifiers);
+            if event::poll(Duration::from_millis(50))? {
+                let input = event::read()?;
+                let wakes = matches!(&input, Event::Key(_)) || matches!(&input, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_)));
+                let woke = if wakes { dimmer.input(Instant::now()) } else { None };
+                if let Some(level) = woke {
+                    set_backlight(level, dimmer.percent);
+                    waking_touch = matches!(&input, Event::Mouse(_));
+                }
+                let input = if woke.is_some() { Event::FocusGained } else { input };
+                let input = match input {
+                    Event::Mouse(m) if waking_touch && !matches!(m.kind, MouseEventKind::Down(_)) => {
+                        if matches!(m.kind, MouseEventKind::Up(_)) {
+                            waking_touch = false;
+                        }
+                        Event::FocusGained
                     }
+                    other => other,
+                };
+                match input {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => effects.push(app.key(key.code, key.modifiers, Instant::now())),
+                    Event::Mouse(mouse) => match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => effects.push(app.touch_down(area, mouse.column, mouse.row, Instant::now())),
+                        MouseEventKind::Drag(MouseButton::Left) => app.touch_move(area, mouse.column, mouse.row),
+                        MouseEventKind::Up(MouseButton::Left) => app.touch_up(),
+                        _ => {}
+                    },
+                    _ => {}
                 }
             }
             app.tick(Instant::now());
-            if save {
-                if let Err(e) = app.layout.save(&options.layout) {
-                    app.message = Some("could not save the layout".into());
-                    log(&format!("saving {}: {e}", options.layout.display()));
+            if let Some(level) = dimmer.tick(Instant::now(), app.mode == Mode::View) {
+                set_backlight(level, dimmer.percent);
+            }
+            for effect in effects {
+                match effect {
+                    Effect::None => {}
+                    Effect::SaveLayout => {
+                        if let Err(e) = app.layout.save(&options.layout) {
+                            app.message = Some("could not save the layout".into());
+                            log(&format!("saving {}: {e}", options.layout.display()));
+                        }
+                        layout_seen = modified(&options.layout);
+                    }
+                    Effect::PowerOff => {
+                        log("shutting down, as asked on the screen");
+                        power_off(input_tx.clone());
+                    }
                 }
             }
             let clock = clock();
@@ -271,7 +383,11 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
         Ok(())
     })();
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::cursor::Show)?;
+    set_backlight(backlight::Level::Full, dimmer.percent);
+    if app.mode == Mode::ShuttingDown && app.shutdown.off {
+        // The device is turning off: leave "Safe to unplug" on the screen.
+        return result;
+    }
+    restore_terminal();
     result
 }

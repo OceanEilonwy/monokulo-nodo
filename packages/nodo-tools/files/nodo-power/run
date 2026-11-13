@@ -1,0 +1,8 @@
+#!/bin/sh
+# The screen's Shut down button (docs/SCREEN.md). Runs as root and does one thing: on a "poweroff"
+# request from root or _nodo_screen, it stops every service, syncs and turns the device off.
+exec 2>&1
+exec </dev/null
+install -d -m 0750 -o root -g _nodo_screen /run/nodo-power
+rm -f /run/nodo-power/off
+exec /usr/bin/nodo-power
