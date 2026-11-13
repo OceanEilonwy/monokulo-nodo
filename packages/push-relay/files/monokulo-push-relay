@@ -1,0 +1,80 @@
+#!/bin/sh
+# Adapts what the appliance provides to what the push relay reads, then becomes the relay.
+#
+# - Settings arrive as NODO_<NAME> variables. The relay's secrets are read from its own
+#   MONOKULO_RELAY_* variables, never argv; the other settings become options.
+# - The APNs key arrives on one line and is put back into PEM form.
+# - One app's names become the relay's handles.apps JSON.
+# - The handles' database goes in the data directory, which the sandbox mounts as $HOME.
+#
+# This script keeps the name of the binary it starts, so `pkill -x monokulo-push-relay` matches
+# whichever of the two is running.
+set -eu
+
+die() {
+	echo "push-relay launcher: $*" >&2
+	exit 1
+}
+
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || die "HOME is not the data directory"
+[ -n "${NODO_HANDLE_KEY:-}" ] || die "the handle_key setting has no value"
+[ -n "${NODO_PUBLIC_URI:-}" ] || die "the public_uri setting has no value"
+
+# The settings file has checked every value; these checks keep the JSON and options below well
+# formed even if this script is ever given something else.
+plain() {
+	case $2 in
+	*[!A-Za-z0-9.-]*) die "unexpected characters in $1" ;;
+	esac
+}
+
+MONOKULO_RELAY_HANDLE_KEY=$NODO_HANDLE_KEY
+export MONOKULO_RELAY_HANDLE_KEY
+
+if [ -n "${NODO_APNS_KEY:-}" ]; then
+	body=$(printf '%s' "$NODO_APNS_KEY" |
+		sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t')
+	case $body in
+	"" | *[!A-Za-z0-9+/=]*) die "the apns_key setting is not a base64 key" ;;
+	esac
+	MONOKULO_RELAY_APNS_KEY=$(printf '%s\n' '-----BEGIN PRIVATE KEY-----' \
+		"$(printf '%s' "$body" | fold -w 64)" '-----END PRIVATE KEY-----')
+	export MONOKULO_RELAY_APNS_KEY
+fi
+if [ -n "${NODO_FCM_CREDENTIALS:-}" ]; then
+	MONOKULO_RELAY_FCM_CREDENTIALS=$NODO_FCM_CREDENTIALS
+	export MONOKULO_RELAY_FCM_CREDENTIALS
+fi
+
+app=${NODO_APP_NAME:-monokular}
+plain app_name "$app"
+fields=
+if [ -n "${NODO_APNS_TOPIC:-}" ]; then
+	plain apns_topic "$NODO_APNS_TOPIC"
+	fields="\"apns_topic\":\"$NODO_APNS_TOPIC\""
+fi
+if [ -n "${NODO_FCM_PROJECT_ID:-}" ]; then
+	plain fcm_project_id "$NODO_FCM_PROJECT_ID"
+	fields="${fields:+$fields,}\"fcm_project_id\":\"$NODO_FCM_PROJECT_ID\""
+fi
+
+set -- --server-public-uri "$NODO_PUBLIC_URI" "$@"
+[ -z "$fields" ] || set -- --handles-apps "{\"$app\":{$fields}}" "$@"
+if [ -n "${NODO_APNS_TEAM_ID:-}" ]; then
+	plain apns_team_id "$NODO_APNS_TEAM_ID"
+	set -- --apns-team-id "$NODO_APNS_TEAM_ID" "$@"
+fi
+if [ -n "${NODO_APNS_KEY_ID:-}" ]; then
+	plain apns_key_id "$NODO_APNS_KEY_ID"
+	set -- --apns-key-id "$NODO_APNS_KEY_ID" "$@"
+fi
+[ "${NODO_APNS_SANDBOX:-false}" != true ] || set -- --apns-endpoint https://api.sandbox.push.apple.com "$@"
+
+for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+
+exec "$(dirname "$0")/../libexec/monokulo-push-relay" \
+	--options "$HOME/relay.toml" \
+	--store-path "$HOME/push-relay.db" \
+	"$@"

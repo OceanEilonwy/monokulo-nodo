@@ -1,0 +1,47 @@
+api_version = 1
+id = "push-relay"
+version = "@VERSION@"
+# bin/monokulo-push-relay is a small launcher that maps the device's settings onto the relay's own
+# options and environment, then executes libexec/monokulo-push-relay under the same name.
+exec = [
+    "bin/monokulo-push-relay",
+    # Apps and senders reach it only through the appliance's proxy, so it listens on loopback
+    # and takes the client's address from the proxy's X-Forwarded-For for its rate limits.
+    "--server-listen", "127.0.0.1:8444",
+    "--server-trusted-proxies", "127.0.0.1",
+    # Its status is a listener of its own, for this machine only: the health check and the panel.
+    "--status-listen", "127.0.0.1:8446",
+    "--logging-format", "json",
+]
+settings = "settings.lua"
+# Pushes in flight are given up to server.upstream_timeout_ms (4 s) to reach APNs or FCM.
+stop_timeout_secs = 15
+health = { http = { url = "http://127.0.0.1:8446/status" } }
+
+[storage]
+# The handles: each device's APNs or FCM token, sealed per row, and the sender it takes pushes
+# from. Small: a handful of rows per device.
+encrypted = true
+size_mib = 64
+
+[network]
+# APNs, FCM and FCM's OAuth token endpoint.
+outbound = "internet"
+
+[[web]]
+name = "relay"
+upstream = "127.0.0.1:8444"
+suggested_subdomain = "push"
+# Every endpoint it hands out is under server.public_uri, and a push must be signed for that one
+# address, so the relay is tied to a single base URL.
+multi_address = false
+
+[[panels]]
+id = "relay"
+title = "Push relay"
+script = "panels/relay.lua"
+refresh_secs = 30
+min_size = [2, 1]
+max_size = [4, 2]
+default_size = [2, 2]
+source = { http = { url = "http://127.0.0.1:8446/status" } }
