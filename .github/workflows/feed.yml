@@ -133,9 +133,12 @@ jobs:
 
       - name: Save the builder image
         if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
+        # lib.sh finds the repository from $0, which in a run step is the step's own temp script,
+        # so it runs with scripts/lib.sh as $0.
         run: |
-          . scripts/lib.sh
-          docker save "$(builder_tag)" | zstd -T0 -3 -o build/builder-image.tar.zst
+          set -o pipefail
+          # shellcheck disable=SC2016
+          bash -c '. scripts/lib.sh && docker save "$(builder_tag)"' scripts/lib.sh | zstd -T0 -3 -o build/builder-image.tar.zst
 
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
