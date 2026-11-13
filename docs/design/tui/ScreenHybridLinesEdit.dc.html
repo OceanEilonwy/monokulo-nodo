@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hairline grid editing</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width:960px;height:540px;box-sizing:border-box;padding:22px 30px 20px;background:#000000;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:12px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="background:#F2A33A;color:#000;font-weight:700">&nbsp;Arrange&nbsp;</span>&nbsp;&nbsp;<span style="color:#80888E">drag a tile · pull its corner to resize</span></span><span><span style="color:#80888E">Reset</span>&nbsp;&nbsp;&nbsp;<span style="background:#F2A33A;color:#000;font-weight:700">&nbsp;Done&nbsp;</span></span></div>
+<div style="height:300px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:4px;position:relative">
+<div style="grid-column:1;grid-row:1;border:1px dashed #23272A"></div><div style="grid-column:2;grid-row:1;border:1px dashed #23272A"></div><div style="grid-column:3;grid-row:1;border:1px dashed #23272A"></div><div style="grid-column:4;grid-row:1;border:1px dashed #23272A"></div><div style="grid-column:5;grid-row:1;border:1px dashed #23272A"></div><div style="grid-column:6;grid-row:1;border:1px dashed #23272A"></div>
+<div style="grid-column:1;grid-row:2;border:1px dashed #23272A"></div><div style="grid-column:2;grid-row:2;border:1px dashed #23272A"></div><div style="grid-column:3;grid-row:2;border:1px dashed #23272A"></div><div style="grid-column:4;grid-row:2;border:1px dashed #23272A"></div><div style="grid-column:5;grid-row:2;border:1px dashed #23272A"></div><div style="grid-column:6;grid-row:2;border:1px dashed #23272A"></div>
+<div style="grid-column:1;grid-row:3;border:1px dashed #23272A"></div><div style="grid-column:2;grid-row:3;border:1px dashed #23272A"></div><div style="grid-column:3;grid-row:3;border:1px dashed #23272A"></div><div style="grid-column:4;grid-row:3;border:1px dashed #23272A"></div><div style="grid-column:5;grid-row:3;border:1px dashed #23272A"></div><div style="grid-column:6;grid-row:3;border:1px dashed #23272A"></div>
+
+<div style="grid-column:1/4;grid-row:1/3;border:1px solid #2E3337;padding:10px 12px;position:relative;z-index:1;background:#000"><div style="color:#80888E;font-size:10px;letter-spacing:.08em">MONERO NODE</div><div style="font-size:34px;font-weight:700;color:#F4F5F6;margin-top:6px">61%</div><span style="position:absolute;left:6px;top:-9px;background:#000;color:#A3AAB0;padding:0 4px">✕</span><span style="position:absolute;right:4px;bottom:2px;color:#80888E;font-size:14px">⌟</span></div>
+<div style="grid-column:4/7;grid-row:1/2;border:1px solid #F2A33A;padding:10px 12px;position:relative;z-index:2;background:#000"><div style="color:#F2A33A;font-size:10px;letter-spacing:.08em">PAYMENTS TODAY</div><div style="font-size:22px;font-weight:700;color:#F4F5F6;margin-top:4px">4.82 XMR</div><span style="position:absolute;left:6px;top:-9px;background:#000;color:#F2A33A;padding:0 4px">✕</span><span style="position:absolute;right:4px;bottom:2px;color:#F2A33A;font-size:16px">⌟</span></div>
+<div style="grid-column:4/7;grid-row:1/3;border:2px dashed #F2A33A;z-index:3;pointer-events:none"></div>
+<span style="position:absolute;right:10px;top:150px;z-index:4;background:#F2A33A;color:#000;font-weight:700;padding:1px 6px">3×1 → 3×2</span>
+<div style="grid-column:4/5;grid-row:2/3;border:1px solid #1C1F22;padding:10px 12px;opacity:.35"><div style="color:#80888E;font-size:10px">BELL</div></div>
+<div style="grid-column:5/6;grid-row:2/3;border:1px solid #1C1F22;padding:10px 12px;opacity:.35"><div style="color:#80888E;font-size:10px">TOR</div></div>
+<div style="grid-column:6/7;grid-row:2/3;border:1px solid #1C1F22;padding:10px 12px;opacity:.35"><div style="color:#80888E;font-size:10px">DEVICE</div></div>
+<div style="grid-column:1/3;grid-row:3/4;border:1px solid #2E3337;padding:10px 12px;position:relative;background:#000"><div style="color:#80888E;font-size:10px;letter-spacing:.08em">WALLET SCANNER</div><div style="font-size:15px;font-weight:700;color:#F4F5F6;margin-top:4px">214</div><span style="position:absolute;left:6px;top:-9px;background:#000;color:#A3AAB0;padding:0 4px">✕</span></div>
+<div style="grid-column:3/5;grid-row:3/4;border:1px solid #2E3337;padding:10px 12px;position:relative;background:#000"><div style="color:#80888E;font-size:10px;letter-spacing:.08em">BELL · TOR · DEVICE</div><div style="font-size:11px;color:#A3AAB0;margin-top:4px">move here when you let go</div></div>
+</div>
+<div style="border-top:1px solid #1C1F22;padding-top:10px;display:flex;flex-direction:column;gap:6px">
+<div style="color:#80888E;letter-spacing:.08em;font-size:10px">ADD A WIDGET · from installed packages</div>
+<div style="display:flex;justify-content:space-between;white-space:pre"><span><span style="color:#F2A33A">+</span> Peers and traffic   <span style="color:#80888E">cuprated</span></span><span><span style="color:#80888E">[1×1]</span> <span style="color:#F2A33A">[2×1]</span> <span style="color:#80888E">[3×2]</span></span></div>
+<div style="display:flex;justify-content:space-between;white-space:pre"><span><span style="color:#F2A33A">+</span> Unpaid sales        <span style="color:#80888E">monokulo</span></span><span><span style="color:#F2A33A">[1×1]</span> <span style="color:#80888E">[2×1]</span></span></div>
+<div style="display:flex;justify-content:space-between;white-space:pre"><span><span style="color:#F2A33A">+</span> Web sites           <span style="color:#80888E">nodo-caddy</span></span><span><span style="color:#80888E">[1×1]</span> <span style="color:#F2A33A">[2×1]</span></span></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

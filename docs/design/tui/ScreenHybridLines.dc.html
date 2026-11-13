@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hairline grid</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width:960px;height:540px;box-sizing:border-box;padding:22px 30px 24px;background:#000000;color:#D7DADC;font-family:'JetBrains Mono',monospace;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;justify-content:space-between;font-size:12px"><span><span style="color:#F2A33A">●</span> monokulo-nodo</span><span style="color:#80888E">thu 13 nov  <span style="color:#D7DADC">14:32</span></span></div>
+<div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));border-top:1px solid #1C1F22;border-left:1px solid #1C1F22">
+
+<div style="grid-column:1/4;grid-row:1/3;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:16px 18px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">MONERO NODE · cuprated</div>
+<div style="font-size:104px;font-weight:700;line-height:1;color:#F4F5F6;margin-top:10px">61<span style="font-size:28px;color:#A3AAB0;font-weight:400">% synced</span></div>
+<div style="font-size:13px;margin-top:8px"><span style="color:#86BEFF">▲</span> 2,121,400 of 3,478,000</div>
+<div style="font-size:12px;color:#80888E;margin-top:2px">about 9 h left · 32 peers</div>
+<svg width="100%" height="44" viewBox="0 0 400 44" preserveAspectRatio="none" style="margin-top:auto" aria-hidden="true"><path d="M0 42 C60 41 90 36 130 30 S200 18 250 13 S340 6 400 4" fill="none" stroke="#86BEFF" stroke-width="2"/></svg>
+</div>
+
+<div style="grid-column:4/7;grid-row:1/2;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 18px;display:flex;gap:18px;align-items:center">
+<div style="flex:1;min-width:0">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">PAYMENTS TODAY · monokulo</div>
+<div style="font-size:38px;font-weight:700;color:#F4F5F6;margin-top:6px">4.82 <span style="font-size:14px;color:#A3AAB0;font-weight:400">XMR</span></div>
+<div style="font-size:12px;color:#A3AAB0">37 paid · <span style="color:#F2A33A">2 waiting</span></div>
+</div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><g fill="#F2A33A"><rect x="0" y="48" width="8" height="16"/><rect x="14" y="42" width="8" height="22"/><rect x="28" y="50" width="8" height="14"/><rect x="42" y="34" width="8" height="30"/><rect x="56" y="26" width="8" height="38"/><rect x="70" y="38" width="8" height="26"/><rect x="84" y="18" width="8" height="46"/><rect x="98" y="8" width="8" height="56"/><rect x="112" y="22" width="8" height="42"/><rect x="126" y="30" width="8" height="34"/><rect x="140" y="40" width="8" height="24" opacity=".4"/></g></svg>
+</div>
+
+<div style="grid-column:4/5;grid-row:2/3;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 16px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">BELL</div>
+<div style="margin-top:auto;font-size:22px;font-weight:700;color:#6FD6B3">ringing</div>
+<div style="font-size:11px;color:#A3AAB0">0.8 s ago</div>
+</div>
+<div style="grid-column:5/6;grid-row:2/3;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 16px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">TOR</div>
+<div style="margin-top:auto;font-size:22px;font-weight:700;color:#F4F5F6">100%</div>
+<div style="font-size:11px;color:#A3AAB0">circuit built</div>
+</div>
+<div style="grid-column:6/7;grid-row:2/3;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 16px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">DEVICE</div>
+<div style="margin-top:auto;font-size:22px;font-weight:700;color:#F4F5F6">52 °C</div>
+<div style="font-size:11px;color:#A3AAB0">SSD 22%</div>
+</div>
+
+<div style="grid-column:1/3;grid-row:3/4;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 18px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">WALLET SCANNER · monokulo-lws</div>
+<div style="margin-top:auto;font-size:22px;font-weight:700;color:#F4F5F6">214 accounts</div>
+<div style="font-size:11px;color:#A3AAB0">GPU · 0 blocks behind</div>
+</div>
+<div style="grid-column:3/5;grid-row:3/4;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 18px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">WEB · nodo-caddy</div>
+<div style="margin-top:auto;font-size:22px;font-weight:700;color:#F4F5F6">3 sites</div>
+<div style="font-size:11px;color:#A3AAB0">onion · public · lan</div>
+</div>
+<div style="grid-column:5/6;grid-row:3/4;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 16px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#F2A33A">UPDATES</div>
+<div style="margin-top:auto;font-size:30px;font-weight:700;color:#F2A33A">2</div>
+<div style="font-size:11px;color:#A3AAB0">to review</div>
+</div>
+<div style="grid-column:6/7;grid-row:3/4;border-right:1px solid #1C1F22;border-bottom:1px solid #1C1F22;padding:14px 16px;display:flex;flex-direction:column">
+<div style="font-size:11px;letter-spacing:.08em;color:#80888E">PRICE</div>
+<div style="margin-top:auto;font-size:20px;font-weight:700;color:#F4F5F6">€312</div>
+<div style="font-size:11px;color:#6FD6B3">▲ 1.8%</div>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>
