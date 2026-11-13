@@ -69,10 +69,6 @@ for s in sshd dhcpcd chronyd nftables cuprated monokulo-diag ${BOARD_SERVICES:-}
 	[ -d "$rootfs/etc/sv/$s" ] || { echo "missing service: $s" >&2; exit 1; }
 	ln -sfn "/etc/sv/$s" "$sv/$s"
 done
-# A board can take a service's place, as the screen's panels take tty1 from its login prompt.
-for s in ${BOARD_DISABLE_SERVICES:-}; do
-	rm -f "$sv/$s"
-done
 if [ -d "$rootfs/etc/sv/agetty-$BOARD_CONSOLE" ]; then
 	ln -sfn "/etc/sv/agetty-$BOARD_CONSOLE" "$sv/agetty-$BOARD_CONSOLE"
 fi
@@ -199,6 +195,15 @@ rc=$(debugfs -R 'cat /monokulo-configure.rc' /work/root.ext4 2>/dev/null)
 [ "$rc" = 0 ] || { echo "image configuration failed, rc='$rc'" >&2; tail -40 "$out/configure.log"; exit 1; }
 debugfs -w -R 'rm /monokulo-configure' /work/root.ext4 >/dev/null 2>&1
 debugfs -w -R 'rm /monokulo-configure.rc' /work/root.ext4 >/dev/null 2>&1
+# A board can take a service's place, as the screen's panels take tty1 from its login prompt. This
+# runs after configuration, because runit-void links the agetty services while it is configured.
+for s in ${BOARD_DISABLE_SERVICES:-}; do
+	debugfs -w -R "rm /etc/runit/runsvdir/default/$s" /work/root.ext4 >/dev/null 2>&1
+	if debugfs -R "stat /etc/runit/runsvdir/default/$s" /work/root.ext4 2>/dev/null | grep -q Inode; then
+		echo "could not disable service: $s" >&2
+		exit 1
+	fi
+done
 
 cp "$kernel" "$out/vmlinuz"
 used_mb=$(debugfs -R stats /work/root.ext4 2>/dev/null | awk -F: '/^Block count/{b=$2} /^Free blocks/{f=$2} /^Block size/{s=$2} END{print int((b-f)*s/1048576)}')
