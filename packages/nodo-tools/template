@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=7
+revision=8
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen"
@@ -72,5 +72,7 @@ do_install() {
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated
 	vinstall ${FILESDIR}/cuprated/Cuprated.toml.in 644 usr/share/nodo/packages/cuprated
 	vinstall ${FILESDIR}/cuprated/panels/sync.lua 644 usr/share/nodo/packages/cuprated/panels
+	# The app feed every device starts with, its key pinned from the start (docs/FEED.md).
+	vinstall ${FILESDIR}/default-feeds.toml 644 usr/share/nodo
 	vlicense LICENSE
 }

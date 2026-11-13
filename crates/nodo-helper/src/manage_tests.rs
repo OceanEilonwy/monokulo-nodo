@@ -503,6 +503,152 @@ fn a_changed_key_blocks_until_the_feed_name_is_typed() {
     assert!(matches!(trust("apps"), Err(ApiError::NeedsConfirmation(_))), "an approval is used once");
 }
 
+const DEFAULT_FEEDS: &str = "/usr/share/nodo/default-feeds.toml";
+
+/// The image's default feeds file, shipping `FEED` pinned to `fingerprint`.
+fn ship_default(h: &Helper<FakeSystem>, fingerprint: &KeyFingerprint) {
+    let text = format!(
+        "[[feed]]\nname = \"monokulo\"\naddress = \"{FEED}\"\nfingerprint = \"{}\"\n",
+        crate::feeds::shown_key(&fingerprint.to_string())
+    );
+    h.sys.put(DEFAULT_FEEDS, text.as_bytes());
+}
+
+fn feeds(h: &Helper<FakeSystem>) -> Vec<nodo_api::FeedInfo> {
+    match call(h, Request::ListFeeds) {
+        Ok(Response::Feeds(f)) => f,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn stored_pin(h: &Helper<FakeSystem>) -> Option<KeyFingerprint> {
+    let state: crate::feeds::FeedState =
+        toml::from_str(&String::from_utf8(h.sys.get("/s/feeds.toml")?).unwrap()).unwrap();
+    state.pins.feeds.get(FEED).map(|p| p.key.clone())
+}
+
+#[test]
+fn a_default_feed_is_added_on_first_start_pinned_to_the_shipped_key() {
+    let (h, packages) = setup();
+    ship_default(&h, &key('a'));
+    let list = feeds(&h);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "monokulo");
+    assert_eq!(list[0].address, FEED);
+    assert!(list[0].enabled);
+    assert!(list[0].fingerprint.starts_with("aa:aa:"));
+    // Pinned and written down before the server was ever asked: no trust on first use.
+    assert_eq!(stored_pin(&h), Some(key('a')));
+    assert!(packages.log().is_empty());
+    let Ok(Response::Feeds(list)) = call(&h, Request::RefreshFeeds) else { panic!() };
+    assert!(!list[0].key_changed);
+    assert_eq!(list[0].packages, 1);
+    // Reading again changes nothing and adds no second copy.
+    assert_eq!(feeds(&h).len(), 1);
+}
+
+#[test]
+fn a_removed_default_feed_does_not_come_back() {
+    let (h, _) = setup();
+    ship_default(&h, &key('a'));
+    assert_eq!(feeds(&h).len(), 1);
+    let Ok(Response::Feeds(list)) = call(&h, Request::RemoveFeed { name: "monokulo".into() }) else {
+        panic!()
+    };
+    assert!(list.is_empty());
+    assert!(feeds(&h).is_empty());
+    assert_eq!(stored_pin(&h), None);
+    // Nor after an image update that ships it again, with another key.
+    ship_default(&h, &key('c'));
+    assert!(feeds(&h).is_empty());
+    // The owner can still add it by hand, confirming the key as for any feed.
+    add_feed(&h);
+    assert_eq!(feeds(&h).len(), 1);
+}
+
+#[test]
+fn a_changed_shipped_key_never_replaces_a_pin() {
+    let (h, _) = setup();
+    ship_default(&h, &key('a'));
+    assert_eq!(feeds(&h).len(), 1);
+    ship_default(&h, &key('c'));
+    let list = feeds(&h);
+    assert_eq!(list.len(), 1);
+    assert!(list[0].fingerprint.starts_with("aa:aa:"));
+    assert_eq!(stored_pin(&h), Some(key('a')));
+
+    // A feed the owner added before the image shipped it keeps the key the owner confirmed.
+    let (h, _) = setup();
+    add_feed(&h);
+    ship_default(&h, &key('c'));
+    let list = feeds(&h);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "apps");
+    assert_eq!(stored_pin(&h), Some(key('a')));
+}
+
+#[test]
+fn a_default_feed_signed_by_another_key_goes_through_the_key_change() {
+    let (h, packages) = setup();
+    ship_default(&h, &key('a'));
+    packages.set_key(key('b'));
+    let Ok(Response::Feeds(list)) = call(&h, Request::RefreshFeeds) else { panic!() };
+    assert!(list[0].key_changed);
+    assert_eq!(list[0].packages, 0, "nothing from the other key is offered");
+    let blocked = call(
+        &h,
+        Request::ReviewInstall {
+            feed: "monokulo".into(),
+            package: "demo".into(),
+        },
+    );
+    assert!(matches!(blocked, Ok(Response::InstallBlocked { key_changed: true, .. })), "{blocked:?}");
+    let Ok(Response::FeedKeyChange(change)) = call(&h, Request::FeedKeyChange { name: "monokulo".into() }) else {
+        panic!()
+    };
+    assert!(change.pinned.starts_with("aa:aa:"));
+    assert!(change.offered.starts_with("bb:bb:"));
+    let trusted = call(
+        &h,
+        Request::TrustFeedKey {
+            name: "monokulo".into(),
+            confirmation: KeyChangeConfirmation {
+                from: change.pinned,
+                to: change.offered,
+                typed_feed_name: "monokulo".into(),
+            },
+        },
+    );
+    assert!(matches!(trusted, Ok(Response::Feeds(f)) if !f[0].key_changed && f[0].packages == 1));
+    assert_eq!(stored_pin(&h), Some(key('b')));
+}
+
+#[test]
+fn a_broken_default_feeds_file_is_ignored() {
+    let (h, _) = setup();
+    for text in [
+        "not toml",
+        "[[feed]]\nname = \"x\"\naddress = \"ftp://h/\"\nfingerprint = \"aa\"\n",
+        "[[feed]]\nname = \"x\"\naddress = \"https://h/\"\nfingerprint = \"zz\"\n",
+    ] {
+        h.sys.put(DEFAULT_FEEDS, text.as_bytes());
+        assert!(feeds(&h).is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn the_shipped_default_feeds_file_parses() {
+    let text = include_str!("../../../packages/nodo-tools/files/default-feeds.toml");
+    let defaults = crate::feeds::parse_default_feeds(text).unwrap();
+    assert_eq!(defaults.len(), 1);
+    assert_eq!(defaults[0].name, "monokulo");
+    assert_eq!(defaults[0].address, "https://nodo.monokulo.com/feed");
+    // The key in feed/signing-key.pub.pem, which CI signs the feed with.
+    let pem = include_bytes!("../../../feed/signing-key.pub.pem");
+    let key = nodo_feed::RepoKey::from_pem(pem, "").unwrap();
+    assert_eq!(KeyFingerprint::new(&defaults[0].fingerprint).unwrap(), key.fingerprint);
+}
+
 fn status(h: &Helper<FakeSystem>) -> nodo_api::UpdateStatus {
     match call(h, Request::CheckUpdates) {
         Ok(Response::UpdateStatus(s)) => s,

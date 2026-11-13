@@ -16,6 +16,8 @@ use crate::system::{System, WriteOptions};
 pub struct ManagePaths {
     /// Feed pins, feed records, approvals and what each package was installed from.
     pub feeds: PathBuf,
+    /// The feeds the image ships with, pinned to their keys (`packages/nodo-tools`).
+    pub default_feeds: PathBuf,
     /// The auto-update policy, holds, history and the last check's candidates.
     pub updates: PathBuf,
     /// One directory per package with the verified package files kept for rollback.
@@ -44,6 +46,7 @@ impl Default for ManagePaths {
     fn default() -> Self {
         ManagePaths {
             feeds: "/var/lib/nodo/feeds.toml".into(),
+            default_feeds: "/usr/share/nodo/default-feeds.toml".into(),
             updates: "/var/lib/nodo/updates".into(),
             kept: "/var/lib/nodo/packages".into(),
             rollback: "/var/lib/nodo/rollback".into(),
