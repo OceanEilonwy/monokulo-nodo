@@ -1,0 +1,217 @@
+# Builds the app feed, signs it and publishes it on GitHub Pages at https://nodo.monokulo.com.
+# docs/FEED.md describes the feed, the key and this workflow; scripts/publish-feed.sh does the work.
+#
+# The build jobs compile third-party code and never see the signing key. Only the publish job
+# does, and only for a run on main: it is not triggered by pull requests at all.
+name: feed
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits rather than cancelling one half deployed.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        # The runner is x86_64: x86_64 builds natively, aarch64 cross-compiles.
+        arch: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # build/stamps and out/feed/<arch> are small. With them, build-packages.sh skips every
+      # package whose recipe did not change, so most runs build nothing.
+      - name: Restore built packages
+        id: out
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/stamps
+            out/feed/${{ matrix.arch }}
+          key: feed-out-${{ matrix.arch }}-${{ hashFiles('feed/packages', 'packages/**', 'versions.env', 'scripts/_build-packages-inner.sh') }}
+          restore-keys: feed-out-${{ matrix.arch }}-
+
+      - name: List what needs building
+        id: todo
+        run: |
+          apps=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' feed/packages | tr '\n' ' ')
+          # shellcheck disable=SC2086
+          todo=$(scripts/build-packages.sh --changed "${{ matrix.arch }}" $apps)
+          echo "to build: ${todo:-nothing}"
+          echo "todo=$todo" >> "$GITHUB_OUTPUT"
+
+      - name: Free disk space
+        if: steps.todo.outputs.todo != ''
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      # Distfiles (toolchains, sources), cargo and npm downloads and xbps's package cache.
+      - name: Restore the build cache
+        id: hostdir
+        if: steps.todo.outputs.todo != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/hostdir
+          key: feed-hostdir-${{ matrix.arch }}-${{ hashFiles('feed/packages', 'packages/**', 'versions.env', 'scripts/_build-packages-inner.sh') }}
+          restore-keys: feed-hostdir-${{ matrix.arch }}-
+
+      - name: Restore the builder image
+        id: builder
+        if: steps.todo.outputs.todo != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/builder-image.tar.zst
+          key: feed-builder-${{ hashFiles('docker/builder.Dockerfile', 'versions.env') }}
+
+      - name: Load the builder image
+        if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit == 'true'
+        run: zstd -dc build/builder-image.tar.zst | docker load
+
+      - name: Build
+        if: steps.todo.outputs.todo != ''
+        run: scripts/publish-feed.sh build "${{ matrix.arch }}"
+
+      - name: Save the builder image
+        if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
+        run: |
+          . scripts/lib.sh
+          docker save "$(builder_tag)" | zstd -T0 -3 -o build/builder-image.tar.zst
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
+        with:
+          path: build/builder-image.tar.zst
+          key: ${{ steps.builder.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.todo.outputs.todo != '' && steps.hostdir.outputs.cache-hit != 'true'
+        with:
+          path: build/hostdir
+          key: ${{ steps.hostdir.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.out.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/stamps
+            out/feed/${{ matrix.arch }}
+          key: ${{ steps.out.outputs.cache-primary-key }}
+
+      # GitHub Pages refuses files over 100 MB and sites over 1 GB.
+      - name: Collect the feed's packages
+        run: |
+          mkdir -p "out/upload/${{ matrix.arch }}"
+          sed -e 's/#.*//' -e '/^[[:space:]]*$/d' feed/packages | while read -r app; do
+            cp "out/feed/${{ matrix.arch }}/$app"-[0-9]*.xbps "out/upload/${{ matrix.arch }}/"
+          done
+          ls -l "out/upload/${{ matrix.arch }}"
+          big=$(find out/upload -type f -size +95M)
+          if [ -n "$big" ]; then echo "::error::over the Pages file limit: $big"; exit 1; fi
+          echo "total: $(du -sh "out/upload/${{ matrix.arch }}" | cut -f1)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feed-${{ matrix.arch }}
+          path: out/upload/${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # A failed architecture never blocks the others' updates; the check below still requires
+    # aarch64, which every T6N device uses.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: feed-*
+          path: out/artifacts
+
+      - name: Place the packages
+        id: archs
+        run: |
+          archs=
+          for arch in aarch64 x86_64; do
+            if [ -d "out/artifacts/feed-$arch" ]; then
+              mkdir -p "out/feed/$arch"
+              mv "out/artifacts/feed-$arch"/*.xbps "out/feed/$arch/"
+              archs="$archs $arch"
+            else
+              echo "::warning::no $arch packages this run; the feed is published without them"
+            fi
+          done
+          case " $archs " in *" aarch64 "*) ;; *) echo "::error::aarch64 did not build"; exit 1 ;; esac
+          echo "archs=$archs" >> "$GITHUB_OUTPUT"
+
+      # The key exists only in this step, in a 0600 file under the runner's temp directory, and
+      # reaches xbps-rindex read-only in a container without network.
+      - name: Sign
+        env:
+          NODO_FEED_SIGNING_KEY: ${{ secrets.NODO_FEED_SIGNING_KEY }}
+        run: |
+          umask 077
+          key=$(mktemp "$RUNNER_TEMP/feed-key.XXXXXX")
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$NODO_FEED_SIGNING_KEY" > "$key"
+          # shellcheck disable=SC2086
+          scripts/publish-feed.sh sign "$key" ${{ steps.archs.outputs.archs }}
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: feed-check-${{ hashFiles('Cargo.lock') }}
+          restore-keys: feed-check-
+
+      # Every package goes through the device's own install review, against the fingerprint the
+      # image pins, before anything is published.
+      - name: Check as a device would
+        run: scripts/publish-feed.sh check ${{ steps.archs.outputs.archs }}
+
+      - name: Write the site
+        run: |
+          # shellcheck disable=SC2086
+          scripts/publish-feed.sh site ${{ steps.archs.outputs.archs }}
+          find out/site -type f -printf '%s\t%P\n' | sort -n
+          total=$(du -sb out/site | cut -f1)
+          echo "site: $total bytes of the 1 GB Pages limit"
+          [ "$total" -lt 900000000 ] || { echo "::error::the site is near the Pages size limit"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: out/site
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,0 +1,8 @@
+# The apps published at https://nodo.monokulo.com/feed, one recipe name from packages/ per line.
+# Base system packages (nodo-base, nodo-tools, kernels...) never go here: they reach devices in
+# signed system snapshots (scripts/publish-snapshot.sh). See docs/FEED.md.
+mk-pay
+mk-bell
+mk-push-relay
+mk-lws
+kringle
