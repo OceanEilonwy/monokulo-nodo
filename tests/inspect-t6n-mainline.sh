@@ -146,6 +146,8 @@ vp3_ep=$(fdtget "$dtb" /__symbols__ vp3_out_dsi1 2>/dev/null)
 result "VOP2 video port 3 feeds dsi1 (ROCKCHIP_VOP2_EP_MIPI1)" "$?"
 fdtget "$dtb" /chosen bootargs | grep -q 'console=tty0 console=ttyS2'
 result "kernel messages go to the HDMI console and the serial port" "$?"
+fdtget "$dtb" /chosen bootargs | grep -q "fbcon=font:TER16x32"
+result "the screen's console uses the Terminus 16x32 font" "$?"
 fdtget "$dtb" /pcie@fe190000/pcie@0,0/ethernet@0,0 compatible | grep -q pci10ec,8125
 result "the RTL8125 node is where the ethernet0 alias points" "$?"
 if [ "$(fdtget "$dtb" /aliases ethernet0)" = /pcie@fe190000/pcie@0,0/ethernet@0,0 ]; then r=0; else r=1; fi

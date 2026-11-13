@@ -118,8 +118,20 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
   panel API, and the template adds it to the kernel tree. The panel has no backlight; its DCS
   brightness is offered as one. The touchscreen is a Goodix GT1x on I2C5, which mainline's `goodix`
   driver handles as `goodix,gt1151`. The DC-PHY, panel and touch drivers are modules, so the screen
-  lights once udev has loaded them. **Unverified:** that panel, touch and the 1080x1920 portrait
-  text console work; the first cards had no DSI at all.
+  lights once udev has loaded them. Verified on the Nodo on 2026-11-13: the panel shows a steady
+  picture and touch registers (Goodix ID 1158). Three things were needed beyond FriendlyElec's
+  tree, found by dumping the DSI host, DC-PHY and VOP2 registers on both systems and comparing:
+  - **Pixel clock 132 MHz.** VOP2's DSI video port only makes 132 MHz here (GPLL / 9); with the
+    mode at FriendlyElec's 133.711 MHz, mainline's DSI host timed lines for the wrong rate.
+  - **VOP2 pre-scan hblank of at least 8.** Mainline writes the mode's hsync length into
+    `VP_PRE_SCAN_HTIMING`; Rockchip's BSP clamps it to 8, since a smaller value lets the window
+    reset corrupt the line start. The panel's hsync is 4 pixels, and without the clamp the picture
+    jittered along the line. `patches/0001-drm-rockchip-vop2-pre-scan-hblank-minimum.patch`.
+  - **High-speed blanking in the back porch** (`MIPI_DSI_MODE_VIDEO_NO_HBP`, the DSI host's
+    `BLK_HBP_HS_EN`), as the original system's DSI host has it.
+  The panel sits in the case left side up (`rotation = <270>`); the driver reports the
+  orientation and fbcon rotation is built in, so the console reads the right way up, in Terminus
+  16x32 (`fbcon=font:TER16x32`, 120 by 33 characters).
 - **HDMI and the text console.** VOP2, `dw-hdmi-qp` and the HDPTX PHY drive `hdmi0`, and DRM's
   fbdev emulation puts a text console on it once `rockchipdrm` loads (udev loads it from the root
   filesystem, so the screen shows the boot logo until then). `console=tty0` sends kernel messages

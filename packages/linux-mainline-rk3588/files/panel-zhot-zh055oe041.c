@@ -10,7 +10,8 @@
  * rk3588-nanopi6-mipi-55amoled.dtsi, written for mainline's panel and DSI APIs. The pixel clock is
  * 132 MHz, not FriendlyElec's 133.711 MHz: the RK3588 makes 132 MHz exactly for VOP2's DSI video
  * port, and when the clock it gives differs from the mode, mainline's DSI host times each line for
- * the wrong rate and the picture shakes sideways (seen on the Nodo, 2026-11-12).
+ * the wrong rate. The panel's 4-pixel hsync also needs VOP2's pre-scan hblank clamped to 8
+ * (patches/0001-drm-rockchip-vop2-pre-scan-hblank-minimum.patch), or the picture jitters.
  *
  * Based on panel-raydium-rm67191.c, Copyright 2019 NXP.
  */
@@ -410,10 +411,15 @@ static int zh_probe(struct mipi_dsi_device *dsi)
 	mipi_dsi_set_drvdata(dsi, zh);
 	zh->dsi = dsi;
 
-	/* FriendlyElec's settings: four lanes, RGB888, burst video mode, no EoT packet. */
+	/*
+	 * FriendlyElec's settings: four lanes, RGB888, burst video mode, no EoT packet, and
+	 * high-speed blanking in the horizontal back porch (MIPI_DSI_MODE_VIDEO_NO_HBP sets the DSI
+	 * host's BLK_HBP_HS_EN), which the original Nodo system's DSI host has set too.
+	 */
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
-			  MIPI_DSI_MODE_VIDEO_HSE | MIPI_DSI_MODE_NO_EOT_PACKET;
+			  MIPI_DSI_MODE_VIDEO_HSE | MIPI_DSI_MODE_VIDEO_NO_HBP |
+			  MIPI_DSI_MODE_NO_EOT_PACKET;
 	dsi->lanes = 4;
 	of_property_read_u32(dev->of_node, "dsi-lanes", &dsi->lanes);
 

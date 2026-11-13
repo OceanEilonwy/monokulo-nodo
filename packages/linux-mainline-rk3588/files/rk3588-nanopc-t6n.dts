@@ -39,10 +39,11 @@
 	 */
 	chosen: chosen {
 		/*
-		 * Kernel messages go to the HDMI text console too. The last console= stays the
-		 * serial port, so /dev/console is still ttyS2.
+		 * Kernel messages go to the screen's text console too. The last console= stays the
+		 * serial port, so /dev/console is still ttyS2. The 1080x1920 panel makes the 8x16
+		 * font tiny, so the console uses Terminus 16x32 (120 by 33 characters on its side).
 		 */
-		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=tty0 console=ttyS2,1500000n8 coherent_pool=1m";
+		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=tty0 console=ttyS2,1500000n8 coherent_pool=1m fbcon=font:TER16x32";
 		bootargs_ext = "root=/dev/mmcblk0p8 rw rootfstype=ext4 rootwait";
 	};
 
