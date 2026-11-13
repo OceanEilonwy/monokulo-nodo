@@ -212,6 +212,11 @@ codebase, and signed xbps packages from user-added feeds.
   root service whose socket only `_nodo_screen` may open and which accepts only `poweroff`: it stops
   every service (cuprated given five minutes to save), syncs and turns the device off.
   [SCREEN.md](SCREEN.md) is the contract.
+- **Logging in over SSH** opens `nodo-tui` (`/etc/profile.d/nodo-tui.sh`, from `nodo-tools`).
+  Only an interactive login shell on a terminal does: `ssh nodo some-command`, scp and sftp are
+  untouched, and a shell started from that login does not open it again. Quitting it (`q`) leaves
+  the normal shell, where `nodo-tui` opens it again; if it fails to start, the shell is there
+  anyway. To skip it, `touch ~/.hushtui`, or log in with `ssh -t nodo sh` (not a login shell).
 
 ## Layout
 

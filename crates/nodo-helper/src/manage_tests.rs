@@ -1579,3 +1579,59 @@ mod usb {
         assert!(r.media.0.lock().unwrap().calls.is_empty());
     }
 }
+
+#[test]
+fn a_seeded_default_feed_is_read_when_the_helper_starts() {
+    let (h, _) = setup();
+    ship_default(&h, &key('a'));
+    // A new device: the feed is seeded but nothing was read yet.
+    assert_eq!(feeds(&h)[0].packages, 0);
+    assert_eq!(feeds(&h)[0].last_checked, None);
+    h.refresh_feeds_now().unwrap();
+    let list = feeds(&h);
+    assert_eq!(list[0].packages, 1);
+    assert!(list[0].last_checked.is_some());
+    assert_eq!(list[0].problem, None);
+}
+
+#[test]
+fn the_scheduled_run_reads_feeds_with_automatic_updates_off_and_installs_nothing() {
+    let (h, packages) = setup();
+    ship_default(&h, &key('a'));
+    assert_eq!(feeds(&h)[0].packages, 0);
+    assert!(run_auto(&h).is_empty());
+    assert_eq!(feeds(&h)[0].packages, 1, "listing what a feed offers does not need auto-update");
+    assert_eq!(packages.installed(), None, "and nothing was installed");
+    // Read just now, so the next run does not read it again.
+    assert_eq!(h.refresh_feeds_if_due(), Ok(false));
+}
+
+#[test]
+fn a_feed_that_cannot_be_read_records_its_problem() {
+    let (h, _) = setup();
+    let text = "[[feed]]\nname = \"elsewhere\"\naddress = \"https://elsewhere.example/feed\"\n\
+                fingerprint = \"aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa\"\n";
+    h.sys.put(DEFAULT_FEEDS, text.as_bytes());
+    assert_eq!(h.refresh_feeds_if_due(), Ok(true));
+    let list = feeds(&h);
+    assert_eq!(list[0].packages, 0);
+    assert!(list[0].problem.is_some());
+    assert!(list[0].last_checked.is_some());
+}
+
+#[test]
+fn feeds_are_read_again_after_six_hours() {
+    use crate::feeds::{FeedRecord, FeedState, FEED_RECHECK_SECS};
+    let mut state = FeedState::default();
+    assert!(!state.refresh_due(NOW), "no feeds, nothing to read");
+    state.feeds.insert(
+        "a".into(),
+        FeedRecord { address: FEED.into(), enabled: true, last_checked: Some(NOW - 60), ..FeedRecord::default() },
+    );
+    assert!(!state.refresh_due(NOW));
+    assert!(state.refresh_due(NOW - 60 + FEED_RECHECK_SECS));
+    state.feeds.get_mut("a").unwrap().last_checked = None;
+    assert!(state.refresh_due(NOW), "a feed never read is due");
+    state.feeds.get_mut("a").unwrap().enabled = false;
+    assert!(!state.refresh_due(NOW), "a disabled feed is never read");
+}

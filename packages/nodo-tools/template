@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=13
+revision=15
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash"
@@ -96,6 +96,8 @@ do_install() {
 	# Before runit's general stop, which kills a service after 7 seconds: waits for the node and any
 	# package that declares a longer stop, on every shutdown that the Shut down button did not start.
 	vinstall ${FILESDIR}/shutdown/06-nodo-long-stop.sh 644 etc/runit/shutdown.d
+	# Opens nodo-tui for interactive SSH logins.
+	vinstall ${FILESDIR}/profile/nodo-tui.sh 644 etc/profile.d
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate

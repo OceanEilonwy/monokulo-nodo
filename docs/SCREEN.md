@@ -303,7 +303,11 @@ the black never change.
   in whichever half needs it. The status line's grey is entry 15. The panels set their own palette.
 - At boot, `/etc/runit/core-services/01-nodo-splash.sh` starts it in the background right after
   the pseudo-filesystems are mounted (pid in `/run/nodo-splash.pid`), on boards where nodo-gui (or
-  nodo-screen) is enabled. Their run scripts stop it before taking the screen. The kernel boots quietly
+  nodo-screen) is enabled. That is before udev loads the display driver, so it first draws on the
+  kernel's placeholder console; when the panel's console appears (about 8 s in, at 120 x 33) it
+  loads its font (`nodo-screen-16x32`, else Terminus) and redraws centred. It checks the console's
+  size every 50 ms for this. nodo-gui's and nodo-screen's run scripts stop it before taking the
+  screen. The kernel boots quietly
   (`quiet loglevel=3 vt.global_cursor_default=0 logo.nologo`, `docs/MAINLINE_KERNEL.md`), and
   runit's messages go to the serial port, so nothing draws over it.
 - At shutdown, `/etc/runit/shutdown.d/05-nodo-splash.sh` stops the panels (nodo-gui hands the

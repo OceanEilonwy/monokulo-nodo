@@ -86,12 +86,29 @@ downgrades refused), whereas a system snapshot is trusted with the whole device.
 the secret from the repository to the `github-pages` environment (Settings, Environments), whose
 branch policy allows only `main`, and protect `main` with required reviews.
 
+## When devices read feeds
+
+Reading a feed only updates what the device lists as available; it never installs anything. The
+helper reads every enabled feed:
+
+- when it starts (in the background, so its socket answers at once);
+- when the owner adds a feed (the confirmed index is stored with it);
+- on the `nodo-autoupdate` timer, whenever a feed was never read or was last read six hours ago or
+  more. This does not depend on automatic updates, which stay off until the owner chooses
+  packages for them;
+- when the owner refreshes the Feeds screen, and when the TUI finds a feed that was never read.
+
+A feed that cannot be read keeps its last package list and records the problem, which the Feeds
+screen and an empty Search show.
+
 ## The default feed on devices
 
 `nodo-tools` installs `/usr/share/nodo/default-feeds.toml` (from `packages/nodo-tools/files`).
 The first time the helper reads its feed state on a device that never had a default, it adds it
 as `monokulo`, enabled, pinned to the shipped fingerprint, before ever contacting the server; the
-first refresh fills its package list. The address is then recorded in `defaults_seeded` in
+first refresh fills its package list. That first refresh happens straight away: the helper reads
+every enabled feed in the background when it starts, so a new device lists the feed's packages
+within seconds of booting. The address is then recorded in `defaults_seeded` in
 `/var/lib/nodo/feeds.toml`, so:
 
 - if the owner removes it, it stays removed, also across image updates (it can still be added by

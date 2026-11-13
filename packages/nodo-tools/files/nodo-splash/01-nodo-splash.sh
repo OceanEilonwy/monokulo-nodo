@@ -7,8 +7,7 @@ if [ -x /usr/bin/nodo-splash ] && [ -c /dev/tty1 ] \
 	&& { [ -e /etc/runit/runsvdir/default/nodo-gui ] || [ -e /etc/runit/runsvdir/default/nodo-screen ]; }; then
 	# Kernel messages would draw over the logo; they still reach the kernel log and the serial port.
 	dmesg -n 1 2>/dev/null
-	# Terminus 16x32 with Unicode block elements. The kernel's built-in Terminus also has the half
-	# blocks the logo needs, so the splash still shows if this fails.
-	setfont -C /dev/tty1 /usr/share/kbd/consolefonts/ter-v32n.psf.gz 2>/dev/null
+	# The panel's console only appears once udev has loaded the display driver, a few seconds
+	# later; nodo-splash loads its font and redraws centred when the console changes size.
 	/usr/bin/nodo-splash --pidfile /run/nodo-splash.pid </dev/null >/dev/null 2>&1 &
 fi
