@@ -1,0 +1,927 @@
+// nodo-gui: the built-in screen's package panels (docs/SCREEN.md).
+//
+// The design is docs/design/tui/ScreenTilesOled*.dc.html and ScreenShutdown*.dc.html, drawn at
+// half size: every measure here is the design's doubled. Rust computes every rectangle a finger
+// can hit (src/geometry.rs) and passes it in; this file only draws. One TouchArea over the whole
+// window hands every press, drag and release to Rust.
+
+import "fonts/JetBrainsMono-Regular.ttf";
+import "fonts/JetBrainsMono-Bold.ttf";
+
+export global Palette {
+    out property <color> ground: #000000;
+    out property <color> fg: #D7DADC;
+    out property <color> bright: #F4F5F6;
+    out property <color> dim: #80888E;
+    out property <color> border: #3A4045;
+    out property <color> track: #2A2F33;
+    out property <color> ok: #6FD6B3;
+    out property <color> accent: #F2A33A;
+    out property <color> err: #FF8A7A;
+    out property <color> info: #86BEFF;
+    out property <color> off-border: #7A3A33;
+}
+
+export struct RowView {
+    label: string,
+    value: string,
+}
+
+export struct TileView {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    title: string,
+    title-color: color,
+    package: string,
+    dot: bool,
+    dot-color: color,
+    outline: color,
+    outline-width: length,
+    big: string,
+    unit: string,
+    big-color: color,
+    // One grid row tall: the design's smaller value.
+    compact: bool,
+    bar-shown: bool,
+    bar: float,
+    bar-color: color,
+    rows: [RowView],
+    value-color: color,
+    series: [float],
+    series-color: color,
+    note: string,
+    note-color: color,
+    // "waiting for cuprated", or why the panel failed, in place of values.
+    message: string,
+    message-color: color,
+    // Arranging: the tile shows only its name and size.
+    arranging: bool,
+    selected: bool,
+    size-text: string,
+}
+
+export struct CellView {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+}
+
+// kind: 0 plain, 1 shut down (red outline), 2 light outline, 3 save (blue), 4 undo (amber),
+// 5 shut down for sure (red), 6 large light outline. icon: 0 none, 1 the three lines of Arrange.
+export struct ButtonView {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    label: string,
+    count: string,
+    sub: string,
+    kind: int,
+    icon: int,
+}
+
+export struct PickerRowView {
+    heading: bool,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    title: string,
+    detail: string,
+    sizes: string,
+    pw: int,
+    ph: int,
+    highlighted: bool,
+}
+
+export struct StepView {
+    mark: string,
+    mark-color: color,
+    name: string,
+    name-color: color,
+    state: string,
+    state-color: color,
+    time: string,
+}
+
+export struct GhostView {
+    shown: bool,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    title: string,
+    size-text: string,
+}
+
+// A rounded rectangle drawn with dashes, as the design's free cells and landing place.
+component DashedBox inherits Rectangle {
+    in property <color> dash-color;
+    in property <length> thickness: 4px;
+    in property <length> r: 20px;
+    property <length> dash: 16px;
+    property <length> gap: 12px;
+    property <int> across: Math.max(0, Math.floor((self.width - 2 * r + gap) / (dash + gap)));
+    property <int> down: Math.max(0, Math.floor((self.height - 2 * r + gap) / (dash + gap)));
+    property <length> across-start: r + (self.width - 2 * r - (across * (dash + gap) - gap)) / 2;
+    property <length> down-start: r + (self.height - 2 * r - (down * (dash + gap) - gap)) / 2;
+    for i in across: Rectangle {
+        x: across-start + i * (dash + gap);
+        y: 0;
+        width: dash;
+        height: thickness;
+        background: dash-color;
+    }
+    for i in across: Rectangle {
+        x: across-start + i * (dash + gap);
+        y: parent.height - thickness;
+        width: dash;
+        height: thickness;
+        background: dash-color;
+    }
+    for i in down: Rectangle {
+        x: 0;
+        y: down-start + i * (dash + gap);
+        width: thickness;
+        height: dash;
+        background: dash-color;
+    }
+    for i in down: Rectangle {
+        x: parent.width - thickness;
+        y: down-start + i * (dash + gap);
+        width: thickness;
+        height: dash;
+        background: dash-color;
+    }
+    // The four corners, solid quarter circles.
+    Path {
+        x: 0;
+        y: 0;
+        width: r;
+        height: r;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        commands: "M 2 20 A 18 18 0 0 1 20 2";
+        stroke: dash-color;
+        stroke-width: thickness;
+    }
+    Path {
+        x: parent.width - r;
+        y: 0;
+        width: r;
+        height: r;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        commands: "M 0 2 A 18 18 0 0 1 18 20";
+        stroke: dash-color;
+        stroke-width: thickness;
+    }
+    Path {
+        x: 0;
+        y: parent.height - r;
+        width: r;
+        height: r;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        commands: "M 2 0 A 18 18 0 0 0 20 18";
+        stroke: dash-color;
+        stroke-width: thickness;
+    }
+    Path {
+        x: parent.width - r;
+        y: parent.height - r;
+        width: r;
+        height: r;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        commands: "M 18 0 A 18 18 0 0 1 0 18";
+        stroke: dash-color;
+        stroke-width: thickness;
+    }
+}
+
+// The three lines of ☰, which JetBrains Mono does not have.
+component MenuIcon inherits Rectangle {
+    in property <color> icon-color;
+    width: 28px;
+    height: 24px;
+    for i in 3: Rectangle {
+        x: 0;
+        y: i * 10px;
+        width: parent.width;
+        height: 4px;
+        border-radius: 2px;
+        background: icon-color;
+    }
+}
+
+// ⇲: an arrow into the bottom-right corner, which JetBrains Mono does not have either.
+component GripIcon inherits Path {
+    width: 44px;
+    height: 44px;
+    viewbox-width: 44;
+    viewbox-height: 44;
+    commands: "M 6 6 L 30 30 M 30 14 L 30 30 L 14 30 M 40 4 L 40 40 L 4 40";
+    stroke: Palette.ground;
+    stroke-width: 5px;
+}
+
+component Btn inherits Rectangle {
+    in property <ButtonView> b;
+    property <bool> filled: b.kind == 3 || b.kind == 4 || b.kind == 5;
+    property <color> fill: b.kind == 3 ? Palette.info : b.kind == 4 ? Palette.accent : b.kind == 5 ? Palette.err : transparent;
+    property <color> text-color: filled ? Palette.ground : b.kind == 1 ? Palette.err : Palette.fg;
+    property <bool> large: b.kind >= 5;
+    x: b.x;
+    y: b.y;
+    width: b.w;
+    height: b.h;
+    border-radius: 16px;
+    border-width: 4px;
+    border-color: filled ? fill : b.kind == 1 ? Palette.off-border : b.kind == 0 ? Palette.border : Palette.fg;
+    background: filled ? fill : transparent;
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 16px;
+            if b.icon == 1: VerticalLayout {
+                alignment: center;
+                MenuIcon {
+                    icon-color: text-color;
+                }
+            }
+            Text {
+                text: b.label;
+                font-size: large ? 40px : 26px;
+                font-weight: 700;
+                color: text-color;
+                vertical-alignment: center;
+            }
+            if b.count != "": Text {
+                text: b.count;
+                font-size: 26px;
+                color: Palette.dim;
+                vertical-alignment: center;
+            }
+        }
+        if b.sub != "": Text {
+            text: b.sub;
+            font-size: 22px;
+            color: filled ? Palette.ground : Palette.dim;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+component Sparkline inherits Rectangle {
+    in property <[float]> values;
+    in property <color> bar-color;
+    property <length> step: values.length > 0 ? self.width / values.length : 0;
+    for v[i] in values: Rectangle {
+        x: i * step;
+        width: Math.max(1px, step - 4px);
+        height: Math.max(2px, parent.height * v);
+        y: parent.height - self.height;
+        background: bar-color;
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <TileView> t;
+    x: t.x;
+    y: t.y;
+    width: t.w;
+    height: t.h;
+    border-radius: 20px;
+    border-width: t.outline-width;
+    border-color: t.outline;
+    background: Palette.ground;
+    clip: true;
+
+    // Title row: the name in capitals and a status dot.
+    Text {
+        x: 24px;
+        y: 16px;
+        width: parent.width - 80px;
+        text: t.title;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 1.3px;
+        color: t.title-color;
+        overflow: elide;
+    }
+    if t.dot && !t.arranging: Text {
+        x: parent.width - 24px - self.width;
+        y: 12px;
+        text: "●";
+        font-size: 24px;
+        color: t.dot-color;
+    }
+
+    if t.arranging: VerticalLayout {
+        x: 24px;
+        y: 52px;
+        width: parent.width - 48px;
+        alignment: start;
+        Text {
+            text: t.size-text;
+            font-size: 24px;
+            color: t.selected ? Palette.accent : Palette.dim;
+            wrap: word-wrap;
+        }
+    }
+    if t.arranging && t.selected: Text {
+        x: 24px;
+        y: parent.height - 16px - 12px - self.height;
+        text: "drag to move";
+        font-size: 24px;
+        color: Palette.dim;
+    }
+    if t.arranging && t.selected: Rectangle {
+        x: parent.width - 104px;
+        y: parent.height - 104px;
+        width: 104px;
+        height: 104px;
+        background: Palette.accent;
+        border-top-left-radius: 20px;
+        border-bottom-right-radius: 20px;
+        GripIcon { }
+    }
+
+    if !t.arranging: VerticalLayout {
+        x: 24px;
+        y: 52px;
+        width: parent.width - 48px;
+        height: parent.height - 52px - 16px;
+        alignment: start;
+        spacing: 0px;
+        if t.message != "": Text {
+            text: t.message;
+            font-size: 24px;
+            color: t.message-color;
+            wrap: word-wrap;
+        }
+        if t.big != "": HorizontalLayout {
+            alignment: start;
+            spacing: 16px;
+            padding-top: 6px;
+            Text {
+                text: t.big;
+                font-size: t.compact ? 36px : 68px;
+                font-weight: 700;
+                color: t.big-color;
+                vertical-alignment: bottom;
+                overflow: elide;
+            }
+            if t.unit != "": VerticalLayout {
+                alignment: end;
+                padding-bottom: t.compact ? 4px : 10px;
+                Text {
+                    text: t.unit;
+                    font-size: 26px;
+                    color: Palette.dim;
+                }
+            }
+        }
+        if t.bar-shown: Rectangle {
+            height: 22px;
+            Rectangle {
+                y: 16px;
+                height: 6px;
+                background: Palette.track;
+            }
+            Rectangle {
+                x: 0;
+                y: 16px;
+                height: 6px;
+                width: parent.width * Math.min(1, Math.max(0, t.bar));
+                background: t.bar-color;
+            }
+        }
+        if t.rows.length > 0: Rectangle {
+            height: 14px;
+        }
+        for row in t.rows: HorizontalLayout {
+            height: 30px;
+            spacing: 16px;
+            Text {
+                text: row.label;
+                font-size: 24px;
+                color: Palette.dim;
+                overflow: elide;
+            }
+            Text {
+                text: row.value;
+                font-size: 24px;
+                color: t.value-color;
+                horizontal-alignment: right;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+        }
+        if t.note != "": Text {
+            text: t.note;
+            font-size: 24px;
+            color: t.note-color;
+            overflow: elide;
+        }
+    }
+    if !t.arranging && t.series.length > 0: Sparkline {
+        x: 24px;
+        y: parent.height - 44px - 60px;
+        width: parent.width - 48px;
+        height: 60px;
+        values: t.series;
+        bar-color: t.series-color;
+    }
+    if !t.arranging && t.package != "": Text {
+        x: parent.width - 24px - self.width;
+        y: parent.height - 10px - self.height;
+        text: t.package;
+        font-size: 20px;
+        color: Palette.dim;
+    }
+}
+
+component PickerRow inherits Rectangle {
+    in property <PickerRowView> line;
+    x: line.x;
+    y: line.y;
+    width: line.w;
+    height: line.h;
+    if line.heading: Text {
+        x: 0;
+        y: parent.height - self.height - 8px;
+        text: line.title;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 1.3px;
+        color: Palette.dim;
+    }
+    if !line.heading: Rectangle {
+        // The row's bottom rule.
+        Rectangle {
+            x: 0;
+            y: parent.height - 2px;
+            height: 2px;
+            background: Palette.track;
+        }
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 36px;
+            alignment: stretch;
+            // A small picture of the panel's starting size on the 8 x 4 grid.
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 8 * 18px + 7 * 4px;
+                    height: 4 * 18px + 3 * 4px;
+                    for i in 32: Rectangle {
+                        x: Math.mod(i, 8) * 22px;
+                        y: Math.floor(i / 8) * 22px;
+                        width: 18px;
+                        height: 18px;
+                        background: Math.mod(i, 8) < line.pw && Math.floor(i / 8) < line.ph ? Palette.fg : Palette.track;
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                spacing: 6px;
+                Text {
+                    text: line.title;
+                    font-size: 30px;
+                    font-weight: 700;
+                    color: line.highlighted ? Palette.accent : Palette.bright;
+                    overflow: elide;
+                }
+                Text {
+                    text: line.detail;
+                    font-size: 24px;
+                    color: Palette.dim;
+                    overflow: elide;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    width: 220px;
+                    text: line.sizes;
+                    font-size: 24px;
+                    color: Palette.dim;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 240px;
+                    height: 96px;
+                    border-radius: 16px;
+                    border-width: 4px;
+                    border-color: Palette.fg;
+                    Text {
+                        text: "+ Add";
+                        font-size: 26px;
+                        font-weight: 700;
+                        color: Palette.fg;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    width: 1920px;
+    height: 1080px;
+    background: Palette.ground;
+    default-font-family: "JetBrains Mono";
+    title: "nodo-gui";
+
+    // 0 tiles, 1 arranging, 2 adding a panel, 3 confirm shut down, 4 shutting down, 5 off.
+    in property <int> mode: 0;
+    in property <string> host: "monokulo-nodo";
+    in property <string> address;
+    in property <string> day;
+    in property <string> time;
+    // Arranging's line in the top bar: a hint in grey or a refusal in amber.
+    in property <string> hint;
+    in property <bool> hint-is-warning;
+    in property <length> header-text-width: 1000px;
+    in property <[TileView]> tiles;
+    in property <[CellView]> free-cells;
+    in property <bool> target-shown;
+    in property <CellView> target;
+    in property <GhostView> ghost;
+    in property <[ButtonView]> buttons;
+    in property <[PickerRowView]> picker;
+    in property <string> picker-hint;
+    in property <string> shutdown-title;
+    in property <string> shutdown-subtitle;
+    in property <bool> shutdown-failed;
+    in property <[StepView]> steps;
+    in property <float> progress;
+    in property <string> progress-note;
+
+    callback pointer-down(length, length);
+    callback pointer-move(length, length);
+    callback pointer-up();
+    // The key's text and whether shift was held; returns whether it was used.
+    callback key(string, bool) -> bool;
+
+    // The top bar, left part: what the screen is, or what arranging is doing.
+    HorizontalLayout {
+        x: 36px;
+        y: 24px;
+        width: header-text-width;
+        height: 88px;
+        spacing: 24px;
+        alignment: start;
+        if mode == 0: Text {
+            text: host;
+            font-size: 26px;
+            font-weight: 700;
+            color: Palette.fg;
+            vertical-alignment: center;
+        }
+        if mode == 0: Text {
+            text: address;
+            font-size: 24px;
+            color: Palette.dim;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if mode == 0: Rectangle {
+            horizontal-stretch: 1;
+        }
+        if mode == 0: HorizontalLayout {
+            spacing: 16px;
+            alignment: end;
+            Text {
+                text: day;
+                font-size: 26px;
+                color: Palette.fg;
+                vertical-alignment: center;
+            }
+            Text {
+                text: time;
+                font-size: 26px;
+                font-weight: 700;
+                color: Palette.fg;
+                vertical-alignment: center;
+            }
+        }
+        if mode == 1: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                background: Palette.accent;
+                width: badge.preferred-width + 24px;
+                height: badge.preferred-height + 4px;
+                badge := Text {
+                    text: "Arrange";
+                    font-size: 26px;
+                    font-weight: 700;
+                    color: Palette.ground;
+                }
+            }
+        }
+        if mode == 1: Text {
+            text: hint;
+            font-size: 24px;
+            color: hint-is-warning ? Palette.accent : Palette.dim;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        if mode == 2: Text {
+            text: "Add a panel";
+            font-size: 36px;
+            font-weight: 700;
+            color: Palette.bright;
+            vertical-alignment: center;
+        }
+        if mode == 2: Text {
+            text: picker-hint;
+            font-size: 24px;
+            color: hint-is-warning ? Palette.accent : Palette.dim;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+
+    if mode <= 1: Rectangle {
+        for c in free-cells: DashedBox {
+            x: c.x;
+            y: c.y;
+            width: c.w;
+            height: c.h;
+            dash-color: Palette.track;
+        }
+        for t in tiles: Tile {
+            t: t;
+        }
+        if target-shown: DashedBox {
+            x: target.x;
+            y: target.y;
+            width: target.w;
+            height: target.h;
+            dash-color: Palette.accent;
+        }
+        if ghost.shown: Rectangle {
+            x: ghost.x;
+            y: ghost.y;
+            width: ghost.w;
+            height: ghost.h;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: Palette.dim;
+            background: #D7DADC10;
+            opacity: 0.85;
+            Text {
+                x: 24px;
+                y: 16px;
+                text: ghost.title;
+                font-size: 22px;
+                font-weight: 700;
+                letter-spacing: 1.3px;
+                color: Palette.fg;
+            }
+            Text {
+                x: 24px;
+                y: 56px;
+                text: ghost.size-text;
+                font-size: 24px;
+                color: Palette.dim;
+            }
+        }
+    }
+
+    if mode == 2: Rectangle {
+        for row in picker: PickerRow {
+            line: row;
+        }
+    }
+
+    if mode == 3: Rectangle {
+        Text {
+            x: 0;
+            y: 300px;
+            width: parent.width;
+            horizontal-alignment: center;
+            text: "Shut down the Nodo?";
+            font-size: 60px;
+            font-weight: 700;
+            color: Palette.bright;
+        }
+        Text {
+            x: 0;
+            y: 400px;
+            width: parent.width;
+            horizontal-alignment: center;
+            text: "Every service stops and saves its data first: cuprated can take a few minutes while it syncs.";
+            font-size: 28px;
+            color: Palette.dim;
+        }
+        HorizontalLayout {
+            x: 0;
+            y: 444px;
+            width: parent.width;
+            alignment: center;
+            Text {
+                text: "Unplug only when the screen says ";
+                font-size: 28px;
+                color: Palette.dim;
+            }
+            Text {
+                text: "Safe to unplug";
+                font-size: 28px;
+                color: Palette.fg;
+            }
+            Text {
+                text: ".";
+                font-size: 28px;
+                color: Palette.dim;
+            }
+        }
+        Text {
+            x: 0;
+            y: 516px;
+            width: parent.width;
+            horizontal-alignment: center;
+            text: "To start it again, unplug it and plug it back in.";
+            font-size: 24px;
+            color: Palette.dim;
+        }
+    }
+
+    if mode == 4: VerticalLayout {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: shutdown-failed ? 820px : parent.height;
+        alignment: center;
+        spacing: 32px;
+        Text {
+            horizontal-alignment: center;
+            text: shutdown-title;
+            font-size: 52px;
+            font-weight: 700;
+            color: Palette.bright;
+        }
+        Text {
+            horizontal-alignment: center;
+            text: shutdown-subtitle;
+            font-size: 28px;
+            font-weight: 700;
+            color: Palette.err;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 1120px;
+                border-width: 2px;
+                border-radius: 20px;
+                border-color: Palette.border;
+                VerticalLayout {
+                    padding-top: 28px;
+                    padding-bottom: 28px;
+                    padding-left: 40px;
+                    padding-right: 40px;
+                    for s in steps: HorizontalLayout {
+                        height: 52px;
+                        spacing: 28px;
+                        Text {
+                            width: 28px;
+                            text: s.mark;
+                            font-size: 28px;
+                            color: s.mark-color;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: s.name;
+                            font-size: 28px;
+                            color: s.name-color;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: s.state;
+                            font-size: 28px;
+                            color: s.state-color;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            width: 112px;
+                            text: s.time;
+                            font-size: 28px;
+                            color: Palette.dim;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+        if !shutdown-failed: HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 1200px;
+                height: 8px;
+                background: Palette.track;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Math.min(1, Math.max(0, progress));
+                    background: Palette.info;
+                }
+            }
+        }
+        if !shutdown-failed: Text {
+            horizontal-alignment: center;
+            text: progress-note;
+            font-size: 24px;
+            color: Palette.dim;
+        }
+    }
+
+    if mode == 5: VerticalLayout {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        alignment: center;
+        spacing: 36px;
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 192px;
+                height: 192px;
+                border-radius: 96px;
+                border-width: 6px;
+                border-color: Palette.ok;
+                Text {
+                    text: "✓";
+                    font-size: 104px;
+                    color: Palette.ok;
+                }
+            }
+        }
+        Text {
+            horizontal-alignment: center;
+            text: "Safe to unplug";
+            font-size: 80px;
+            font-weight: 700;
+            color: Palette.ok;
+        }
+        Text {
+            horizontal-alignment: center;
+            text: "Every service stopped and its data is saved.\nThe screen may stay lit: the Nodo is off.";
+            font-size: 28px;
+            color: Palette.dim;
+        }
+        Text {
+            horizontal-alignment: center;
+            text: "To start it again, plug it back in.";
+            font-size: 24px;
+            color: Palette.dim;
+        }
+    }
+
+    for b in buttons: Btn {
+        b: b;
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (root.key(event.text, event.modifiers.shift)) {
+                return accept;
+            }
+            reject
+        }
+        TouchArea {
+            pointer-event(event) => {
+                if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                    root.pointer-down(self.mouse-x, self.mouse-y);
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.pointer-up();
+                }
+            }
+            moved => {
+                root.pointer-move(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+
+    init => {
+        keys.focus();
+    }
+}

@@ -17,8 +17,8 @@ nodo-power = { path = "../nodo-power" }
 serde.workspace = true
 toml.workspace = true
 # The same terminal stack as nodo-tui.
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
-crossterm = "0.28"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
 signal-hook = { version = "0.3", default-features = false }
 libc = "0.2"
 

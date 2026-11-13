@@ -233,7 +233,9 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
         default_hook(info);
     }));
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-    terminal.clear()?;
+    // ratatui 0.30's Terminal::clear asks the terminal where its cursor is, which a terminal that
+    // never answers turns into an error; clearing directly needs no answer.
+    crossterm::execute!(terminal.backend_mut(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
 
     let host = hostname();
     let mut app = App::new(offered, layout, Instant::now());

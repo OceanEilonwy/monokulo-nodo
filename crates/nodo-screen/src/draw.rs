@@ -751,7 +751,8 @@ pub(crate) mod tests {
         let out = screen(&demo());
         assert!(out.contains("monokulo-nodo"), "{out}");
         assert!(out.contains("thu 13 nov 14:32"));
-        assert!(out.contains("☰ Arrange") && out.contains("⏻ Shut down"), "both buttons in the top bar:\n{out}");
+        // unicode-width 0.2.2 (Unicode 16) counts ☰ as two columns wide, as current terminals draw it.
+        assert!(out.contains("☰") && out.contains("Arrange") && out.contains("⏻ Shut down"), "both buttons in the top bar:\n{out}");
         assert!(out.contains("╭") && out.contains("╯"), "rounded tiles:\n{out}");
         assert!(out.contains("MONERO NODE"));
         assert!(out.contains("█▀▀ ▄█  ▀ █"), "61% drawn large:\n{out}");

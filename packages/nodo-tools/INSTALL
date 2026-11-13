@@ -1,0 +1,16 @@
+# A board that shows the panels on its built-in screen used to run them in text, as nodo-screen on
+# tty1; nodo-gui now draws them in pixels (docs/SCREEN.md). A system update that brings nodo-gui
+# moves such a board over: nodo-screen's service is turned off and nodo-gui's on, and runit starts
+# it within a few seconds. nodo-screen stays installed, for terminals over SSH. Boards without the
+# panels, and image builds (which enable services after installing), are left alone. Paths are
+# relative: xbps runs this from the root directory.
+case "${ACTION}" in
+post)
+	enabled=./etc/runit/runsvdir/default
+	if [ -L "$enabled/nodo-screen" ] && [ ! -e "$enabled/nodo-gui" ] && [ -d ./etc/sv/nodo-gui ]; then
+		rm -f "$enabled/nodo-screen"
+		ln -s /etc/sv/nodo-gui "$enabled/nodo-gui"
+		echo "nodo-tools: the built-in screen now runs nodo-gui in place of nodo-screen"
+	fi
+	;;
+esac

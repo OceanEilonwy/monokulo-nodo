@@ -1,0 +1,32 @@
+#!/bin/sh
+# Package panels on the built-in screen (docs/SCREEN.md), drawn by nodo-gui straight to the panel
+# through KMS. On boards with a screen this service owns the display in place of tty1's login
+# prompt. It starts as root only to hand the screen over, then runs nodo-gui as _nodo_screen, which
+# may open the display (video) and the touchscreen (input) and nothing else.
+exec 2>&1
+exec </dev/null
+install -d -m 0750 -o _nodo_screen -g _nodo_screen /var/lib/nodo-screen
+# The boot splash (nodo-splash, started in runit stage 1) has the screen until now.
+if [ -r /run/nodo-splash.pid ]; then
+	splash=$(cat /run/nodo-splash.pid)
+	kill "$splash" 2>/dev/null
+	# It finishes its frame and exits within a tenth of a second; wait so it cannot draw after us.
+	for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$splash" 2>/dev/null || break; sleep 0.1; done
+	rm -f /run/nodo-splash.pid
+fi
+# Kernel messages go to the console underneath, which shows again whenever nodo-gui stops: only
+# emergencies reach it. They still go to the kernel log and the serial port.
+dmesg -n 1
+# The program dims the panel's backlight when nobody uses it (docs/SCREEN.md): give its account
+# that one file, and nothing else in sysfs.
+for b in /sys/class/backlight/*/brightness; do
+	[ -e "$b" ] || break
+	chgrp _nodo_screen "$b" && chmod g+w "$b"
+	break
+done
+# The panel sits on its side: its native mode is 1080x1920, and the console turns it a quarter turn
+# (fbcon rotate 3). Slint turns its picture, and the touches, the same way.
+export SLINT_KMS_ROTATION=270
+# Fontconfig keeps its cache in the account's home.
+export HOME=/var/lib/nodo-screen
+exec chpst -u _nodo_screen:_nodo_screen:input:video /usr/bin/nodo-gui

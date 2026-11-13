@@ -12,9 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 nodo-api = { path = "../nodo-api" }
-# ratatui 0.30 needs a newer compiler than the workspace's rust-version.
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
-crossterm = "0.28"
+# ratatui 0.29 pinned unicode-width to 0.2.0, which Slint (nodo-gui) cannot share.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
 signal-hook = { version = "0.3", default-features = false }
 unicode-width = "0.2"
 zeroize = "1"

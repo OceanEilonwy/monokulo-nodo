@@ -27,9 +27,10 @@ pub const REQUEST: &str = "poweroff";
 /// A request longer than this is refused without reading further.
 pub const MAX_REQUEST: usize = 64;
 
-/// Services that are never stopped here: this service, and the screen that shows the progress.
+/// Services that are never stopped here: this service, and the screen that shows the progress
+/// (nodo-gui, or nodo-screen on a board that still draws the panels in text).
 /// runit stops them as the device turns off.
-pub const KEEP_RUNNING: [&str; 2] = ["nodo-power", "nodo-screen"];
+pub const KEEP_RUNNING: [&str; 3] = ["nodo-power", "nodo-screen", "nodo-gui"];
 
 /// How long a service may take to stop. A node writing its database during the first sync can take
 /// minutes; it is never killed while it saves.
@@ -276,7 +277,7 @@ mod tests {
     #[test]
     fn the_screen_and_this_service_are_left_running() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["cuprated", "nodo-screen", "nodo-power", "sshd", ".hidden", "mk-pay"] {
+        for name in ["cuprated", "nodo-screen", "nodo-gui", "nodo-power", "sshd", ".hidden", "mk-pay"] {
             std::fs::create_dir(dir.path().join(name)).unwrap();
         }
         assert_eq!(enabled_services(dir.path()).unwrap(), ["cuprated", "mk-pay", "sshd"]);
