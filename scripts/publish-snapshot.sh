@@ -168,6 +168,7 @@ test)
 		same_index || { echo "Void's mirror moved on since the index was copied; make the snapshot again" >&2; exit 1; }
 	fi
 	# The same build as scripts/build-image.sh, with the snapshot as the only repositories.
+	mkdir -p "$root/out/images/$board"
 	docker run --rm --name "nodo-snapshot-test-$name-$board" \
 		-e "BOARD=$board" -e "VOID_MIRROR=$voidrepo" -e "NODO_REPO=$feed" -e "NODO_REPO_KEYS=$repokeys" \
 		-e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
