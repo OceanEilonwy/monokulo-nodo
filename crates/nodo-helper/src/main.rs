@@ -109,6 +109,17 @@ fn watch_local_address<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>)
     });
 }
 
+/// Reads every enabled feed once at start, in the background so the socket answers at once. This
+/// also seeds a default feed on a new device and reads it straight away, so the catalog is not
+/// empty until the first scheduled run. Problems are recorded on each feed.
+fn refresh_feeds_at_start<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>) {
+    std::thread::spawn(move || {
+        if let Err(e) = helper.refresh_feeds_now() {
+            eprintln!("nodo-helper: refreshing feeds at start: {e}");
+        }
+    });
+}
+
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--settings-worker") {
         return match worker::serve_stdio() {
@@ -162,6 +173,7 @@ fn main() -> ExitCode {
     helper.apply_radio_state();
     let helper = Arc::new(helper);
     watch_local_address(helper.clone());
+    refresh_feeds_at_start(helper.clone());
     if let Err(e) = server::serve(listener, helper) {
         eprintln!("nodo-helper: {e}");
         return ExitCode::FAILURE;
