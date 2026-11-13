@@ -1,4 +1,6 @@
 #!/bin/sh
-# Leave the screen readable when the program stops: clear it and show the cursor again.
+# Leave the screen readable when the program stops: clear it and show the cursor again. When the
+# device is turning off (nodo-power marks it), leave the last screen, "Safe to unplug", in place.
+[ -e /run/nodo-power/off ] && exit 0
 printf '\033[0m\033[2J\033[H\033[?25h' >/dev/tty1 2>/dev/null
 exit 0

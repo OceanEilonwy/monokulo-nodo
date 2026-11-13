@@ -18,11 +18,11 @@ const MAX_HEADER: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FetchError {
-    #[error("cannot reach the service ({0})")]
+    #[error("is not answering ({0})")]
     Unreachable(String),
     #[error("timed out")]
     Timeout,
-    #[error("answered {0}")]
+    #[error("answered HTTP {0}")]
     Status(u16),
     #[error("sent a response the screen cannot read ({0})")]
     Malformed(String),

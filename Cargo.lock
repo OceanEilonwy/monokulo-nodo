@@ -896,6 +896,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodo-power"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+]
+
+[[package]]
 name = "nodo-screen"
 version = "0.1.0"
 dependencies = [
@@ -903,6 +911,7 @@ dependencies = [
  "libc",
  "nodo-manifest",
  "nodo-panels",
+ "nodo-power",
  "ratatui",
  "serde",
  "signal-hook",

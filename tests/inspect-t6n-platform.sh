@@ -153,7 +153,8 @@ result "udevd (module and firmware loading, hotplug), the mixer service and tty1
 if [ "$tty1" = nodo-screen ]; then
 	r=0
 	case " $links " in *" agetty-tty1 "*) echo "  tty1's login prompt also starts"; r=1 ;; esac
-	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/kbd/consolefonts/ter-v32n.psf.gz \
+	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/nodo/nodo-screen-16x32.psf.gz \
+		/usr/share/licenses/nodo-tools/OFL-nodo-screen-16x32.txt \
 		/usr/share/nodo/packages/cuprated/panels/sync.lua; do
 		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
 	done
@@ -161,6 +162,14 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
 	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
 	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
+	# The screen's Shut down button asks nodo-power, the one root service that may turn the device off.
+	r=0
+	case " $links " in *" nodo-power "*) ;; *) echo "  not started: nodo-power"; r=1 ;; esac
+	show 'stat /usr/bin/nodo-power' | grep -q 'Type: regular' || { echo "  missing: /usr/bin/nodo-power"; r=1; }
+	show 'cat /etc/sv/nodo-power/run' | grep -q 'install -d -m 0750 -o root -g _nodo_screen /run/nodo-power' ||
+		{ echo "  nodo-power's socket directory is not root:_nodo_screen 0750"; r=1; }
+	show 'cat /etc/sv/nodo-screen/finish' | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
+	result "the screen's Shut down button has nodo-power to ask, and only root and _nodo_screen may ask it" "$r"
 fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do
