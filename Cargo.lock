@@ -924,6 +924,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodo-splash"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "signal-hook",
+]
+
+[[package]]
 name = "nodo-tui"
 version = "0.1.0"
 dependencies = [

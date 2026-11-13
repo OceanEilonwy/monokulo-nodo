@@ -148,6 +148,11 @@ fdtget "$dtb" /chosen bootargs | grep -q 'console=tty0 console=ttyS2'
 result "kernel messages go to the HDMI console and the serial port" "$?"
 fdtget "$dtb" /chosen bootargs | grep -q "fbcon=font:TER16x32"
 result "the screen's console uses the Terminus 16x32 font" "$?"
+r=0
+for a in quiet loglevel=3 vt.global_cursor_default=0 logo.nologo; do
+	case " $(fdtget "$dtb" /chosen bootargs) " in *" $a "*) ;; *) echo "  bootargs lack $a"; r=1 ;; esac
+done
+result "the screen shows the boot splash, not boot text, a cursor or the Tux logo" "$r"
 fdtget "$dtb" /pcie@fe190000/pcie@0,0/ethernet@0,0 compatible | grep -q pci10ec,8125
 result "the RTL8125 node is where the ethernet0 alias points" "$?"
 if [ "$(fdtget "$dtb" /aliases ethernet0)" = /pcie@fe190000/pcie@0,0/ethernet@0,0 ]; then r=0; else r=1; fi

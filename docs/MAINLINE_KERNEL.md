@@ -131,7 +131,9 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
     `BLK_HBP_HS_EN`), as the original system's DSI host has it.
   The panel sits in the case left side up (`rotation = <270>`); the driver reports the
   orientation and fbcon rotation is built in, so the console reads the right way up, in Terminus
-  16x32 (`fbcon=font:TER16x32`, 120 by 33 characters).
+  16x32 (`fbcon=font:TER16x32`, 120 by 33 characters). The kernel boots with `quiet loglevel=3
+  vt.global_cursor_default=0 logo.nologo`, so the screen stays black, without boot text, a cursor
+  or the Tux logo, until the boot splash (docs/SCREEN.md); errors still reach the consoles.
 - **HDMI and the text console.** VOP2, `dw-hdmi-qp` and the HDPTX PHY drive `hdmi0`, and DRM's
   fbdev emulation puts a text console on it once `rockchipdrm` loads (udev loads it from the root
   filesystem, so the screen shows the boot logo until then). `console=tty0` sends kernel messages

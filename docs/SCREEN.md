@@ -182,6 +182,33 @@ invert_x = true
 invert_y = false
 ```
 
+## Boot splash
+
+From early boot until the panels start, and again while the device shuts down, the screen shows
+the Nodo logo instead of text: the Ember band with its hex core in the band's seven oranges, drawn
+in Unicode half blocks (`▀`), 56 by 56 square pixels on rows 1 to 28 of the console, with
+`n o d o` and a dim `starting up…` or `shutting down…` below. Every 4 seconds a glint crosses it
+diagonally in about a second (13 frames, only the changed cells redrawn): inside the glint each
+orange steps up one to three tones, to a pale `#FFE2C4` at its centre, while the dark outlines and
+the black never change.
+
+- `nodo-splash` (in `nodo-tools`) draws it. It embeds the logo as a palette grid,
+  `crates/nodo-splash/logo.grid`, which `tools/splash` makes from the SVG (its README says how).
+- Colours: the console has 16 palette entries but only the first 8 can be a background. The logo's
+  8 colours are entries 0 to 7, so either half of a cell can show them; the glint's pale tone is
+  entry 8, which only a foreground can show (bold black), so a cell draws it with `▀`, `▄` or `█`
+  in whichever half needs it. The status line's grey is entry 15. The panels set their own palette.
+- At boot, `/etc/runit/core-services/01-nodo-splash.sh` starts it in the background right after
+  the pseudo-filesystems are mounted (pid in `/run/nodo-splash.pid`), on boards where nodo-screen
+  is enabled. nodo-screen's run script stops it before taking tty1. The kernel boots quietly
+  (`quiet loglevel=3 vt.global_cursor_default=0 logo.nologo`, `docs/MAINLINE_KERNEL.md`), and
+  runit's messages go to the serial port, so nothing draws over it.
+- At shutdown, `/etc/runit/shutdown.d/05-nodo-splash.sh` stops nodo-screen and starts it with
+  `--stopping` before the services stop. A shutdown that draws its own last screen creates
+  `/run/nodo-splash.skip` first and is left alone.
+- `nodo-splash --preview` prints the logo at rest and mid-glint in 24-bit colour, for a desktop
+  terminal.
+
 ## What the owner approves
 
 A package's panels are listed in its install review ("shows 2 panels on the screen, reading its own

@@ -1,0 +1,21 @@
+[package]
+name = "nodo-splash"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "The boot and shutdown splash on the built-in screen: the Nodo logo with a glint"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "nodo-splash"
+path = "src/main.rs"
+
+[dependencies]
+# Stops on SIGTERM, leaving the picture for whatever draws next.
+signal-hook = { version = "0.3", default-features = false }
+# The console's size (TIOCGWINSZ), to centre the logo.
+libc = "0.2"

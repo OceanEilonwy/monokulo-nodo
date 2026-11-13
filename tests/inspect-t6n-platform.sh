@@ -161,6 +161,12 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
 	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
 	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
+	r=0
+	for f in /usr/bin/nodo-splash /etc/runit/core-services/01-nodo-splash.sh /etc/runit/shutdown.d/05-nodo-splash.sh; do
+		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
+	done
+	show 'cat /etc/sv/nodo-screen/run' | grep -q /run/nodo-splash.pid || { echo "  nodo-screen does not stop the splash"; r=1; }
+	result "the boot splash shows the logo from early boot until the panels, and again at shutdown" "$r"
 fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do

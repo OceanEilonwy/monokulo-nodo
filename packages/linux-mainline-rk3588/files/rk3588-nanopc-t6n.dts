@@ -41,9 +41,11 @@
 		/*
 		 * Kernel messages go to the screen's text console too. The last console= stays the
 		 * serial port, so /dev/console is still ttyS2. The 1080x1920 panel makes the 8x16
-		 * font tiny, so the console uses Terminus 16x32 (120 by 33 characters on its side).
+		 * font tiny, so the console uses Terminus 16x32 (120 by 33 characters on its side). The
+		 * screen shows the boot splash, not boot text: quiet and loglevel=3 keep all but errors off
+		 * the consoles (the kernel log keeps everything), and there is no cursor or Tux logo.
 		 */
-		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=tty0 console=ttyS2,1500000n8 coherent_pool=1m fbcon=font:TER16x32";
+		bootargs = "earlycon=uart8250,mmio32,0xfeb50000 console=tty0 console=ttyS2,1500000n8 coherent_pool=1m fbcon=font:TER16x32 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo";
 		bootargs_ext = "root=/dev/mmcblk0p8 rw rootfstype=ext4 rootwait";
 	};
 
