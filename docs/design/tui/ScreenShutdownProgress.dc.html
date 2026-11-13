@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shut down progress</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:12px 18px 16px;background:#000;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;height:44px}
+.host{font-weight:700;color:#D7DADC;font-size:13px}
+.dim{color:#80888E}.ok{color:#6FD6B3}.a{color:#F2A33A}.err{color:#FF8A7A}.i{color:#86BEFF}.tr{color:#3A4045}
+.tb{min-width:112px;height:44px;box-sizing:border-box;border:2px solid #3A4045;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:700;font-size:13px;color:#D7DADC}
+.tb.off{border-color:#7A3A33;color:#FF8A7A}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));gap:8px}
+.t{border:1px solid #3A4045;border-radius:10px;padding:8px 12px;display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;background:#000}
+.h{font-size:11px;font-weight:700;color:#80888E;letter-spacing:.06em;display:flex;justify-content:space-between}
+.big{font-size:34px;font-weight:700;color:#F4F5F6;line-height:1.05;margin-top:4px}
+.mid{font-size:18px;font-weight:700;color:#F4F5F6;margin-top:4px}
+.u{font-size:13px;color:#80888E;font-weight:400}
+.kv{display:flex;justify-content:space-between;font-size:12px;margin-top:3px}
+.kv span:first-child{color:#80888E}
+.bar{height:3px;background:#2A2F33;margin-top:8px}.bar div{height:3px}
+.pkg{position:absolute;right:12px;bottom:5px;font-size:10px;color:#80888E}
+.spark{display:flex;align-items:flex-end;gap:2px;height:30px;margin-top:auto;margin-bottom:14px}
+.spark i{flex:1;display:block}
+.free{border:2px dashed #2A2F33;border-radius:10px}
+.go{border:2px dashed #F2A33A;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#F2A33A;font-weight:700;font-size:14px;text-align:center}
+.sel{border:2px solid #F2A33A}
+.btns{display:flex;gap:14px}
+.b{flex:1;height:64px;box-sizing:border-box;border:2px solid #F2A33A;border-radius:8px;color:#F2A33A;font-weight:700;font-size:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.b small{font-size:11px;font-weight:400;color:#80888E;margin-top:2px}
+.b.off{border-color:#3A4045;color:#80888E}.b.off small{color:#3A4045}
+.b.fill{background:#F2A33A;color:#000}.b.fill small{color:#000}
+.badge{background:#F2A33A;color:#000;font-weight:700;padding:1px 6px}
+</style>
+</helmet>
+<div class="scr">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+<div style="font-size:26px;font-weight:700;color:#F4F5F6">Shutting down safely…</div>
+<div class="err" style="font-size:14px;font-weight:700">Do not unplug yet</div>
+<div style="width:560px;border:1px solid #3A4045;border-radius:10px;padding:14px 20px;font-size:14px;line-height:26px"><div style="display:flex;gap:14px"><span class="ok" style="width:14px">✓</span><span style="flex:1;color:#D7DADC">mk-push-relay</span><span class="dim">stopped</span><span class="dim" style="width:48px;text-align:right">0.4 s</span></div><div style="display:flex;gap:14px"><span class="ok" style="width:14px">✓</span><span style="flex:1;color:#D7DADC">mk-bell</span><span class="dim">stopped</span><span class="dim" style="width:48px;text-align:right">0.6 s</span></div><div style="display:flex;gap:14px"><span class="ok" style="width:14px">✓</span><span style="flex:1;color:#D7DADC">mk-pay</span><span class="dim">stopped</span><span class="dim" style="width:48px;text-align:right">1.1 s</span></div><div style="display:flex;gap:14px"><span class="ok" style="width:14px">✓</span><span style="flex:1;color:#D7DADC">mk-lws</span><span class="dim">stopped</span><span class="dim" style="width:48px;text-align:right">2.3 s</span></div><div style="display:flex;gap:14px"><span class="ok" style="width:14px">✓</span><span style="flex:1;color:#D7DADC">sshd</span><span class="dim">stopped</span><span class="dim" style="width:48px;text-align:right">0.2 s</span></div><div style="display:flex;gap:14px"><span class="i" style="width:14px">…</span><span style="flex:1;color:#D7DADC">cuprated</span><span class="i">saving its database</span><span class="dim" style="width:48px;text-align:right">38 s</span></div><div style="display:flex;gap:14px"><span class="dim" style="width:14px">·</span><span style="flex:1;color:#80888E">saving files to disk</span><span class="dim">waiting</span><span class="dim" style="width:48px;text-align:right"></span></div><div style="display:flex;gap:14px"><span class="dim" style="width:14px">·</span><span style="flex:1;color:#80888E">turning off</span><span class="dim">waiting</span><span class="dim" style="width:48px;text-align:right"></span></div></div><div class="bar" style="width:600px;height:4px"><div style="width:72%;height:4px;background:#86BEFF"></div></div>
+<div class="dim">5 of 6 services stopped · cuprated may take up to 2 minutes</div></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>
