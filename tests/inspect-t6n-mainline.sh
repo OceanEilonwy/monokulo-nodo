@@ -156,10 +156,25 @@ result "ethernet0 alias, for the bootloader's MAC address" "$r"
 result "the microSD card is mmc0, as on the vendor kernel" "$?"
 fdtget "$dtb" /thermal-zones/package-thermal/trips/package-crit type | grep -q critical
 result "thermal zones with a critical trip" "$?"
+# The Nodo is fanless, so it throttles early (docs/THERMAL.md): 70 °C warm, 80 °C hot on the CPU
+# clusters and the GPU, 100 °C critical on every sensor, the hardware reset at 110 °C.
+trip() { fdtget -t i "$dtb" "/thermal-zones/$1/trips/$2" temperature 2>/dev/null; }
+r=0
+for z in bigcore0 bigcore2 littlecore gpu; do
+	[ "$(trip "$z-thermal" "$z-alert")" = 70000 ] || { echo "  $z-alert is $(trip "$z-thermal" "$z-alert")"; r=1; }
+	[ "$(trip "$z-thermal" "$z-hot")" = 80000 ] || { echo "  $z-hot is $(trip "$z-thermal" "$z-hot")"; r=1; }
+	[ "$(fdtget "$dtb" "/thermal-zones/$z-thermal/cooling-maps/map1" trip 2>/dev/null)" = \
+		"$(fdtget "$dtb" "/thermal-zones/$z-thermal/trips/$z-hot" phandle 2>/dev/null)" ] || { echo "  $z-hot has no cooling map"; r=1; }
+done
+for z in package bigcore0 bigcore2 littlecore center gpu npu; do
+	[ "$(trip "$z-thermal" "$z-crit")" = 100000 ] || { echo "  $z-crit is $(trip "$z-thermal" "$z-crit")"; r=1; }
+done
+[ "$(fdtget -t i "$dtb" /tsadc@fec00000 rockchip,hw-tshut-temp)" = 110000 ] || { echo "  hw-tshut-temp is $(fdtget -t i "$dtb" /tsadc@fec00000 rockchip,hw-tshut-temp)"; r=1; }
+result "fanless thermal limits: throttle at 70 and 80 °C, shut down at 100, reset at 110" "$r"
 fdtget "$dtb" /cpus/cpu@400 operating-points-v2 >/dev/null
 result "CPU frequency tables for cpufreq" "$?"
 if fdtget "$dtb" / pwm-fan >/dev/null 2>&1 || fdtget -l "$dtb" / | grep -q '^pwm-fan$'; then fan=yes; else fan=no; fi
-echo "pwm-fan node: $fan (FriendlyElec's T6N tree has none either)"
+echo "pwm-fan node: $fan (the Nodo is fanless; FriendlyElec's T6N tree has none either)"
 if [ "$(fdtget "$dtb" /__symbols__ chosen)" = /chosen ]; then r=0; else r=1; fi
 result "the chosen label is exported for FriendlyElec's dtbo overlay" "$r"
 echo "bootargs: $(fdtget "$dtb" /chosen bootargs)"
@@ -200,7 +215,7 @@ for s in CAN NFC INFINIBAND STAGING BPF_SYSCALL BPF_JIT ACPI XEN VIRTUALIZATION 
 	grep -qx "# CONFIG_$s is not set" "$tmp/kconfig" || { echo "  not off: CONFIG_$s"; r=1; }
 done
 for s in DRM_PANTHOR=m DRM_ROCKCHIP=m ROCKCHIP_VOP2=y ROCKCHIP_DW_HDMI_QP=y DRM_FBDEV_EMULATION=y FRAMEBUFFER_CONSOLE=y \
-	SND_SOC_RT5616=m VIDEO_HANTRO=m CFG80211=m BT=m RTC_DRV_HYM8563=y IR_GPIO_CIR=m SECURITY_LANDLOCK=y; do
+	SND_SOC_RT5616=m VIDEO_HANTRO=m CFG80211=m BT=m RTC_DRV_HYM8563=y IR_GPIO_CIR=m SECURITY_LANDLOCK=y NVME_HWMON=y; do
 	grep -qx "CONFIG_$s" "$tmp/kconfig" || { echo "  not set: CONFIG_$s"; r=1; }
 done
 result "kernel.config: the hardware drivers are on, the excluded subsystems off" "$r"
