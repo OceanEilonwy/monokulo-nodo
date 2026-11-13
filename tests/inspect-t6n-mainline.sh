@@ -122,7 +122,9 @@ for n in "/gpu@fb000000 gpu (Mali-G610, panthor)" "/vop@fdd90000 vop (VOP2)" "/i
 	"/hdmi@fde80000 hdmi0" "/phy@fed60000 hdptxphy0 (HDMI PHY)" "/i2s@fddf0000 i2s5 (HDMI audio)" \
 	"/hdmi0-sound hdmi0 sound card" "/i2s@fe470000 i2s0 (RT5616)" "/i2c@fec90000/codec@1b RT5616 codec" "/sound RT5616 sound card" \
 	"/video-codec@fdb50000 vpu121 (hantro decoder)" "/video-codec@fdc70000 av1d (hantro AV1)" "/rga@fdb80000 rga" \
-	"/ir-receiver IR receiver" "/i2c@fec80000/rtc@51 HYM8563 RTC"; do
+	"/ir-receiver IR receiver" "/i2c@fec80000/rtc@51 HYM8563 RTC" \
+	"/dsi@fde30000 dsi1 (built-in screen)" "/phy@fedb0000 mipidcphy1 (DSI PHY)" \
+	"/dsi@fde30000/panel@0 ZH055OE041 panel" "/i2c@fead0000/touchscreen@14 GT1x touchscreen"; do
 	node_ok "${n%% *}"
 	result "enabled: ${n#* }" "$?"
 done
@@ -135,8 +137,17 @@ result "the GPU has its mali and sram supplies" "$?"
 gpio4=$(fdtget -t x "$dtb" "$(fdtget "$dtb" /__symbols__ gpio4)" phandle)
 if [ "$(fdtget -t x "$dtb" /hdmi@fde80000 enable-gpios)" = "$gpio4 9 0" ]; then r=0; else r=1; fi
 result "hdmi0's level shifter switch is GPIO4_B1, as in FriendlyElec's T6N tree" "$r"
+[ "$(fdtget "$dtb" /dsi@fde30000/panel@0 compatible)" = zhot,zh055oe041 ]
+result "the panel is the ZHOT ZH055OE041 the original Nodo system drives" "$?"
+[ "$(fdtget "$dtb" /dsi@fde30000/panel@0 rotation)" = 270 ]
+result "the panel is turned to sit left side up in the case (rotation 270)" "$?"
+vp3_ep=$(fdtget "$dtb" /__symbols__ vp3_out_dsi1 2>/dev/null)
+[ -n "$vp3_ep" ] && [ "$(fdtget "$dtb" "$vp3_ep" reg)" = 6 ]
+result "VOP2 video port 3 feeds dsi1 (ROCKCHIP_VOP2_EP_MIPI1)" "$?"
 fdtget "$dtb" /chosen bootargs | grep -q 'console=tty0 console=ttyS2'
 result "kernel messages go to the HDMI console and the serial port" "$?"
+fdtget "$dtb" /chosen bootargs | grep -q "fbcon=font:TER16x32"
+result "the screen's console uses the Terminus 16x32 font" "$?"
 fdtget "$dtb" /pcie@fe190000/pcie@0,0/ethernet@0,0 compatible | grep -q pci10ec,8125
 result "the RTL8125 node is where the ethernet0 alias points" "$?"
 if [ "$(fdtget "$dtb" /aliases ethernet0)" = /pcie@fe190000/pcie@0,0/ethernet@0,0 ]; then r=0; else r=1; fi
@@ -170,7 +181,7 @@ kver=$(show 'ls -p /usr/lib/modules' | tr '/' '\n' | grep '^6\.18\.' | head -1)
 show "cat /usr/lib/modules/$kver/modules.dep" | cut -d: -f1 > "$tmp/modules"
 echo "$(wc -l < "$tmp/modules") modules in modules.dep"
 r=0
-for m in panthor rockchipdrm phy-rockchip-samsung-hdptx phy-rockchip-samsung-dcphy dw-hdmi-qp display-connector \
+for m in panthor rockchipdrm phy-rockchip-samsung-hdptx phy-rockchip-samsung-dcphy dw-hdmi-qp display-connector panel-zhot-zh055oe041 \
 	snd-soc-rt5616 snd-soc-rockchip-i2s-tdm snd-soc-simple-card snd-soc-hdmi-codec snd-usb-audio \
 	hantro-vpu rockchip-rga gpio-ir-recv ir-nec-decoder goodix_ts edt-ft5x06 adc-keys \
 	cfg80211 mac80211 rtw88_8822ce rtw88_8822cu rtw89_8852ce mt7921e mt7925u iwlwifi iwlmvm ath11k_pci ath12k \

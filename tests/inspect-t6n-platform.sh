@@ -34,6 +34,15 @@ done
 ! grep -q '^monokulo ' "$tmp/pkgs"
 result "Monokulo is not preinstalled; it comes through the helper from a feed" "$?"
 
+# sshd refuses root when root's shell is missing; the first T6N cards had /bin/bash without bash.
+root_shell=$(show 'cat /etc/passwd' | awk -F: '$1 == "root" { print $7 }')
+echo "== root's shell: $root_shell"
+[ "$root_shell" = /bin/sh ]
+result "root's login shell is /bin/sh" "$?"
+# /bin and /usr/bin/sh are symlinks (to usr/bin and dash); stat on the target the link names.
+show 'stat /usr/bin/dash' | grep -q 'Type: regular'
+result "the shell it points to, dash, is installed" "$?"
+
 # debugfs's parseable listing is /inode/mode/uid/gid/name/size/ per entry.
 links=$(show 'ls -p /etc/runit/runsvdir/default' | cut -d/ -f6 | grep -v '^\.\.\?$' | grep . | sort | tr '\n' ' ')
 echo "== started at boot: $links"

@@ -119,6 +119,12 @@ rm -f /boot/initramfs-*.img
 command -v dracut >/dev/null || NO_DRACUT=1
 [ -n "${NO_DRACUT:-}" ] || [ -s "/boot/initramfs-$kver.img" ] || dracut --force --no-hostonly --kver "$kver" "/boot/initramfs-$kver.img" || rc=1
 passwd -l root || rc=1
+# sshd refuses every login for an account whose shell does not exist. Void gives root /bin/bash,
+# which only images with dracut (a bash script) contain, so the T6N cards refused root over SSH
+# while the VM images let it in. dash's /bin/sh is on every image; use it everywhere, so the VM
+# tests log in exactly as the boards do.
+usermod -s /bin/sh root || rc=1
+[ -x "$(getent passwd root | cut -d: -f7)" ] || rc=1
 id _cuprated || rc=1
 echo "$rc" > /monokulo-configure.rc
 umount /run /tmp /dev /sys /proc

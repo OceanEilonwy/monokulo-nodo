@@ -1,0 +1,42 @@
+From: monokulo-nodo
+Subject: drm/rockchip: vop2: keep the pre-scan hblank at 8 or more
+
+The pre-scan hblank (the low half of VP_PRE_SCAN_HTIMING) is written as the
+mode's hsync length. Rockchip's BSP kernel clamps it to at least 8, because a
+smaller value lets the window reset signal corrupt the start of the line. HDMI
+modes always have long sync pulses; DSI panels need not. The NanoPC-T6N based
+Nodo's ZH055OE041 panel has a 4-pixel hsync, and without the clamp its picture
+jitters along the line direction. Measured on the board: VP3 PRE_SCAN_HTIMING
+was 0x024f0004 with mainline and 0x024f0008 with the BSP; with this patch it is
+0x024f0008 and the jitter is gone.
+
+--- a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+@@ -2463,7 +2463,12 @@
+ 	vop2_writel(vp->vop2, RK3568_VP_BG_MIX_CTRL(vp->id),
+ 		    FIELD_PREP(RK3568_VP_BG_MIX_CTRL__BG_DLY, bg_dly));
+ 
+-	pre_scan_dly = ((bg_dly + (hdisplay >> 1) - 1) << 16) | hsync_len;
++	/*
++	 * The pre-scan hblank must be at least 8, or the window reset signal corrupts
++	 * the start of the line (Rockchip's BSP does the same). DSI panels can have
++	 * shorter hsync pulses than any HDMI mode.
++	 */
++	pre_scan_dly = ((bg_dly + (hdisplay >> 1) - 1) << 16) | max_t(u16, hsync_len, 8);
+ 	vop2_vp_write(vp, RK3568_VP_PRE_SCAN_HTIMING, pre_scan_dly);
+ }
+ 
+@@ -2483,7 +2488,12 @@
+ 	vop2_writel(vp->vop2, RK3576_OVL_BG_MIX_CTRL(vp->id),
+ 		    FIELD_PREP(RK3576_OVL_BG_MIX_CTRL__BG_DLY, bg_dly));
+ 
+-	pre_scan_dly = ((bg_dly + (hdisplay >> 1) - 1) << 16) | hsync_len;
++	/*
++	 * The pre-scan hblank must be at least 8, or the window reset signal corrupts
++	 * the start of the line (Rockchip's BSP does the same). DSI panels can have
++	 * shorter hsync pulses than any HDMI mode.
++	 */
++	pre_scan_dly = ((bg_dly + (hdisplay >> 1) - 1) << 16) | max_t(u16, hsync_len, 8);
+ 	vop2_vp_write(vp, RK3568_VP_PRE_SCAN_HTIMING, pre_scan_dly);
+ }
+ 
