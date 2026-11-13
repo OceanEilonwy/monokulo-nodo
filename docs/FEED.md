@@ -26,9 +26,11 @@ request.
 1. **build** (one job per architecture, without the key): `scripts/publish-feed.sh build <arch>`
    builds the recipes listed in `feed/packages` with `scripts/build-packages.sh`, in the builder
    image, exactly as locally. The per-recipe stamps and built packages are cached, so a run only
-   compiles recipes that changed; distfiles, cargo and npm downloads, xbps's package cache and the
-   builder image are cached for the runs that do. Any file near GitHub Pages' 100 MB limit fails
-   the job.
+   compiles recipes that changed; distfiles, cargo and npm downloads, xbps's package cache, the
+   compiler caches (sccache for Rust, ccache for C) and the builder image are cached for the runs
+   that do. Each package's log ends with its sccache and ccache hit rates. A run on any branch can
+   be started by hand (`gh workflow run feed.yml --ref <branch>`); it builds but skips publish.
+   Any file near GitHub Pages' 100 MB limit fails the job.
 2. **publish** (main only, in the `github-pages` environment, which only `main` may deploy to):
    - `sign`: the key comes from the `NODO_FEED_SIGNING_KEY` secret into a 0600 temp file for that
      one step. `xbps-rindex -a`, then `--signedby "monokulo-nodo feed" --privkey <key> -s` (the

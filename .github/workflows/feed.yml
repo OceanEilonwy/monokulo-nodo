@@ -67,9 +67,33 @@ jobs:
         if: steps.todo.outputs.todo != ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: build/hostdir
+          # The compiler caches have their own entry, below.
+          path: |
+            build/hostdir
+            !build/hostdir/sccache
+            !build/hostdir/ccache
           key: feed-hostdir-${{ matrix.arch }}-${{ hashFiles('feed/packages', 'packages/**', 'versions.env', 'scripts/_build-packages-inner.sh') }}
           restore-keys: feed-hostdir-${{ matrix.arch }}-
+
+      # sccache (Rust, and the C in -sys crates) and ccache (other C and C++) results, bounded by
+      # SCCACHE_CACHE_SIZE and CCACHE_MAXSIZE below. Per architecture that is at most 1.75 GB,
+      # beside about 2.5 GB of hostdir, so both architectures with the builder image and the
+      # publish job's cargo cache stay within GitHub's 10 GB per repository. A build that fails
+      # partway saves what it compiled under a -partial- key, so the next attempt starts from it;
+      # the prefix restore-keys find either kind, newest first. As GitHub scopes caches, a branch
+      # run reads main's entries but main does not read a branch's.
+      - name: Restore the compiler caches
+        id: compile
+        if: steps.todo.outputs.todo != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: feed-compile-${{ matrix.arch }}-${{ hashFiles('feed/packages', 'packages/**', 'Cargo.lock', 'versions.env', 'scripts/_build-packages-inner.sh', 'scripts/_xbps-src-sccache.sh') }}
+          restore-keys: |
+            feed-compile-${{ matrix.arch }}-${{ hashFiles('feed/packages', 'packages/**', 'Cargo.lock', 'versions.env', 'scripts/_build-packages-inner.sh', 'scripts/_xbps-src-sccache.sh') }}-
+            feed-compile-${{ matrix.arch }}-
 
       - name: Restore the builder image
         id: builder
@@ -84,14 +108,37 @@ jobs:
         run: zstd -dc build/builder-image.tar.zst | docker load
 
       - name: Build
+        id: build
         if: steps.todo.outputs.todo != ''
+        env:
+          SCCACHE_CACHE_SIZE: 1536M
+          CCACHE_MAXSIZE: 256M
         run: scripts/publish-feed.sh build "${{ matrix.arch }}"
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.todo.outputs.todo != '' && steps.build.outcome == 'success' && steps.compile.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: ${{ steps.compile.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: failure() && steps.build.outcome == 'failure'
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: ${{ steps.compile.outputs.cache-primary-key }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save the builder image
         if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
+        # lib.sh finds the repository from $0, which in a run step is the step's own temp script,
+        # so it runs with scripts/lib.sh as $0.
         run: |
-          . scripts/lib.sh
-          docker save "$(builder_tag)" | zstd -T0 -3 -o build/builder-image.tar.zst
+          set -o pipefail
+          # shellcheck disable=SC2016
+          bash -c '. scripts/lib.sh && docker save "$(builder_tag)"' scripts/lib.sh | zstd -T0 -3 -o build/builder-image.tar.zst
 
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.todo.outputs.todo != '' && steps.builder.outputs.cache-hit != 'true'
@@ -102,7 +149,10 @@ jobs:
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.todo.outputs.todo != '' && steps.hostdir.outputs.cache-hit != 'true'
         with:
-          path: build/hostdir
+          path: |
+            build/hostdir
+            !build/hostdir/sccache
+            !build/hostdir/ccache
           key: ${{ steps.hostdir.outputs.cache-primary-key }}
 
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

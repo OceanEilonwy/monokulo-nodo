@@ -16,3 +16,6 @@ RUN git clone -q --filter=blob:none --no-checkout https://github.com/void-linux/
  && ./xbps-src binary-bootstrap
 # Kept as its own layer so adding it did not repeat the steps above.
 RUN xbps-install -Sy qemu-system-amd64
+# Compiler caches for package builds (scripts/_build-packages-inner.sh): sccache for Rust, ccache for
+# C and C++. Void names the sccache package rust-sccache.
+RUN xbps-install -Sy rust-sccache ccache
