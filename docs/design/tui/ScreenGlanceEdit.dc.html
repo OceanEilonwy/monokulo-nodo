@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen glance editing</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:22px 30px;background:#0A0B0C;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:13px;display:flex;flex-direction:column;gap:16px}
+.d{color:#6B7379}.a{color:#F2A33A}.ok{color:#6FD6B3}.i{color:#86BEFF}
+.s{background:#F2A33A;color:#101214;font-weight:700}
+.top{display:flex;justify-content:space-between}
+.body{flex:1;display:flex;gap:28px;min-height:0}
+.mini{width:420px;display:flex;flex-direction:column;gap:10px}
+.slot{border:1px solid #2E3438;border-radius:8px;padding:10px 12px;position:relative}
+.slot .k{font-size:10px;letter-spacing:.08em;color:#6B7379}
+.slot .v{color:#F4F5F6;font-weight:700;margin-top:2px}
+.slot.on{border-color:#F2A33A;box-shadow:0 0 0 3px rgba(242,163,58,.15)}
+.hero{height:150px}
+.rot{position:absolute;right:10px;top:10px;font-size:10px;color:#F2A33A}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.strip .slot{height:56px;padding:8px}
+.list{flex:1;display:flex;flex-direction:column;gap:2px}
+.list h4{margin:0 0 8px;font-size:13px;color:#F4F5F6}
+.row{display:flex;justify-content:space-between;padding:7px 10px;border-radius:6px;white-space:pre}
+.row.sel{background:#1E2226}
+.chk{color:#F2A33A}
+.foot{display:flex;justify-content:space-between;border-top:1px solid #262B2F;padding-top:12px}
+</style>
+</helmet>
+<div class="scr">
+<div class="top"><span><span class="s">&nbsp;Screen&nbsp;</span>&nbsp;&nbsp;choose what each slot shows</span><span class="d">tap a slot, then a widget</span></div>
+<div class="body">
+<div class="mini">
+<div class="slot hero on"><div class="k">HERO · large</div><div class="v" style="font-size:26px;margin-top:10px">Monero node</div><div class="d" style="margin-top:4px">+ Payments today</div><div class="d">+ Wallet scanner</div><span class="rot">↻ every 20 s</span></div>
+<div class="strip">
+<div class="slot"><div class="k">STRIP 1</div><div class="v">Payments</div></div>
+<div class="slot"><div class="k">STRIP 2</div><div class="v ok">Bell</div></div>
+<div class="slot"><div class="k">STRIP 3</div><div class="v">Tor · Web</div></div>
+<div class="slot"><div class="k">STRIP 4</div><div class="v">Device</div></div>
+</div>
+<div class="slot" style="display:flex;justify-content:space-between"><span>Dim after 2 min</span><span class="a">on</span></div>
+<div class="slot" style="display:flex;justify-content:space-between"><span>Wake on touch or an alert</span><span class="a">on</span></div>
+</div>
+<div class="list">
+<h4>Hero shows   <span class="d" style="font-weight:400">large widgets from your packages</span></h4>
+<div class="row sel"><span><span class="chk">■</span> Monero node        <span class="d">cuprated</span></span><span class="i">sync, height, peers</span></div>
+<div class="row"><span><span class="chk">■</span> Payments today     <span class="d">monokulo</span></span><span class="d">total, chart</span></div>
+<div class="row"><span><span class="chk">■</span> Wallet scanner     <span class="d">monokulo-lws</span></span><span class="d">accounts, lag</span></div>
+<div class="row"><span><span class="d">□</span> Device health      <span class="d">system</span></span><span class="d">temp, storage</span></div>
+<div class="row"><span><span class="d">□</span> Peers and traffic  <span class="d">cuprated</span></span><span class="d">graph</span></div>
+<div class="row" style="margin-top:10px"><span class="d">An alert from any package takes the hero until you tap it.</span></div>
+</div>
+</div>
+<div class="foot d"><span><span class="a">tap</span> choose  <span class="a">hold</span> reorder hero  <span class="a">swipe</span> preview</span><span><span class="s">&nbsp;Save&nbsp;</span>&nbsp;&nbsp;Cancel</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

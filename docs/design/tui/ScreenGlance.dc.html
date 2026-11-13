@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen glance</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:26px 34px 22px;background:#0A0B0C;color:#D7DADC;font-family:'JetBrains Mono',monospace;display:flex;flex-direction:column}
+.d{color:#6B7379}.a{color:#F2A33A}.ok{color:#6FD6B3}.i{color:#86BEFF}
+.top{display:flex;justify-content:space-between;font-size:13px}
+.hero{}
+.lbl{font-size:13px;letter-spacing:.08em}
+.num{font-size:150px;font-weight:700;line-height:1;color:#F4F5F6;margin-top:6px}
+.num span{font-size:36px;color:#A3AAB0;font-weight:400}
+.line{font-size:15px;margin-top:8px}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #262B2F;padding-top:16px}
+.st{padding-right:16px}
+.st + .st{border-left:1px solid #262B2F;padding-left:18px}
+.st .k{font-size:11px;letter-spacing:.08em;color:#6B7379}
+.st .v{font-size:24px;font-weight:700;color:#F4F5F6;margin-top:4px}
+.st .s{font-size:12px;color:#A3AAB0;margin-top:2px}
+.dots{display:flex;gap:6px;justify-content:center;margin:0 0 14px}
+.dots i{width:6px;height:6px;border-radius:50%;background:#2E3438}
+.dots i.on{background:#F2A33A}
+</style>
+</helmet>
+<div class="scr">
+<div class="top"><span><span class="a">●</span> monokulo-nodo</span><span class="d">thu 13 nov  <span style="color:#D7DADC">14:32</span></span></div>
+<div style="flex:1;display:flex;gap:30px;align-items:center">
+<div class="hero">
+<div class="lbl d">MONERO NODE · cuprated</div>
+<div class="num">61<span>% synced</span></div>
+<div class="line"><span class="i">▲</span> 2,121,400 of 3,478,000   <span class="d">about 9 h left · 32 peers</span></div>
+</div>
+<svg width="340" height="190" viewBox="0 0 300 150" style="margin-left:auto">
+<path d="M0 140 C40 138 60 130 90 112 S150 80 180 66 S240 40 300 34" fill="none" stroke="#86BEFF" stroke-width="3"/>
+<path d="M300 34 L300 34" stroke="#86BEFF" stroke-width="10" stroke-linecap="round"/>
+<text x="300" y="20" text-anchor="end" fill="#6B7379" font-family="JetBrains Mono" font-size="11">last 24 h</text>
+</svg>
+</div>
+<div class="dots"><i class="on"></i><i></i><i></i></div>
+<div class="strip">
+<div class="st"><div class="k">PAYMENTS · monokulo</div><div class="v">4.82 <span style="font-size:14px;color:#A3AAB0;font-weight:400">XMR</span></div><div class="s">37 today · <span class="a">2 waiting</span></div></div>
+<div class="st"><div class="k">BELL</div><div class="v ok">ringing</div><div class="s">last 0.8 s ago</div></div>
+<div class="st"><div class="k">TOR · WEB</div><div class="v">3 sites</div><div class="s">onion · public · lan</div></div>
+<div class="st"><div class="k">DEVICE</div><div class="v">52 °C</div><div class="s">SSD 22% · <span class="a">2 updates</span></div></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

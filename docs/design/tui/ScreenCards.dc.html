@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen cards</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:22px 28px;background:#14171A;color:#D7DADC;font-family:Inter,sans-serif;display:flex;flex-direction:column;gap:16px}
+.top{display:flex;justify-content:space-between;align-items:baseline}
+.top .hi{font-size:22px;font-weight:600;color:#F4F5F6}
+.top .st{font-size:12px;color:#A3AAB0}
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-content:start}
+.c{background:#1D2125;border:1px solid #262B2F;border-radius:16px;padding:14px 16px;min-width:0}
+.c h4{margin:0;font-size:12px;font-weight:600;color:#A3AAB0;display:flex;justify-content:space-between}
+.c h4 em{font-style:normal;font-weight:500;color:#6B7379}
+.v{font-size:28px;font-weight:700;color:#F4F5F6;margin-top:8px;line-height:1.1}
+.v small{font-size:13px;color:#A3AAB0;font-weight:500}
+.s{font-size:12px;color:#A3AAB0;margin-top:2px}
+.ok{color:#6FD6B3}.a{color:#F2A33A}.i{color:#86BEFF}
+.li{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-top:1px solid #262B2F}
+.li:first-of-type{border-top:0}
+.li > span:first-child{color:#D7DADC}
+.bar{height:6px;background:#2A2F33;border-radius:3px;margin-top:10px}
+.bar div{height:6px;border-radius:3px}
+</style>
+</helmet>
+<div class="scr">
+<div class="top"><span class="hi">All good · node 61% synced</span><span class="st">monokulo-nodo · 14:32 · Thu 13 Nov</span></div>
+<div class="cols">
+
+<div class="c" style="grid-column:1/2">
+<h4><span>Monero node</span><em>cuprated</em></h4>
+<div class="v i">61<small> %</small></div>
+<div class="s">2,121,400 of 3,478,000 · about 9 h left</div>
+<div class="bar"><div style="width:61%;background:#86BEFF"></div></div>
+<div class="li" style="margin-top:10px"><span>Peers</span><span>32 out · 9 in</span></div>
+<div class="li"><span>Download</span><span>48 MB/s</span></div>
+</div>
+
+<div class="c" style="grid-column:2/4">
+<h4><span>Payments today</span><em>monokulo</em></h4>
+<div style="display:flex;align-items:flex-end;justify-content:space-between">
+<div><div class="v">4.82 <small>XMR</small></div><div class="s">37 paid · 2 waiting · 1 refunded</div></div>
+<div class="s ok">▲ 12% on last Thursday</div>
+</div>
+<svg width="100%" height="88" viewBox="0 0 560 88" preserveAspectRatio="none" style="margin-top:10px">
+<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F2A33A" stop-opacity=".35"/><stop offset="1" stop-color="#F2A33A" stop-opacity="0"/></linearGradient></defs>
+<path d="M0 78 L50 70 L100 74 L150 56 L200 50 L250 60 L300 36 L350 22 L400 34 L450 42 L500 28 L560 30 L560 88 L0 88Z" fill="url(#g)"/>
+<path d="M0 78 L50 70 L100 74 L150 56 L200 50 L250 60 L300 36 L350 22 L400 34 L450 42 L500 28 L560 30" fill="none" stroke="#F2A33A" stroke-width="2.5"/>
+<path d="M0 82 L50 80 L100 79 L150 70 L200 66 L250 69 L300 58 L350 50 L400 55 L450 60 L500 52 L560 55" fill="none" stroke="#545C63" stroke-width="1.5" stroke-dasharray="4 4"/>
+</svg>
+</div>
+
+<div class="c" style="grid-column:1/2">
+<h4><span>Services</span><em>4 packages</em></h4>
+<div class="li" style="margin-top:6px"><span><span class="ok">●</span> Bell</span><span class="ok">ringing</span></div>
+<div class="li"><span><span class="ok">●</span> Tor</span><span>circuit built</span></div>
+<div class="li"><span><span class="ok">●</span> Wallet scanner</span><span>214 accounts</span></div>
+<div class="li"><span><span class="a">◆</span> Updates</span><span class="a">2 ready</span></div>
+</div>
+
+<div class="c" style="grid-column:2/3">
+<h4><span>Device</span><em>system</em></h4>
+<div class="v">52 <small>°C</small></div>
+<div class="s">Fan quiet · 3 days up</div>
+<div class="li" style="margin-top:8px"><span>SSD</span><span>412 GB / 1.9 TB</span></div>
+<div class="li"><span>Memory</span><span>6.1 / 31 GB</span></div>
+</div>
+
+<div class="c" style="grid-column:3/4">
+<h4><span>Web sites</span><em>nodo-caddy</em></h4>
+<div class="v ok">3 <small>online</small></div>
+<div class="li" style="margin-top:8px"><span>pay.shop.example</span><span>public</span></div>
+<div class="li"><span>shop.lan</span><span>local</span></div>
+<div class="li"><span>shop…onion</span><span>Tor</span></div>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>
