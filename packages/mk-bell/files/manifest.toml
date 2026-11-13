@@ -1,0 +1,46 @@
+api_version = 1
+id = "mk-bell"
+version = "@VERSION@"
+# bin/monokulo-bell is a small launcher that maps the device's settings onto the Bell's own
+# options and environment, then executes libexec/monokulo-bell under the same name.
+exec = [
+    "bin/monokulo-bell",
+    # Points of sale and tills reach it only through the appliance's proxy on this machine, which
+    # the Bell trusts for X-Forwarded-For by default (bell.trusted_proxies).
+    "--bell-listen", "127.0.0.1:8445",
+    # Its status is a listener of its own, for this machine only: the health check and the panel.
+    "--status-listen", "127.0.0.1:8447",
+    "--logging-format", "json",
+]
+settings = "settings.lua"
+# Requests in flight, and the dings they started, get bell.timeout_ms (10 s) to finish.
+stop_timeout_secs = 20
+health = { http = { url = "http://127.0.0.1:8447/status" } }
+
+[storage]
+# The tills' registrations: each till's push subscription, merchant and location.
+encrypted = true
+size_mib = 64
+
+[network]
+# Square's and Clover's APIs (a registration's location is checked with its point of sale) and the
+# tills' push services.
+outbound = "internet"
+
+[[web]]
+name = "bell"
+upstream = "127.0.0.1:8445"
+suggested_subdomain = "bell"
+# Square signs each webhook for the exact URL its subscription names, under bell.public_uri, so the
+# Bell is tied to that one address.
+multi_address = false
+
+[[panels]]
+id = "bell"
+title = "Bell"
+script = "panels/bell.lua"
+refresh_secs = 30
+min_size = [2, 1]
+max_size = [4, 2]
+default_size = [2, 2]
+source = { http = { url = "http://127.0.0.1:8447/status" } }

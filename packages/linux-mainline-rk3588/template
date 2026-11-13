@@ -4,13 +4,13 @@
 # without changing the bootloader. See docs/MAINLINE_KERNEL.md.
 pkgname=linux-mainline-rk3588
 version=6.18.62
-revision=2
+revision=5
 # FriendlyElec's kernel tree, used only for the two small tools that write its boot image
 # formats and for the boot logo its bootloader expects. Nothing else is taken from it.
 _fe_commit=30d3e1c2470a7282f37b96fdd4354314dda69aa3
 _fe_raw="https://raw.githubusercontent.com/friendlyarm/kernel-rockchip/${_fe_commit}"
 archs="aarch64"
-hostmakedepends="bc bison flex kmod openssl-devel perl python3 elfutils-devel cpio tar xz zstd make gcc"
+hostmakedepends="bc bison flex kmod openssl-devel perl python3 elfutils-devel cpio tar xz zstd make gcc patch"
 makedepends="openssl-devel"
 depends="kmod"
 short_desc="Mainline Linux kernel for the FriendlyElec NanoPC-T6N"
@@ -43,6 +43,18 @@ do_configure() {
 	unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
 	cp ${FILESDIR}/${_dtb}.dts arch/arm64/boot/dts/rockchip/
 	echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += ${_dtb}.dtb" >> arch/arm64/boot/dts/rockchip/Makefile
+	# The Nodo's screen panel driver, which mainline lacks: added as its own file, with its
+	# Kconfig entry inside the panel menu and its Makefile line.
+	cp ${FILESDIR}/panel-zhot-zh055oe041.c drivers/gpu/drm/panel/
+	echo 'obj-$(CONFIG_DRM_PANEL_ZHOT_ZH055OE041) += panel-zhot-zh055oe041.o' >> drivers/gpu/drm/panel/Makefile
+	local kc=drivers/gpu/drm/panel/Kconfig
+	[ "$(tail -n 1 $kc)" = endmenu ] || { echo "unexpected end of $kc" >&2; return 1; }
+	sed -i '$d' $kc
+	printf '%s\n' 'config DRM_PANEL_ZHOT_ZH055OE041' \
+		'\ttristate "ZHOT ZH055OE041 5.5-inch 1080x1920 AMOLED DSI panel"' \
+		'\tdepends on OF' '\tdepends on DRM_MIPI_DSI' '\tdepends on BACKLIGHT_CLASS_DEVICE' \
+		'\thelp' '\t  The built-in screen of the NanoPC-T6N based Nodo.' '' 'endmenu' |
+		sed 's/\\t/\t/g' >> $kc
 	_kmake defconfig
 	scripts/kconfig/merge_config.sh -m .config ${FILESDIR}/monokulo.config
 	_kmake olddefconfig

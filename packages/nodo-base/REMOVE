@@ -1,0 +1,10 @@
+# Removing nodo-base takes nodo-localnet's block out of /etc/dhcpcd.conf. An upgrade keeps it,
+# since the new version's INSTALL replaces it. This runs before the files go, while the script is
+# still there.
+case "${ACTION}" in
+pre)
+	if [ "${UPDATE}" = no ] && [ -x ./usr/libexec/monokulo/dhcpcd-nodo-local ]; then
+		./usr/libexec/monokulo/dhcpcd-nodo-local remove .
+	fi
+	;;
+esac

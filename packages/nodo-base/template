@@ -1,0 +1,24 @@
+# Template file for 'nodo-base'
+pkgname=nodo-base
+version=0.1.0
+revision=5
+archs="aarch64 x86_64"
+depends="base-minimal iproute2 openssh dhcpcd chrony nftables bubblewrap e2fsprogs"
+short_desc="Minimal base system for monokulo-nodo appliances"
+maintainer="monokulo-nodo <noreply@localhost>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/OceanEilonwy/monokulo-nodo"
+conf_files="/etc/nftables.conf /etc/ssh/sshd_config.d/10-monokulo.conf"
+
+do_install() {
+	vinstall ${FILESDIR}/nftables.conf 644 etc
+	vinstall ${FILESDIR}/10-monokulo.conf 644 etc/ssh/sshd_config.d
+	vinstall ${FILESDIR}/05-service-timeout.sh 644 etc/runit/shutdown.d
+	vinstall ${FILESDIR}/issue 644 usr/share/monokulo
+	# dhcpcd owns /etc/dhcpcd.conf, so this block for nodo-localnet goes into it through INSTALL,
+	# on every install and upgrade, and the image builder runs the same script.
+	vinstall ${FILESDIR}/dhcpcd-nodo-local.conf 644 usr/share/monokulo
+	vinstall ${FILESDIR}/dhcpcd-nodo-local 755 usr/libexec/monokulo
+	vbin ${FILESDIR}/nodo-report
+	vsv monokulo-diag
+}

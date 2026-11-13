@@ -90,7 +90,7 @@ sync
 3. Find the IP address in one of these places:
    - Your router, as a device named `monokulo-nodo`. Card 1 may get a different address than
      card 2 if the board's MAC address comes out differently.
-   - The Nodo's screen, card 2 only, if the console appears there.
+   - The Nodo's built-in screen, on mainline cards built since 2026-11-12, which drive its DSI panel.
 4. Log in. Only your `id_ed25519` key works, and there is no password login:
 
 ```sh

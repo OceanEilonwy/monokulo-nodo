@@ -209,7 +209,11 @@ impl Vm {
     /// Runs the file and returns its table. Binary chunks are refused because Lua does not verify
     /// bytecode, and crafted bytecode can corrupt memory.
     fn eval(&self, source: &str) -> Result<Table, SettingsError> {
-        let result = self.lua.load(source).set_name("settings").set_mode(ChunkMode::Text).eval::<LuaValue>();
+        self.eval_named(source, "settings")
+    }
+
+    fn eval_named(&self, source: &str, name: &str) -> Result<Table, SettingsError> {
+        let result = self.lua.load(source).set_name(name).set_mode(ChunkMode::Text).eval::<LuaValue>();
         let value = result.map_err(|e| self.classify(&e))?;
         match value {
             LuaValue::Table(table) => Ok(table),
@@ -229,6 +233,44 @@ impl Vm {
             return SettingsError::LimitExceeded(Limit::Memory);
         }
         SettingsError::Script(clean_message(&error.to_string()))
+    }
+}
+
+/// The settings sandbox, for other package code that must run under exactly the same rules, such
+/// as the screen's panel functions (docs/SCREEN.md). Each `Sandbox` is a fresh Lua state: create
+/// one per run so that nothing survives between runs.
+pub struct Sandbox {
+    vm: Vm,
+}
+
+impl Sandbox {
+    /// Refuses to run as root, like settings code.
+    pub fn new(limits: Limits) -> Result<Self, SettingsError> {
+        refuse_root()?;
+        Ok(Sandbox { vm: Vm::new(limits)? })
+    }
+
+    /// Runs a text chunk (never bytecode) and returns the table it returns. `name` appears in
+    /// error messages.
+    pub fn eval_table(&self, source: &str, name: &str) -> Result<Table, SettingsError> {
+        if source.len() > MAX_SOURCE_LEN {
+            return Err(SettingsError::SourceTooLarge);
+        }
+        self.vm.budget.reset();
+        self.vm.eval_named(source, name)
+    }
+
+    /// The state, for converting values in and out. Calls into package code go through
+    /// [`Sandbox::run`] so that they are metered.
+    pub fn lua(&self) -> &Lua {
+        &self.vm.lua
+    }
+
+    /// Runs `body` with a fresh instruction and time budget. Exceeding a limit or the memory cap
+    /// becomes [`SettingsError::LimitExceeded`], any other error a one-line [`SettingsError::Script`].
+    pub fn run<T>(&self, body: impl FnOnce(&Lua) -> mlua::Result<T>) -> Result<T, SettingsError> {
+        self.vm.budget.reset();
+        body(&self.vm.lua).map_err(|e| self.vm.classify(&e))
     }
 }
 

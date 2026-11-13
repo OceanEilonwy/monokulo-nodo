@@ -56,7 +56,9 @@ pub use resolve::{
     Access, Dependency, Grant, Installed, InstalledPackage, NetworkGrant, PortProtocol, Rendered, ResolveError,
     Resolved,
 };
-pub use sandbox::{load_settings, Limit, Limits, LoadedSettings, SettingsError};
+pub use sandbox::{load_settings, Limit, Limits, LoadedSettings, Sandbox, SettingsError};
+/// The Lua binding the sandbox uses, so that code built on [`Sandbox`] shares its version.
+pub use mlua;
 pub use schema::{
     is_valid_setting_name, DefaultValue, Endpoint, Generate, Schema, SecretString, SettingDef, SettingType,
     SettingValue, Value, MAX_GENERATED_BYTES, MAX_TEXT_LEN, MIN_GENERATED_BYTES, SETTINGS_API_VERSION,

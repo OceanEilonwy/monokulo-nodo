@@ -1,0 +1,15 @@
+# Feeds every device starts with, installed as /usr/share/nodo/default-feeds.toml.
+#
+# nodo-helper adds each one the first time it reads its feed state on a device that never had it,
+# pinned to the fingerprint here: there is no trust on first use, the device never asks the
+# server which key to trust. A feed the owner removed stays removed, and changing a fingerprint
+# here never replaces a pin a device already has: a device that sees another key goes through the
+# normal key change, where the owner decides. See docs/FEED.md.
+#
+# The fingerprint is how xbps shows the key (MD5 of the key in SSH form, as nodo-feed's
+# KeyFingerprint and `ssh-keygen -l -E md5` print it).
+
+[[feed]]
+name = "monokulo"
+address = "https://nodo.monokulo.com/feed"
+fingerprint = "62:54:a2:57:c2:57:9d:7e:11:8f:4c:30:a9:32:93:07"

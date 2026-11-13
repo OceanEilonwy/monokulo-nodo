@@ -1,10 +1,10 @@
 #!/bin/sh
-# Runs monokulo-base's nodo-report with and without nodo-healthd, using a stand-in for it, and
+# Runs nodo-base's nodo-report with and without nodo-healthd, using a stand-in for it, and
 # checks the abstract socket section in both cases and that the report goes on after it. Needs
 # no device: the fast tier runs it in the checks container.
 #   tests/nodo-report.sh [path to nodo-report]
 set -u
-report=${1:-$(cd "$(dirname "$0")/.." && pwd)/packages/monokulo-base/files/nodo-report}
+report=${1:-$(cd "$(dirname "$0")/.." && pwd)/packages/nodo-base/files/nodo-report}
 fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 tmp=$(mktemp -d)

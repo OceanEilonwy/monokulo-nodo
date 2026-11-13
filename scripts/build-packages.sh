@@ -8,8 +8,7 @@ if [ "${1:-}" = --changed ]; then only_list=1; shift; fi
 arch=${1:-aarch64}
 [ $# -gt 0 ] && shift
 # nodo-tools is listed because cuprated-service depends on it for nodo-confine.
-[ $# -gt 0 ] || set -- cuprated cuprated-service monokulo-base nodo-tools nodo-caddy nodo-ddns nodo-localnet
-[ -n "$only_list" ] || ensure_builder
+[ $# -gt 0 ] || set -- cuprated cuprated-service nodo-base nodo-tools nodo-caddy nodo-ddns nodo-localnet
 feed=$root/out/feed/$arch
 mkdir -p "$root/build/hostdir" "$feed" "$root/build/stamps"
 todo=
@@ -24,6 +23,8 @@ for pkg in "$@"; do
 done
 [ -n "$todo" ] || exit 0
 if [ -n "$only_list" ]; then echo $todo; exit 0; fi
+# Only now, so a run with nothing to build never builds the builder image.
+ensure_builder
 docker run --rm -e "ARCH=$arch" -e "PKGS=$todo" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 	-v "$root:/src" "$BUILDER" /src/scripts/_build-packages-inner.sh
 # Record the recipe hash from before the build, so edits made during it trigger a rebuild.

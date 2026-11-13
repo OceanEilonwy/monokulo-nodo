@@ -32,7 +32,7 @@ cp "$keys"/* "$rootfs$keys/"
 cp "$keys"/* "/work/stage1$keys/"
 
 XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "${NODO_REPO:-/src/out/feed/$BOARD_ARCH}" -R "$repo" \
-	monokulo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
+	nodo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
 # Void's packages come from the live mirror, which moves on from the pinned void-packages recipes
 # that this project's packages are built against. Each difference is listed, here and in
 # void-drift.txt next to the image, so a mirror change is seen before it surprises a test.
@@ -76,7 +76,7 @@ fi
 [ -z "${BOARD_FSTAB_EXTRA:-}" ] || printf '%s\n' "$BOARD_FSTAB_EXTRA" >> "$rootfs/etc/fstab"
 # base-files owns /etc/issue, so the console banner showing the IP is copied in here.
 cp "$rootfs/usr/share/monokulo/issue" "$rootfs/etc/issue"
-# dhcpcd owns /etc/dhcpcd.conf. monokulo-base's INSTALL puts nodo-localnet's block into it, and
+# dhcpcd owns /etc/dhcpcd.conf. nodo-base's INSTALL puts nodo-localnet's block into it, and
 # updates replace it the same way; the same script runs here so the image never depends on
 # whether xbps could run it for a foreign architecture. Configuring the image runs it again,
 # which changes nothing.
@@ -115,6 +115,12 @@ rm -f /boot/initramfs-*.img
 command -v dracut >/dev/null || NO_DRACUT=1
 [ -n "${NO_DRACUT:-}" ] || [ -s "/boot/initramfs-$kver.img" ] || dracut --force --no-hostonly --kver "$kver" "/boot/initramfs-$kver.img" || rc=1
 passwd -l root || rc=1
+# sshd refuses every login for an account whose shell does not exist. Void gives root /bin/bash,
+# which only images with dracut (a bash script) contain, so the T6N cards refused root over SSH
+# while the VM images let it in. dash's /bin/sh is on every image; use it everywhere, so the VM
+# tests log in exactly as the boards do.
+usermod -s /bin/sh root || rc=1
+[ -x "$(getent passwd root | cut -d: -f7)" ] || rc=1
 id _cuprated || rc=1
 echo "$rc" > /monokulo-configure.rc
 umount /run /tmp /dev /sys /proc
@@ -189,6 +195,15 @@ rc=$(debugfs -R 'cat /monokulo-configure.rc' /work/root.ext4 2>/dev/null)
 [ "$rc" = 0 ] || { echo "image configuration failed, rc='$rc'" >&2; tail -40 "$out/configure.log"; exit 1; }
 debugfs -w -R 'rm /monokulo-configure' /work/root.ext4 >/dev/null 2>&1
 debugfs -w -R 'rm /monokulo-configure.rc' /work/root.ext4 >/dev/null 2>&1
+# A board can take a service's place, as the screen's panels take tty1 from its login prompt. This
+# runs after configuration, because runit-void links the agetty services while it is configured.
+for s in ${BOARD_DISABLE_SERVICES:-}; do
+	debugfs -w -R "rm /etc/runit/runsvdir/default/$s" /work/root.ext4 >/dev/null 2>&1
+	if debugfs -R "stat /etc/runit/runsvdir/default/$s" /work/root.ext4 2>/dev/null | grep -q Inode; then
+		echo "could not disable service: $s" >&2
+		exit 1
+	fi
+done
 
 cp "$kernel" "$out/vmlinuz"
 used_mb=$(debugfs -R stats /work/root.ext4 2>/dev/null | awk -F: '/^Block count/{b=$2} /^Free blocks/{f=$2} /^Block size/{s=$2} END{print int((b-f)*s/1048576)}')

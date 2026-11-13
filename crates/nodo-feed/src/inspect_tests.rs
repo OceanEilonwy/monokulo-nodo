@@ -566,7 +566,7 @@ fn reports_duplicate_paths() {
 
 #[test]
 fn reports_base_system_names() {
-    for name in ["glibc", "xbps", "runit", "sudo", "openssh", "bash", "base-system", "base-files", "linux", "linux6-6", "linux-firmware", "cuprated", "monerod", "monokulo-base", "nodo-helper"] {
+    for name in ["glibc", "xbps", "runit", "sudo", "openssh", "bash", "base-system", "base-files", "linux", "linux6-6", "linux-firmware", "cuprated", "monerod", "nodo-base", "nodo-helper"] {
         let props = props_for(name, "1.0_1", "");
         let found = violations(&package_with_props(payload(), &props));
         assert_has(&found, &Violation::BasePackageName { name: name.into() });

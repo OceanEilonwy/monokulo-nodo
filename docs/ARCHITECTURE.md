@@ -26,7 +26,7 @@ codebase, and signed xbps packages from user-added feeds.
   process and user and saying whether this kernel's sandbox can block it (Landlock ABI 6 or
   later, detected at runtime). The allow-list is empty, because the base system needs no
   abstract socket, and manifests cannot add to it. `nodo-healthd --abstract-sockets` prints the
-  list and exits 1 when something unexpected listens, and monokulo-base's `nodo-report`
+  list and exits 1 when something unexpected listens, and nodo-base's `nodo-report`
   includes it (or the kernel's bare list when nodo-tools is missing). Sandboxes also get
   `--unshare-user --disable-userns`, so a service cannot create nested user namespaces. The
   cuprated run script has both, like every generated one: cuprated-service depends on
@@ -44,7 +44,7 @@ codebase, and signed xbps packages from user-added feeds.
   helper reads `get_info` from it for Home, since the TUI may not. The firewall opens only P2P
   (18080) inbound. cuprated-service's default `Cuprated.toml` and the helper's template in
   nodo-tools must agree, which `crates/nodo-install/tests/cuprated_package.rs` checks.
-- **Images:** monokulo-base keeps its `dhcpcd-nodo-local.conf` at the end of `/etc/dhcpcd.conf`
+- **Images:** nodo-base keeps its `dhcpcd-nodo-local.conf` at the end of `/etc/dhcpcd.conf`
   (dhcpcd owns that file and has no include): its INSTALL script puts the block there between
   marker lines on every install, upgrade and re-install, replacing an older copy, including the
   unmarked one images appended before, and REMOVE takes it out. The image builder runs the same
@@ -110,6 +110,17 @@ codebase, and signed xbps packages from user-added feeds.
   comparing the fingerprint with the publisher catches. Downloads are bounded in size and time,
   follow at most five redirects to any host (GitHub release downloads use two), and never from HTTPS
   down to HTTP.
+- **Default feed:** Every image ships the project's app feed, `https://nodo.monokulo.com/feed`
+  (GitHub Pages), in `/usr/share/nodo/default-feeds.toml` from nodo-tools, with its key's
+  fingerprint. The helper adds it once, already pinned to that key, so there is no trust on first
+  use; the address is then remembered, so a feed the owner removed never comes back and a
+  fingerprint changed in a later image never replaces a pin (another key from the server is the
+  normal key change). CI signs it (`.github/workflows/feed.yml`, `scripts/publish-feed.sh`) with a
+  key kept as an Actions secret, and runs every package through the device's install review before
+  deploying. Unlike the system keys, which UPDATES.md keeps offline, anyone who can get a workflow
+  run on `main` can sign for this feed. That is accepted because feed packages are untrusted on the
+  device anyway (gate, permissions, no downgrades), while a snapshot is trusted with the whole
+  system. [FEED.md](FEED.md) covers publishing, the key and adding an app.
 - **Auto-update:** Off by default and chosen per package, within a scheduled window. It never installs
   an update that needs new permissions, has a changed feed key, fails install checks, is on hold or needs
   a system restart, and it waits while the device is locked or low on disk. A failed update rolls back
@@ -186,10 +197,22 @@ codebase, and signed xbps packages from user-added feeds.
   file and blocks it. The VM tests join a WPA2 hostapd access point on a second mac80211_hwsim
   radio in a network namespace (`tests/wifi-prepare.sh` builds the module, which Void's kernel
   lacks); Bluetooth is tested with fakes only, as the VM has no virtual controller to pair with.
+- **Screen:** The NanoPC-T6N's built-in 1920x1080 touchscreen shows package widgets as terminal
+  panels (design H3, chosen on 2026-11-13; `docs/design/tui/ScreenHybridPanels*.dc.html`): the
+  TUI's boxed panels with the title set into the border, on a pure black background so unlit
+  OLED pixels stay off, in JetBrains Mono with the TUI's amber accent, and with bars and
+  sparklines drawn in block characters. Panels sit on an 8x4 grid; the owner adds, hides, moves
+  and resizes them by touch or keys (`hjkl` move, `HJKL` resize), and packages offer the panels,
+  each in a range of sizes. A manifest declares its panels (`[[panels]]`); the screen fetches each
+  one's data from the package's own service on loopback, runs the package's Lua `panel` function in
+  the settings sandbox to compute the values, checks them against a fixed schema and draws them
+  itself, so a package never draws or reaches beyond its own service. `nodo-screen` runs as
+  `_nodo_screen` on tty1 in place of its login prompt. [SCREEN.md](SCREEN.md) is the contract.
 
 ## Layout
 
 - `packages/`: xbps recipes.
+- `feed/`: the app feed's package list and public key ([FEED.md](FEED.md)); `.github/workflows/feed.yml` publishes it.
 - `boards/`, `scripts/`, `tests/`: image builds and test tiers (`scripts/test.sh fast|vm|full`).
   Images take Void's packages from the live mirror (`VOID_MIRROR`), and xbps-src builds ours
   against the void-packages recipes at `VOID_PACKAGES_REV`. A Void dependency whose mirror version

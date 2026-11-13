@@ -1,0 +1,56 @@
+#!/bin/sh
+# Adapts what the appliance provides to what the Bell reads, then becomes the Bell.
+#
+# - Settings arrive as NODO_<NAME> variables. The Bell's secrets are read from its own
+#   MONOKULO_BELL_* variables, never argv; application IDs and the address become options.
+# - The registrations' database goes in the data directory, which the sandbox mounts as $HOME.
+#
+# This script keeps the name of the binary it starts, so `pkill -x monokulo-bell` matches
+# whichever of the two is running.
+set -eu
+
+die() {
+	echo "bell launcher: $*" >&2
+	exit 1
+}
+
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || die "HOME is not the data directory"
+[ -n "${NODO_VAPID_KEY:-}" ] || die "the vapid_key setting has no value"
+[ -n "${NODO_PUBLIC_URI:-}" ] || die "the public_uri setting has no value"
+
+MONOKULO_BELL_VAPID_KEY=$NODO_VAPID_KEY
+export MONOKULO_BELL_VAPID_KEY
+set -- --bell-public-uri "$NODO_PUBLIC_URI" "$@"
+
+on=
+for integration in square_production:webhook_key square_sandbox:webhook_key \
+	clover_north_america:auth_code clover_europe:auth_code clover_latin_america:auth_code \
+	clover_sandbox:auth_code; do
+	name=${integration%%:*} secret=${integration#*:}
+	upper=$(printf '%s' "$name" | tr a-z A-Z)
+	secret_upper=$(printf '%s' "$secret" | tr a-z A-Z)
+	eval "id=\${NODO_${upper}_APPLICATION_ID:-}"
+	eval "key=\${NODO_${upper}_${secret_upper}:-}"
+	if [ -n "$id" ]; then
+		case $id in
+		*[!A-Za-z0-9_-]*) die "unexpected characters in ${name}_application_id" ;;
+		esac
+		[ -n "$key" ] || die "${name}_application_id is set, so ${name}_${secret} must be too"
+		flag=$(printf '%s' "$name" | tr _ -)
+		set -- "--bell-${flag}-application-id" "$id" "$@"
+		export "MONOKULO_BELL_${upper}_${secret_upper}=$key"
+		on=1
+	elif [ -n "$key" ]; then
+		die "${name}_${secret} is set without ${name}_application_id"
+	fi
+done
+[ -n "$on" ] || die "no point of sale is set up: set a Square application ID or a Clover App ID"
+
+for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+
+exec "$(dirname "$0")/../libexec/monokulo-bell" \
+	--options "$HOME/bell.toml" \
+	--bell-store-path "$HOME/bell.db" \
+	"$@"

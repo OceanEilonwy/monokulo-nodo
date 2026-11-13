@@ -3,7 +3,8 @@
 # root, and checks what the image adds on top of the boot path: the platform packages and the
 # services started at boot, nodo-localnet's dhcpcd block, restricted RPC on loopback, cuprated
 # under nodo-confine, nodo-report's abstract socket list, and the GPU's group, udev rule and
-# (on the mainline card only) Vulkan. The image is only read.
+# (on the mainline card only) Vulkan, and the default app feed with its pinned key. The image is
+# only read.
 #   tests/inspect-t6n-platform.sh out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
 # Needs sfdisk, debugfs and python3 (3.11 or later) on the machine running it.
 set -u
@@ -26,13 +27,31 @@ import plistlib, sys
 for k, v in sorted(plistlib.loads(sys.stdin.buffer.read()).items()):
     print(k, v.get("pkgver", k))' > "$tmp/pkgs"
 echo "== $(wc -l < "$tmp/pkgs") packages; the platform:"
-grep -E '^(monokulo-base|cuprated|cuprated-service|nodo-tools|nodo-caddy|nodo-ddns|nodo-localnet|linux-nanopc-t6n|linux-mainline-rk3588) ' "$tmp/pkgs" | sed 's/^/  /'
-for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service monokulo-base; do
+grep -E '^(nodo-base|cuprated|cuprated-service|nodo-tools|nodo-caddy|nodo-ddns|nodo-localnet|linux-nanopc-t6n|linux-mainline-rk3588) ' "$tmp/pkgs" | sed 's/^/  /'
+for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service nodo-base; do
 	grep -q "^$p " "$tmp/pkgs"
 	result "$p is installed" "$?"
 done
-! grep -q '^monokulo ' "$tmp/pkgs"
-result "Monokulo is not preinstalled; it comes through the helper from a feed" "$?"
+! grep -q '^mk-pay ' "$tmp/pkgs"
+result "Monokulo (mk-pay) is not preinstalled; it comes through the helper from a feed" "$?"
+# The app feed is a default source with its key pinned from the start; the repository's file
+# is tied to feed/signing-key.pub.pem by nodo-helper's tests.
+repo=$(cd "$(dirname "$0")/.." && pwd)
+want=$(sed -n 's/^fingerprint *= *"\(.*\)"/\1/p' "$repo/packages/nodo-tools/files/default-feeds.toml")
+show 'cat /usr/share/nodo/default-feeds.toml' > "$tmp/default-feeds.toml"
+got=$(sed -n 's/^fingerprint *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml")
+echo "== default feed: $(sed -n 's/^address *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml") key $got"
+grep -qx 'address = "https://nodo.monokulo.com/feed"' "$tmp/default-feeds.toml" && [ -n "$got" ] && [ "$got" = "$want" ]
+result "the app feed nodo.monokulo.com/feed ships as a default, pinned to $want" "$?"
+
+# sshd refuses root when root's shell is missing; the first T6N cards had /bin/bash without bash.
+root_shell=$(show 'cat /etc/passwd' | awk -F: '$1 == "root" { print $7 }')
+echo "== root's shell: $root_shell"
+if [ "$root_shell" = /bin/sh ]; then r=0; else r=1; fi
+result "root's login shell is /bin/sh" "$r"
+# /bin and /usr/bin/sh are symlinks (to usr/bin and dash); stat on the target the link names.
+show 'stat /usr/bin/dash' | grep -q 'Type: regular'
+result "the shell it points to, dash, is installed" "$?"
 
 # debugfs's parseable listing is /inode/mode/uid/gid/name/size/ per entry.
 links=$(show 'ls -p /etc/runit/runsvdir/default' | cut -d/ -f6 | grep -v '^\.\.\?$' | grep . | sort | tr '\n' ' ')
@@ -65,7 +84,7 @@ result "dhcpcd's own settings before it are kept" "$?"
 show 'cat /usr/share/monokulo/dhcpcd-nodo-local.conf' > "$tmp/block"
 [ -s "$tmp/block" ] && [ "$(tail -n 1 "$tmp/dhcpcd.conf")" = '# END nodo-local' ] &&
 	sed -n '/^# BEGIN nodo-local/,/^# END nodo-local/p' "$tmp/dhcpcd.conf" | sed '1d;$d' | cmp -s - "$tmp/block"
-result "the block is monokulo-base's file, between its markers at the end" "$?"
+result "the block is nodo-base's file, between its markers at the end" "$?"
 if [ "$(grep -c '^# BEGIN nodo-local' "$tmp/dhcpcd.conf")" = 1 ]; then r=0; else r=1; fi
 result "the marked block appears once" "$r"
 show 'stat /usr/libexec/monokulo/dhcpcd-nodo-local' | grep -q 'Type: regular'
@@ -123,12 +142,26 @@ for p in eudev alsa-utils wpa_supplicant bluez dbus v4l-utils; do
 	grep -q "^$p " "$tmp/pkgs" || { echo "  not installed: $p"; r=1; }
 done
 result "eudev, alsa-utils, wpa_supplicant, bluez, dbus and v4l-utils are installed" "$r"
+# A card with the screen's panels gives them tty1; any other keeps tty1's login prompt.
+case " $links " in *" nodo-screen "*) tty1=nodo-screen ;; *) tty1=agetty-tty1 ;; esac
 r=0
-for s in udevd nodo-sound agetty-tty1; do
+for s in udevd nodo-sound $tty1; do
 	case " $links " in *" $s "*) ;; *) echo "  not started: $s"; r=1 ;; esac
 	show "stat /etc/sv/$s/run" | grep -qE 'Type: (regular|symlink)' || { echo "  no run script: $s"; r=1; }
 done
-result "udevd (module and firmware loading, hotplug), the mixer service and the tty1 login start at boot" "$r"
+result "udevd (module and firmware loading, hotplug), the mixer service and tty1 ($tty1) start at boot" "$r"
+if [ "$tty1" = nodo-screen ]; then
+	r=0
+	case " $links " in *" agetty-tty1 "*) echo "  tty1's login prompt also starts"; r=1 ;; esac
+	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/kbd/consolefonts/ter-v32n.psf.gz \
+		/usr/share/nodo/packages/cuprated/panels/sync.lua; do
+		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
+	done
+	show 'cat /etc/passwd' | grep -q '^_nodo_screen:' || { echo "  no _nodo_screen account"; r=1; }
+	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
+	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
+	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
+fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do
 	case " $links " in *" $s "*) echo "  started at boot: $s"; r=1 ;; esac

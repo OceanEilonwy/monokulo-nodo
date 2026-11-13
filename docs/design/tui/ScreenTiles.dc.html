@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screen tiles</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:14px 20px 20px;background:#101214;color:#D7DADC;font-family:Inter,sans-serif;display:flex;flex-direction:column;gap:12px}
+.bar{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#A3AAB0;height:16px}
+.bar b{color:#D7DADC;font-weight:600}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(3,1fr);gap:12px}
+.t{background:#1A1D20;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative}
+.h{font-size:11px;font-weight:600;color:#A3AAB0;letter-spacing:.02em;display:flex;justify-content:space-between}
+.big{font-size:30px;font-weight:700;color:#F4F5F6;line-height:1.1}
+.mid{font-size:18px;font-weight:600;color:#F4F5F6}
+.sub{font-size:11px;color:#A3AAB0}
+.ok{color:#6FD6B3}.a{color:#F2A33A}.err{color:#FF8A7A}.i{color:#86BEFF}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.kv{display:flex;justify-content:space-between;font-size:12px;margin-top:6px}
+.kv span:first-child{color:#A3AAB0}
+.pkg{position:absolute;right:12px;bottom:10px;font-size:9px;color:#6B7379}
+</style>
+</helmet>
+<div class="scr">
+<div class="bar"><span><b>monokulo-nodo</b>  ·  192.168.1.105  ·  .onion ready</span><span>Thu 13 Nov  <b>14:32</b></span></div>
+<div class="grid">
+
+<!-- cuprated 2x2 -->
+<div class="t" style="grid-column:1/3;grid-row:1/3">
+<div class="h"><span>MONERO NODE</span><span class="i">syncing</span></div>
+<div style="flex:1;display:flex;align-items:center;gap:18px">
+<svg width="118" height="118" viewBox="0 0 118 118"><circle cx="59" cy="59" r="50" fill="none" stroke="#2A2F33" stroke-width="12"/><circle cx="59" cy="59" r="50" fill="none" stroke="#86BEFF" stroke-width="12" stroke-linecap="round" stroke-dasharray="191.6 314.2" transform="rotate(-90 59 59)"/><text x="59" y="66" text-anchor="middle" fill="#F4F5F6" font-family="Inter" font-weight="700" font-size="24">61%</text></svg>
+<div style="flex:1">
+<div class="kv"><span>Height</span><span>2,121,400</span></div>
+<div class="kv"><span>Target</span><span>3,478,000</span></div>
+<div class="kv"><span>Peers</span><span>32 out · 9 in</span></div>
+<div class="kv"><span>Left</span><span>about 9 h</span></div>
+</div>
+</div>
+<div class="pkg">cuprated</div>
+</div>
+
+<!-- Monokulo pay 2x2 with chart -->
+<div class="t" style="grid-column:3/5;grid-row:1/3">
+<div class="h"><span>PAYMENTS TODAY</span><span><span style="color:#6B7379;font-weight:400;margin-right:8px">monokulo</span><span class="ok">● live</span></span></div>
+<div class="big" style="margin-top:6px">4.82 <span style="font-size:15px;color:#A3AAB0;font-weight:500">XMR</span></div>
+<div class="sub">37 paid · 2 waiting · 1 refunded</div>
+<svg style="margin-top:auto" width="100%" height="92" viewBox="0 0 280 92" preserveAspectRatio="none">
+<g fill="#F2A33A">
+<rect x="4" y="70" width="14" height="22" rx="2"/><rect x="26" y="62" width="14" height="30" rx="2"/><rect x="48" y="74" width="14" height="18" rx="2"/><rect x="70" y="50" width="14" height="42" rx="2"/><rect x="92" y="40" width="14" height="52" rx="2"/><rect x="114" y="56" width="14" height="36" rx="2"/><rect x="136" y="30" width="14" height="62" rx="2"/><rect x="158" y="18" width="14" height="74" rx="2"/><rect x="180" y="34" width="14" height="58" rx="2"/><rect x="202" y="44" width="14" height="48" rx="2"/><rect x="224" y="26" width="14" height="66" rx="2"/>
+<rect x="246" y="60" width="14" height="32" rx="2" opacity=".45"/>
+</g></svg>
+<div class="sub" style="display:flex;justify-content:space-between;margin-top:4px"><span>08:00</span><span>12:00</span><span>now</span></div>
+</div>
+
+<!-- Device 2x1 -->
+<div class="t" style="grid-column:5/7;grid-row:1/2">
+<div class="h"><span>DEVICE</span><span>52 °C</span></div>
+<div class="kv" style="margin-top:10px"><span>Blockchain SSD</span><span>412 GB / 1.9 TB</span></div>
+<div style="height:6px;background:#2A2F33;border-radius:3px;margin-top:5px"><div style="width:22%;height:6px;background:#6FD6B3;border-radius:3px"></div></div>
+<div class="kv"><span>Memory</span><span>6.1 / 31 GB</span></div>
+<div class="pkg">system</div>
+</div>
+
+<!-- LWS 2x1 -->
+<div class="t" style="grid-column:5/7;grid-row:2/3">
+<div class="h"><span>WALLET SCANNER</span><span class="ok">up to date</span></div>
+<div class="mid" style="margin-top:10px">214 accounts</div>
+<div class="sub">GPU scanning · 0 blocks behind</div>
+<div class="pkg">monokulo-lws</div>
+</div>
+
+<!-- Web 2x1 -->
+<div class="t" style="grid-column:1/3;grid-row:3/4">
+<div class="h"><span>WEB SITES</span><span class="ok">3 up</span></div>
+<div class="kv" style="margin-top:8px"><span><span class="dot" style="background:#6FD6B3"></span>pay.shop.example</span><span>public · onion</span></div>
+<div class="kv"><span><span class="dot" style="background:#6FD6B3"></span>shop.lan</span><span>local</span></div>
+<div class="pkg">nodo-caddy</div>
+</div>
+
+<!-- Bell 1x1 -->
+<div class="t" style="grid-column:3/4;grid-row:3/4">
+<div class="h"><span>BELL</span></div>
+<div style="margin-top:auto"><div class="mid ok">● Ringing</div><div class="sub">last 0.8 s ago</div></div>
+</div>
+
+<!-- Tor 1x1 -->
+<div class="t" style="grid-column:4/5;grid-row:3/4">
+<div class="h"><span>TOR</span></div>
+<div style="margin-top:auto"><div class="mid">100%</div><div class="sub">circuit built</div></div>
+</div>
+
+<!-- Updates 1x1 -->
+<div class="t" style="grid-column:5/6;grid-row:3/4;background:#2A2116">
+<div class="h"><span class="a">UPDATES</span></div>
+<div style="margin-top:auto"><div class="big a">2</div><div class="sub">ready to review</div></div>
+</div>
+
+<!-- Clock 1x1 -->
+<div class="t" style="grid-column:6/7;grid-row:3/4">
+<div class="h"><span>PRICE</span></div>
+<div style="margin-top:auto"><div class="mid">€312.40</div><div class="sub ok">▲ 1.8% today</div></div>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

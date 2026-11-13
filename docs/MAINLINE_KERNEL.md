@@ -71,7 +71,7 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 | Headphone jack | RT5616 on I2C7, `i2s0`, jack detect GPIO1_C4 | the same | unchanged |
 | IR receiver | `gpio-ir-receiver` on GPIO0_D4 | the same pin, as a PWM remote input | unchanged |
 | DisplayPort over Type-C | none | `dp0`/`dp1` alt mode on both ports | not wired up (driver built, nodes off) |
-| MIPI-DSI, MIPI-CSI | connectors only | DSI0/DSI1 (an AMOLED panel overlay, Goodix touch on I2C5), CSI0/CSI1 | nodes off: no panel or camera is declared |
+| MIPI-DSI, MIPI-CSI | connectors only | DSI1 with the 5.5" ZH055OE041 AMOLED on video port 3, GT1x touch on I2C5, CSI0/CSI1 | DSI1, its DC-PHY, the panel and the touchscreen as FriendlyElec; DSI0 and the cameras off |
 
 ### Per subsystem
 
@@ -109,6 +109,29 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 - **Console.** On mainline the debug UART is `ttyS2`, 1500000 8N1, where the vendor kernel has
   the FIQ debugger's `ttyFIQ0`. Void has no `agetty-ttyS2` or `agetty-ttyFIQ0` service, so
   neither image starts a login prompt on it. The serial port shows kernel messages.
+- **The built-in screen.** The Nodo's screen is not on HDMI: it is a ZHOT ZH055OE041 5.5"
+  1080x1920 AMOLED panel on `dsi1`, fed by VOP2 video port 3, the same as in the device tree the
+  original Nodo system boots (read from its eMMC on 2026-11-12, where `card0-DSI-1` is connected and
+  `card0-HDMI-A-1` is not). Mainline has no driver for this panel; `files/panel-zhot-zh055oe041.c`
+  carries FriendlyElec's (their `panel-raydium-rm67191.c` at kernel-rockchip 30d3e1c: the panel's
+  command table, power-on sequence and timing, 133.711 MHz for 1080x1920 at 60 Hz) for mainline's
+  panel API, and the template adds it to the kernel tree. The panel has no backlight; its DCS
+  brightness is offered as one. The touchscreen is a Goodix GT1x on I2C5, which mainline's `goodix`
+  driver handles as `goodix,gt1151`. The DC-PHY, panel and touch drivers are modules, so the screen
+  lights once udev has loaded them. Verified on the Nodo on 2026-11-13: the panel shows a steady
+  picture and touch registers (Goodix ID 1158). Three things were needed beyond FriendlyElec's
+  tree, found by dumping the DSI host, DC-PHY and VOP2 registers on both systems and comparing:
+  - **Pixel clock 132 MHz.** VOP2's DSI video port only makes 132 MHz here (GPLL / 9); with the
+    mode at FriendlyElec's 133.711 MHz, mainline's DSI host timed lines for the wrong rate.
+  - **VOP2 pre-scan hblank of at least 8.** Mainline writes the mode's hsync length into
+    `VP_PRE_SCAN_HTIMING`; Rockchip's BSP clamps it to 8, since a smaller value lets the window
+    reset corrupt the line start. The panel's hsync is 4 pixels, and without the clamp the picture
+    jittered along the line. `patches/0001-drm-rockchip-vop2-pre-scan-hblank-minimum.patch`.
+  - **High-speed blanking in the back porch** (`MIPI_DSI_MODE_VIDEO_NO_HBP`, the DSI host's
+    `BLK_HBP_HS_EN`), as the original system's DSI host has it.
+  The panel sits in the case left side up (`rotation = <270>`); the driver reports the
+  orientation and fbcon rotation is built in, so the console reads the right way up, in Terminus
+  16x32 (`fbcon=font:TER16x32`, 120 by 33 characters).
 - **HDMI and the text console.** VOP2, `dw-hdmi-qp` and the HDPTX PHY drive `hdmi0`, and DRM's
   fbdev emulation puts a text console on it once `rockchipdrm` loads (udev loads it from the root
   filesystem, so the screen shows the boot logo until then). `console=tty0` sends kernel messages
@@ -235,7 +258,7 @@ sandbox's sysfs subset, and that the compute shader gives the right answer (nodo
 - **IR receiver.** `gpio-ir-recv` with the common protocol decoders; `ir-keytable` (v4l-utils)
   loads keymaps.
 - **MIPI-DSI.** The DSI2 host and the Samsung DC-PHY are built, with Goodix and FocalTech touch
-  drivers, for FriendlyElec's panels. The DSI nodes stay off until a panel is declared.
+  drivers. `dsi1` drives the built-in screen (above); `dsi0` stays off.
 - **Wi-Fi and Bluetooth.** Drivers for M.2 (PCIe) and USB cards: Realtek rtw88/rtw89, MediaTek
   MT7921/MT7922/MT7925, Intel AX200/AX210/BE200 and Qualcomm WCN6855/WCN7850, with Bluetooth
   over USB (`btusb`) and UART (`hci_uart`), and the matching firmware. wpa_supplicant, bluez and

@@ -3,8 +3,15 @@
 //! Feeds are named on this device, and pins are kept by address in a `nodo_feed::PinStore`. A
 //! key change blocks the feed until the user trusts the new key by typing the feed's name, which
 //! the helper checks, together with both keys so the approval fits only this one change.
+//!
+//! The image also ships default feeds (`/usr/share/nodo/default-feeds.toml`), each with the
+//! fingerprint of its key. One is added, already pinned to that key, the first time the feed
+//! state is read on a device that never had it, so the device never asks the server which key to
+//! trust. It is added once: a default the owner removed stays removed, and a fingerprint changed in
+//! a later image never replaces a pin; a server that signs with another key goes through the
+//! normal key change like any feed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use nodo_api::{
     ApiError, CatalogEntry, FeedInfo, FeedKeyChange, FeedProbe, InstalledFromFeed,
@@ -67,6 +74,45 @@ pub(crate) struct FeedState {
     pub approved: BTreeMap<String, Permissions>,
     #[serde(default)]
     pub installed: BTreeMap<String, InstalledRecord>,
+    /// Addresses of the image's default feeds this device was already given, whether or not they
+    /// are still added. A removed default is remembered here, so it does not come back.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub defaults_seeded: BTreeSet<String>,
+}
+
+/// One feed the image ships with.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DefaultFeed {
+    pub name: String,
+    pub address: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultFeeds {
+    #[serde(default)]
+    feed: Vec<DefaultFeed>,
+}
+
+/// Reads the image's default feeds file.
+pub(crate) fn parse_default_feeds(text: &str) -> Result<Vec<DefaultFeed>, String> {
+    let parsed: DefaultFeeds = toml::from_str(text).map_err(|e| e.to_string())?;
+    for feed in &parsed.feed {
+        check_address(&feed.address).map_err(|e| format!("{}: {e}", feed.address))?;
+        KeyFingerprint::new(&feed.fingerprint).map_err(|e| format!("{}: {e}", feed.address))?;
+    }
+    Ok(parsed.feed)
+}
+
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
 }
 
 impl FeedState {
@@ -81,6 +127,46 @@ impl FeedState {
             .iter()
             .find(|(_, f)| f.address == address)
             .map(|(n, _)| n.as_str())
+    }
+
+    /// Adds each default feed this device has never been given, pinned to the shipped key.
+    /// Returns whether the state changed.
+    pub fn seed_defaults(&mut self, defaults: &[DefaultFeed], now: u64) -> bool {
+        let mut changed = false;
+        for default in defaults {
+            if !self.defaults_seeded.insert(default.address.clone()) {
+                continue;
+            }
+            changed = true;
+            let Ok(key) = KeyFingerprint::new(&default.fingerprint) else {
+                continue;
+            };
+            // The owner added this address before, and pinned the key they confirmed: theirs
+            // stays, whatever the image ships.
+            if self.name_for(&default.address).is_some()
+                || self.pins.feeds.contains_key(&default.address)
+            {
+                continue;
+            }
+            if self.pins.add_feed(&default.address, &key) != Decision::Pinned {
+                continue;
+            }
+            let name = if plain_name(&default.name) && !self.feeds.contains_key(&default.name) {
+                default.name.clone()
+            } else {
+                self.new_name(&default.address)
+            };
+            self.feeds.insert(
+                name,
+                FeedRecord {
+                    address: default.address.clone(),
+                    enabled: true,
+                    added: now,
+                    ..FeedRecord::default()
+                },
+            );
+        }
+        changed
     }
 
     /// A short name from the address's last segment, made unique on this device.
@@ -153,8 +239,42 @@ fn check_address(address: &str) -> Result<(), ApiError> {
 }
 
 impl<S: System> Helper<S> {
+    /// The feed state, with any default feed this device has never had added to it.
     fn feeds_state(&self) -> Result<FeedState, ApiError> {
-        self.load_state(&self.manage.paths.feeds)
+        let mut state: FeedState = self.load_state(&self.manage.paths.feeds)?;
+        let defaults = self.default_feeds();
+        if state.seed_defaults(&defaults, self.manage.packages.now()) {
+            // Seeding gives the same result each time, so a failed write is tried again on the
+            // next read rather than failing this one.
+            if let Err(e) = self.save_feeds(&state) {
+                eprintln!("nodo-helper: could not record the default feeds: {e}");
+            }
+        }
+        Ok(state)
+    }
+
+    /// The image's default feeds. A missing file means none; a broken one is logged and ignored,
+    /// so it can never stop the owner's own feeds from working.
+    fn default_feeds(&self) -> Vec<DefaultFeed> {
+        let path = &self.manage.paths.default_feeds;
+        let bytes = match self.sys.read_file(path) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Vec::new(),
+            Err(e) => {
+                eprintln!("nodo-helper: {}: {e}", path.display());
+                return Vec::new();
+            }
+        };
+        match std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(parse_default_feeds)
+        {
+            Ok(feeds) => feeds,
+            Err(e) => {
+                eprintln!("nodo-helper: ignoring {}: {e}", path.display());
+                Vec::new()
+            }
+        }
     }
 
     pub(crate) fn save_feeds(&self, state: &FeedState) -> Result<(), ApiError> {
