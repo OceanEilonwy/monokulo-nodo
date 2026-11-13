@@ -11,6 +11,7 @@
 #
 #   index.html               what the feed is, its address, key fingerprint and packages
 #   CNAME                    nodo.monokulo.com, for GitHub Pages
+#   404.html                 so a missing file is answered 404, not 503
 #   signing-key.pub.pem      the public key, to compare with what a device shows
 #   feed/<arch>-repodata     the xbps index, signed: the key and signer are in its meta
 #   feed/<name>-<ver>.<arch>.xbps and .xbps.sig2
@@ -93,6 +94,9 @@ site)
 	field() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$root/packages/$1/template" | head -n 1; }
 	shown=$(printf '%s' "$fingerprint" | tr -d : | sed 's/../&:/g; s/:$//')
 	printf '%s\n' "$host" > "$site/CNAME"
+	# GitHub Pages answered a missing file inside a directory with HTTP 503 while the site had no
+	# 404 page (2026-11-13). This page is meant to make that a 404. Devices do not rely on it.
+	printf %s\\n "<!doctype html><title>Not found</title><p>Not found." > "$site/404.html"
 	cp "$root/feed/signing-key.pub.pem" "$site/signing-key.pub.pem"
 	rows=
 	for arch in $list; do

@@ -56,6 +56,12 @@ Unknown fields are refused.
   rotations applies them in order. Older statements are refused, so a retired key cannot be
   restored. A manifest signed only by unknown keys is reported as "signed by an unknown key" and
   needs the user, who can approve one exact change (`KeyApproval` names the old and new keys).
+- **A key statement that cannot be read:** 404 or 410 means none is published. Any other failure is
+  tried once more; if it still fails, the update goes ahead under the keys already trusted, and only
+  if the manifest is then refused does the download failure become the error. The stable channel
+  always publishes one (`feed/snapshot-keys/README.md`): a no-op restating the pinned keys, because
+  GitHub Pages answers a missing file in a directory with 503 and the client in nodo-tools 12
+  stopped on that.
 - **Withdrawing a bad snapshot** is a new manifest with a higher serial pointing at an older
   snapshot, naming the pulled one in `withdraws` (`publish-snapshot.sh sign ... --withdraws
   <name>`). That is not a downgrade of trust: the serial must still be higher than the record and

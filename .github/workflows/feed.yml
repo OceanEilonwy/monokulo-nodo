@@ -254,7 +254,7 @@ jobs:
           # shellcheck disable=SC2086
           scripts/publish-feed.sh site ${{ steps.archs.outputs.archs }}
           # This workflow's half of the site, and system.yml's snapshots copied from the live one.
-          scripts/pages-site.sh list out/site feed index.html CNAME signing-key.pub.pem feed
+          scripts/pages-site.sh list out/site feed index.html 404.html CNAME signing-key.pub.pem feed
           scripts/pages-site.sh pull out/site system
           find out/site -type f -printf '%s\t%P\n' | sort -n
           total=$(du -sb out/site | cut -f1)
