@@ -228,7 +228,7 @@ reaches the network only to fetch the declared loopback sources, and talks to on
 `nodo-power`'s, only after the owner confirms a shutdown.
 
 The touchscreen is the first input device whose name starts with `Goodix`. Its coordinates are
-turned to match the console with `/etc/nodo/screen.toml`:
+turned to match the console with `/etc/nodo/screen.toml` (which also sets the backlight, below):
 
 ```toml
 [touch]
@@ -236,6 +236,24 @@ swap_xy = true
 invert_x = true
 invert_y = false
 ```
+
+## Backlight
+
+After two minutes with no touch, click or key, the screen dims its backlight (the first device under
+`/sys/class/backlight`, `fde30000.dsi.0` on the T6N, maximum 255) to 20% of its maximum. Any input
+brings it back to full, and that input only wakes the screen: a tap on a dim screen presses nothing,
+and the rest of that touch is ignored until the finger lifts. The screen never dims while someone
+arranges, adds a panel, or during the shutdown screens, and it sets full brightness when it stops.
+
+```toml
+[backlight]
+dim_after_secs = 120   # 0 never dims
+dim_percent = 20       # never quite off: 0 means the lowest step, 1 of 255
+```
+
+The program still runs without root: the service's run script, as root, gives `_nodo_screen`'s
+group write access to that one `brightness` file (`chgrp` and `chmod g+w`) before it starts the
+program. A copy over SSH (`--no-touch`) leaves the backlight alone.
 
 ## What the owner approves
 

@@ -6,6 +6,7 @@
 //! mouse); each picks up the layout the other saves.
 
 mod app;
+mod backlight;
 mod bigtext;
 mod config;
 mod draw;
@@ -236,6 +237,19 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
 
     let host = hostname();
     let mut app = App::new(offered, layout, Instant::now());
+    // The backlight dims when nobody uses the screen; over SSH there is none to dim.
+    let backlight = if options.touch { backlight::Device::find(std::path::Path::new("/sys/class/backlight")) } else { None };
+    let mut dimmer = backlight::Dimmer::new(&config.backlight, Instant::now());
+    let set_backlight = |level: backlight::Level, percent: u8| {
+        if let Some(device) = &backlight {
+            if let Err(e) = device.set(level, percent) {
+                log(&format!("backlight: {e}"));
+            }
+        }
+    };
+    set_backlight(backlight::Level::Full, dimmer.percent);
+    // A touch that woke the screen is ignored until the finger lifts.
+    let mut waking_touch = false;
     let mut in_flight = std::collections::BTreeSet::new();
     let rules = nodo_panels::size_rules(&app.offered);
     // Another copy of the screen (over SSH, say) may save the layout: take it up when it changes.
@@ -288,20 +302,48 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
                 };
                 match input {
                     Input::Touch(touch::Touch::Down(x, y)) => {
+                        if let Some(level) = dimmer.input(Instant::now()) {
+                            set_backlight(level, dimmer.percent);
+                            waking_touch = true;
+                            continue;
+                        }
                         let (c, r) = to_cell(x, y);
                         effects.push(app.touch_down(area, c, r, Instant::now()));
                     }
                     Input::Touch(touch::Touch::Move(x, y)) => {
-                        let (c, r) = to_cell(x, y);
-                        app.touch_move(area, c, r);
+                        if !waking_touch {
+                            let (c, r) = to_cell(x, y);
+                            app.touch_move(area, c, r);
+                        }
                     }
-                    Input::Touch(touch::Touch::Up) => app.touch_up(),
+                    Input::Touch(touch::Touch::Up) => {
+                        if !std::mem::take(&mut waking_touch) {
+                            app.touch_up();
+                        }
+                    }
                     Input::Power(event) => app.power_event(event),
                     Input::PowerClosed(error) => app.power_closed(error),
                 }
             }
             if event::poll(Duration::from_millis(50))? {
-                match event::read()? {
+                let input = event::read()?;
+                let wakes = matches!(&input, Event::Key(_)) || matches!(&input, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_)));
+                let woke = if wakes { dimmer.input(Instant::now()) } else { None };
+                if let Some(level) = woke {
+                    set_backlight(level, dimmer.percent);
+                    waking_touch = matches!(&input, Event::Mouse(_));
+                }
+                let input = if woke.is_some() { Event::FocusGained } else { input };
+                let input = match input {
+                    Event::Mouse(m) if waking_touch && !matches!(m.kind, MouseEventKind::Down(_)) => {
+                        if matches!(m.kind, MouseEventKind::Up(_)) {
+                            waking_touch = false;
+                        }
+                        Event::FocusGained
+                    }
+                    other => other,
+                };
+                match input {
                     Event::Key(key) if key.kind == KeyEventKind::Press => effects.push(app.key(key.code, key.modifiers, Instant::now())),
                     Event::Mouse(mouse) => match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => effects.push(app.touch_down(area, mouse.column, mouse.row, Instant::now())),
@@ -313,6 +355,9 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
                 }
             }
             app.tick(Instant::now());
+            if let Some(level) = dimmer.tick(Instant::now(), app.mode == Mode::View) {
+                set_backlight(level, dimmer.percent);
+            }
             for effect in effects {
                 match effect {
                     Effect::None => {}
@@ -338,6 +383,7 @@ fn run(offered: Vec<Offered>, layout: Layout, options: &Options, config: Config)
         Ok(())
     })();
 
+    set_backlight(backlight::Level::Full, dimmer.percent);
     if app.mode == Mode::ShuttingDown && app.shutdown.off {
         // The device is turning off: leave "Safe to unplug" on the screen.
         return result;

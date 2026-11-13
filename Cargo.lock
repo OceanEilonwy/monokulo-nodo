@@ -915,6 +915,7 @@ dependencies = [
  "ratatui",
  "serde",
  "signal-hook",
+ "tempfile",
  "toml",
 ]
 

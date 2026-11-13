@@ -14,6 +14,13 @@ dmesg -n 1
 setfont -C /dev/tty1 /usr/share/nodo/nodo-screen-16x32.psf.gz ||
 	setfont -C /dev/tty1 /usr/share/kbd/consolefonts/ter-v32n.psf.gz ||
 	echo "nodo-screen: no console font"
+# The program dims the panel's backlight when nobody uses it (docs/SCREEN.md): give its account
+# that one file, and nothing else in sysfs.
+for b in /sys/class/backlight/*/brightness; do
+	[ -e "$b" ] || break
+	chgrp _nodo_screen "$b" && chmod g+w "$b"
+	break
+done
 # stdin and stdout become the screen; stderr stays this service's log.
 exec </dev/tty1 >/dev/tty1
 export TERM=linux

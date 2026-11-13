@@ -169,7 +169,8 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'cat /etc/sv/nodo-power/run' | grep -q 'install -d -m 0750 -o root -g _nodo_screen /run/nodo-power' ||
 		{ echo "  nodo-power's socket directory is not root:_nodo_screen 0750"; r=1; }
 	show 'cat /etc/sv/nodo-screen/finish' | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
-	result "the screen's Shut down button has nodo-power to ask, and only root and _nodo_screen may ask it" "$r"
+	show 'cat /etc/sv/nodo-screen/run' | grep -q 'chgrp _nodo_screen "$b" && chmod g+w "$b"' || { echo "  the screen cannot dim the backlight"; r=1; }
+	result "the screen's Shut down button has nodo-power to ask (only root and _nodo_screen may), and the screen may dim its backlight" "$r"
 fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do
