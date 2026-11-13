@@ -1023,6 +1023,10 @@ impl<S: System> Helper<S> {
             .check_due(self.update_state()?.last_check, now);
         if due && !policy.packages.is_empty() {
             self.check_updates()?;
+        } else if let Err(e) = self.refresh_feeds_if_due() {
+            // Listing what the feeds offer does not depend on automatic updates being on, and a
+            // feed that cannot be read records its problem; neither stops the rest of the run.
+            eprintln!("nodo-helper: refreshing feeds: {e}");
         }
         let _work = lock(&self.manage.work);
         let mut updates = self.update_state()?;

@@ -26,6 +26,28 @@ fn need_item(t: &Theme, need: &Need) -> Item {
     Item::Text(Line::from(spans))
 }
 
+/// What an empty result list says: a search that matched nothing, or why the catalog itself is
+/// empty (no feeds, feeds still being read, or a feed that could not be read).
+pub fn empty_catalog_line(app: &App, state: &SearchState) -> String {
+    if !app.data.catalog.is_empty() || !state.query.text().is_empty() {
+        return " Nothing matches that search.".to_owned();
+    }
+    let enabled: Vec<_> = app.data.feeds.iter().filter(|f| f.status != FeedStatus::Disabled).collect();
+    if let Some((name, problem)) = enabled.iter().find_map(|f| match &f.status {
+        FeedStatus::Unreachable(problem) => Some((&f.name, problem)),
+        _ => None,
+    }) {
+        return format!(" Could not read the feed {name}: {problem}");
+    }
+    if enabled.iter().any(|f| f.checked.is_empty()) {
+        return " Checking feeds…".to_owned();
+    }
+    if enabled.is_empty() {
+        return " No feeds are on. Add or turn one on under Feeds.".to_owned();
+    }
+    " The feeds offer no packages yet.".to_owned()
+}
+
 pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     let results = app.search_results(state);
     let scope = state.feed_filter.as_deref().map_or_else(|| "All feeds".to_owned(), |feed| format!("Feed: {feed}"));
@@ -52,7 +74,8 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
         rows.push(if selected { Item::Selected(left, right) } else { Item::Row(left, right) });
     }
     if results.is_empty() {
-        rows.push(Item::Text(Line::from(t.d(" Nothing matches that search."))));
+        let line = empty_catalog_line(app, state);
+        rows.push(Item::Text(Line::from(t.d(line))));
     }
     rows.push(Item::Blank);
     rows.push(Item::Text(Line::from(t.d(" ● installed   ○ available   ▲ update ready"))));
@@ -218,4 +241,52 @@ pub fn capability(t: &Theme, state: &CapabilityState) -> Page {
     .panel(Panel::new("What each node provides", matrix))
     .panel(Panel::new("Your options", choices).grow())
     .footer(Item::Text(hints(t, &[("↑↓", "choose"), ("↵", "confirm"), ("Esc", "cancel")])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::update::search_state;
+
+    fn feed(checked: &str, status: FeedStatus) -> Feed {
+        Feed {
+            name: "monokulo".into(),
+            packages: 0,
+            key_state: KeyState::Pinned,
+            checked: checked.into(),
+            status,
+            address: "https://nodo.monokulo.com/feed".into(),
+            fingerprint: String::new(),
+            added: String::new(),
+            installed_from: Vec::new(),
+        }
+    }
+
+    fn line(feeds: Vec<Feed>) -> String {
+        let mut app = App::new();
+        app.data.catalog.clear();
+        app.data.feeds = feeds;
+        empty_catalog_line(&app, &search_state(false))
+    }
+
+    #[test]
+    fn an_empty_catalog_says_why() {
+        assert_eq!(line(vec![feed("", FeedStatus::Healthy)]), " Checking feeds…");
+        assert_eq!(
+            line(vec![feed("1 min ago", FeedStatus::Unreachable("connection refused".into()))]),
+            " Could not read the feed monokulo: connection refused"
+        );
+        assert_eq!(line(vec![]), " No feeds are on. Add or turn one on under Feeds.");
+        assert_eq!(line(vec![feed("", FeedStatus::Disabled)]), " No feeds are on. Add or turn one on under Feeds.");
+        assert_eq!(line(vec![feed("1 min ago", FeedStatus::Healthy)]), " The feeds offer no packages yet.");
+    }
+
+    #[test]
+    fn a_search_that_matches_nothing_still_says_so() {
+        let mut app = App::new();
+        app.data.feeds = vec![feed("", FeedStatus::Healthy)];
+        let mut state = search_state(false);
+        state.query = crate::secret::Input::plain("zzz");
+        assert_eq!(empty_catalog_line(&app, &state), " Nothing matches that search.");
+    }
 }
