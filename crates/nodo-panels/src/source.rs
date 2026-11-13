@@ -215,6 +215,17 @@ pub fn device(root: &Path) -> Json {
     if let Some(milli) = hottest {
         out.insert("temp_c".into(), Json::from(milli as f64 / 1000.0));
     }
+    // The SSD's own sensor, through the kernel's NVMe hwmon driver (CONFIG_NVME_HWMON). The
+    // hottest NVMe drive when there are several; absent when none reports.
+    let hwmons = std::fs::read_dir(root.join("sys/class/hwmon")).into_iter().flatten().flatten();
+    let ssd = hwmons
+        .filter(|entry| std::fs::read_to_string(entry.path().join("name")).is_ok_and(|n| n.trim() == "nvme"))
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("temp1_input")).ok())
+        .filter_map(|text| text.trim().parse::<i64>().ok())
+        .max();
+    if let Some(milli) = ssd {
+        out.insert("ssd_temp_c".into(), Json::from(milli as f64 / 1000.0));
+    }
     if let Some(meminfo) = read("/proc/meminfo") {
         let field = |name: &str| {
             meminfo
@@ -350,12 +361,32 @@ mod tests {
         std::fs::create_dir_all(root.join("proc")).unwrap();
         std::fs::write(root.join("proc/meminfo"), "MemTotal:       32000000 kB\nMemFree: 1 kB\nMemAvailable:   26000000 kB\n").unwrap();
         std::fs::write(root.join("proc/uptime"), "259200.42 1000.0\n").unwrap();
+        // Only the hwmon device named "nvme" is the SSD.
+        for (hwmon, name, temp) in [("hwmon0", "package_thermal", "90000"), ("hwmon9", "nvme", "61850")] {
+            let dir = root.join("sys/class/hwmon").join(hwmon);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("name"), format!("{name}\n")).unwrap();
+            std::fs::write(dir.join("temp1_input"), temp).unwrap();
+        }
         let data = device(&root);
         assert_eq!(data["temp_c"], 52.5);
+        assert_eq!(data["ssd_temp_c"], 61.85);
         assert_eq!(data["mem_total"], 32000000u64 * 1024);
         assert_eq!(data["mem_used"], 6000000u64 * 1024);
         assert_eq!(data["uptime_secs"], 259200);
         assert!(data["ssd_total"].as_u64().unwrap() > 0);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_device_leaves_out_an_ssd_temperature_it_cannot_read() {
+        let root = std::env::temp_dir().join(format!("nodo-panels-device-nossd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sys/class/hwmon/hwmon0")).unwrap();
+        std::fs::write(root.join("sys/class/hwmon/hwmon0/name"), "gpu_thermal\n").unwrap();
+        std::fs::write(root.join("sys/class/hwmon/hwmon0/temp1_input"), "45000").unwrap();
+        let data = device(&root);
+        assert!(data.get("ssd_temp_c").is_none(), "{data}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

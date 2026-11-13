@@ -78,7 +78,9 @@ fails the fetch.
 
 The base system's own panels (the device's temperature, storage and memory) use a third source,
 `device`, which only the screen provides: it reads `/sys` and `/proc` and gives the function
-`{ temp_c, ssd_used, ssd_total, mem_used, mem_total, uptime_secs }`. Feed packages cannot use it.
+`{ temp_c, ssd_temp_c, ssd_used, ssd_total, mem_used, mem_total, uptime_secs }`, where `temp_c`
+is the hottest of the SoC's sensors and `ssd_temp_c` the NVMe drive's own (docs/THERMAL.md).
+Each is left out when it cannot be read. Feed packages cannot use it.
 
 ## The function
 
