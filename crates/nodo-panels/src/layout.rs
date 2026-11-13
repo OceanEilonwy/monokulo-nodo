@@ -116,7 +116,11 @@ impl Layout {
         let file = LayoutFile { version: LAYOUT_VERSION, panels: self.placements.clone() };
         let text = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text)?;
+        let mut file = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, &text)?;
+        // On disk before the rename, so that a power cut cannot leave an empty layout behind.
+        file.sync_all()?;
+        drop(file);
         std::fs::rename(tmp, path)
     }
 
@@ -217,6 +221,122 @@ impl Layout {
         true
     }
 
+    /// Whether panel `index`, keeping its size, could sit with its top-left cell at (`x`, `y`).
+    pub fn fits_at(&self, index: usize, x: u8, y: u8) -> bool {
+        let Some(current) = self.placements.get(index) else { return false };
+        let candidate = Placement { x, y, ..current.clone() };
+        candidate.inside_grid() && !self.placements.iter().enumerate().any(|(i, p)| i != index && p.overlaps(&candidate))
+    }
+
+    /// Where to put panel `index` so that it covers cell (`x`, `y`): that cell as its top-left
+    /// if it fits there, else the nearest top-left that still covers the cell. None when the panel
+    /// cannot cover that cell at all.
+    pub fn anchor_covering(&self, index: usize, x: u8, y: u8) -> Option<(u8, u8)> {
+        let p = self.placements.get(index)?;
+        let mut options = Vec::new();
+        for dy in 0..p.h {
+            for dx in 0..p.w {
+                if let (Some(ax), Some(ay)) = (x.checked_sub(dx), y.checked_sub(dy)) {
+                    options.push((u16::from(dx) + u16::from(dy), ax, ay));
+                }
+            }
+        }
+        options.sort();
+        options.into_iter().find(|(_, ax, ay)| self.fits_at(index, *ax, *ay)).map(|(_, ax, ay)| (ax, ay))
+    }
+
+    /// Every size `rule` allows, smallest area first, then narrowest.
+    pub fn sizes(rule: &SizeRule) -> Vec<(u8, u8)> {
+        let mut sizes: Vec<(u8, u8)> = (rule.min[1]..=rule.max[1])
+            .flat_map(|h| (rule.min[0]..=rule.max[0]).map(move |w| (w, h)))
+            .filter(|(w, h)| *w <= COLUMNS && *h <= ROWS)
+            .collect();
+        sizes.sort_by_key(|(w, h)| (u16::from(*w) * u16::from(*h), *w));
+        sizes
+    }
+
+    /// The size panel `index` takes when its Size button is tapped: the next allowed size after
+    /// its current one, wrapping round, that fits where it is. It grows from its top-left cell,
+    /// and moves left or up only when the grid's edge is in the way.
+    pub fn next_size(&self, index: usize, rule: &SizeRule) -> Option<Placement> {
+        let current = self.placements.get(index)?;
+        let sizes = Self::sizes(rule);
+        let at = sizes.iter().position(|s| *s == (current.w, current.h)).unwrap_or(0);
+        (1..sizes.len()).map(|i| sizes[(at + i) % sizes.len()]).find_map(|(w, h)| {
+            let x = current.x.min(COLUMNS - w);
+            let y = current.y.min(ROWS - h);
+            let candidate = Placement { key: current.key.clone(), x, y, w, h };
+            let clashes = self.placements.iter().enumerate().any(|(i, p)| i != index && p.overlaps(&candidate));
+            (!clashes).then_some(candidate)
+        })
+    }
+
+    /// Applies [`Layout::next_size`]. False when no other size fits.
+    pub fn cycle_size(&mut self, index: usize, rule: &SizeRule) -> bool {
+        match self.next_size(index, rule) {
+            Some(next) => {
+                self.placements[index] = next;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Adds a panel so that it covers cell (`x`, `y`), at its initial size if that fits there, else
+    /// its smallest. Falls back to [`Layout::add`]'s first free space. False when nothing fits.
+    pub fn add_covering(&mut self, key: &PanelKey, rules: &BTreeMap<PanelKey, SizeRule>, x: u8, y: u8) -> bool {
+        let Some(rule) = rules.get(key) else { return false };
+        if self.is_placed(key) {
+            return false;
+        }
+        for [w, h] in [rule.initial, rule.min] {
+            let mut options = Vec::new();
+            for dy in 0..h {
+                for dx in 0..w {
+                    if let (Some(ax), Some(ay)) = (x.checked_sub(dx), y.checked_sub(dy)) {
+                        options.push((u16::from(dx) + u16::from(dy), ax, ay));
+                    }
+                }
+            }
+            options.sort();
+            for (_, ax, ay) in options {
+                let candidate = Placement { key: key.clone(), x: ax, y: ay, w, h };
+                if candidate.inside_grid() && !self.placements.iter().any(|p| p.overlaps(&candidate)) {
+                    self.placements.push(candidate);
+                    return true;
+                }
+            }
+        }
+        self.add(key, rules)
+    }
+
+    /// Whether `candidate` could replace placement `index`: inside the grid, within `rule` when
+    /// given, and clear of every other panel. Dragging shows where a tile would land with this.
+    pub fn allows(&self, index: usize, candidate: &Placement, rule: Option<&SizeRule>) -> bool {
+        candidate.inside_grid()
+            && rule.is_none_or(|rule| candidate.within(rule))
+            && !self.placements.iter().enumerate().any(|(i, p)| i != index && p.overlaps(candidate))
+    }
+
+    /// Replaces placement `index` with `candidate` if [`Layout::allows`] it.
+    pub fn try_set(&mut self, index: usize, candidate: Placement, rule: Option<&SizeRule>) -> bool {
+        if index < self.placements.len() && self.placements[index].key == candidate.key && self.allows(index, &candidate, rule) {
+            self.placements[index] = candidate;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Puts back a placement that was hidden, at its old position in the list, if it still fits.
+    pub fn restore(&mut self, index: usize, placement: Placement) -> bool {
+        if !placement.inside_grid() || self.is_placed(&placement.key) || self.placements.iter().any(|p| p.overlaps(&placement)) {
+            return false;
+        }
+        self.placements.insert(index.min(self.placements.len()), placement);
+        true
+    }
+
     /// The panel covering a cell, if any.
     pub fn at(&self, x: u8, y: u8) -> Option<usize> {
         self.placements.iter().position(|p| x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h)
@@ -271,6 +391,54 @@ mod tests {
         assert!(layout.try_move_to(0, 4, 2));
         assert_eq!(layout.at(5, 3), Some(0));
         assert_eq!(layout.at(0, 3), None);
+        assert!(no_overlaps(&layout));
+    }
+
+    #[test]
+    fn tapping_a_free_cell_finds_a_place_and_size_cycles() {
+        let r = rules(&[("a", [2, 1], [4, 2], [2, 2]), ("b", [2, 1], [4, 2], [2, 1])]);
+        let mut layout = Layout::default();
+        layout.place_all(&r);
+        // a at (0,0) 2x2, b at (2,0) 2x1.
+        assert!(layout.fits_at(0, 6, 2));
+        assert!(!layout.fits_at(0, 7, 0), "would leave the grid");
+        assert!(!layout.fits_at(0, 1, 0), "would overlap b");
+        assert_eq!(layout.anchor_covering(0, 7, 3), Some((6, 2)), "the tapped cell becomes its bottom-right");
+        assert_eq!(layout.anchor_covering(0, 4, 0), Some((4, 0)));
+        let rule = r[&PanelKey::new("a", "p")];
+        assert_eq!(Layout::sizes(&rule).first(), Some(&(2, 1)));
+        assert_eq!(Layout::sizes(&rule).last(), Some(&(4, 2)));
+        // After 2x2 come 4x1, 3x2 and 4x2, which all hit b, so it wraps round to 2x1, then 3x1
+        // would hit b too and 2x2 comes back.
+        assert!(layout.cycle_size(0, &rule));
+        assert_eq!((layout.placements[0].w, layout.placements[0].h), (2, 1));
+        assert!(layout.cycle_size(0, &rule));
+        assert_eq!((layout.placements[0].w, layout.placements[0].h), (2, 2));
+        let hidden = layout.placements[1].clone();
+        layout.hide(1);
+        assert!(layout.restore(1, hidden.clone()));
+        assert!(!layout.restore(1, hidden), "already back");
+        assert!(no_overlaps(&layout));
+    }
+
+    #[test]
+    fn adding_where_tapped_and_checking_a_drag() {
+        let r = rules(&[("a", [2, 1], [4, 2], [4, 2]), ("b", [2, 1], [4, 2], [2, 1])]);
+        let mut layout = Layout::default();
+        let a = PanelKey::new("a", "p");
+        assert!(layout.add_covering(&a, &r, 7, 3));
+        let p = &layout.placements[0];
+        assert_eq!((p.x, p.y, p.w, p.h), (4, 2, 4, 2), "covers the tapped bottom-right cell");
+        assert!(layout.add_covering(&PanelKey::new("b", "p"), &r, 5, 3), "falls back to the first free space");
+        assert_eq!((layout.placements[1].x, layout.placements[1].y), (0, 0));
+        let rule = r[&a];
+        let moved = Placement { x: 0, y: 2, ..layout.placements[0].clone() };
+        assert!(layout.allows(0, &moved, Some(&rule)));
+        let clash = Placement { x: 0, y: 0, ..layout.placements[0].clone() };
+        assert!(!layout.allows(0, &clash, Some(&rule)), "b is there");
+        let too_big = Placement { w: 5, ..moved.clone() };
+        assert!(!layout.allows(0, &too_big, Some(&rule)), "beyond max_size");
+        assert!(layout.try_set(0, moved, Some(&rule)));
         assert!(no_overlaps(&layout));
     }
 

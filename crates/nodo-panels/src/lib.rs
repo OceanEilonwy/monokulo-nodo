@@ -193,7 +193,7 @@ impl PanelState {
 /// One complete refresh of a panel: fetch, then run its function. Run off the drawing thread.
 pub fn refresh(panel: &Offered, history: &[f64], device_root: &Path) -> Result<PanelOutput, String> {
     let script = panel.script.as_ref().map_err(Clone::clone)?;
-    let data = fetch(&panel.source, device_root).map_err(|e| format!("the service {e}"))?;
+    let data = fetch(&panel.source, device_root).map_err(|e| format!("{} {e}", panel.key.package))?;
     let name = format!("{}/{}", panel.key.package, panel.key.panel);
     run_panel(script, &name, &data, history).map_err(|e| format!("the panel {e}"))
 }
@@ -227,9 +227,24 @@ mod tests {
         // With nothing readable it still shows, rather than failing.
         let empty = run_panel(device.script.as_ref().unwrap(), "nodo/device", &serde_json::json!({}), &[]).unwrap();
         assert_eq!(empty.big.as_deref(), Some("--"));
-        // Hot is a warning.
-        let hot = run_panel(device.script.as_ref().unwrap(), "nodo/device", &serde_json::json!({ "temp_c": 86 }), &[]).unwrap();
-        assert_eq!(hot.status, Some(Status::Warn));
+        // The chip is a warning from 75 °C, where the kernel is already slowing it.
+        let run = |data: serde_json::Value| run_panel(device.script.as_ref().unwrap(), "nodo/device", &data, &[]).unwrap();
+        assert_eq!(run(serde_json::json!({ "temp_c": 74.9 })).status, Some(Status::Ok));
+        assert_eq!(run(serde_json::json!({ "temp_c": 75 })).status, Some(Status::Warn));
+        // The SSD: a row always, a warning from 70 °C and an error from 80 °C.
+        let cool = run(serde_json::json!({ "temp_c": 50, "ssd_temp_c": 45.5 }));
+        assert_eq!(cool.status, Some(Status::Ok));
+        assert!(cool.rows.iter().any(|(label, value)| label == "ssd temp" && value == "45 °C"), "{:?}", cool.rows);
+        assert_eq!(cool.note, None);
+        let warm = run(serde_json::json!({ "temp_c": 50, "ssd_temp_c": 72 }));
+        assert_eq!(warm.status, Some(Status::Warn));
+        assert_eq!(warm.note.as_deref(), Some("ssd is hot"));
+        let hot = run(serde_json::json!({ "temp_c": 50, "ssd_temp_c": 81 }));
+        assert_eq!(hot.status, Some(Status::Error));
+        assert_eq!(hot.note.as_deref(), Some("ssd is too hot"));
+        // The worse of the two wins, and an SSD reading counts even without the chip's.
+        assert_eq!(run(serde_json::json!({ "temp_c": 76, "ssd_temp_c": 81 })).status, Some(Status::Error));
+        assert_eq!(run(serde_json::json!({ "ssd_temp_c": 72 })).status, Some(Status::Warn));
     }
 
     fn write(path: &Path, text: &str) {
@@ -283,7 +298,7 @@ mod tests {
         assert_eq!(state.history.len(), MAX_HISTORY);
         assert_eq!(state.history.front(), Some(&5.0), "oldest dropped first");
         assert!(!state.is_stale());
-        state.record(Err("the service timed out".into()), t0 + Duration::from_secs(20), refresh);
+        state.record(Err("cuprated timed out".into()), t0 + Duration::from_secs(20), refresh);
         assert!(state.is_stale(), "keeps the last output, dimmed");
         assert_eq!(state.last.as_ref().unwrap().big.as_deref(), Some(&*format!("{}", (MAX_HISTORY + 4) as f64)));
         assert_eq!(state.next_due, t0 + Duration::from_secs(30));

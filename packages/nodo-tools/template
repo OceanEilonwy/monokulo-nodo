@@ -4,11 +4,12 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=9
+revision=11
 archs="aarch64 x86_64"
 build_style=cargo
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-splash"
-hostmakedepends="pkg-config"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-power -p nodo-screen-font -p nodo-splash"
+# terminus-font is what nodo-screen-font builds the screen's console font from.
+hostmakedepends="pkg-config terminus-font"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library.
 makedepends="libzstd-devel"
 depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow"
@@ -35,6 +36,7 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-systemupdate 0750 root root
  /var/log/nodo-wifi 0750 root root
  /var/log/nodo-screen 0750 root root
+ /var/log/nodo-power 0750 root root
  /var/lib/nodo/wifi 0700 root root
  /etc/nodo 0755 root root"
 
@@ -57,11 +59,28 @@ do_install() {
 	# Package panels on the built-in screen. Not enabled here: boards with a screen enable it in
 	# place of tty1's login prompt.
 	vbin target/${RUST_TARGET}/release/nodo-screen
+	# The screen's Shut down button: a root service that only stops services and turns the device
+	# off, asked over a socket that only root and _nodo_screen may open.
+	vbin target/${RUST_TARGET}/release/nodo-power
+	# The screen's console font: Terminus with the glyphs the screen draws added, renamed as the
+	# Open Font License requires of a modified font.
+	# nodo-screen-font runs here, on the build machine, so it is built again for the build machine
+	# (the build above was for the target); it is not installed.
+	_host=$(rustc -vV | sed -n 's/^host: //p')
+	env -u CARGO_BUILD_TARGET -u RUSTFLAGS CC=gcc \
+		cargo build --release --locked --target "$_host" -p nodo-screen-font
+	vmkdir usr/share/nodo
+	target/${_host}/release/nodo-screen-font /usr/share/kbd/consolefonts/ter-v32n.psf.gz \
+		${DESTDIR}/usr/share/nodo/nodo-screen-16x32.psf.gz
+	vinstall /usr/share/licenses/terminus-font/OFL.txt 644 usr/share/licenses/nodo-tools OFL-nodo-screen-16x32.txt
 	# The logo on the built-in screen while the device starts and stops. Its runit hooks do
 	# nothing on boards without nodo-screen enabled.
 	vbin target/${RUST_TARGET}/release/nodo-splash
 	vinstall ${FILESDIR}/nodo-splash/01-nodo-splash.sh 644 etc/runit/core-services
 	vinstall ${FILESDIR}/nodo-splash/05-nodo-splash.sh 644 etc/runit/shutdown.d
+	# Before runit's general stop, which kills a service after 7 seconds: waits for the node and any
+	# package that declares a longer stop, on every shutdown that the Shut down button did not start.
+	vinstall ${FILESDIR}/shutdown/06-nodo-long-stop.sh 644 etc/runit/shutdown.d
 	vsv nodo-helper
 	vsv nodo-healthd
 	vsv nodo-autoupdate
@@ -72,6 +91,7 @@ do_install() {
 	# Wi-Fi on. wpa_supplicant itself comes with the board's image.
 	vsv nodo-wifi
 	vsv nodo-screen
+	vsv nodo-power
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated

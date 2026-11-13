@@ -152,6 +152,174 @@
 };
 
 /*
+ * Thermal limits. The Nodo is fanless: its case is the heatsink, so slowing down is the only
+ * cooling there is. Mainline's RK3588 limits (throttle at 85 °C, power off at 115 °C, hardware
+ * reset at 120 °C) assume a fan and leave the board hot for hours during a sync. Here:
+ *
+ *   70 °C  warm: each CPU cluster and the GPU step down to at most a middle speed
+ *          (A76 1.8 GHz, A55 1.416 GHz, GPU 600 MHz)
+ *   80 °C  hot: they may step on down to their lowest speeds
+ *          (A76 1.2 GHz, A55 1.008 GHz, GPU 300 MHz)
+ *  100 °C  critical, on every sensor: the kernel shuts down in order, so services such as
+ *          cuprated stop and save their data
+ *  110 °C  the TSADC resets the chip in hardware, in case the kernel is stuck
+ *
+ * Both steps use the step_wise governor, with 3 °C of hysteresis. docs/THERMAL.md explains
+ * the numbers and why not power_allocator.
+ */
+&bigcore0_alert {
+	temperature = <70000>;
+	hysteresis = <3000>;
+};
+
+&bigcore0_thermal {
+	trips {
+		bigcore0_hot: bigcore0-hot {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map0 {
+			cooling-device =
+				<&cpu_b0 0 3>,
+				<&cpu_b1 0 3>;
+		};
+
+		map1 {
+			trip = <&bigcore0_hot>;
+			cooling-device =
+				<&cpu_b0 3 THERMAL_NO_LIMIT>,
+				<&cpu_b1 3 THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+&bigcore2_alert {
+	temperature = <70000>;
+	hysteresis = <3000>;
+};
+
+&bigcore2_thermal {
+	trips {
+		bigcore2_hot: bigcore2-hot {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map0 {
+			cooling-device =
+				<&cpu_b2 0 3>,
+				<&cpu_b3 0 3>;
+		};
+
+		map1 {
+			trip = <&bigcore2_hot>;
+			cooling-device =
+				<&cpu_b2 3 THERMAL_NO_LIMIT>,
+				<&cpu_b3 3 THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+&littlecore_alert {
+	temperature = <70000>;
+	hysteresis = <3000>;
+};
+
+&little_core_thermal {
+	trips {
+		littlecore_hot: littlecore-hot {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map0 {
+			cooling-device =
+				<&cpu_l0 0 2>,
+				<&cpu_l1 0 2>,
+				<&cpu_l2 0 2>,
+				<&cpu_l3 0 2>;
+		};
+
+		map1 {
+			trip = <&littlecore_hot>;
+			cooling-device =
+				<&cpu_l0 2 THERMAL_NO_LIMIT>,
+				<&cpu_l1 2 THERMAL_NO_LIMIT>,
+				<&cpu_l2 2 THERMAL_NO_LIMIT>,
+				<&cpu_l3 2 THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+&gpu_alert {
+	temperature = <70000>;
+	hysteresis = <3000>;
+};
+
+&gpu_thermal {
+	trips {
+		gpu_hot: gpu-hot {
+			temperature = <80000>;
+			hysteresis = <3000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map0 {
+			cooling-device = <&gpu 0 4>;
+		};
+
+		map1 {
+			trip = <&gpu_hot>;
+			cooling-device = <&gpu 4 THERMAL_NO_LIMIT>;
+		};
+	};
+};
+
+&package_crit {
+	temperature = <100000>;
+};
+
+&bigcore0_crit {
+	temperature = <100000>;
+};
+
+&bigcore2_crit {
+	temperature = <100000>;
+};
+
+&littlecore_crit {
+	temperature = <100000>;
+};
+
+&center_crit {
+	temperature = <100000>;
+};
+
+&gpu_crit {
+	temperature = <100000>;
+};
+
+&npu_crit {
+	temperature = <100000>;
+};
+
+&tsadc {
+	rockchip,hw-tshut-temp = <110000>;
+};
+
+/*
  * USB. The second Type-C port has its own FUSB302 controller on i2c4 and takes the power
  * switch that drives the T6's USB-A port, so that switch only turns on when the port
  * negotiates the source role. The Type-A port is USB 3.0 on the third controller.

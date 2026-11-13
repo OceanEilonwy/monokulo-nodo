@@ -197,17 +197,20 @@ codebase, and signed xbps packages from user-added feeds.
   file and blocks it. The VM tests join a WPA2 hostapd access point on a second mac80211_hwsim
   radio in a network namespace (`tests/wifi-prepare.sh` builds the module, which Void's kernel
   lacks); Bluetooth is tested with fakes only, as the VM has no virtual controller to pair with.
-- **Screen:** The NanoPC-T6N's built-in 1920x1080 touchscreen shows package widgets as terminal
-  panels (design H3, chosen on 2026-11-13; `docs/design/tui/ScreenHybridPanels*.dc.html`): the
-  TUI's boxed panels with the title set into the border, on a pure black background so unlit
-  OLED pixels stay off, in JetBrains Mono with the TUI's amber accent, and with bars and
-  sparklines drawn in block characters. Panels sit on an 8x4 grid; the owner adds, hides, moves
-  and resizes them by touch or keys (`hjkl` move, `HJKL` resize), and packages offer the panels,
+- **Screen:** The NanoPC-T6N's built-in 1920x1080 touchscreen shows package widgets as OLED
+  tiles (design A made dark, approved on 2026-11-13; `docs/design/tui/ScreenTilesOled*.dc.html`,
+  replacing the earlier terminal panels, H3): thin rounded outlines on a pure black background so
+  unlit OLED pixels stay off, with the TUI's amber accent for the selection and bars and
+  sparklines drawn in block characters from the screen's own console font. Panels sit on an 8x4 grid; the owner adds, hides, moves
+  and resizes them by touch, mouse or keys (drag to move, drag the corner grip to resize; `hjkl` move, `HJKL` resize), and packages offer the panels,
   each in a range of sizes. A manifest declares its panels (`[[panels]]`); the screen fetches each
   one's data from the package's own service on loopback, runs the package's Lua `panel` function in
   the settings sandbox to compute the values, checks them against a fixed schema and draws them
   itself, so a package never draws or reaches beyond its own service. `nodo-screen` runs as
-  `_nodo_screen` on tty1 in place of its login prompt. [SCREEN.md](SCREEN.md) is the contract.
+  `_nodo_screen` on tty1 in place of its login prompt. Its Shut down button asks `nodo-power`, a
+  root service whose socket only `_nodo_screen` may open and which accepts only `poweroff`: it stops
+  every service (cuprated given five minutes to save), syncs and turns the device off.
+  [SCREEN.md](SCREEN.md) is the contract.
 
 ## Layout
 

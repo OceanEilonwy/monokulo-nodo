@@ -16,9 +16,19 @@ fi
 # Kernel messages would draw over the panels: only emergencies reach the console. They still go to
 # the kernel log and the serial port.
 dmesg -n 1
-# Terminus 16x32 with the block characters the panels draw with. The kernel's built-in Terminus
-# has the same size but no block elements. Without the file, panels still show, with plainer bars.
-setfont -C /dev/tty1 /usr/share/kbd/consolefonts/ter-v32n.psf.gz || echo "nodo-screen: no Terminus console font"
+# Terminus 16x32 with the glyphs the screen draws (rounded and dashed corners, blocks, its button
+# icons) added; nodo-screen-font builds it when the package is built. The kernel's built-in Terminus
+# has the same size but none of those glyphs.
+setfont -C /dev/tty1 /usr/share/nodo/nodo-screen-16x32.psf.gz ||
+	setfont -C /dev/tty1 /usr/share/kbd/consolefonts/ter-v32n.psf.gz ||
+	echo "nodo-screen: no console font"
+# The program dims the panel's backlight when nobody uses it (docs/SCREEN.md): give its account
+# that one file, and nothing else in sysfs.
+for b in /sys/class/backlight/*/brightness; do
+	[ -e "$b" ] || break
+	chgrp _nodo_screen "$b" && chmod g+w "$b"
+	break
+done
 # stdin and stdout become the screen; stderr stays this service's log.
 exec </dev/tty1 >/dev/tty1
 export TERM=linux

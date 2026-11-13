@@ -2,8 +2,10 @@
 
 The NanoPC-T6N's built-in 1920x1080 touchscreen shows panels that packages offer: a node's sync
 progress, a shop's payments, the device's temperature. The owner chooses which panels show, where,
-and how big. The look is design H3, terminal panels (`docs/design/tui/ScreenHybridPanels*.dc.html`):
-the TUI's boxed panels, titles set into the border, on pure black so that unlit OLED pixels stay off.
+and how big. The look is design A's tile grid made OLED dark (`docs/design/tui/ScreenTilesOled*.dc.html`):
+thin rounded outlines on pure black, so that unlit OLED pixels stay off, with each tile's name in
+small capitals, its value large and a status dot. The top bar has two buttons, ☰ Arrange and
+⏻ Shut down.
 
 This document is the contract between packages and the screen. Packages describe their panels in
 their manifest and compute the values in a small sandboxed Lua function; the screen fetches the data,
@@ -17,11 +19,23 @@ runs the function, checks what it returns, and draws every pixel itself.
 | Fetching, Lua, output checks, history, layout | `nodo-panels` | inside `nodo-screen` |
 | The screen program | `nodo-screen` (in `nodo-tools`) | `_nodo_screen`, never root |
 | Service | `/etc/sv/nodo-screen` on tty1 | started on boards with a screen |
+| Shutting down | `nodo-power` (in `nodo-tools`) | root, asked only by `_nodo_screen` |
 
 `nodo-screen` is a terminal program. On the T6N the kernel's console on the panel uses Terminus
-16x32 and is turned to the case (`docs/MAINLINE_KERNEL.md`), so tty1 is 120 columns by 33 rows; the
-service loads a Terminus font with the block characters panels draw with, and the program sets the
+16x32 and is turned to the case (`docs/MAINLINE_KERNEL.md`), so tty1 is 120 columns by 33 rows. The
+service loads the screen's own console font, `nodo-screen-16x32`, and the program sets the
 console's colours to the TUI's. The same program runs in any terminal, which is how it is tested.
+
+### The console font
+
+Terminus's 512-glyph console font (`ter-v32n`) has straight box lines and full blocks but none of the
+rounded or dashed corners, heavy lines, half and eighth blocks, dot or icons the screen draws.
+`nodo-screen-font` (`crates/nodo-screen-font`) builds `nodo-screen-16x32` when the package is
+built: it draws those 28 glyphs to match Terminus's line positions and puts them in place of Greek
+and Cyrillic glyphs the screen never shows. Terminus is under the SIL Open Font License, which
+requires a modified font to take another name; the licence ships as
+`/usr/share/licenses/nodo-tools/OFL-nodo-screen-16x32.txt`. A test in `nodo-screen` fails if the
+program draws a glyph that neither Terminus nor the script provides.
 
 ## A package declares panels
 
@@ -64,7 +78,9 @@ fails the fetch.
 
 The base system's own panels (the device's temperature, storage and memory) use a third source,
 `device`, which only the screen provides: it reads `/sys` and `/proc` and gives the function
-`{ temp_c, ssd_used, ssd_total, mem_used, mem_total, uptime_secs }`. Feed packages cannot use it.
+`{ temp_c, ssd_temp_c, ssd_used, ssd_total, mem_used, mem_total, uptime_secs }`, where `temp_c`
+is the hottest of the SoC's sensors and `ssd_temp_c` the NVMe drive's own (docs/THERMAL.md).
+Each is left out when it cannot be read. Feed packages cannot use it.
 
 ## The function
 
@@ -149,19 +165,69 @@ the screen places every available panel in order, each at its default size, wher
 
 ### Arranging
 
-Hold anywhere on the screen for one second, or press `e`, to arrange. Then:
+Tap ☰ Arrange in the top bar, hold anywhere for one second, or press `e`. The top bar then shows
+Hide, + Add panel (with how many panels are hidden) and a blue Save; free spaces are grey dashed
+boxes, and only the selected tile is orange.
 
-| Touch | Keys | Action |
+| Touch or mouse | Keys | Action |
 |---|---|---|
-| tap a panel | `Tab`, arrows | select |
-| drag a panel | `h` `j` `k` `l` | move by one cell |
-| drag its bottom-right corner | `H` `J` `K` `L` | resize |
-| `[ + add ]` | `a` | add a hidden panel in the first free space |
-| `[ x hide ]` | `x` | hide the selected panel |
-| `[ done ]` | `Enter`, `Esc` | save and return |
+| tap a tile | `Tab`, arrows | select it |
+| drag a tile | `h` `j` `k` `l` | move it; it snaps to the grid, and a dashed orange outline shows where it lands |
+| drag the ⇲ grip in the selected tile's corner | `H` `J` `K` `L` | resize it within its `min_size` and `max_size` |
+| Hide | `x` | hide the selected tile; Undo takes Hide's place for 8 seconds (`u`) |
+| tap a free space, then + Add panel | `a` | the list of hidden panels by package, three rows each with a picture of its size; + Add puts it over the tapped space, or in the first free one |
+| Save | `Enter`, `Esc`, `s` | save and return |
 
-A move or resize that would overlap another panel or leave the grid is refused, and the panel shows
-where it stopped.
+A drop that would overlap another tile or leave the grid is refused: the tile goes back and the top
+bar says why. Every touch target is at least 6 columns by 3 rows, about 96 pixels square.
+
+The layout is saved atomically (written, synced, then renamed over the old file). The copy on tty1
+reads it again within a second when it changes, unless someone is arranging on it, so a second copy
+started over SSH can arrange too:
+
+```sh
+chpst -u _nodo_screen:_nodo_screen nodo-screen --no-touch
+```
+
+Over SSH the mouse works as touch does (click, drag), in any terminal that reports the mouse. Run it
+as `_nodo_screen` so that the layout file stays owned by the screen's account.
+
+## Shutting down
+
+Unplugging a node while it writes its database can corrupt it, as happened to cuprated's during its
+first sync. ⏻ Shut down (or `p`) asks "Shut down the Nodo?" full screen, with large Cancel and
+Shut down buttons, so that no single tap turns the device off. Then the screen shows each service
+stopping, saving files to disk and turning off, and finally "Safe to unplug", which stays on the
+panel after the device is off.
+
+`nodo-screen` never runs as root, so it asks `nodo-power`, a root runit service that can do exactly
+one thing:
+
+- It listens on `/run/nodo-power/socket`, in a directory that is root:_nodo_screen 0750; the socket
+  is root:_nodo_screen 0660, and the service also checks the caller's uid (root or `_nodo_screen`).
+- The only request is the line `poweroff`. Anything else is answered with an error and ignored:
+  there are no arguments, service names or other commands.
+- It stops every enabled service at once except itself and the screen, each with `sv -w <seconds>
+  stop`: 300 seconds for cuprated (it is never killed while it saves), 90 for the rest. A service
+- Before the first service stops it creates `/run/nodo-splash.skip`, so that the boot splash's
+  shutdown hook leaves its screens and "Safe to unplug" alone (removed again if the shutdown fails).
+  that has not stopped by then is left to runit's own shutdown. Then it syncs, creates
+  `/run/nodo-power/off`, and runs `poweroff`.
+- It writes one line per step back: `services N`, `stopping NAME`, `stopped NAME MS`,
+  `timeout NAME MS`, `syncing`, `synced MS`, `off`, or `error TEXT`. The protocol and the sequence
+  are in `crates/nodo-power`, with tests.
+
+The screen's finish script clears tty1 when the program stops, except when `/run/nodo-power/off`
+exists, so that "Safe to unplug" stays. If `nodo-power` cannot be reached, the screen says so and
+offers a way back to the panels.
+
+An ordinary shutdown (`poweroff` or `reboot` over SSH, or the kernel's at a critical temperature)
+does not go through the button, and Void's runit stage 3 stops services with `sv force-stop`, which
+kills any service still running after 7 seconds. So `/etc/runit/shutdown.d/06-nodo-long-stop.sh`,
+which stage 3 sources before its `10-sv-stop.sh`, runs `nodo-power --before-shutdown` first: it
+stops cuprated (at least 300 seconds) and every enabled package whose manifest declares a
+`stop_timeout_secs` longer than 7, all at once, each waiting as long as it declares (at most an
+hour). After the button's shutdown, `/run/nodo-power/off` exists and it returns at once.
 
 ## The screen service
 
@@ -170,10 +236,11 @@ else. The service's run script, as root, opens tty1, loads the console font (`se
 kernel's console log level so that kernel messages do not draw over the panels, and then executes
 the program with `chpst`. It reads manifests from `/usr/share/nodo/manifests` and
 `/var/lib/nodo/manifests`, scripts from the package directories, and writes only its layout. It
-reaches the network only to fetch the declared loopback sources.
+reaches the network only to fetch the declared loopback sources, and talks to one local socket,
+`nodo-power`'s, only after the owner confirms a shutdown.
 
 The touchscreen is the first input device whose name starts with `Goodix`. Its coordinates are
-turned to match the console with `/etc/nodo/screen.toml`:
+turned to match the console with `/etc/nodo/screen.toml` (which also sets the backlight, below):
 
 ```toml
 [touch]
@@ -181,6 +248,24 @@ swap_xy = true
 invert_x = true
 invert_y = false
 ```
+
+## Backlight
+
+After two minutes with no touch, click or key, the screen dims its backlight (the first device under
+`/sys/class/backlight`, `fde30000.dsi.0` on the T6N, maximum 255) to 20% of its maximum. Any input
+brings it back to full, and that input only wakes the screen: a tap on a dim screen presses nothing,
+and the rest of that touch is ignored until the finger lifts. The screen never dims while someone
+arranges, adds a panel, or during the shutdown screens, and it sets full brightness when it stops.
+
+```toml
+[backlight]
+dim_after_secs = 120   # 0 never dims
+dim_percent = 20       # never quite off: 0 means the lowest step, 1 of 255
+```
+
+The program still runs without root: the service's run script, as root, gives `_nodo_screen`'s
+group write access to that one `brightness` file (`chgrp` and `chmod g+w`) before it starts the
+program. A copy over SSH (`--no-touch`) leaves the backlight alone.
 
 ## Boot splash
 

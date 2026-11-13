@@ -57,8 +57,8 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
 | PMIC, CPU regulators | RK806 on SPI2, RK8602/8603 on I2C0 | same | unchanged |
 | RTC | HYM8563 on I2C6 at 0x51 | same | unchanged |
 | Watchdog | `wdt`, enabled in rk3588-base.dtsi | enabled | unchanged |
-| Fan | `pwm1` enabled, no `pwm-fan` node | no fan node, `pwm1` off | `pwm1` off, no fan, as FriendlyElec |
-| Thermal | `tsadc` on, rk3588 thermal zones with CPU and GPU passive cooling and critical trips | similar | unchanged |
+| Fan | `pwm1` enabled, no `pwm-fan` node | no fan node, `pwm1` off | `pwm1` off, no fan, as FriendlyElec: the Nodo is fanless |
+| Thermal | `tsadc` on, rk3588 thermal zones with CPU and GPU passive cooling and critical trips | similar | fanless limits: throttle at 70 and 80 °C, critical 100 °C, reset 110 °C (docs/THERMAL.md) |
 | CPU frequency | rk3588-opp.dtsi OPP tables (since 6.11), SCMI clocks from BL31 | vendor tables | unchanged |
 | Type-C port 1 | FUSB302 on I2C6, `usb_host0_xhci` | same | unchanged |
 | Type-C port 2 | none; GPIO4_B0 powers the T6's USB-A port permanently | FUSB302 on I2C4 (int GPIO4_A3), GPIO4_B0 is this port's VBUS | as FriendlyElec, so VBUS is only switched on after the port negotiates the source role |
@@ -94,9 +94,10 @@ kernel-rockchip commit 30d3e1c, the same source as the 6.1 kernel). This is the 
   ramdisk, which mounts the root filesystem, contains no kernel modules.
 - **USB.** DWC3, the USB2 and USBDP PHYs, EHCI and OHCI are built in, FUSB302 is a module.
   `usb-storage` and `uas` are modules.
-- **Thermal and fan.** `rockchip_thermal` and CPU cooling are built in, `pwm-fan` is a module
-  with nothing to bind to. **Unverified:** whether the Nodo case has a fan. If it does, neither
-  kernel drives it from the device tree.
+- **Thermal and fan.** `rockchip_thermal` and CPU cooling are built in. The Nodo is fanless, so
+  `pwm-fan` is a module with nothing to bind to, and the device tree throttles earlier than
+  mainline: 70 and 80 °C, critical at 100 °C, the hardware reset at 110 °C (docs/THERMAL.md).
+  `CONFIG_NVME_HWMON` exposes the SSD's temperature.
 - **cpufreq.** `cpufreq-dt` with SCMI clocks. **Unverified:** that FriendlyElec's BL31 answers
   the SCMI requests mainline makes. Mainline rk3588 trees are written for Rockchip's rkbin BL31,
   which is what FriendlyElec ships (the running system reports `bl31-v1.46`).

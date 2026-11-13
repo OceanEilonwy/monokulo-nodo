@@ -116,6 +116,13 @@ show 'stat /usr/bin/nodo-confine' | grep -q 'Type: regular'
 result "nodo-confine is installed" "$?"
 show 'cat /etc/sv/cuprated/conf' | grep -qx 'DATA_MOUNT=/media/monero'
 result "cuprated still waits for the data drive" "$?"
+# An ordinary shutdown (poweroff over SSH, a critical temperature) waits for cuprated to save before
+# runit's general stop, which kills a service after 7 seconds.
+r=0
+show 'stat /etc/runit/shutdown.d/06-nodo-long-stop.sh' | grep -q 'Type: regular' || { echo "  missing: /etc/runit/shutdown.d/06-nodo-long-stop.sh"; r=1; }
+show 'cat /etc/runit/shutdown.d/06-nodo-long-stop.sh' | grep -q 'nodo-power --before-shutdown' || { echo "  the hook does not run nodo-power --before-shutdown"; r=1; }
+show 'stat /etc/runit/shutdown.d/10-sv-stop.sh' | grep -q 'Type: regular' || { echo "  Void's 10-sv-stop.sh is not where the hook expects it, after 06"; r=1; }
+result "shutdown waits for cuprated to save before runit's 7-second force-stop" "$r"
 
 echo "== data drive"
 # No udev on the card, so no /dev/disk/by-partlabel link: the helper takes the drive from fstab
@@ -153,7 +160,8 @@ result "udevd (module and firmware loading, hotplug), the mixer service and tty1
 if [ "$tty1" = nodo-screen ]; then
 	r=0
 	case " $links " in *" agetty-tty1 "*) echo "  tty1's login prompt also starts"; r=1 ;; esac
-	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/kbd/consolefonts/ter-v32n.psf.gz \
+	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/nodo/nodo-screen-16x32.psf.gz \
+		/usr/share/licenses/nodo-tools/OFL-nodo-screen-16x32.txt \
 		/usr/share/nodo/packages/cuprated/panels/sync.lua; do
 		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
 	done
@@ -161,6 +169,15 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
 	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
 	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
+	# The screen's Shut down button asks nodo-power, the one root service that may turn the device off.
+	r=0
+	case " $links " in *" nodo-power "*) ;; *) echo "  not started: nodo-power"; r=1 ;; esac
+	show 'stat /usr/bin/nodo-power' | grep -q 'Type: regular' || { echo "  missing: /usr/bin/nodo-power"; r=1; }
+	show 'cat /etc/sv/nodo-power/run' | grep -q 'install -d -m 0750 -o root -g _nodo_screen /run/nodo-power' ||
+		{ echo "  nodo-power's socket directory is not root:_nodo_screen 0750"; r=1; }
+	show 'cat /etc/sv/nodo-screen/finish' | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
+	show 'cat /etc/sv/nodo-screen/run' | grep -q 'chgrp _nodo_screen "$b" && chmod g+w "$b"' || { echo "  the screen cannot dim the backlight"; r=1; }
+	result "the screen's Shut down button has nodo-power to ask (only root and _nodo_screen may), and the screen may dim its backlight" "$r"
 	r=0
 	for f in /usr/bin/nodo-splash /etc/runit/core-services/01-nodo-splash.sh /etc/runit/shutdown.d/05-nodo-splash.sh; do
 		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }

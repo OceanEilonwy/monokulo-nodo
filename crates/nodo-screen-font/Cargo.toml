@@ -1,0 +1,15 @@
+[package]
+name = "nodo-screen-font"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Builds the screen's console font, nodo-screen-16x32, from Terminus ter-v32n"
+
+[[bin]]
+name = "nodo-screen-font"
+path = "src/main.rs"
+
+[dependencies]
+flate2 = "1"
