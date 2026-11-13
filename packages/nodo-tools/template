@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=11
+revision=12
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-power -p nodo-screen-font -p nodo-splash"
@@ -17,6 +17,8 @@ short_desc="Root helper service and terminal interface for monokulo-nodo"
 maintainer="monokulo-nodo <noreply@localhost>"
 license="GPL-3.0-or-later"
 homepage="https://github.com/OceanEilonwy/monokulo-nodo"
+# The system update server (docs/UPDATES.md): the owner may point it elsewhere.
+conf_files="/etc/nodo/system-update.toml"
 # Package settings code runs as this account, never as root. xbps turns the name into a
 # shell variable, so it cannot contain a dash.
 system_accounts="_nodo_settings _nodo_screen"
@@ -99,5 +101,8 @@ do_install() {
 	vinstall ${FILESDIR}/cuprated/panels/sync.lua 644 usr/share/nodo/packages/cuprated/panels
 	# The app feed every device starts with, its key pinned from the start (docs/FEED.md).
 	vinstall ${FILESDIR}/default-feeds.toml 644 usr/share/nodo
+	# System snapshots: the update server and the keys and channel this device trusts.
+	vinstall ${FILESDIR}/system-update.toml 644 etc/nodo
+	vinstall ${FILESDIR}/snapshot-pins.toml 644 usr/share/nodo
 	vlicense LICENSE
 }

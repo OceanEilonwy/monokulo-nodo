@@ -42,7 +42,11 @@ request.
      signature against the pinned key, the package gate). Nothing is published if one fails.
    - `site`: the landing page (`index.html`, with the address, fingerprint and the package list
      taken from that check), `CNAME` and the public key, then the official Pages actions deploy
-     `out/site`.
+     `out/site`. The same site serves the system snapshots under `snapshots/`, published by
+     `.github/workflows/system.yml` (docs/UPDATES.md, "The T6N's published snapshots"). A
+     deployment replaces the whole site, so this job lists its own files in `files/feed.txt` and
+     copies the snapshots from the live site by `files/system.txt` (`scripts/pages-site.sh`), and
+     the two workflows' publish jobs share one concurrency group.
 
 A run where no recipe changed takes a few minutes (restore the stamps, sign, check, deploy). A
 cold run compiles everything on 4-core runners and can take two to three hours (x86_64 took 19

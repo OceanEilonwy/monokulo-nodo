@@ -30,6 +30,14 @@ done > "$rootfs/etc/xbps.d/20-monokulo-noextract.conf"
 set +f
 cp "$keys"/* "$rootfs$keys/"
 cp "$keys"/* "/work/stage1$keys/"
+# The system snapshots' own repository is signed with the key pinned in feed/xbps-keys
+# (publish-snapshot.sh nodo), so images trust that key from the start, never on first sight.
+# NODO_REPO_KEYS adds others the same way, such as a branch run's throwaway key.
+for k in /src/feed/xbps-keys/*.plist ${NODO_REPO_KEYS:+"$NODO_REPO_KEYS"/*.plist}; do
+	[ -f "$k" ] || continue
+	cp "$k" "$rootfs$keys/"
+	cp "$k" "/work/stage1$keys/"
+done
 
 XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "${NODO_REPO:-/src/out/feed/$BOARD_ARCH}" -R "$repo" \
 	nodo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null

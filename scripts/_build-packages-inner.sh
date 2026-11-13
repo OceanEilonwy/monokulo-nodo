@@ -56,14 +56,32 @@ fi
 # xbps-src takes a dependency from the mirror only at the pinned recipe's exact version, and
 # otherwise compiles the old recipe from source, for a package images then install at the
 # mirror's version anyway. So a Void dependency that moved on in the mirror stops the build here.
+# Host tools (hostmakedepends, and the cross compiler) run on this machine and come from its
+# architecture's mirror, so they are compared with that mirror only; everything else a build
+# installs is for the target. Comparing a host tool with the target's mirror too stopped builds
+# whenever Void's builders for the two architectures were at different revisions of it.
 deps=$(for pkg in $PKGS; do ./xbps-src $cross show-build-deps "$pkg"; done | grep -vxF "$own" | sort -u)
-[ -z "$cross" ] || deps="$deps cross-$(./xbps-src -a "$ARCH" show-var XBPS_CROSS_TRIPLET)"
+host_deps=$(for pkg in $PKGS; do ./xbps-src $cross show-hostmakedepends "$pkg"; done | grep -vxF "$own" | sort -u)
+target_deps=$(printf '%s\n' $deps | grep -vxF "${host_deps:-/}" || true)
+[ -z "$cross" ] || host_deps="$host_deps cross-$(./xbps-src -a "$ARCH" show-var XBPS_CROSS_TRIPLET)"
 rc=0
-drift=$(/src/scripts/_void-drift.sh repo "$ARCH" $deps) || rc=$?
+drift=
+drift_in() {
+	# $1: architecture; the rest: packages. Adds to $drift and sets rc=3 on a difference.
+	a=$1
+	shift
+	[ $# -gt 0 ] || return 0
+	r=0
+	found=$(/src/scripts/_void-drift.sh repo "$a" "$@") || r=$?
+	[ "$r" = 0 ] || [ "$r" = 3 ] || exit "$r"
+	[ "$r" = 0 ] || { rc=3; drift="$drift$found
+"; }
+}
+drift_in "$(xbps-uhelper arch)" $host_deps
+drift_in "$ARCH" $target_deps
 if [ "$rc" != 0 ]; then
-	[ "$rc" = 3 ] || exit "$rc"
 	echo "Void's mirror and the void-packages recipes at VOID_PACKAGES_REV disagree on:" >&2
-	printf '%s\n' "$drift" | awk '{ printf "  %s: mirror %s, recipe %s\n", $1, $2, $3 }' >&2
+	printf '%s\n' "$drift" | awk 'NF { printf "  %s: mirror %s, recipe %s\n", $1, $2, $3 }' >&2
 	echo "Set VOID_PACKAGES_REV in versions.env to a void-packages commit with the mirror's versions." >&2
 	exit 1
 fi

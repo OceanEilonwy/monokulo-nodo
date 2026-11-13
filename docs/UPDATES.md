@@ -160,9 +160,79 @@ device passphrase first, Esc cancels, a wrong passphrase changes and holds nothi
 one grows the volume in place and updates; and with the test snapshots served in the VM, the
 `system base` row offers test-b, says automatic system updates only notify, and applies it.
 
-Not yet: `fetch` and `test` have not been run against a live mirror; no real Void package was
-updated in a test (the test snapshots reuse the VM's own Void index); and a snapshot that needs a
-restart only says so, and nothing restarts the device for it.
+Not yet: `fetch` has not been run against a live mirror; no real Void package was updated in a
+VM test (the test snapshots reuse the VM's own Void index); and a snapshot that needs a restart
+only says so, and nothing restarts the device for it.
+
+### The T6N's published snapshots
+
+Every NanoPC-T6N (mainline) image trusts `https://nodo.monokulo.com/snapshots`
+(`/etc/nodo/system-update.toml`, a configuration file the owner may edit) and two Ed25519 keys on
+the `stable` channel (`/usr/share/nodo/snapshot-pins.toml`, `threshold = 1`, `min_serial = 0`
+because images are built from `main`, not from a snapshot). `nodo-systemupdate` starts at boot, so
+the helper checks every six hours and the Updates screen shows a new snapshot as the `system base`
+row. **Automatic system updates stay off**: nothing is installed until the owner applies it, or
+turns automatic system updates on, which still never applies a snapshot that needs a restart.
+
+**Hosting.** The snapshots share the GitHub Pages site with the app feed. Pages refuses files over
+100 MB and sites over 1 GB, and the image's Void packages do not fit (`linux-firmware-network`
+alone is 440 MiB). So a published snapshot copies only Void's signed index, a few megabytes
+(`publish-snapshot.sh index`), and its manifest names Void's mirror
+(`https://repo-fastly.voidlinux.org/current/aarch64`) as the `mirror` the `void` repository's
+packages are downloaded from. The device still fetches the index from the snapshot and requires
+its pinned hash, places it where xbps keeps the mirror's copy, and runs xbps without syncing, so
+xbps installs exactly the pinned versions and checks each package against that index and Void's
+`.sig2` signature. The mirror decides only whether a package can be downloaded, never which one;
+the security properties above are unchanged. This project's packages (the `nodo` repository,
+about 60 MB: the kernel is 31 MB) are on Pages, and the three newest snapshots are kept, so a bad
+one can be withdrawn back to either of the two before it. Void removes superseded packages from its
+mirror after a while, so a snapshot made this way stays installable only while its Void versions
+are still there: CI makes a new snapshot every week even when nothing of ours changed.
+
+**Publishing.** `.github/workflows/system.yml` builds `feed/base-packages` for aarch64 on every push
+to `main` that changes one of them, every Monday, and by hand. Its jobs keep keys away from
+third-party code: `build` compiles (no secrets); `sign-repo` signs the `nodo` repository with the
+RSA key `NODO_SNAPSHOT_XBPS_KEY`, whose public half is pinned in `feed/snapshot-xbps-key.pub.pem`
+with the key file xbps keeps for it in `feed/xbps-keys/` (`nodo-snapshot xbps-key`; a test ties the
+two together), which every image build copies into `/var/db/xbps/keys` so the key is trusted from
+the start, never accepted on first sight (a branch run seeds its throwaway key the same way,
+through `NODO_REPO_KEYS`); `test` copies Void's index, builds a T6N image from only the
+snapshot (`publish-snapshot.sh test`, which also requires that Void's mirror still served the same
+index before and after the build) and runs `tests/inspect-t6n-platform.sh` and
+`tests/inspect-t6n-mainline.sh` on it, which is the test run the stamp records (no secrets); and
+`publish` signs the manifest with `NODO_SNAPSHOT_SIGNING_KEY` (refused unless every index is the
+one the test stamped), checks it against the shipped pins as a device would, publishes it on the
+channel, keeps the three newest snapshots and deploys. `publish-snapshot.sh restart` marks the
+manifest as needing a restart when the kernel, glibc or runit changed since the previous snapshot.
+The serial is the UTC time it was made (`YYYYMMDDHHMMSS`) and the name the same time
+(`YYYY.MM.DD-HHMMSS`). A branch run builds and tests with a throwaway key and publishes nothing.
+The secrets live in the `github-pages` environment, which only `main` may use.
+
+Both workflows deploy the whole Pages site, so each writes its own half and copies the other half
+from the live site (`scripts/pages-site.sh`): the feed's `index.html`, `CNAME`,
+`signing-key.pub.pem` and `feed/`, listed in `files/feed.txt`, and the snapshots' `snapshots/`,
+listed in `files/system.txt`, each file with its SHA-256. Their publish jobs share one concurrency
+group, so they never overlap.
+
+**Keys.** The snapshot keys were made with `nodo-snapshot keygen`. The first signs in CI; the second
+exists only offline (`~/.local/share/monokulo-nodo/snapshot-key-2` on the machine that made them,
+to be copied to encrypted storage and deleted there) and can sign a key rotation statement that
+replaces a lost or exposed first key, which devices then apply by themselves. Signing in CI
+differs from the offline signing described above: anyone who can run a workflow on `main` can
+publish a snapshot, the same trade-off as the feed's key (docs/FEED.md), bounded by automatic
+system updates being off.
+
+**Kernel updates on the T6N.** The bootloader reads the kernel and device tree from their own
+partitions (`kernel` and `resource`), not from the root filesystem, and the SD card has no second
+slot. So `linux-mainline-rk3588`'s INSTALL script, on a running board, copies the package's
+`kernel.img` and `resource.img` to those partitions after saving their old contents in
+`/var/lib/nodo/boot/previous/`; the image builder has no such partitions and writes them itself.
+A snapshot that changes the kernel says it needs a restart, so it is never installed
+automatically, and the new kernel runs after the owner restarts. Rollback here covers this
+project's packages (a withdrawal) but not a kernel that does not boot: that card is recovered on
+another computer by writing `kernel.part` and `resource.part` back to their partitions, or by
+flashing a new image. The modules of the old kernel are replaced by the update, so a kernel cannot
+be swapped back on the running board either.
 
 ## 2. Auto-update
 
@@ -533,6 +603,9 @@ Still open:
   keeps that key, so sealed secrets from the other device cannot be opened there.
 - **System snapshots**: the remaining gaps are listed at the end of section 1.
 - **boards/nanopc-t6n**: ship `/etc/fs.resized`, add the ramdisk hook, the A/B layout for eMMC,
-  enable the `nodo-healthd`, `nodo-autoupdate` and `nodo-systemupdate` services from nodo-tools,
-  set the update server in `/etc/nodo/system-update.toml` and the keys in
-  `/usr/share/nodo/snapshot-pins.toml`, and open the watchdog early.
+  and open the watchdog early. The mainline card (`boards/nanopc-t6n-mainline`) now enables
+  `nodo-systemupdate` and ships the update server and keys (section 1, "The T6N's published
+  snapshots"); the vendor 6.1 card does not start the timer.
+- **System snapshots on the T6N**: a kernel that does not boot is recovered by hand on another
+  computer, since the SD card has no second slot; a previous kernel kept on the card for the
+  bootloader to fall back to would close that.

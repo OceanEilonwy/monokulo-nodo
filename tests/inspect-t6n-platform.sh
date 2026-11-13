@@ -43,6 +43,14 @@ got=$(sed -n 's/^fingerprint *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml")
 echo "== default feed: $(sed -n 's/^address *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml") key $got"
 grep -qx 'address = "https://nodo.monokulo.com/feed"' "$tmp/default-feeds.toml" && [ -n "$got" ] && [ "$got" = "$want" ]
 result "the app feed nodo.monokulo.com/feed ships as a default, pinned to $want" "$?"
+# System snapshots (docs/UPDATES.md, section 1): the update server and the keys a snapshot must be
+# signed with, exactly as the repository has them.
+show 'cat /etc/nodo/system-update.toml' > "$tmp/system-update.toml"
+show 'cat /usr/share/nodo/snapshot-pins.toml' > "$tmp/snapshot-pins.toml"
+r=0
+grep -qx 'server = "https://nodo.monokulo.com/snapshots"' "$tmp/system-update.toml" || { echo "  no update server"; r=1; }
+cmp -s "$tmp/snapshot-pins.toml" "$repo/packages/nodo-tools/files/snapshot-pins.toml" || { echo "  the snapshot keys differ from the repository's"; r=1; }
+result "system snapshots come from nodo.monokulo.com/snapshots, signed with the pinned keys" "$r"
 
 # sshd refuses root when root's shell is missing; the first T6N cards had /bin/bash without bash.
 root_shell=$(show 'cat /etc/passwd' | awk -F: '$1 == "root" { print $7 }')
@@ -184,6 +192,10 @@ if [ "$tty1" = nodo-screen ]; then
 	done
 	show 'cat /etc/sv/nodo-screen/run' | grep -q /run/nodo-splash.pid || { echo "  nodo-screen does not stop the splash"; r=1; }
 	result "the boot splash shows the logo from early boot until the panels, and again at shutdown" "$r"
+	# This card takes base updates as system snapshots; the timer only checks unless the owner
+	# turns automatic system updates on.
+	case " $links " in *" nodo-systemupdate "*) r=0 ;; *) r=1 ;; esac
+	result "the system snapshot timer (nodo-systemupdate) starts at boot" "$r"
 fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do

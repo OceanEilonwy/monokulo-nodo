@@ -36,8 +36,8 @@ fn manifest(serial: u64) -> SnapshotManifest {
         expires: 2000,
         needs_restart: false,
         repo: vec![
-            RepoEntry { arch: "x86_64".into(), name: "void".into(), path: format!("snapshots/s{serial}/current"), repodata_sha256: digest.clone() },
-            RepoEntry { arch: "x86_64".into(), name: "nodo".into(), path: format!("snapshots/s{serial}/nodo/x86_64"), repodata_sha256: digest },
+            RepoEntry { arch: "x86_64".into(), name: "void".into(), path: format!("snapshots/s{serial}/current"), repodata_sha256: digest.clone(), mirror: None },
+            RepoEntry { arch: "x86_64".into(), name: "nodo".into(), path: format!("snapshots/s{serial}/nodo/x86_64"), repodata_sha256: digest, mirror: None },
         ],
         packages: vec![PackagePin { name: "demo".into(), version: "1.1_1".into() }],
         withdraws: vec![],
@@ -190,6 +190,35 @@ fn a_newer_signed_snapshot_is_applied_and_only_then_recorded() {
     let again = Device::new();
     assert_eq!(apply(&server, &again, &mut st).unwrap(), Outcome::UpToDate { serial: 4 });
     assert!(again.log().is_empty());
+}
+
+#[test]
+fn packages_come_from_a_named_mirror_while_the_index_comes_from_the_server() {
+    let mut server = Server::default();
+    let mut m = manifest(4);
+    m.repo[0].mirror = Some("https://repo-fastly.voidlinux.org/current".into());
+    server.publish(&m, Some(&key(1)));
+    let device = Device::new();
+    let mut st = state();
+    assert!(matches!(apply(&server, &device, &mut st).unwrap(), Outcome::Applied { .. }));
+    let log = device.log();
+    // The verified index is placed where xbps keeps the mirror's copy, so xbps installs exactly
+    // what the snapshot pinned while downloading the files from the mirror.
+    assert!(log.contains(&"index https://repo-fastly.voidlinux.org/current x86_64".to_owned()), "{log:?}");
+    assert!(
+        log.contains(
+            &"update https://repo-fastly.voidlinux.org/current https://updates.example/snapshots/s4/nodo/x86_64"
+                .to_owned()
+        ),
+        "{log:?}"
+    );
+    // A mirror never replaces the server as the source of the index: a wrong index on the
+    // server is still refused.
+    let mut server = Server::default();
+    server.publish(&m, Some(&key(1)));
+    server.files.insert("snapshots/s4/current/x86_64-repodata".into(), b"other".to_vec());
+    let (e, _) = refused(&server, &Device::new());
+    assert!(matches!(e, UpdateError::BadRepository { .. }), "{e}");
 }
 
 fn refused(server: &Server, device: &Device) -> (UpdateError, TrustState) {
@@ -452,4 +481,18 @@ fn applying_only_the_serial_the_user_saw() {
     // Once applied, the same serial is simply up to date; another one is not what the user saw.
     assert_eq!(apply_expecting(&server, &Device::new(), &mut st, Some(4)).unwrap(), Outcome::UpToDate { serial: 4 });
     assert!(matches!(apply_expecting(&server, &Device::new(), &mut st, Some(7)), Err(UpdateError::UnexpectedSerial { .. })));
+}
+
+/// Image builds trust the snapshots' repository key from feed/xbps-keys, never on first sight, so
+/// the key file there must be exactly what xbps would record for the pinned public key.
+#[test]
+fn the_pinned_snapshot_repository_key_file_matches_its_public_key() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pem = std::fs::read(root.join("feed/snapshot-xbps-key.pub.pem")).unwrap();
+    let key = xbps_key_from_pem(&pem, "monokulo-nodo").unwrap();
+    assert!(key.bits >= 4096, "the snapshot repository key is {} bits", key.bits);
+    let files: Vec<_> = std::fs::read_dir(root.join("feed/xbps-keys")).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(files.len(), 1, "one pinned key: {files:?}");
+    assert_eq!(files[0].file_name().unwrap().to_str().unwrap(), format!("{}.plist", key.fingerprint));
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), xbps_key_plist(&key));
 }

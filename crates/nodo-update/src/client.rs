@@ -269,7 +269,8 @@ fn verify_repositories(
         verified.push(Verified {
             name: repo.name.clone(),
             offers,
-            url: source.repository_url(&repo.path),
+            // Packages come from the mirror when the manifest names one; the index above did not.
+            url: repo.mirror.clone().unwrap_or_else(|| source.repository_url(&repo.path)),
             key: XbpsKey {
                 fingerprint: colon_hex(&key.fingerprint.to_string()),
                 pem: key.pem().to_vec(),
@@ -407,6 +408,18 @@ pub fn apply_expecting(
 /// `/` replaced by `_`, as `xbps_get_remote_repo_string` does.
 pub fn xbps_repo_dir(url: &str) -> String {
     url.chars().map(|c| if matches!(c, '.' | ':' | '/') { '_' } else { c }).collect()
+}
+
+/// The key xbps would record for a repository signed with this RSA public key (PEM), for seeding
+/// `/var/db/xbps/keys` from a pinned key instead of accepting one the first time it is seen.
+pub fn xbps_key_from_pem(pem: &[u8], signed_by: &str) -> Result<XbpsKey, String> {
+    let key = nodo_feed::RepoKey::from_pem(pem, signed_by).map_err(|e| e.to_string())?;
+    Ok(XbpsKey {
+        fingerprint: colon_hex(&key.fingerprint.to_string()),
+        pem: key.pem().to_vec(),
+        bits: key.bits,
+        signed_by: key.signed_by.clone(),
+    })
 }
 
 /// A key file as xbps writes it into `/var/db/xbps/keys`.

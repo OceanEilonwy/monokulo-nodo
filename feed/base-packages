@@ -1,0 +1,14 @@
+# This project's packages in the NanoPC-T6N (mainline) image, which reach devices in signed system
+# snapshots at https://nodo.monokulo.com/snapshots (.github/workflows/system.yml,
+# docs/UPDATES.md). One recipe name from packages/ per line: everything the image installs from
+# this project (scripts/_build-image-inner.sh installs nodo-base, cuprated-service and the board's
+# BOARD_PACKAGES), and their dependencies from packages/. Apps go in feed/packages instead.
+nodo-base
+nodo-tools
+cuprated
+cuprated-service
+linux-mainline-rk3588
+nodo-caddy
+nodo-ddns
+nodo-localnet
+mesa-panvk
