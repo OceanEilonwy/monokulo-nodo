@@ -7,6 +7,28 @@ cp -r /src/packages/* "$vp/srcpkgs/"
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
 export HOME=/work
+# Compiler caches, kept in the hostdir next to the distfiles and bounded in size: by default 4 GB
+# for sccache and 2 GB for ccache (a kernel build alone fills about 1.5 GB), less in CI, where
+# .github/workflows/feed.yml sets SCCACHE_CACHE_SIZE and CCACHE_MAXSIZE to fit GitHub's 10 GB.
+# C and C++: xbps-src's own ccache support puts /usr/lib/ccache/bin first in PATH, with
+# CCACHE_DIR=$XBPS_HOSTDIR/ccache.
+echo "XBPS_CCACHE=yes" >> etc/conf
+mkdir -p /src/build/hostdir/ccache
+CCACHE_DIR=/src/build/hostdir/ccache ccache --max-size "${CCACHE_MAXSIZE:-2G}" >/dev/null
+# Rust: one sccache server for the whole run, started here so it has these settings whatever
+# environment xbps-src gives the compiles. It never idles out, and goes with the container. cc-rs
+# sees RUSTC_WRAPPER=sccache and sends the C and assembly of -sys crates through it too, so in Rust
+# packages sccache, not ccache, caches those.
+sccache=
+if SCCACHE_DIR=/src/build/hostdir/sccache SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" \
+	SCCACHE_IDLE_TIMEOUT=0 sccache --start-server; then
+	sccache=1
+	for step in configure build check install; do
+		cp /src/scripts/_xbps-src-sccache.sh "common/environment/$step/zz-monokulo-sccache.sh"
+	done
+else
+	echo "warning: sccache did not start; Rust packages build without it" >&2
+fi
 # xbps-src cross-compiles only when the target differs from this machine.
 cross=
 [ "$ARCH" = "$(xbps-uhelper arch)" ] || cross="-a $ARCH"
@@ -46,7 +68,17 @@ if [ "$rc" != 0 ]; then
 	exit 1
 fi
 for pkg in $PKGS; do
-	./xbps-src -H /src/build/hostdir $cross -f pkg "$pkg"
+	[ -z "$sccache" ] || sccache --zero-stats >/dev/null
+	CCACHE_DIR=/src/build/hostdir/ccache ccache --zero-stats >/dev/null
+	rc=0
+	./xbps-src -H /src/build/hostdir $cross -f pkg "$pkg" || rc=$?
+	# Hit rates for the log, also for a build that failed.
+	echo "== compiler caches for $pkg"
+	[ -z "$sccache" ] || sccache --show-stats || true
+	CCACHE_DIR=/src/build/hostdir/ccache ccache --show-stats || true
+	# The tree _xbps-src-sccache.sh moved out of $wrksrc, which xbps-src does not know to remove.
+	rm -rf /work/void-packages/masterdir/builddir/.shared-src
+	[ "$rc" = 0 ] || exit "$rc"
 done
 feed="/src/out/feed/$ARCH"
 for pkg in $PKGS; do

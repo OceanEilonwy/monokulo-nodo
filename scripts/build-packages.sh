@@ -25,7 +25,9 @@ done
 if [ -n "$only_list" ]; then echo $todo; exit 0; fi
 # Only now, so a run with nothing to build never builds the builder image.
 ensure_builder
+# The compiler cache sizes pass through when set (see _build-packages-inner.sh).
 docker run --rm -e "ARCH=$arch" -e "PKGS=$todo" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+	-e SCCACHE_CACHE_SIZE -e CCACHE_MAXSIZE \
 	-v "$root:/src" "$BUILDER" /src/scripts/_build-packages-inner.sh
 # Record the recipe hash from before the build, so edits made during it trigger a rebuild.
 for pkg in $todo; do
