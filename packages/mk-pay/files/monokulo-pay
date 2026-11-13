@@ -6,12 +6,12 @@
 # - The daemon setting is a URL, and Monokulo wants its node as JSON with host, port and ssl.
 # - Monokulo's files go in its data directory, which the sandbox mounts as $HOME.
 #
-# This script keeps the name of the binary it starts, so the supervisor's `pkill -x monokulo`
+# This script keeps the name of the binary it starts, so the supervisor's `pkill -x monokulo-pay`
 # matches whichever of the two is running.
 set -eu
 
 die() {
-	echo "monokulo launcher: $*" >&2
+	echo "monokulo-pay launcher: $*" >&2
 	exit 1
 }
 
@@ -67,7 +67,7 @@ for arg do
 done
 [ -n "$daemon" ] || die "no --daemon-url was given"
 
-exec "$(dirname "$0")/../libexec/monokulo" \
+exec "$(dirname "$0")/../libexec/monokulo-pay" \
 	--options "$HOME/monokulo.toml" \
 	--database-path "$HOME/monokulo.db" \
 	--engine-database-path "$HOME/engine.db" \

@@ -8,9 +8,9 @@
 # the source and toolchain distfiles and their checksums are shared. The relay needs neither Node
 # nor the wasm32 standard library.
 pkgname=mk-push-relay
-version=0.1.0pre20261107
+version=0.1.0pre20261113
 revision=1
-_commit=4e3c6042c312b68020e27f22fdb8d954e5df4371
+_commit=7d8d458598e04d865b8b37214936efc555893b61
 _nightly=2026-11-07
 archs="aarch64 x86_64"
 hostmakedepends="gcc cmake make pkg-config clang xz"
@@ -18,7 +18,7 @@ short_desc="Monokulo's Web Push relay to APNs and FCM"
 maintainer="monokulo-nodo <noreply@localhost>"
 # Upstream declares no license yet.
 license="custom:none-declared"
-homepage="https://github.com/OceanEilonwy/monokulo"
+homepage="https://github.com/OceanEilonwy/monokulo-pay"
 
 _dist=https://static.rust-lang.org/dist/${_nightly}
 case "$XBPS_MACHINE" in
@@ -37,11 +37,11 @@ case "$XBPS_MACHINE" in
 	*) broken="no pinned toolchain for build machine $XBPS_MACHINE" ;;
 esac
 
-distfiles="https://github.com/OceanEilonwy/monokulo/archive/${_commit}.tar.gz
+distfiles="https://github.com/OceanEilonwy/monokulo-pay/archive/${_commit}.tar.gz
  ${_dist}/rustc-nightly-${_host}.tar.xz
  ${_dist}/cargo-nightly-${_host}.tar.xz
  ${_dist}/rust-std-nightly-${_host}.tar.xz"
-checksum="61b6ddcab0af3b4659b778bd7f133bd3950f81af427bbb0579406ef2e20e2e5f
+checksum="54f55e1d6fe7ccecdd0025da42c6525fb338e7f09aa6ea885fcd2cccb30e0987
  ${_rustc_sum}
  ${_cargo_sum}
  ${_std_sum}"
@@ -54,7 +54,7 @@ elif [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = x86_64 ]; then
 	checksum+=" 7b85b56d7169c076fa1e31de5a4e3052ff8400d887dd80f47aa69579e15c85f8"
 fi
 
-build_wrksrc="monokulo-${_commit}"
+build_wrksrc="monokulo-pay-${_commit}"
 _app=opt/nodo/apps/mk-push-relay
 
 post_extract() {

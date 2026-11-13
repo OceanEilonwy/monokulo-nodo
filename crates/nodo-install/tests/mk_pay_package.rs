@@ -46,7 +46,7 @@ fn cuprated() -> InstalledPackage {
 fn the_manifest_passes_feed_validation_and_names_its_files() {
     let m = manifest();
     assert_eq!(m.id, "mk-pay");
-    assert_eq!(m.exec[0], "bin/monokulo");
+    assert_eq!(m.exec[0], "bin/monokulo-pay");
     assert_eq!(m.settings.as_deref(), Some("settings.lua"));
     assert!(m.storage.encrypted);
     assert_eq!(m.needs, ["monero-daemon"]);
@@ -111,12 +111,12 @@ fn launch(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
     for d in [&bin, &libexec, &home] {
         std::fs::create_dir(d).unwrap();
     }
-    std::fs::copy(files().join("monokulo"), bin.join("monokulo")).unwrap();
-    let stand_in = libexec.join("monokulo");
+    std::fs::copy(files().join("monokulo-pay"), bin.join("monokulo-pay")).unwrap();
+    let stand_in = libexec.join("monokulo-pay");
     std::fs::write(&stand_in, "#!/bin/sh\nfor a do echo \"arg:$a\"; done\necho \"key:$MONOKULO_ENCRYPTION_KEY\"\necho \"nodo:${NODO_ENCRYPTION_KEY-unset}\"\n").unwrap();
     std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut command = Command::new("sh");
-    command.arg(bin.join("monokulo")).args(args).env_clear().env("PATH", "/usr/bin:/bin").env("HOME", &home);
+    command.arg(bin.join("monokulo-pay")).args(args).env_clear().env("PATH", "/usr/bin:/bin").env("HOME", &home);
     for (k, v) in env {
         command.env(k, v);
     }
@@ -155,7 +155,7 @@ fn the_launcher_refuses_what_it_cannot_express() {
     for url in ["ws://h:1", "http://h:1/json_rpc", "http://h:x", "http://h\"x:1", "http://:1"] {
         let (ok, out, err) = launch(&[&format!("--daemon-url={url}")], &key);
         assert!(!ok && out.is_empty(), "{url} was accepted: {out}");
-        assert!(err.contains("monokulo launcher"), "{err}");
+        assert!(err.contains("monokulo-pay launcher"), "{err}");
     }
     let (ok, _, err) = launch(&["--daemon-url=http://h:1"], &[]);
     assert!(!ok && err.contains("encryption_key"), "{err}");

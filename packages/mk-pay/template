@@ -5,9 +5,9 @@
 # /usr or install scripts here. The device creates the user, sandbox and firewall from
 # manifest.toml.
 pkgname=mk-pay
-version=0.1.0pre20261107
+version=0.1.0pre20261113
 revision=1
-_commit=4e3c6042c312b68020e27f22fdb8d954e5df4371
+_commit=7d8d458598e04d865b8b37214936efc555893b61
 # Monokulo builds on nightly Rust, unpinned upstream. This is the nightly published the day of
 # _commit, so the toolchain is fixed by date and checksum rather than by whatever is current.
 _nightly=2026-11-07
@@ -19,7 +19,7 @@ maintainer="monokulo-nodo <noreply@localhost>"
 # Upstream declares no license yet. Nothing is installed under /usr/share/licenses because a feed
 # package may only write inside its own directory.
 license="custom:none-declared"
-homepage="https://github.com/OceanEilonwy/monokulo"
+homepage="https://github.com/OceanEilonwy/monokulo-pay"
 
 _dist=https://static.rust-lang.org/dist/${_nightly}
 case "$XBPS_MACHINE" in
@@ -42,13 +42,13 @@ case "$XBPS_MACHINE" in
 	*) broken="no pinned toolchain for build machine $XBPS_MACHINE" ;;
 esac
 
-distfiles="https://github.com/OceanEilonwy/monokulo/archive/${_commit}.tar.gz
+distfiles="https://github.com/OceanEilonwy/monokulo-pay/archive/${_commit}.tar.gz
  ${_dist}/rustc-nightly-${_host}.tar.xz
  ${_dist}/cargo-nightly-${_host}.tar.xz
  ${_dist}/rust-std-nightly-${_host}.tar.xz
  ${_dist}/rust-std-nightly-wasm32-unknown-unknown.tar.xz
  https://nodejs.org/dist/v${_node}/node-v${_node}-linux-${_nodearch}.tar.xz"
-checksum="61b6ddcab0af3b4659b778bd7f133bd3950f81af427bbb0579406ef2e20e2e5f
+checksum="54f55e1d6fe7ccecdd0025da42c6525fb338e7f09aa6ea885fcd2cccb30e0987
  ${_rustc_sum}
  ${_cargo_sum}
  ${_std_sum}
@@ -65,7 +65,7 @@ elif [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = x86_64 ]; then
 fi
 
 # Several distfiles extract side by side into $wrksrc; the source is one of them.
-build_wrksrc="monokulo-${_commit}"
+build_wrksrc="monokulo-pay-${_commit}"
 _app=opt/nodo/apps/mk-pay
 
 post_extract() {
@@ -116,14 +116,14 @@ do_configure() {
 
 do_build() {
 	_toolchain_env
-	"${CARGO}" build --release --locked --target "${RUST_TARGET}" -p monokulo --bin monokulo
+	"${CARGO}" build --release --locked --target "${RUST_TARGET}" -p monokulo --bin monokulo-pay
 }
 
 do_install() {
 	vmkdir ${_app}/bin 755
 	vmkdir ${_app}/libexec 755
-	install -m 755 target/${RUST_TARGET}/release/monokulo "${DESTDIR}/${_app}/libexec/monokulo"
-	install -m 755 "${FILESDIR}/monokulo" "${DESTDIR}/${_app}/bin/monokulo"
+	install -m 755 target/${RUST_TARGET}/release/monokulo-pay "${DESTDIR}/${_app}/libexec/monokulo-pay"
+	install -m 755 "${FILESDIR}/monokulo-pay" "${DESTDIR}/${_app}/bin/monokulo-pay"
 	install -m 644 "${FILESDIR}/manifest.toml" "${DESTDIR}/${_app}/manifest.toml"
 	sed -i "s/@VERSION@/${version}/" "${DESTDIR}/${_app}/manifest.toml"
 	install -m 644 "${FILESDIR}/settings.lua" "${DESTDIR}/${_app}/settings.lua"
