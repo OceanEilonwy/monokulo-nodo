@@ -26,6 +26,7 @@ on:
     paths:
       - feed/base-packages
       - feed/xbps-keys/**
+      - feed/snapshot-keys/**
       - packages/**
       - boards/nanopc-t6n-mainline/**
       - scripts/publish-snapshot.sh

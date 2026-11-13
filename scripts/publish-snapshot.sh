@@ -255,6 +255,16 @@ publish)
 	cp "$snap/manifest.toml" "$out/channels/$channel/.manifest.toml.new"
 	mv "$out/channels/$channel/.manifest.toml.sig.new" "$out/channels/$channel/manifest.toml.sig"
 	mv "$out/channels/$channel/.manifest.toml.new" "$out/channels/$channel/manifest.toml"
+	# The channel's key statement, signed once by hand (feed/snapshot-keys/README.md). It is always
+	# published: a static host may answer a missing one with a server error rather than 404, which
+	# nodo-tools 12's client cannot get past.
+	keys=$root/feed/snapshot-keys/$channel
+	if [ -s "$keys/keys.toml" ] && [ -s "$keys/keys.toml.sig" ]; then
+		cp "$keys/keys.toml.sig" "$out/channels/$channel/.keys.toml.sig.new"
+		cp "$keys/keys.toml" "$out/channels/$channel/.keys.toml.new"
+		mv "$out/channels/$channel/.keys.toml.sig.new" "$out/channels/$channel/keys.toml.sig"
+		mv "$out/channels/$channel/.keys.toml.new" "$out/channels/$channel/keys.toml"
+	fi
 	echo "channel $channel now offers $name"
 	;;
 restart)

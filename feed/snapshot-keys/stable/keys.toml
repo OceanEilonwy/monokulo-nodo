@@ -1,0 +1,13 @@
+# The stable channel's key statement, published as snapshots/channels/stable/keys.toml with every
+# snapshot (docs/UPDATES.md). It restates the keys and threshold in
+# packages/nodo-tools/files/snapshot-pins.toml, so applying it changes no trust; it exists so the
+# file is always there, because GitHub Pages answers a missing file in a directory with HTTP 503,
+# which nodo-tools 12's client treats as a failed download. A real rotation replaces this with
+# sequence 2 or higher, signed by the keys below.
+format = 1
+sequence = 1
+keys = [
+	"61dbdcfa99ef2c759ecd53774125ae74860b0ebf57c340b21b7d2e519434af52",
+	"34aceb43252e0b484f42957525e053ed55e160322b2dbfefe4e941c9a386d021",
+]
+threshold = 1

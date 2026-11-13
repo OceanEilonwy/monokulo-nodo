@@ -48,6 +48,8 @@ fn manifest(serial: u64) -> SnapshotManifest {
 #[derive(Default)]
 struct Server {
     files: BTreeMap<String, Vec<u8>>,
+    /// Paths answered with a server error, and how many more times (`u32::MAX`: always).
+    failing: RefCell<BTreeMap<String, u32>>,
 }
 
 impl Server {
@@ -73,6 +75,10 @@ impl Server {
 
 impl Source for Server {
     fn get(&self, path: &str, limit: u64) -> io::Result<Option<Vec<u8>>> {
+        if let Some(left) = self.failing.borrow_mut().get_mut(path).filter(|n| **n > 0) {
+            *left = left.saturating_sub(u32::from(*left != u32::MAX));
+            return Err(io::Error::other(format!("the update server answered HTTP 503 for {path}")));
+        }
         let file = self.files.get(path).cloned();
         if file.as_ref().is_some_and(|f| f.len() as u64 > limit) {
             return Err(io::Error::other("too large"));
@@ -495,4 +501,50 @@ fn the_pinned_snapshot_repository_key_file_matches_its_public_key() {
     assert_eq!(files.len(), 1, "one pinned key: {files:?}");
     assert_eq!(files[0].file_name().unwrap().to_str().unwrap(), format!("{}.plist", key.fingerprint));
     assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), xbps_key_plist(&key));
+}
+
+fn publish_rotation_to_key_2(server: &mut Server) {
+    let statement = KeyStatement { format: 1, sequence: 1, keys: vec![PublicKey::from(&key(2))], threshold: 1 };
+    let body = statement.to_toml().into_bytes();
+    let mut sigs = SignatureFile::default();
+    sigs.sign(KEY_STATEMENT_CONTEXT, &body, &key(1));
+    server.files.insert("channels/stable/keys.toml".into(), body);
+    server.files.insert("channels/stable/keys.toml.sig".into(), sigs.to_toml().into_bytes());
+}
+
+#[test]
+fn a_server_error_for_the_optional_key_statement_does_not_block_an_update_the_trusted_keys_signed() {
+    // GitHub Pages answers a missing file inside a directory with 503, not 404.
+    let mut server = Server::default();
+    server.failing.borrow_mut().insert("channels/stable/keys.toml".into(), u32::MAX);
+    server.publish(&manifest(4), Some(&key(1)));
+    let mut st = state();
+    assert!(matches!(apply(&server, &Device::new(), &mut st).unwrap(), Outcome::Applied { .. }));
+    assert_eq!(st.key_sequence, 0);
+}
+
+#[test]
+fn the_key_statement_is_tried_twice() {
+    let mut server = Server::default();
+    publish_rotation_to_key_2(&mut server);
+    server.failing.borrow_mut().insert("channels/stable/keys.toml".into(), 1);
+    server.publish(&manifest(4), Some(&key(2)));
+    let mut st = state();
+    assert!(matches!(apply(&server, &Device::new(), &mut st).unwrap(), Outcome::Applied { .. }));
+    assert_eq!(st.key_sequence, 1);
+}
+
+#[test]
+fn a_manifest_that_needs_an_unreadable_key_statement_reports_the_download_failure() {
+    let mut server = Server::default();
+    publish_rotation_to_key_2(&mut server);
+    server.failing.borrow_mut().insert("channels/stable/keys.toml".into(), u32::MAX);
+    server.publish(&manifest(4), Some(&key(2)));
+    let mut st = state();
+    let before = st.clone();
+    match apply(&server, &Device::new(), &mut st) {
+        Err(UpdateError::Io { action, .. }) => assert_eq!(action, "download the key statement"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(st, before);
 }

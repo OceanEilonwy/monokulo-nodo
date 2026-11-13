@@ -194,26 +194,49 @@ pub fn manifest_path(channel: &str) -> String {
     format!("channels/{channel}/manifest.toml")
 }
 
+/// What fetching the channel's key statement came to.
+enum Rotation {
+    /// A newer statement was applied.
+    Rotated,
+    /// None is published, or the published one was already applied.
+    Unchanged,
+    /// The server failed twice to send it. The update goes ahead under the keys already trusted;
+    /// if the manifest turns out to need the statement, this error is what the user sees.
+    Unavailable(UpdateError),
+}
+
 /// Fetches and applies a key rotation statement, if the channel publishes one. One that was
 /// already applied is not an error.
-fn rotate_keys(source: &dyn Source, state: &mut TrustState) -> Result<bool, UpdateError> {
+fn rotate_keys(source: &dyn Source, state: &mut TrustState) -> Result<Rotation, UpdateError> {
     let path = format!("channels/{}/keys.toml", state.channel);
     let limit = MAX_DOCUMENT_LEN as u64;
-    let Some(body) = source.get(&path, limit).map_err(io("download the key statement"))? else {
-        return Ok(false);
+    // The statement is optional. A static host can answer a missing file with an error status
+    // instead of 404 (GitHub Pages sends 503 for one inside a directory), so a failure is tried
+    // once more and then set aside rather than blocking every update.
+    let fetched = match source.get(&path, limit) {
+        Err(_) => source.get(&path, limit),
+        ok => ok,
+    };
+    let body = match fetched {
+        Ok(Some(body)) => body,
+        Ok(None) => return Ok(Rotation::Unchanged),
+        Err(e) => {
+            eprintln!("nodo-update: could not download the key statement, going on with the trusted keys: {e}");
+            return Ok(Rotation::Unavailable(io("download the key statement")(e)));
+        }
     };
     // One already applied is signed by keys this device may no longer trust, so it is skipped
     // by its sequence before any signature is checked. Nothing else of it is used.
     if KeyStatement::parse(&body).is_ok_and(|s| s.sequence <= state.key_sequence) {
-        return Ok(false);
+        return Ok(Rotation::Unchanged);
     }
     let sig = source
         .get(&format!("{path}.sig"), limit)
         .map_err(io("download the key statement's signatures"))?
         .ok_or(UpdateError::Unsigned)?;
     match state.apply_key_statement(&body, &sig) {
-        Ok(()) => Ok(true),
-        Err(TrustError::StaleKeyStatement { .. }) => Ok(false),
+        Ok(()) => Ok(Rotation::Rotated),
+        Err(TrustError::StaleKeyStatement { .. }) => Ok(Rotation::Unchanged),
         Err(e) => Err(e.into()),
     }
 }
@@ -330,8 +353,19 @@ pub fn apply_expecting(
     expected: Option<u64>,
 ) -> Result<Outcome, UpdateError> {
     let mut working = state.clone();
-    let rotated = rotate_keys(source, &mut working)?;
-    let (accepted, body, sig) = check(source, machine, &working)?;
+    let (rotated, unavailable) = match rotate_keys(source, &mut working)? {
+        Rotation::Rotated => (true, None),
+        Rotation::Unchanged => (false, None),
+        Rotation::Unavailable(e) => (false, Some(e)),
+    };
+    let (accepted, body, sig) = match check(source, machine, &working) {
+        // Refused under the trusted keys while the statement could not be read: the statement may
+        // be what this manifest needs, so its download failure is the real problem.
+        Err(UpdateError::Refused(_) | UpdateError::Unsigned) if unavailable.is_some() => {
+            return Err(unavailable.expect("checked above"))
+        }
+        other => other?,
+    };
     let manifest = match accepted {
         Accepted::Unchanged => {
             if let Some(expected) = expected.filter(|e| *e != working.serial) {
