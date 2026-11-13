@@ -83,7 +83,12 @@ done
 feed="/src/out/feed/$ARCH"
 for pkg in $PKGS; do
 	rm -f "$feed/$pkg"-[0-9]*.xbps
-	cp /src/build/hostdir/binpkgs/"$pkg"-[0-9]*."$ARCH".xbps "$feed/" || { echo "package was not built: $pkg" >&2; exit 1; }
+	# The hostdir keeps every revision ever built. Copy only the newest: the index below registers
+	# files in name order with -f, so an older revision copied alongside (nodo-tools_8 sorts after
+	# nodo-tools_11) would end up being the one images install.
+	newest=$(ls /src/build/hostdir/binpkgs/"$pkg"-[0-9]*."$ARCH".xbps 2>/dev/null | sort -V | tail -n 1)
+	[ -n "$newest" ] || { echo "package was not built: $pkg" >&2; exit 1; }
+	cp "$newest" "$feed/"
 done
 XBPS_TARGET_ARCH="$ARCH" xbps-rindex -c "$feed" 2>/dev/null || true
 XBPS_TARGET_ARCH="$ARCH" xbps-rindex -f -a "$feed"/*.xbps
