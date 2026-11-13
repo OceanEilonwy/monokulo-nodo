@@ -115,7 +115,19 @@ fn plain_name(name: &str) -> bool {
         && !name.starts_with('-')
 }
 
+/// How long an enabled feed's index may go unread before the scheduled run reads it again. Reading
+/// a feed only updates what the device lists as available; it never installs anything.
+pub(crate) const FEED_RECHECK_SECS: u64 = 6 * 60 * 60;
+
 impl FeedState {
+    /// Whether an enabled feed was never read, or was last read `FEED_RECHECK_SECS` or more ago.
+    pub fn refresh_due(&self, now: u64) -> bool {
+        self.feeds.values().filter(|f| f.enabled).any(|f| {
+            f.last_checked
+                .is_none_or(|at| now.saturating_sub(at) >= FEED_RECHECK_SECS)
+        })
+    }
+
     pub fn feed(&self, name: &str) -> Result<&FeedRecord, ApiError> {
         self.feeds
             .get(name)
@@ -410,6 +422,22 @@ impl<S: System> Helper<S> {
             }
             Ok(Response::Feeds(feed_infos(state)))
         })
+    }
+
+    /// Reads every enabled feed's index now, for the helper's start.
+    pub fn refresh_feeds_now(&self) -> Result<(), ApiError> {
+        self.refresh_feeds().map(|_| ())
+    }
+
+    /// Reads the feeds' indexes when one was never read (a default feed just seeded, say) or has
+    /// not been read for `FEED_RECHECK_SECS`. Returns whether it read them.
+    pub fn refresh_feeds_if_due(&self) -> Result<bool, ApiError> {
+        let now = self.manage.packages.now();
+        if !self.read_feeds()?.refresh_due(now) {
+            return Ok(false);
+        }
+        self.refresh_feeds()?;
+        Ok(true)
     }
 
     pub(crate) fn set_feed_enabled(&self, name: &str, enabled: bool) -> Result<Response, ApiError> {

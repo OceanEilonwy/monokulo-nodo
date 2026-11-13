@@ -67,8 +67,20 @@ pub fn catalog_entries(b: &HelperBackend) -> Result<Vec<CatalogEntry>, ApiError>
     }
 }
 
-/// Installed packages first, as the helper knows them, then what the feeds offer.
+/// Whether an enabled feed was never read: a default feed on a new device, before the helper's
+/// own first read has finished.
+pub fn unread_feeds(list: &[nodo_api::FeedInfo]) -> bool {
+    list.iter().any(|f| f.enabled && f.last_checked.is_none())
+}
+
+/// Installed packages first, as the helper knows them, then what the feeds offer. A feed that
+/// was never read is read first, so a new device does not show an empty list.
 pub fn catalog(b: &HelperBackend, installed: Vec<nodo_api::PackageInfo>) -> Vec<PackageSummary> {
+    if let Ok(Response::Feeds(list)) = b.ask(Request::ListFeeds) {
+        if unread_feeds(&list) {
+            let _ = b.ask(Request::RefreshFeeds);
+        }
+    }
     let entries = match catalog_entries(b) {
         Ok(entries) => entries,
         Err(e) => {

@@ -260,7 +260,9 @@ for encrypted packages), and a rollback reinstalls that file with `xbps-install 
 data back. Updates the user selects follow the same rules, and one that asks for more needs the
 reviewed permission lines quoted back. The `nodo-autoupdate` runit service is the timer: every ten
 minutes it asks the helper for one run (`RunAutoUpdate`, root only), and the helper decides whether
-a check is due and whether the window is open. Proven in the KVM VM by `tests/helper-e2e.sh` with
+a check is due and whether the window is open. With automatic updates off, the run still reads
+any feed not read for six hours, so the device's list of available packages stays current
+(docs/FEED.md, When devices read feeds); it installs nothing. Proven in the KVM VM by `tests/helper-e2e.sh` with
 a feed signed in the VM: an update asking for internet access is held, one failing its health
 check is rolled back with its data and held, a held version is not retried, and a healthy one
 installs.
