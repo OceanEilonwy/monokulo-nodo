@@ -482,3 +482,17 @@ fn applying_only_the_serial_the_user_saw() {
     assert_eq!(apply_expecting(&server, &Device::new(), &mut st, Some(4)).unwrap(), Outcome::UpToDate { serial: 4 });
     assert!(matches!(apply_expecting(&server, &Device::new(), &mut st, Some(7)), Err(UpdateError::UnexpectedSerial { .. })));
 }
+
+/// Image builds trust the snapshots' repository key from feed/xbps-keys, never on first sight, so
+/// the key file there must be exactly what xbps would record for the pinned public key.
+#[test]
+fn the_pinned_snapshot_repository_key_file_matches_its_public_key() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pem = std::fs::read(root.join("feed/snapshot-xbps-key.pub.pem")).unwrap();
+    let key = xbps_key_from_pem(&pem, "monokulo-nodo").unwrap();
+    assert!(key.bits >= 4096, "the snapshot repository key is {} bits", key.bits);
+    let files: Vec<_> = std::fs::read_dir(root.join("feed/xbps-keys")).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(files.len(), 1, "one pinned key: {files:?}");
+    assert_eq!(files[0].file_name().unwrap().to_str().unwrap(), format!("{}.plist", key.fingerprint));
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), xbps_key_plist(&key));
+}

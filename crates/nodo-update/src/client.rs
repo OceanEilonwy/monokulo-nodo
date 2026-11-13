@@ -410,6 +410,18 @@ pub fn xbps_repo_dir(url: &str) -> String {
     url.chars().map(|c| if matches!(c, '.' | ':' | '/') { '_' } else { c }).collect()
 }
 
+/// The key xbps would record for a repository signed with this RSA public key (PEM), for seeding
+/// `/var/db/xbps/keys` from a pinned key instead of accepting one the first time it is seen.
+pub fn xbps_key_from_pem(pem: &[u8], signed_by: &str) -> Result<XbpsKey, String> {
+    let key = nodo_feed::RepoKey::from_pem(pem, signed_by).map_err(|e| e.to_string())?;
+    Ok(XbpsKey {
+        fingerprint: colon_hex(&key.fingerprint.to_string()),
+        pem: key.pem().to_vec(),
+        bits: key.bits,
+        signed_by: key.signed_by.clone(),
+    })
+}
+
 /// A key file as xbps writes it into `/var/db/xbps/keys`.
 pub fn xbps_key_plist(key: &XbpsKey) -> String {
     use base64::Engine as _;

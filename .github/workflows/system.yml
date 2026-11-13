@@ -25,6 +25,7 @@ on:
   pull_request:
     paths:
       - feed/base-packages
+      - feed/xbps-keys/**
       - packages/**
       - boards/nanopc-t6n-mainline/**
       - scripts/publish-snapshot.sh
@@ -294,13 +295,17 @@ jobs:
           path: out/site/snapshots/snapshots/${{ needs.build.outputs.name }}/nodo/aarch64
 
       # A branch run has no key: it signs with a throwaway one, so the same image build is tested.
+      # Its public key is seeded into the test image the way the pinned one is (feed/xbps-keys).
       - name: Sign with a throwaway key (branch runs only)
         if: needs.sign-repo.result != 'success'
         run: |
           key=$(mktemp "$RUNNER_TEMP/throwaway.XXXXXX")
           openssl genrsa -out "$key" 2048 2>/dev/null
+          openssl rsa -in "$key" -pubout -out out/throwaway.pub.pem 2>/dev/null
           scripts/publish-snapshot.sh nodo "$NAME" aarch64 "$key" out/base
           rm -f "$key"
+          cargo run -q --release -p nodo-update --bin nodo-snapshot -- xbps-key out/throwaway.pub.pem monokulo-nodo out/throwaway-keys
+          echo "NODO_REPO_KEYS=$GITHUB_WORKSPACE/out/throwaway-keys" >> "$GITHUB_ENV"
 
       - name: Copy Void's index
         run: scripts/publish-snapshot.sh index "$NAME" aarch64

@@ -192,7 +192,11 @@ are still there: CI makes a new snapshot every week even when nothing of ours ch
 **Publishing.** `.github/workflows/system.yml` builds `feed/base-packages` for aarch64 on every push
 to `main` that changes one of them, every Monday, and by hand. Its jobs keep keys away from
 third-party code: `build` compiles (no secrets); `sign-repo` signs the `nodo` repository with the
-RSA key `NODO_SNAPSHOT_XBPS_KEY`; `test` copies Void's index, builds a T6N image from only the
+RSA key `NODO_SNAPSHOT_XBPS_KEY`, whose public half is pinned in `feed/snapshot-xbps-key.pub.pem`
+with the key file xbps keeps for it in `feed/xbps-keys/` (`nodo-snapshot xbps-key`; a test ties the
+two together), which every image build copies into `/var/db/xbps/keys` so the key is trusted from
+the start, never accepted on first sight (a branch run seeds its throwaway key the same way,
+through `NODO_REPO_KEYS`); `test` copies Void's index, builds a T6N image from only the
 snapshot (`publish-snapshot.sh test`, which also requires that Void's mirror still served the same
 index before and after the build) and runs `tests/inspect-t6n-platform.sh` and
 `tests/inspect-t6n-mainline.sh` on it, which is the test run the stamp records (no secrets); and

@@ -148,6 +148,14 @@ test)
 	rel=${snap#"$root/"}
 	feed=/src/out/feed/$BOARD_ARCH
 	[ -s "$nodo/$BOARD_ARCH-repodata" ] && feed=/src/$rel/nodo/$BOARD_ARCH
+	# The snapshot's repository is signed with the key pinned in feed/xbps-keys, which the image
+	# build trusts. A repository signed with another key (a branch run's throwaway one) needs its
+	# key file in $NODO_REPO_KEYS, a directory inside the repository (nodo-snapshot xbps-key).
+	repokeys=
+	if [ -n "${NODO_REPO_KEYS:-}" ]; then
+		repokeys=$(cd "$NODO_REPO_KEYS" && pwd)
+		case $repokeys in "$root"/*) repokeys=/src/${repokeys#"$root/"} ;; *) echo "NODO_REPO_KEYS must be inside the repository" >&2; exit 1 ;; esac
+	fi
 	voidrepo=/src/$rel
 	mirrorfile=$(repodir "$BOARD_ARCH")/mirror
 	if [ -s "$mirrorfile" ]; then
@@ -161,7 +169,8 @@ test)
 	fi
 	# The same build as scripts/build-image.sh, with the snapshot as the only repositories.
 	docker run --rm --name "nodo-snapshot-test-$name-$board" \
-		-e "BOARD=$board" -e "VOID_MIRROR=$voidrepo" -e "NODO_REPO=$feed" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+		-e "BOARD=$board" -e "VOID_MIRROR=$voidrepo" -e "NODO_REPO=$feed" -e "NODO_REPO_KEYS=$repokeys" \
+		-e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 		-v "$root:/src" "$@" "$BUILDER" /src/scripts/_build-image-inner.sh
 	if [ -s "$mirrorfile" ]; then
 		same_index || { echo "Void's mirror moved on during the test build; make the snapshot again" >&2; exit 1; }
