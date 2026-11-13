@@ -72,6 +72,8 @@ do_install() {
 	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Regular.ttf 644 usr/share/fonts/nodo
 	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Bold.ttf 644 usr/share/fonts/nodo
 	vinstall crates/nodo-gui/ui/fonts/OFL.txt 644 usr/share/licenses/nodo-tools OFL-JetBrainsMono.txt
+	# libxkbcommon's keymaps would otherwise bring xkbcomp and libX11 (the file says why).
+	vinstall ${FILESDIR}/xbps.d/nodo-no-x11.conf 644 usr/share/xbps.d
 	# The screen's Shut down button: a root service that only stops services and turns the device
 	# off, asked over a socket that only root and _nodo_screen may open.
 	vbin target/${RUST_TARGET}/release/nodo-power
