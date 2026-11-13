@@ -579,7 +579,9 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, t
 
     let _guard = TerminalGuard::enter(CrosstermMode)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    terminal.clear()?;
+    // ratatui 0.30's Terminal::clear asks the terminal where its cursor is, which a terminal that
+    // never answers turns into an error; clearing directly needs no answer.
+    crossterm::execute!(terminal.backend_mut(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
 
     let mut worker = EffectWorker::spawn(backend);
     let (width, height) = crossterm::terminal::size()?;

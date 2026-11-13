@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tiles OLED hidden</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.scr{width:960px;height:540px;box-sizing:border-box;padding:12px 18px 16px;background:#000;color:#D7DADC;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;height:44px}
+.host{font-weight:700;color:#D7DADC;font-size:13px}
+.dim{color:#80888E}.ok{color:#6FD6B3}.a{color:#F2A33A}.err{color:#FF8A7A}.i{color:#86BEFF}.tr{color:#3A4045}
+.tb{min-width:112px;height:44px;box-sizing:border-box;border:2px solid #3A4045;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:700;font-size:13px;color:#D7DADC}
+.tb.off{border-color:#7A3A33;color:#FF8A7A}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr));gap:8px}
+.t{border:1px solid #3A4045;border-radius:10px;padding:8px 12px;display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;background:#000}
+.h{font-size:11px;font-weight:700;color:#80888E;letter-spacing:.06em;display:flex;justify-content:space-between}
+.big{font-size:34px;font-weight:700;color:#F4F5F6;line-height:1.05;margin-top:4px}
+.mid{font-size:18px;font-weight:700;color:#F4F5F6;margin-top:4px}
+.u{font-size:13px;color:#80888E;font-weight:400}
+.kv{display:flex;justify-content:space-between;font-size:12px;margin-top:3px}
+.kv span:first-child{color:#80888E}
+.bar{height:3px;background:#2A2F33;margin-top:8px}.bar div{height:3px}
+.pkg{position:absolute;right:12px;bottom:5px;font-size:10px;color:#80888E}
+.spark{display:flex;align-items:flex-end;gap:2px;height:30px;margin-top:auto;margin-bottom:14px}
+.spark i{flex:1;display:block}
+.free{border:2px dashed #2A2F33;border-radius:10px}
+.go{border:2px dashed #F2A33A;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#F2A33A;font-weight:700;font-size:14px;text-align:center}
+.sel{border:2px solid #F2A33A}
+.btns{display:flex;gap:14px}
+.b{flex:1;height:64px;box-sizing:border-box;border:2px solid #F2A33A;border-radius:8px;color:#F2A33A;font-weight:700;font-size:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.b small{font-size:11px;font-weight:400;color:#80888E;margin-top:2px}
+.b.off{border-color:#3A4045;color:#80888E}.b.off small{color:#3A4045}
+.b.fill{background:#F2A33A;color:#000}.b.fill small{color:#000}
+.badge{background:#F2A33A;color:#000;font-weight:700;padding:1px 6px}
+.grip{position:absolute;right:-2px;bottom:-2px;width:52px;height:52px;box-sizing:border-box;background:#F2A33A;color:#000;border-radius:10px 0 10px 0;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700}
+.tb.save{background:#86BEFF;border-color:#86BEFF;color:#000}
+.tb.add{border-color:#D7DADC;min-width:160px}
+.tb.hide{border-color:#D7DADC}
+.tb.dis{border-color:#2A2F33;color:#3A4045}
+.tb.undo{background:#F2A33A;border-color:#F2A33A;color:#000;min-width:220px}
+.ghost{border:1px solid #80888E;border-radius:10px;background:rgba(215,218,220,.06);padding:8px 12px;opacity:.85}
+.target{border:2px dashed #F2A33A;border-radius:10px}
+</style>
+</helmet>
+<div class="scr">
+<div class="top"><span class="badge">Arrange</span><span class="dim">Device hidden</span><span style="flex:1"></span><div class="tb undo">Undo: show Device · 7 s</div><div class="tb add">+ Add panel <span class="dim" style="font-weight:400">4</span></div><div class="tb save">Save</div></div><div class="grid"><div class="t" style="grid-column:1/5;grid-row:1/3"><div class="h"><span style="color:#D7DADC">MONERO NODE</span></div><div class="dim" style="margin-top:4px">4×2</div></div><div class="t" style="grid-column:5/9;grid-row:1/3"><div class="h"><span style="color:#D7DADC">PAYMENTS TODAY</span></div><div class="dim" style="margin-top:4px">4×2</div></div><div class="t" style="grid-column:1/3;grid-row:3/4"><div class="h"><span style="color:#D7DADC">BELL</span></div><div class="dim" style="margin-top:4px">2×1</div></div><div class="t" style="grid-column:3/5;grid-row:3/4"><div class="h"><span style="color:#D7DADC">WALLET SCANNER</span></div><div class="dim" style="margin-top:4px">2×1</div></div><div class="t" style="grid-column:1/5;grid-row:4/5"><div class="h"><span style="color:#D7DADC">PUSH RELAY</span></div><div class="dim" style="margin-top:4px">4×1</div></div><div class="free" style="grid-column:5/6;grid-row:3/4"></div><div class="free" style="grid-column:6/7;grid-row:3/4"></div><div class="free" style="grid-column:5/6;grid-row:4/5"></div><div class="free" style="grid-column:6/7;grid-row:4/5"></div><div class="free" style="grid-column:7/8;grid-row:3/4"></div><div class="free" style="grid-column:8/9;grid-row:3/4"></div><div class="free" style="grid-column:7/8;grid-row:4/5"></div><div class="free" style="grid-column:8/9;grid-row:4/5"></div></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

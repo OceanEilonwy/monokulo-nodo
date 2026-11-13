@@ -1,0 +1,11 @@
+#!/bin/sh
+# When nodo-gui stops, the panel shows tty1's text console again. When the device is turning off
+# (nodo-power marks it), say there too that it is safe to unplug, in case the panel stays lit;
+# otherwise leave the console clear and readable.
+if [ -e /run/nodo-power/off ]; then
+	printf '\033[0m\033[2J\033[H\033[?25l\n\n\n\n\n\n\n\n\n\n\n\n\n%53s\n\n%s\n' "Safe to unplug" \
+		"                  Every service stopped and its data is saved." >/dev/tty1 2>/dev/null
+	exit 0
+fi
+printf '\033[0m\033[2J\033[H\033[?25h' >/dev/tty1 2>/dev/null
+exit 0

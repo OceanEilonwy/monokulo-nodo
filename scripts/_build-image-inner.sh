@@ -16,8 +16,11 @@ keys=/var/db/xbps/keys
 rootfs=/work/rootfs
 mkdir -p "$rootfs$keys" /work/local /work/stage1$keys "$rootfs/etc/xbps.d"
 # Boards list only the firmware they need, which keeps the image small.
-# nftables only needs Python for its optional bindings, which nothing here uses.
-for f in python3 ${BOARD_FIRMWARE_IGNORE:-}; do echo "ignorepkg=$f"; done > "$rootfs/etc/xbps.d/10-monokulo-firmware.conf"
+# nftables only needs Python for its optional bindings, which nothing here uses. xkeyboard-config
+# (libxkbcommon's keymaps, for nodo-gui) asks for xkbcomp, the X server's keymap compiler, which
+# would bring libX11; libxkbcommon reads the keymaps itself. nodo-tools ships the same ignore in
+# /usr/share/xbps.d for cards flashed before it.
+for f in python3 xkbcomp ${BOARD_FIRMWARE_IGNORE:-}; do echo "ignorepkg=$f"; done > "$rootfs/etc/xbps.d/10-monokulo-firmware.conf"
 # Skip files a headless appliance never reads. This also applies to later updates. Data other
 # programs may load (ICU, glibc's gconv modules, iptables' extensions, udev's hardware database)
 # is kept, so a package that needs it works.

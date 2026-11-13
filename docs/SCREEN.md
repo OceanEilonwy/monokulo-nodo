@@ -16,15 +16,26 @@ runs the function, checks what it returns, and draws every pixel itself.
 | Part | Where | Runs as |
 |---|---|---|
 | Manifest `[[panels]]` | `nodo-manifest` | parsed by the helper and the screen |
-| Fetching, Lua, output checks, history, layout | `nodo-panels` | inside `nodo-screen` |
-| The screen program | `nodo-screen` (in `nodo-tools`) | `_nodo_screen`, never root |
-| Service | `/etc/sv/nodo-screen` on tty1 | started on boards with a screen |
+| Fetching, Lua, output checks, history, layout | `nodo-panels` | inside `nodo-gui` and `nodo-screen` |
+| The screen program | `nodo-gui` (in `nodo-tools`) | `_nodo_screen`, never root |
+| Service | `/etc/sv/nodo-gui` | started on boards with a screen |
+| The same panels in a terminal | `nodo-screen` (in `nodo-tools`) | `_nodo_screen`, over SSH |
 | Shutting down | `nodo-power` (in `nodo-tools`) | root, asked only by `_nodo_screen` |
 
-`nodo-screen` is a terminal program. On the T6N the kernel's console on the panel uses Terminus
-16x32 and is turned to the case (`docs/MAINLINE_KERNEL.md`), so tty1 is 120 columns by 33 rows. The
-service loads the screen's own console font, `nodo-screen-16x32`, and the program sets the
-console's colours to the TUI's. The same program runs in any terminal, which is how it is tested.
+`nodo-gui` draws the screen in pixels, at 1920 x 1080, straight to the panel through KMS with Slint's
+software renderer (no display server and no GPU driver), and reads the touchscreen through libinput.
+Its look is the design's at twice its size, in JetBrains Mono (SIL Open Font License, installed in
+`/usr/share/fonts/nodo` with its licence as `/usr/share/licenses/nodo-tools/OFL-JetBrainsMono.txt`).
+The panel's native mode is 1080 x 1920: the service sets `SLINT_KMS_ROTATION=270`, the quarter turn
+the console also takes (`docs/MAINLINE_KERNEL.md`), and Slint turns touches the same way. It uses no
+CPU while nothing changes; on the T6N an animation across the screen costs about half of one core.
+`nodo-gui --screenshot SCENE FILE.png` renders a screen with sample panels without a display (scenes
+`view`, `arrange`, `drag`, `hidden`, `add`, `confirm`, `progress`, `failed`, `off`); `docs/design/gui`
+holds them at half size, beside the design boards they follow.
+
+`nodo-screen` is the same screen as a terminal program, for SSH and any terminal; it draws in text
+cells and is how the screen first ran on tty1. On the console it uses its own font,
+`nodo-screen-16x32` (below).
 
 ### The console font
 
@@ -179,10 +190,11 @@ boxes, and only the selected tile is orange.
 | Save | `Enter`, `Esc`, `s` | save and return |
 
 A drop that would overlap another tile or leave the grid is refused: the tile goes back and the top
-bar says why. Every touch target is at least 6 columns by 3 rows, about 96 pixels square.
+bar says why. Every touch target is at least 88 pixels square (6 columns by 3 rows in the terminal),
+about 9 mm on the T6N's panel.
 
-The layout is saved atomically (written, synced, then renamed over the old file). The copy on tty1
-reads it again within a second when it changes, unless someone is arranging on it, so a second copy
+The layout is saved atomically (written, synced, then renamed over the old file). The screen reads
+it again within a second when it changes, unless someone is arranging on it, so the terminal variant
 started over SSH can arrange too:
 
 ```sh
@@ -200,7 +212,7 @@ Shut down buttons, so that no single tap turns the device off. Then the screen s
 stopping, saving files to disk and turning off, and finally "Safe to unplug", which stays on the
 panel after the device is off.
 
-`nodo-screen` never runs as root, so it asks `nodo-power`, a root runit service that can do exactly
+The screen never runs as root, so it asks `nodo-power`, a root runit service that can do exactly
 one thing:
 
 - It listens on `/run/nodo-power/socket`, in a directory that is root:_nodo_screen 0750; the socket
@@ -217,8 +229,9 @@ one thing:
   `timeout NAME MS`, `syncing`, `synced MS`, `off`, or `error TEXT`. The protocol and the sequence
   are in `crates/nodo-power`, with tests.
 
-The screen's finish script clears tty1 when the program stops, except when `/run/nodo-power/off`
-exists, so that "Safe to unplug" stays. If `nodo-power` cannot be reached, the screen says so and
+While the device turns off, `nodo-gui` keeps "Safe to unplug" on the panel even when runit asks it to
+stop. If it is stopped anyway, the panel shows tty1 again, and the service's finish script writes
+"Safe to unplug" there when `/run/nodo-power/off` exists (and clears tty1 otherwise). If `nodo-power` cannot be reached, the screen says so and
 offers a way back to the panels.
 
 An ordinary shutdown (`poweroff` or `reboot` over SSH, or the kernel's at a critical temperature)
@@ -231,16 +244,21 @@ hour). After the button's shutdown, `/run/nodo-power/off` exists and it returns 
 
 ## The screen service
 
-`nodo-screen` runs as `_nodo_screen`, in the `input` group (to read the touchscreen) and nowhere
-else. The service's run script, as root, opens tty1, loads the console font (`setfont`), lowers the
-kernel's console log level so that kernel messages do not draw over the panels, and then executes
-the program with `chpst`. It reads manifests from `/usr/share/nodo/manifests` and
-`/var/lib/nodo/manifests`, scripts from the package directories, and writes only its layout. It
-reaches the network only to fetch the declared loopback sources, and talks to one local socket,
+`nodo-gui` runs as `_nodo_screen`, with the `input` group (to read the touchscreen) and the `video`
+group (to open `/dev/dri/card1`, the display) and nothing else; `chpst` sets exactly those groups.
+The service's run script, as root, stops the boot splash, lowers the kernel's console log level,
+gives the account the backlight's `brightness` file, and then executes the program. A board that ran
+`nodo-screen` on tty1 is moved to `nodo-gui` by the system update that brings it (nodo-tools'
+`INSTALL`): nodo-screen's service is turned off and nodo-gui's on. nodo-screen's own run script
+(tty1, `setfont`, the console's colours) stays for boards that still enable it.
+
+Either program reads manifests from `/usr/share/nodo/manifests` and `/var/lib/nodo/manifests`,
+scripts from the package directories, and writes only its layout. It reaches the network only to fetch the declared loopback sources, and talks to one local socket,
 `nodo-power`'s, only after the owner confirms a shutdown.
 
-The touchscreen is the first input device whose name starts with `Goodix`. Its coordinates are
-turned to match the console with `/etc/nodo/screen.toml` (which also sets the backlight, below):
+For `nodo-screen` on tty1, the touchscreen is the first input device whose name starts with `Goodix`,
+and its coordinates are turned to match the console with `/etc/nodo/screen.toml` (which also sets
+the backlight, below, for both programs):
 
 ```toml
 [touch]
@@ -284,14 +302,16 @@ the black never change.
   entry 8, which only a foreground can show (bold black), so a cell draws it with `▀`, `▄` or `█`
   in whichever half needs it. The status line's grey is entry 15. The panels set their own palette.
 - At boot, `/etc/runit/core-services/01-nodo-splash.sh` starts it in the background right after
-  the pseudo-filesystems are mounted (pid in `/run/nodo-splash.pid`), on boards where nodo-screen
-  is enabled. That is before udev loads the display driver, so it first draws on the kernel's
-  placeholder console; when the panel's console appears (about 8 s in, at 120 x 33) it loads its
-  font (`nodo-screen-16x32`, else Terminus) and redraws centred. It checks the console's size
-  every 50 ms for this. nodo-screen's run script stops it before taking tty1. The kernel boots quietly
+  the pseudo-filesystems are mounted (pid in `/run/nodo-splash.pid`), on boards where nodo-gui (or
+  nodo-screen) is enabled. That is before udev loads the display driver, so it first draws on the
+  kernel's placeholder console; when the panel's console appears (about 8 s in, at 120 x 33) it
+  loads its font (`nodo-screen-16x32`, else Terminus) and redraws centred. It checks the console's
+  size every 50 ms for this. nodo-gui's and nodo-screen's run scripts stop it before taking the
+  screen. The kernel boots quietly
   (`quiet loglevel=3 vt.global_cursor_default=0 logo.nologo`, `docs/MAINLINE_KERNEL.md`), and
   runit's messages go to the serial port, so nothing draws over it.
-- At shutdown, `/etc/runit/shutdown.d/05-nodo-splash.sh` stops nodo-screen and starts it with
+- At shutdown, `/etc/runit/shutdown.d/05-nodo-splash.sh` stops the panels (nodo-gui hands the
+  display back to tty1) and starts it with
   `--stopping` before the services stop. A shutdown that draws its own last screen creates
   `/run/nodo-splash.skip` first and is left alone.
 - `nodo-splash --preview` prints the logo at rest and mid-glint in 24-bit colour, for a desktop

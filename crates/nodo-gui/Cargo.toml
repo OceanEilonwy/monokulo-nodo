@@ -1,0 +1,32 @@
+[package]
+name = "nodo-gui"
+version = "0.1.0"
+edition.workspace = true
+# Slint needs a newer compiler than the rest of the workspace.
+rust-version = "1.88"
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nodo-gui"
+path = "src/main.rs"
+
+[dependencies]
+nodo-panels = { path = "../nodo-panels" }
+nodo-manifest = { path = "../nodo-manifest" }
+nodo-power = { path = "../nodo-power" }
+serde.workspace = true
+toml.workspace = true
+signal-hook = { version = "0.3", default-features = false }
+libc = "0.2"
+# Draws straight to the panel through KMS with the software renderer, and reads the touchscreen
+# through libinput: no display server, no GPU driver (docs/SCREEN.md).
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-linuxkms-noseat", "renderer-software"] }
+# For --screenshot, which renders a screen to a PNG file without a display.
+png = "0.17"
+
+[build-dependencies]
+slint-build = "1.18"
+
+[dev-dependencies]
+tempfile = "3"

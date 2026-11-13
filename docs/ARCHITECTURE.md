@@ -206,8 +206,9 @@ codebase, and signed xbps packages from user-added feeds.
   each in a range of sizes. A manifest declares its panels (`[[panels]]`); the screen fetches each
   one's data from the package's own service on loopback, runs the package's Lua `panel` function in
   the settings sandbox to compute the values, checks them against a fixed schema and draws them
-  itself, so a package never draws or reaches beyond its own service. `nodo-screen` runs as
-  `_nodo_screen` on tty1 in place of its login prompt. Its Shut down button asks `nodo-power`, a
+  itself, so a package never draws or reaches beyond its own service. `nodo-gui` draws it in pixels
+  straight to the display through KMS (Slint, software rendering), as `_nodo_screen`, in place of
+  tty1's login prompt; `nodo-screen` is the same screen in a terminal, for SSH. Its Shut down button asks `nodo-power`, a
   root service whose socket only `_nodo_screen` may open and which accepts only `poweroff`: it stops
   every service (cuprated given five minutes to save), syncs and turns the device off.
   [SCREEN.md](SCREEN.md) is the contract.

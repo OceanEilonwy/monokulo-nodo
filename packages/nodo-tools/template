@@ -4,14 +4,15 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=14
+revision=15
 archs="aarch64 x86_64"
 build_style=cargo
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-power -p nodo-screen-font -p nodo-splash"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash"
 # terminus-font is what nodo-screen-font builds the screen's console font from.
 hostmakedepends="pkg-config terminus-font"
-# The feed gate reads zstd packages, and Void builds zstd-sys against the system library.
-makedepends="libzstd-devel"
+# The feed gate reads zstd packages, and Void builds zstd-sys against the system library. nodo-gui
+# reads the touchscreen through libinput (with udev and xkbcommon) and finds fonts with fontconfig.
+makedepends="libzstd-devel libinput-devel libxkbcommon-devel eudev-libudev-devel fontconfig-devel"
 depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow"
 short_desc="Root helper service and terminal interface for monokulo-nodo"
 maintainer="monokulo-nodo <noreply@localhost>"
@@ -19,14 +20,16 @@ license="GPL-3.0-or-later"
 homepage="https://github.com/OceanEilonwy/monokulo-nodo"
 # The system update server (docs/UPDATES.md): the owner may point it elsewhere.
 conf_files="/etc/nodo/system-update.toml"
+# nodo-gui's typeface; fontconfig needs at least one font to start, and the device has no others.
+font_dirs="/usr/share/fonts/nodo"
 # Package settings code runs as this account, never as root. xbps turns the name into a
 # shell variable, so it cannot contain a dash.
 system_accounts="_nodo_settings _nodo_screen"
 _nodo_settings_homedir="/var/empty"
-# The screen's panels (docs/SCREEN.md) run as this account. Its only extra group is input, for the
-# touchscreen; its run script hands it tty1.
+# The screen's panels (docs/SCREEN.md) run as this account. Its only extra groups are input, for the
+# touchscreen, and video, for nodo-gui to draw on the display; nodo-screen's run script hands it tty1.
 _nodo_screen_homedir="/var/lib/nodo-screen"
-_nodo_screen_groups="input"
+_nodo_screen_groups="input,video"
 # Members of nodo may use the helper (root always may). gpu may open the GPU's render nodes (a
 # udev rule on the T6N boards gives them to it). No account is a member: a service runs with it,
 # through chpst in its generated run script, only when the owner approved the GPU for it.
@@ -38,6 +41,7 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-systemupdate 0750 root root
  /var/log/nodo-wifi 0750 root root
  /var/log/nodo-screen 0750 root root
+ /var/log/nodo-gui 0750 root root
  /var/log/nodo-power 0750 root root
  /var/lib/nodo/wifi 0700 root root
  /etc/nodo 0755 root root"
@@ -61,6 +65,15 @@ do_install() {
 	# Package panels on the built-in screen. Not enabled here: boards with a screen enable it in
 	# place of tty1's login prompt.
 	vbin target/${RUST_TARGET}/release/nodo-screen
+	# The same panels drawn in pixels straight to the display through KMS, with JetBrains Mono (Open
+	# Font License) as the screen's typeface. Boards with a screen enable it in place of tty1's login
+	# prompt; nodo-screen stays for terminals, over SSH.
+	vbin target/${RUST_TARGET}/release/nodo-gui
+	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Regular.ttf 644 usr/share/fonts/nodo
+	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Bold.ttf 644 usr/share/fonts/nodo
+	vinstall crates/nodo-gui/ui/fonts/OFL.txt 644 usr/share/licenses/nodo-tools OFL-JetBrainsMono.txt
+	# libxkbcommon's keymaps would otherwise bring xkbcomp and libX11 (the file says why).
+	vinstall ${FILESDIR}/xbps.d/nodo-no-x11.conf 644 usr/share/xbps.d
 	# The screen's Shut down button: a root service that only stops services and turns the device
 	# off, asked over a socket that only root and _nodo_screen may open.
 	vbin target/${RUST_TARGET}/release/nodo-power
@@ -95,6 +108,7 @@ do_install() {
 	# Wi-Fi on. wpa_supplicant itself comes with the board's image.
 	vsv nodo-wifi
 	vsv nodo-screen
+	vsv nodo-gui
 	vsv nodo-power
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml

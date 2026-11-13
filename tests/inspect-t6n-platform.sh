@@ -157,24 +157,36 @@ for p in eudev alsa-utils wpa_supplicant bluez dbus v4l-utils; do
 	grep -q "^$p " "$tmp/pkgs" || { echo "  not installed: $p"; r=1; }
 done
 result "eudev, alsa-utils, wpa_supplicant, bluez, dbus and v4l-utils are installed" "$r"
-# A card with the screen's panels gives them tty1; any other keeps tty1's login prompt.
-case " $links " in *" nodo-screen "*) tty1=nodo-screen ;; *) tty1=agetty-tty1 ;; esac
+# A card with the screen's panels gives them the screen (nodo-gui, or nodo-screen in text on tty1);
+# any other keeps tty1's login prompt.
+case " $links " in *" nodo-gui "*) tty1=nodo-gui ;; *" nodo-screen "*) tty1=nodo-screen ;; *) tty1=agetty-tty1 ;; esac
 r=0
 for s in udevd nodo-sound $tty1; do
 	case " $links " in *" $s "*) ;; *) echo "  not started: $s"; r=1 ;; esac
 	show "stat /etc/sv/$s/run" | grep -qE 'Type: (regular|symlink)' || { echo "  no run script: $s"; r=1; }
 done
 result "udevd (module and firmware loading, hotplug), the mixer service and tty1 ($tty1) start at boot" "$r"
-if [ "$tty1" = nodo-screen ]; then
+if [ "$tty1" != agetty-tty1 ]; then
 	r=0
 	case " $links " in *" agetty-tty1 "*) echo "  tty1's login prompt also starts"; r=1 ;; esac
-	for f in /usr/bin/nodo-screen /usr/bin/setfont /usr/share/nodo/nodo-screen-16x32.psf.gz \
-		/usr/share/licenses/nodo-tools/OFL-nodo-screen-16x32.txt \
-		/usr/share/nodo/packages/cuprated/panels/sync.lua; do
+	case " $links " in *" nodo-gui "*" nodo-screen "*|*" nodo-screen "*" nodo-gui "*) echo "  both nodo-gui and nodo-screen start"; r=1 ;; esac
+	if [ "$tty1" = nodo-gui ]; then
+		screen_files="/usr/bin/nodo-gui /usr/share/fonts/nodo/JetBrainsMono-Regular.ttf /usr/share/fonts/nodo/JetBrainsMono-Bold.ttf /usr/share/licenses/nodo-tools/OFL-JetBrainsMono.txt"
+	else
+		screen_files="/usr/bin/setfont /usr/share/nodo/nodo-screen-16x32.psf.gz /usr/share/licenses/nodo-tools/OFL-nodo-screen-16x32.txt"
+	fi
+	# nodo-screen stays installed either way, for terminals over SSH.
+	for f in /usr/bin/nodo-screen $screen_files /usr/share/nodo/packages/cuprated/panels/sync.lua; do
 		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
 	done
 	show 'cat /etc/passwd' | grep -q '^_nodo_screen:' || { echo "  no _nodo_screen account"; r=1; }
 	show 'cat /etc/group' | grep -qE '^input:[^:]*:[0-9]+:(.*,)?_nodo_screen(,|$)' || { echo "  _nodo_screen is not in input"; r=1; }
+	if [ "$tty1" = nodo-gui ]; then
+		# The display: chpst gives nodo-gui the video group whatever /etc/group says.
+		show 'cat /etc/sv/nodo-gui/run' | grep -q 'chpst -u _nodo_screen:_nodo_screen:input:video /usr/bin/nodo-gui' ||
+			{ echo "  nodo-gui does not run as _nodo_screen with input and video only"; r=1; }
+		show 'cat /etc/sv/nodo-gui/run' | grep -q 'SLINT_KMS_ROTATION=270' || { echo "  nodo-gui is not turned to the case"; r=1; }
+	fi
 	show 'cat /usr/share/nodo/manifests/cuprated.toml' | grep -q 'method = "get_info"' || { echo "  cuprated offers no panel"; r=1; }
 	result "the screen's panels replace tty1's login, with their font, account and cuprated's panel" "$r"
 	# The screen's Shut down button asks nodo-power, the one root service that may turn the device off.
@@ -183,14 +195,14 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'stat /usr/bin/nodo-power' | grep -q 'Type: regular' || { echo "  missing: /usr/bin/nodo-power"; r=1; }
 	show 'cat /etc/sv/nodo-power/run' | grep -q 'install -d -m 0750 -o root -g _nodo_screen /run/nodo-power' ||
 		{ echo "  nodo-power's socket directory is not root:_nodo_screen 0750"; r=1; }
-	show 'cat /etc/sv/nodo-screen/finish' | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
-	show 'cat /etc/sv/nodo-screen/run' | grep -q 'chgrp _nodo_screen "$b" && chmod g+w "$b"' || { echo "  the screen cannot dim the backlight"; r=1; }
+	show "cat /etc/sv/$tty1/finish" | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
+	show "cat /etc/sv/$tty1/run" | grep -q 'chgrp _nodo_screen "$b" && chmod g+w "$b"' || { echo "  the screen cannot dim the backlight"; r=1; }
 	result "the screen's Shut down button has nodo-power to ask (only root and _nodo_screen may), and the screen may dim its backlight" "$r"
 	r=0
 	for f in /usr/bin/nodo-splash /etc/runit/core-services/01-nodo-splash.sh /etc/runit/shutdown.d/05-nodo-splash.sh; do
 		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
 	done
-	show 'cat /etc/sv/nodo-screen/run' | grep -q /run/nodo-splash.pid || { echo "  nodo-screen does not stop the splash"; r=1; }
+	show "cat /etc/sv/$tty1/run" | grep -q /run/nodo-splash.pid || { echo "  $tty1 does not stop the splash"; r=1; }
 	result "the boot splash shows the logo from early boot until the panels, and again at shutdown" "$r"
 	r=0
 	show "cat /etc/profile.d/nodo-tui.sh" | grep -q SSH_TTY || { echo "  missing: /etc/profile.d/nodo-tui.sh"; r=1; }
