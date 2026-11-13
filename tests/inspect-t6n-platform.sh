@@ -116,6 +116,13 @@ show 'stat /usr/bin/nodo-confine' | grep -q 'Type: regular'
 result "nodo-confine is installed" "$?"
 show 'cat /etc/sv/cuprated/conf' | grep -qx 'DATA_MOUNT=/media/monero'
 result "cuprated still waits for the data drive" "$?"
+# An ordinary shutdown (poweroff over SSH, a critical temperature) waits for cuprated to save before
+# runit's general stop, which kills a service after 7 seconds.
+r=0
+show 'stat /etc/runit/shutdown.d/06-nodo-long-stop.sh' | grep -q 'Type: regular' || { echo "  missing: /etc/runit/shutdown.d/06-nodo-long-stop.sh"; r=1; }
+show 'cat /etc/runit/shutdown.d/06-nodo-long-stop.sh' | grep -q 'nodo-power --before-shutdown' || { echo "  the hook does not run nodo-power --before-shutdown"; r=1; }
+show 'stat /etc/runit/shutdown.d/10-sv-stop.sh' | grep -q 'Type: regular' || { echo "  Void's 10-sv-stop.sh is not where the hook expects it, after 06"; r=1; }
+result "shutdown waits for cuprated to save before runit's 7-second force-stop" "$r"
 
 echo "== data drive"
 # No udev on the card, so no /dev/disk/by-partlabel link: the helper takes the drive from fstab
@@ -171,6 +178,12 @@ if [ "$tty1" = nodo-screen ]; then
 	show 'cat /etc/sv/nodo-screen/finish' | grep -q '/run/nodo-power/off' || { echo "  the screen's finish clears Safe to unplug"; r=1; }
 	show 'cat /etc/sv/nodo-screen/run' | grep -q 'chgrp _nodo_screen "$b" && chmod g+w "$b"' || { echo "  the screen cannot dim the backlight"; r=1; }
 	result "the screen's Shut down button has nodo-power to ask (only root and _nodo_screen may), and the screen may dim its backlight" "$r"
+	r=0
+	for f in /usr/bin/nodo-splash /etc/runit/core-services/01-nodo-splash.sh /etc/runit/shutdown.d/05-nodo-splash.sh; do
+		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
+	done
+	show 'cat /etc/sv/nodo-screen/run' | grep -q /run/nodo-splash.pid || { echo "  nodo-screen does not stop the splash"; r=1; }
+	result "the boot splash shows the logo from early boot until the panels, and again at shutdown" "$r"
 fi
 r=0
 for s in wpa_supplicant bluetoothd dbus alsa; do

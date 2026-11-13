@@ -5,6 +5,14 @@
 exec 2>&1
 exec </dev/null
 install -d -m 0750 -o _nodo_screen -g _nodo_screen /var/lib/nodo-screen
+# The boot splash (nodo-splash, started in runit stage 1) has tty1 until now.
+if [ -r /run/nodo-splash.pid ]; then
+	splash=$(cat /run/nodo-splash.pid)
+	kill "$splash" 2>/dev/null
+	# It finishes its frame and exits within a tenth of a second; wait so it cannot draw after us.
+	for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$splash" 2>/dev/null || break; sleep 0.1; done
+	rm -f /run/nodo-splash.pid
+fi
 # Kernel messages would draw over the panels: only emergencies reach the console. They still go to
 # the kernel log and the serial port.
 dmesg -n 1

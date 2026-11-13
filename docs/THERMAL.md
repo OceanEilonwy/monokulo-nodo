@@ -32,6 +32,9 @@ to 3, 0 to 2 and 0 to 4; the hot step allows the rest.
   a power cut during a sync is what corrupted cuprated's database before. So the orderly
   shutdown comes well before the reset, and is reached only if throttling to the lowest speeds
   cannot hold the temperature, for example in direct sun.
+  That shutdown waits for cuprated to save before runit's general stop, up to 300 seconds
+  (`06-nodo-long-stop.sh`, docs/SCREEN.md, "Shutting down"); the kernel has no emergency
+  poweroff delay that would cut it short, and the throttled chip stays far below the reset.
 - **110 °C hardware reset.** Above the critical trip, so that it only acts when software cannot,
   and below Rockchip's own 120 °C.
 - **step_wise, not power_allocator.** power_allocator needs the case's sustainable power in

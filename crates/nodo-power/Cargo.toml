@@ -13,6 +13,8 @@ path = "src/bin/nodo-power.rs"
 
 [dependencies]
 libc = "0.2"
+# Reads the stop time each installed package declares, for the wait before an ordinary shutdown.
+nodo-manifest = { path = "../nodo-manifest" }
 
 [dev-dependencies]
 tempfile = "3"

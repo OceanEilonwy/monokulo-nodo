@@ -5,6 +5,7 @@
 //! and turns the device off, writing each step back. Any other request, or a connection from any
 //! other account, is refused.
 
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -15,7 +16,8 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use nodo_power::{enabled_services, read_request, shut_down, Event, System, OFF_MARKER, SOCKET};
+use nodo_manifest::Manifest;
+use nodo_power::{enabled_services, long_stops, read_request, shut_down, stop_all, Event, System, OFF_MARKER, SOCKET, SPLASH_SKIP};
 
 const SCREEN_ACCOUNT: &str = "_nodo_screen";
 const SERVICE_DIR: &str = "/var/service";
@@ -29,6 +31,12 @@ fn log(line: &str) {
 struct Runit;
 
 impl System for Runit {
+    fn begin(&self) {
+        if let Err(e) = std::fs::write(SPLASH_SKIP, b"") {
+            log(&format!("{SPLASH_SKIP}: {e}"));
+        }
+    }
+
     fn services(&self) -> io::Result<Vec<String>> {
         enabled_services(Path::new(SERVICE_DIR))
     }
@@ -121,14 +129,70 @@ fn handle(mut stream: UnixStream, screen_uid: libc::uid_t) {
     if let Err(e) = result {
         log(&format!("shutdown failed: {e}"));
         SHUTTING_DOWN.store(false, Ordering::SeqCst);
+        // An ordinary shutdown later shows the boot splash again.
+        let _ = std::fs::remove_file(SPLASH_SKIP);
         send_error(&mut stream, &e.to_string());
     }
 }
 
+/// Each installed package's declared stop time, by id (its service's name).
+fn declared_stops() -> BTreeMap<String, u32> {
+    let mut stops = BTreeMap::new();
+    for (dir, system) in [("/usr/share/nodo/manifests", true), ("/var/lib/nodo/manifests", false)] {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "toml") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let parsed = if system { Manifest::parse_system(&text) } else { Manifest::parse(&text) };
+            match parsed {
+                Ok(m) => {
+                    stops.insert(m.id.clone(), m.stop_timeout_secs);
+                }
+                Err(e) => log(&format!("{}: {e}", path.display())),
+            }
+        }
+    }
+    stops
+}
+
+/// runit stage 3, before its general stop (`/etc/runit/shutdown.d/06-nodo-long-stop.sh`): stops the
+/// node and every package that declares a stop longer than runit's 7 s, waiting as long as each
+/// declares, so that a poweroff or reboot over SSH, or a critical temperature, never kills one
+/// while it saves. Skipped when the screen's Shut down button already stopped everything.
+fn before_shutdown() -> ExitCode {
+    if Path::new(OFF_MARKER).exists() {
+        println!("nodo-power: the services were already stopped from the screen");
+        return ExitCode::SUCCESS;
+    }
+    let enabled = match enabled_services(Path::new(SERVICE_DIR)) {
+        Ok(enabled) => enabled,
+        Err(e) => {
+            println!("nodo-power: cannot list the services: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let stops = long_stops(&enabled, &declared_stops());
+    for (service, wait) in &stops {
+        println!("nodo-power: stopping {service}, waiting up to {} s", wait.as_secs());
+    }
+    for (service, stopped) in stop_all(&Runit, &stops) {
+        println!("nodo-power: {service} {}", if stopped { "stopped" } else { "did not stop in time" });
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
-    if std::env::args().len() > 1 {
-        eprintln!("usage: nodo-power (a runit service; see docs/SCREEN.md)");
-        return ExitCode::from(2);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [] => {}
+        [flag] if flag == "--before-shutdown" => return before_shutdown(),
+        _ => {
+            eprintln!("usage: nodo-power [--before-shutdown] (a runit service; see docs/SCREEN.md)");
+            return ExitCode::from(2);
+        }
     }
     let Some((screen_uid, screen_gid)) = account_ids(SCREEN_ACCOUNT) else {
         log("there is no _nodo_screen account; nothing may ask for a shutdown");

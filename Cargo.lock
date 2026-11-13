@@ -936,6 +936,7 @@ name = "nodo-power"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nodo-manifest",
  "tempfile",
 ]
 
@@ -975,6 +976,14 @@ dependencies = [
  "thiserror",
  "tiny-keccak",
  "toml",
+]
+
+[[package]]
+name = "nodo-splash"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "signal-hook",
 ]
 
 [[package]]

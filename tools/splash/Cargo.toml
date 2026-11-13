@@ -1,0 +1,14 @@
+# Turns the Nodo logo's SVG into the palette grid nodo-splash embeds (crates/nodo-splash/logo.grid).
+# A tool for whoever changes the logo, not part of the image: it is its own workspace, so its SVG
+# renderer stays out of the device's Cargo.lock and build.
+[package]
+name = "splash-grid"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[workspace]
+
+[dependencies]
+resvg = { version = "0.45", default-features = false }

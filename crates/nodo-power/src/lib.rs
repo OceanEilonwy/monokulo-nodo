@@ -18,6 +18,10 @@ pub const SOCKET: &str = "/run/nodo-power/socket";
 /// Created just before the device turns off, so that the screen's finish script leaves the last
 /// screen ("Safe to unplug") in place instead of clearing it.
 pub const OFF_MARKER: &str = "/run/nodo-power/off";
+/// Created before the first service stops, so that the boot splash's shutdown hook
+/// (`/etc/runit/shutdown.d/05-nodo-splash.sh`) does not draw "shutting down…" over the screen's own
+/// shutdown screens and "Safe to unplug".
+pub const SPLASH_SKIP: &str = "/run/nodo-splash.skip";
 /// The only request there is.
 pub const REQUEST: &str = "poweroff";
 /// A request longer than this is refused without reading further.
@@ -34,6 +38,39 @@ pub fn stop_timeout(service: &str) -> Duration {
         "cuprated" | "monerod" => Duration::from_secs(300),
         _ => Duration::from_secs(90),
     }
+}
+
+/// How long Void's runit stage 3 waits for a service before killing it (`sv force-stop` with the
+/// default SVWAIT). Services that may need longer are stopped first, by `--before-shutdown`.
+pub const RUNIT_FORCE_STOP_WAIT: Duration = Duration::from_secs(7);
+/// The longest stop a manifest may declare.
+pub const MAX_STOP: Duration = Duration::from_secs(3600);
+
+/// The services an ordinary shutdown (poweroff or reboot over SSH, a critical temperature) must
+/// stop before runit's general stop would kill them: each enabled service whose package declares a
+/// stop longer than [`RUNIT_FORCE_STOP_WAIT`] (`stop_timeout_secs`), and the node whatever it
+/// declares, with at least its [`stop_timeout`].
+pub fn long_stops(enabled: &[String], declared: &std::collections::BTreeMap<String, u32>) -> Vec<(String, Duration)> {
+    enabled
+        .iter()
+        .filter_map(|service| {
+            let mut wait = declared.get(service).map(|s| Duration::from_secs(u64::from(*s)));
+            if matches!(service.as_str(), "cuprated" | "monerod") {
+                wait = Some(wait.unwrap_or_default().max(stop_timeout(service)));
+            }
+            let wait = wait?.min(MAX_STOP);
+            (wait > RUNIT_FORCE_STOP_WAIT).then(|| (service.clone(), wait))
+        })
+        .collect()
+}
+
+/// Stops the given services at the same time, each with its own wait. Returns each service and
+/// whether it stopped in time.
+pub fn stop_all(system: &dyn System, stops: &[(String, Duration)]) -> Vec<(String, bool)> {
+    thread::scope(|scope| {
+        let handles: Vec<_> = stops.iter().map(|(service, wait)| scope.spawn(move || (service.clone(), system.stop(service, *wait)))).collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
 }
 
 /// One line of progress, as sent over the socket.
@@ -118,6 +155,8 @@ pub fn read_request(stream: &mut impl Read) -> Result<(), String> {
 
 /// What the shutdown needs from the system.
 pub trait System: Sync {
+    /// Notes that this shutdown draws its own screens ([`SPLASH_SKIP`]), before anything stops.
+    fn begin(&self);
     /// The services to stop: every enabled one except [`KEEP_RUNNING`].
     fn services(&self) -> io::Result<Vec<String>>;
     /// Stops one service, waiting up to `timeout`. True when it stopped.
@@ -148,6 +187,7 @@ pub fn shut_down(system: &dyn System, send: &mut dyn FnMut(&Event)) -> io::Resul
             return Err(e);
         }
     };
+    system.begin();
     send(&Event::Services(services.len()));
     let (tx, rx) = mpsc::channel();
     thread::scope(|scope| {
@@ -250,6 +290,9 @@ mod tests {
     }
 
     impl System for Fake {
+        fn begin(&self) {
+            self.log.lock().unwrap().push("begin".into());
+        }
         fn services(&self) -> io::Result<Vec<String>> {
             Ok(vec!["cuprated".into(), "mk-pay".into(), "sshd".into()])
         }
@@ -283,7 +326,37 @@ mod tests {
         assert!(matches!(lines[8], Event::Synced { .. }));
         let log = fake.log.lock().unwrap();
         assert!(log.contains(&"stop cuprated 300".to_string()));
-        assert_eq!(&log[3..], &["sync", "poweroff"], "sync and power off come after every stop");
+        assert_eq!(log[0], "begin", "the splash is told to stay away before anything stops");
+        assert_eq!(&log[4..], &["sync", "poweroff"], "sync and power off come after every stop");
+    }
+
+    #[test]
+    fn an_ordinary_shutdown_first_waits_for_the_node_and_slow_packages() {
+        let enabled: Vec<String> = ["cuprated", "mk-pay", "mk-bell", "sshd", "quick"].iter().map(|s| s.to_string()).collect();
+        let declared: std::collections::BTreeMap<String, u32> =
+            [("cuprated".to_string(), 120), ("mk-pay".to_string(), 30), ("quick".to_string(), 5), ("absent".to_string(), 600)].into_iter().collect();
+        assert_eq!(
+            long_stops(&enabled, &declared),
+            [("cuprated".to_string(), Duration::from_secs(300)), ("mk-pay".to_string(), Duration::from_secs(30))],
+            "the node gets at least 300 s, mk-pay its own 30 s; sshd declares nothing, quick fits runit's 7 s, absent is not enabled"
+        );
+        // The node is waited for even without a manifest; a longer declared stop wins, up to an hour.
+        let none = std::collections::BTreeMap::new();
+        assert_eq!(long_stops(&["cuprated".to_string()], &none), [("cuprated".to_string(), Duration::from_secs(300))]);
+        let long: std::collections::BTreeMap<String, u32> = [("cuprated".to_string(), 7200)].into_iter().collect();
+        assert_eq!(long_stops(&["cuprated".to_string()], &long), [("cuprated".to_string(), MAX_STOP)]);
+    }
+
+    #[test]
+    fn slow_services_are_stopped_together_with_their_own_waits() {
+        let fake = Fake { log: Mutex::new(Vec::new()), slow: "cuprated" };
+        let stops = [("cuprated".to_string(), Duration::from_secs(300)), ("sshd".to_string(), Duration::from_secs(30))];
+        let mut result = stop_all(&fake, &stops);
+        result.sort();
+        assert_eq!(result, [("cuprated".to_string(), true), ("sshd".to_string(), false)]);
+        let mut log = fake.log.lock().unwrap().clone();
+        log.sort();
+        assert_eq!(log, ["stop cuprated 300", "stop sshd 30"]);
     }
 
     #[test]

@@ -209,6 +209,8 @@ one thing:
   there are no arguments, service names or other commands.
 - It stops every enabled service at once except itself and the screen, each with `sv -w <seconds>
   stop`: 300 seconds for cuprated (it is never killed while it saves), 90 for the rest. A service
+- Before the first service stops it creates `/run/nodo-splash.skip`, so that the boot splash's
+  shutdown hook leaves its screens and "Safe to unplug" alone (removed again if the shutdown fails).
   that has not stopped by then is left to runit's own shutdown. Then it syncs, creates
   `/run/nodo-power/off`, and runs `poweroff`.
 - It writes one line per step back: `services N`, `stopping NAME`, `stopped NAME MS`,
@@ -218,6 +220,14 @@ one thing:
 The screen's finish script clears tty1 when the program stops, except when `/run/nodo-power/off`
 exists, so that "Safe to unplug" stays. If `nodo-power` cannot be reached, the screen says so and
 offers a way back to the panels.
+
+An ordinary shutdown (`poweroff` or `reboot` over SSH, or the kernel's at a critical temperature)
+does not go through the button, and Void's runit stage 3 stops services with `sv force-stop`, which
+kills any service still running after 7 seconds. So `/etc/runit/shutdown.d/06-nodo-long-stop.sh`,
+which stage 3 sources before its `10-sv-stop.sh`, runs `nodo-power --before-shutdown` first: it
+stops cuprated (at least 300 seconds) and every enabled package whose manifest declares a
+`stop_timeout_secs` longer than 7, all at once, each waiting as long as it declares (at most an
+hour). After the button's shutdown, `/run/nodo-power/off` exists and it returns at once.
 
 ## The screen service
 
@@ -256,6 +266,33 @@ dim_percent = 20       # never quite off: 0 means the lowest step, 1 of 255
 The program still runs without root: the service's run script, as root, gives `_nodo_screen`'s
 group write access to that one `brightness` file (`chgrp` and `chmod g+w`) before it starts the
 program. A copy over SSH (`--no-touch`) leaves the backlight alone.
+
+## Boot splash
+
+From early boot until the panels start, and again while the device shuts down, the screen shows
+the Nodo logo instead of text: the Ember band with its hex core in the band's seven oranges, drawn
+in Unicode half blocks (`▀`), 56 by 56 square pixels on rows 1 to 28 of the console, with
+`n o d o` and a dim `starting up…` or `shutting down…` below. Every 4 seconds a glint crosses it
+diagonally in about a second (13 frames, only the changed cells redrawn): inside the glint each
+orange steps up one to three tones, to a pale `#FFE2C4` at its centre, while the dark outlines and
+the black never change.
+
+- `nodo-splash` (in `nodo-tools`) draws it. It embeds the logo as a palette grid,
+  `crates/nodo-splash/logo.grid`, which `tools/splash` makes from the SVG (its README says how).
+- Colours: the console has 16 palette entries but only the first 8 can be a background. The logo's
+  8 colours are entries 0 to 7, so either half of a cell can show them; the glint's pale tone is
+  entry 8, which only a foreground can show (bold black), so a cell draws it with `▀`, `▄` or `█`
+  in whichever half needs it. The status line's grey is entry 15. The panels set their own palette.
+- At boot, `/etc/runit/core-services/01-nodo-splash.sh` starts it in the background right after
+  the pseudo-filesystems are mounted (pid in `/run/nodo-splash.pid`), on boards where nodo-screen
+  is enabled. nodo-screen's run script stops it before taking tty1. The kernel boots quietly
+  (`quiet loglevel=3 vt.global_cursor_default=0 logo.nologo`, `docs/MAINLINE_KERNEL.md`), and
+  runit's messages go to the serial port, so nothing draws over it.
+- At shutdown, `/etc/runit/shutdown.d/05-nodo-splash.sh` stops nodo-screen and starts it with
+  `--stopping` before the services stop. A shutdown that draws its own last screen creates
+  `/run/nodo-splash.skip` first and is left alone.
+- `nodo-splash --preview` prints the logo at rest and mid-glint in 24-bit colour, for a desktop
+  terminal.
 
 ## What the owner approves
 
