@@ -32,7 +32,7 @@ cp "$keys"/* "$rootfs$keys/"
 cp "$keys"/* "/work/stage1$keys/"
 
 XBPS_TARGET_ARCH=$BOARD_ARCH xbps-install -SyU -c "$cache" -r "$rootfs" -R "${NODO_REPO:-/src/out/feed/$BOARD_ARCH}" -R "$repo" \
-	monokulo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
+	nodo-base cuprated-service ${BOARD_PACKAGES:-linux dracut zstd} >/dev/null
 # Void's packages come from the live mirror, which moves on from the pinned void-packages recipes
 # that this project's packages are built against. Each difference is listed, here and in
 # void-drift.txt next to the image, so a mirror change is seen before it surprises a test.
@@ -76,7 +76,7 @@ fi
 [ -z "${BOARD_FSTAB_EXTRA:-}" ] || printf '%s\n' "$BOARD_FSTAB_EXTRA" >> "$rootfs/etc/fstab"
 # base-files owns /etc/issue, so the console banner showing the IP is copied in here.
 cp "$rootfs/usr/share/monokulo/issue" "$rootfs/etc/issue"
-# dhcpcd owns /etc/dhcpcd.conf. monokulo-base's INSTALL puts nodo-localnet's block into it, and
+# dhcpcd owns /etc/dhcpcd.conf. nodo-base's INSTALL puts nodo-localnet's block into it, and
 # updates replace it the same way; the same script runs here so the image never depends on
 # whether xbps could run it for a foreign architecture. Configuring the image runs it again,
 # which changes nothing.

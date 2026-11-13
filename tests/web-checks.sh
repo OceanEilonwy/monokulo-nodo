@@ -11,7 +11,7 @@ if command -v push_packages >/dev/null && ls "/src/out/feed/$ARCH"/nodo-caddy-[0
 		ssh_vm 'cat > /tmp/web-routing.sh' < /src/tests/web-routing.sh
 		ssh_vm 'sh /tmp/web-routing.sh </dev/null' || fail=1
 		# nodo-localnet's dhcpcd block through xbps: re-install, removal and an in-place upgrade.
-		base=$(cd "/src/out/feed/$ARCH" && ls monokulo-base-[0-9]*.xbps | sort -V | tail -n 1)
+		base=$(cd "/src/out/feed/$ARCH" && ls nodo-base-[0-9]*.xbps | sort -V | tail -n 1)
 		ssh_vm 'rm -rf /tmp/base-feed && mkdir -p /tmp/base-feed'
 		tar -C "/src/out/feed/$ARCH" -cf - "$base" | ssh_vm 'tar -C /tmp/base-feed -xf -'
 		ssh_vm 'cat > /tmp/dhcpcd-block.sh' < /src/tests/dhcpcd-block.sh

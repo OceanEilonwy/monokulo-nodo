@@ -1,7 +1,7 @@
 //! The Monokulo recipe's own files, checked with the same code the device uses.
 //!
 //! The package is built by xbps-src, but its manifest, settings and launcher are plain files in
-//! `packages/monokulo/files`, so they are tested here without a build.
+//! `packages/mk-pay/files`, so they are tested here without a build.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -16,7 +16,7 @@ use nodo_settings::{
 };
 
 fn files() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/monokulo/files")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mk-pay/files")
 }
 
 fn manifest() -> Manifest {
@@ -45,7 +45,7 @@ fn cuprated() -> InstalledPackage {
 #[test]
 fn the_manifest_passes_feed_validation_and_names_its_files() {
     let m = manifest();
-    assert_eq!(m.id, "monokulo");
+    assert_eq!(m.id, "mk-pay");
     assert_eq!(m.exec[0], "bin/monokulo");
     assert_eq!(m.settings.as_deref(), Some("settings.lua"));
     assert!(m.storage.encrypted);
@@ -70,8 +70,8 @@ fn settings_resolve_against_the_node_role() {
     installed.packages.insert("cuprated".into(), cuprated());
     installed
         .packages
-        .insert("monokulo".into(), InstalledPackage { manifest: manifest(), schema, values });
-    let resolved = installed.resolve("monokulo").unwrap();
+        .insert("mk-pay".into(), InstalledPackage { manifest: manifest(), schema, values });
+    let resolved = installed.resolve("mk-pay").unwrap();
 
     assert_eq!(resolved.values["daemon_url"], Value::Url("http://127.0.0.1:18089".into()));
     assert!(resolved.exec.contains(&"--daemon-url=http://127.0.0.1:18089".to_string()), "{:?}", resolved.exec);
@@ -83,7 +83,7 @@ fn settings_resolve_against_the_node_role() {
     assert_eq!(
         resolved.network.iter().collect::<Vec<_>>(),
         [&NetworkGrant {
-            consumer: "monokulo".into(),
+            consumer: "mk-pay".into(),
             provider: "cuprated".into(),
             access: Access::Port { protocol: PortProtocol::Tcp, port: 18089 },
         }]

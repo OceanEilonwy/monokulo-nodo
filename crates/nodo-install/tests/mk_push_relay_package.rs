@@ -10,7 +10,7 @@ use nodo_manifest::{HealthCheck, Manifest};
 use nodo_settings::{env_file, load_settings, Generate, Installed, InstalledPackage, Limits, SecretString, SettingValue, Value};
 
 fn files() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/push-relay/files")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mk-push-relay/files")
 }
 
 fn manifest() -> Manifest {
@@ -21,7 +21,7 @@ fn manifest() -> Manifest {
 #[test]
 fn the_manifest_passes_feed_validation_and_names_its_files() {
     let m = manifest();
-    assert_eq!(m.id, "push-relay");
+    assert_eq!(m.id, "mk-push-relay");
     assert_eq!(m.exec[0], "bin/monokulo-push-relay");
     assert!(files().join("monokulo-push-relay").exists());
     assert!(m.needs.is_empty(), "the relay needs no node");
@@ -51,8 +51,8 @@ fn settings_load_and_resolve_with_only_the_public_address_given() {
     values.insert("handle_key".to_string(), SettingValue::Literal(Value::Secret(key)));
     values.insert("public_uri".to_string(), SettingValue::Literal(Value::Url("https://push.example.org".into())));
     let mut installed = Installed::default();
-    installed.packages.insert("push-relay".into(), InstalledPackage { manifest: manifest(), schema, values });
-    let resolved = installed.resolve("push-relay").unwrap();
+    installed.packages.insert("mk-push-relay".into(), InstalledPackage { manifest: manifest(), schema, values });
+    let resolved = installed.resolve("mk-push-relay").unwrap();
     assert!(resolved.dependencies.is_empty() && resolved.network.is_empty());
     assert_eq!(resolved.values["app_name"], Value::String("monokular".into()));
     assert!(!resolved.values.contains_key("apns_key"), "unset optional settings stay unset");

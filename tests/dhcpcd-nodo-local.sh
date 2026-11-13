@@ -1,16 +1,16 @@
 #!/bin/sh
-# Runs monokulo-base's dhcpcd-nodo-local against stand-in root directories: a fresh dhcpcd.conf, one
+# Runs nodo-base's dhcpcd-nodo-local against stand-in root directories: a fresh dhcpcd.conf, one
 # with the unmarked block images appended before, an older marked block, lines added after the
 # block, a second run and removal. Needs no device: the fast tier runs it in the checks container,
 # and tests/localnet-dhcp.sh checks the same through xbps in the VM.
 #   tests/dhcpcd-nodo-local.sh
 set -u
-src=$(cd "$(dirname "$0")/.." && pwd)/packages/monokulo-base/files
+src=$(cd "$(dirname "$0")/.." && pwd)/packages/nodo-base/files
 fail=0
 result() { if [ "$2" = 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-begin='# BEGIN nodo-local (monokulo-base replaces this block on every update; do not edit it)'
+begin='# BEGIN nodo-local (nodo-base replaces this block on every update; do not edit it)'
 
 # dhcpcd's own settings, as its package ships them, shortened.
 cat > "$tmp/dhcpcd.conf" <<'EOF'
@@ -26,7 +26,7 @@ require dhcp_server_identifier
 slaac private
 controlgroup wheel
 EOF
-# A root as a package install leaves it: dhcpcd's file and monokulo-base's files.
+# A root as a package install leaves it: dhcpcd's file and nodo-base's files.
 newroot() {
 	rm -rf "$tmp/r"
 	mkdir -p "$tmp/r/etc" "$tmp/r/usr/share/monokulo" "$tmp/r/usr/libexec/monokulo"

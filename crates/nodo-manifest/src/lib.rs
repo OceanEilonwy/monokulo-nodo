@@ -527,10 +527,14 @@ mod tests {
     }
 
     #[test]
-    fn the_payment_gateway_app_may_use_its_own_name() {
+    fn the_projects_apps_use_the_mk_prefix_and_no_feed_app_may_be_monokulo() {
         let mut m = base();
+        for id in ["mk-pay", "mk-bell", "mk-push-relay", "mk-lws"] {
+            m.id = id.into();
+            assert!(m.validate().is_empty(), "{id}");
+        }
         m.id = "monokulo".into();
-        assert!(m.validate().is_empty());
+        assert_eq!(fields(&m), ["id"], "reserved, so no feed app can pass itself off as the project");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 api_version = 1
-id = "monokulo"
+id = "mk-pay"
 version = "@VERSION@"
 # bin/monokulo is a small launcher that maps the device's settings onto Monokulo's own options
 # and then executes libexec/monokulo under the same name.
@@ -9,7 +9,7 @@ exec = [
     # Every visitor arrives through the appliance's proxy on loopback, so the real client address
     # is taken from X-Forwarded-For. Without this, rate limits would treat all visitors as one.
     "--abuse-trusted-proxies", "127.0.0.1",
-    "--daemon-url=$(monokulo.daemon_url)",
+    "--daemon-url=$(mk-pay.daemon_url)",
 ]
 needs = ["monero-daemon"]
 settings = "settings.lua"

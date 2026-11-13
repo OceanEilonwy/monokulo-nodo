@@ -55,7 +55,7 @@ fetch)
 		dir=$(repodir "$arch")
 		mkdir -p "$dir"
 		# The closure of everything an image installs. Boards may add packages; list them here too.
-		pkgs="monokulo-base cuprated-service busybox-static linux linux6.18 linux-firmware-network dracut zstd"
+		pkgs="nodo-base cuprated-service busybox-static linux linux6.18 linux-firmware-network dracut zstd"
 		docker run --rm --name "nodo-snapshot-fetch-$name-$arch" \
 			-e "ARCH=$arch" -e "UP=$(upstream "$arch")" -e "PKGS=$pkgs" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 			-v "$root:/src" -v "$dir:/snap" "$BUILDER" sh -euc '

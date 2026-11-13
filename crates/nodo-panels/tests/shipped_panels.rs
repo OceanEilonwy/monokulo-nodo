@@ -56,8 +56,8 @@ fn cuprateds_panel_once_caught_up_and_while_starting() {
     assert_eq!(starting.status, Some(Status::Idle));
 }
 
-const PUSH_RELAY_MANIFEST: &str = include_str!("../../../packages/push-relay/files/manifest.toml");
-const PUSH_RELAY_PANEL: &str = include_str!("../../../packages/push-relay/files/panels/relay.lua");
+const PUSH_RELAY_MANIFEST: &str = include_str!("../../../packages/mk-push-relay/files/manifest.toml");
+const PUSH_RELAY_PANEL: &str = include_str!("../../../packages/mk-push-relay/files/panels/relay.lua");
 
 /// monokulo-push-relay's GET /status, as crates/push-relay/tests/relay_over_http.rs shows it.
 fn relay_status(stored: Option<u64>, apns: &str, fcm: &str, last: Option<&str>) -> serde_json::Value {
@@ -95,8 +95,8 @@ fn the_push_relays_manifest_and_panel() {
     assert_eq!(busy.status, Some(Status::Warn));
 }
 
-const BELL_MANIFEST: &str = include_str!("../../../packages/bell/files/manifest.toml");
-const BELL_PANEL: &str = include_str!("../../../packages/bell/files/panels/bell.lua");
+const BELL_MANIFEST: &str = include_str!("../../../packages/mk-bell/files/manifest.toml");
+const BELL_PANEL: &str = include_str!("../../../packages/mk-bell/files/panels/bell.lua");
 
 /// monokulo-bell's GET /status, as crates/monokulo-bell/tests/bell_over_http.rs shows it.
 fn bell_status(stored: Option<u64>, clover_na: &str, last: Option<&str>) -> serde_json::Value {
@@ -142,8 +142,8 @@ fn the_bells_manifest_and_panel() {
     assert_eq!(all.big.as_deref(), Some("--"));
 }
 
-const LWS_MANIFEST: &str = include_str!("../../../packages/lws/files/manifest.toml");
-const LWS_PANEL: &str = include_str!("../../../packages/lws/files/panels/scan.lua");
+const LWS_MANIFEST: &str = include_str!("../../../packages/mk-lws/files/manifest.toml");
+const LWS_PANEL: &str = include_str!("../../../packages/mk-lws/files/panels/scan.lua");
 
 /// monokulo-lws's GET /daemon_status, as crates/monokulo-lws/src/rest/wallet.rs writes it.
 fn daemon_status(reachable: bool, chain: u64, scanned: u64, lanes: serde_json::Value) -> serde_json::Value {

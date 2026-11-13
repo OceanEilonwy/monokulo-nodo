@@ -26,13 +26,13 @@ import plistlib, sys
 for k, v in sorted(plistlib.loads(sys.stdin.buffer.read()).items()):
     print(k, v.get("pkgver", k))' > "$tmp/pkgs"
 echo "== $(wc -l < "$tmp/pkgs") packages; the platform:"
-grep -E '^(monokulo-base|cuprated|cuprated-service|nodo-tools|nodo-caddy|nodo-ddns|nodo-localnet|linux-nanopc-t6n|linux-mainline-rk3588) ' "$tmp/pkgs" | sed 's/^/  /'
-for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service monokulo-base; do
+grep -E '^(nodo-base|cuprated|cuprated-service|nodo-tools|nodo-caddy|nodo-ddns|nodo-localnet|linux-nanopc-t6n|linux-mainline-rk3588) ' "$tmp/pkgs" | sed 's/^/  /'
+for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service nodo-base; do
 	grep -q "^$p " "$tmp/pkgs"
 	result "$p is installed" "$?"
 done
-! grep -q '^monokulo ' "$tmp/pkgs"
-result "Monokulo is not preinstalled; it comes through the helper from a feed" "$?"
+! grep -q '^mk-pay ' "$tmp/pkgs"
+result "Monokulo (mk-pay) is not preinstalled; it comes through the helper from a feed" "$?"
 
 # sshd refuses root when root's shell is missing; the first T6N cards had /bin/bash without bash.
 root_shell=$(show 'cat /etc/passwd' | awk -F: '$1 == "root" { print $7 }')
@@ -74,7 +74,7 @@ result "dhcpcd's own settings before it are kept" "$?"
 show 'cat /usr/share/monokulo/dhcpcd-nodo-local.conf' > "$tmp/block"
 [ -s "$tmp/block" ] && [ "$(tail -n 1 "$tmp/dhcpcd.conf")" = '# END nodo-local' ] &&
 	sed -n '/^# BEGIN nodo-local/,/^# END nodo-local/p' "$tmp/dhcpcd.conf" | sed '1d;$d' | cmp -s - "$tmp/block"
-result "the block is monokulo-base's file, between its markers at the end" "$?"
+result "the block is nodo-base's file, between its markers at the end" "$?"
 if [ "$(grep -c '^# BEGIN nodo-local' "$tmp/dhcpcd.conf")" = 1 ]; then r=0; else r=1; fi
 result "the marked block appears once" "$r"
 show 'stat /usr/libexec/monokulo/dhcpcd-nodo-local' | grep -q 'Type: regular'

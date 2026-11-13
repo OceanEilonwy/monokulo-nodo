@@ -41,5 +41,5 @@ for t in packages/*/template; do
 done
 mkdir -p /etc/nftables.d
 cp packages/*/files/*.nft /etc/nftables.d/
-step "firewall rules" nft -c -f packages/monokulo-base/files/nftables.conf
+step "firewall rules" nft -c -f packages/nodo-base/files/nftables.conf
 exit "$fail"

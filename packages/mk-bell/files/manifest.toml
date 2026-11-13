@@ -1,5 +1,5 @@
 api_version = 1
-id = "bell"
+id = "mk-bell"
 version = "@VERSION@"
 # bin/monokulo-bell is a small launcher that maps the device's settings onto the Bell's own
 # options and environment, then executes libexec/monokulo-bell under the same name.

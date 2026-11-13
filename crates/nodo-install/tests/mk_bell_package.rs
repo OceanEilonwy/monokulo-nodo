@@ -10,7 +10,7 @@ use nodo_manifest::{HealthCheck, Manifest};
 use nodo_settings::{env_file, load_settings, Generate, Installed, InstalledPackage, Limits, SecretString, SettingValue, Value};
 
 fn files() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/bell/files")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mk-bell/files")
 }
 
 fn manifest() -> Manifest {
@@ -21,7 +21,7 @@ fn manifest() -> Manifest {
 #[test]
 fn the_manifest_passes_feed_validation_and_names_its_files() {
     let m = manifest();
-    assert_eq!(m.id, "bell");
+    assert_eq!(m.id, "mk-bell");
     assert_eq!(m.exec[0], "bin/monokulo-bell");
     assert!(files().join("monokulo-bell").exists());
     assert!(m.needs.is_empty(), "the Bell needs no node");
@@ -58,8 +58,8 @@ fn settings_load_and_resolve() {
         SettingValue::Literal(Value::Secret(SecretString::new("whsk_Zx9+/="))),
     );
     let mut installed = Installed::default();
-    installed.packages.insert("bell".into(), InstalledPackage { manifest: manifest(), schema, values });
-    let resolved = installed.resolve("bell").unwrap();
+    installed.packages.insert("mk-bell".into(), InstalledPackage { manifest: manifest(), schema, values });
+    let resolved = installed.resolve("mk-bell").unwrap();
     assert!(resolved.dependencies.is_empty() && resolved.network.is_empty());
     assert!(loaded.validate_values(&resolved.values).is_empty());
     env_file(&resolved.values).unwrap();

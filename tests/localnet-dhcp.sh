@@ -42,7 +42,7 @@ run_with() {
 }
 wait_status() { i=0; until grep -q "^status=$1" "$state" 2>/dev/null || [ "$i" -ge "$2" ]; do i=$((i+1)); sleep 1; done; grep -q "^status=$1" "$state"; }
 
-# monokulo-base puts its block into dhcpcd's own configuration, between markers.
+# nodo-base puts its block into dhcpcd's own configuration, between markers.
 grep -qx 'interface nodo-local' /etc/dhcpcd.conf && grep -A12 -x 'interface nodo-local' /etc/dhcpcd.conf | grep -qx '	nogateway' &&
 	grep -q '^# BEGIN nodo-local' /etc/dhcpcd.conf
 result "dhcpcd.conf has the nodo-local block" "$?"

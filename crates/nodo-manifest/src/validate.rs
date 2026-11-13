@@ -27,12 +27,13 @@ pub const MIN_PACKAGE_PORT: u16 = 1024;
 /// Ids that would collide with system users, the appliance itself, or well known roles. A package
 /// named after a role could otherwise capture references meant for the role's provider.
 ///
-/// `monokulo` is not here: it is the payment gateway app, which installs from a feed like any
-/// other. The appliance's own packages use the `monokulo-` and `nodo-` prefixes, which the feed
-/// gate refuses.
+/// `monokulo` is here so that no feed app can pass itself off as the project. Its own apps install
+/// from a feed like any other under the `mk-` prefix (`mk-pay`, `mk-bell`, ...). The appliance's
+/// own packages use the `nodo-` prefix (and formerly `monokulo-`), which the feed gate refuses.
 pub const RESERVED_IDS: &[&str] = &[
     "cuprated",
     "monerod",
+    "monokulo",
     "adm",
     "apps",
     "bin",

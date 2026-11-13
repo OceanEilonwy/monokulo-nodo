@@ -1,25 +1,24 @@
-# Template file for 'lws'
+# Template file for 'mk-bell'
 #
-# monokulo-lws, a Monero light wallet server. A feed app, not a base system package: everything
-# lands in /opt/nodo/apps/lws. The id cannot carry the monokulo- prefix, which the feed gate keeps
-# for the appliance's own packages.
+# The Monokular Bell (crates/monokulo-bell in the monokulo repository). A feed app,
+# not a base system package: everything lands in /opt/nodo/apps/mk-bell. The id cannot carry
+# the monokulo- prefix, which the feed gate keeps for the appliance's own packages.
 #
-# Upstream builds on stable Rust; this uses the nightly packages/monokulo pins, so the toolchain
-# distfiles and their checksums are shared. Cargo.lock pins every crate, the one git dependency
-# (monokulo-8ar) by its full commit, and the build runs with --locked.
-pkgname=lws
-version=0.1.0pre20261112
+# It builds from the same monokulo commit, with the same pinned nightly, as packages/monokulo, so
+# the source and toolchain distfiles and their checksums are shared. The Bell needs neither Node
+# nor the wasm32 standard library.
+pkgname=mk-bell
+version=0.1.0pre20261107
 revision=1
-_commit=bb3683dc69b401712e6bab9d1ad47af3f2e31eb8
+_commit=4e3c6042c312b68020e27f22fdb8d954e5df4371
 _nightly=2026-11-07
 archs="aarch64 x86_64"
-hostmakedepends="gcc make pkg-config clang xz"
-short_desc="Monero light wallet server (monokulo-lws)"
+hostmakedepends="gcc cmake make pkg-config clang xz"
+short_desc="Monokular Bell: point of sale webhooks to Web Push dings"
 maintainer="monokulo-nodo <noreply@localhost>"
-# Nothing is installed under /usr/share/licenses because a feed package may only write inside its
-# own directory.
-license="GPL-3.0-only"
-homepage="https://github.com/OceanEilonwy/monokulo-lws"
+# Upstream declares no license yet.
+license="custom:none-declared"
+homepage="https://github.com/OceanEilonwy/monokulo"
 
 _dist=https://static.rust-lang.org/dist/${_nightly}
 case "$XBPS_MACHINE" in
@@ -38,11 +37,11 @@ case "$XBPS_MACHINE" in
 	*) broken="no pinned toolchain for build machine $XBPS_MACHINE" ;;
 esac
 
-distfiles="https://github.com/OceanEilonwy/monokulo-lws/archive/${_commit}.tar.gz
+distfiles="https://github.com/OceanEilonwy/monokulo/archive/${_commit}.tar.gz
  ${_dist}/rustc-nightly-${_host}.tar.xz
  ${_dist}/cargo-nightly-${_host}.tar.xz
  ${_dist}/rust-std-nightly-${_host}.tar.xz"
-checksum="1e9b505909b871c061795294c34563a8232295b306d4e2ce6308bfcec10cafd2
+checksum="61b6ddcab0af3b4659b778bd7f133bd3950f81af427bbb0579406ef2e20e2e5f
  ${_rustc_sum}
  ${_cargo_sum}
  ${_std_sum}"
@@ -55,8 +54,8 @@ elif [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = x86_64 ]; then
 	checksum+=" 7b85b56d7169c076fa1e31de5a4e3052ff8400d887dd80f47aa69579e15c85f8"
 fi
 
-build_wrksrc="monokulo-lws-${_commit}"
-_app=opt/nodo/apps/lws
+build_wrksrc="monokulo-${_commit}"
+_app=opt/nodo/apps/mk-bell
 
 post_extract() {
 	local d
@@ -72,10 +71,10 @@ _toolchain_env() {
 	export PATH="${_tc}/bin:${PATH}"
 	export RUSTC="${_tc}/bin/rustc"
 	export CARGO="${_tc}/bin/cargo"
-	export CARGO_HOME="${XBPS_HOSTDIR}/feed-cargo"
+	# Shared with packages/monokulo: the same lock file, so the same crates.
+	export CARGO_HOME="${XBPS_HOSTDIR}/monokulo-cargo"
 	export CARGO_BUILD_JOBS="${XBPS_MAKEJOBS}"
-	# Read by option_env! for /get_version's last_git_commit_hash.
-	export MONOKULO_LWS_COMMIT="${_commit}"
+	export MONOKULO_GIT_COMMIT="${_commit}"
 	export HOST_CC=gcc HOST_CXX=g++
 	local t="${RUST_TARGET^^}" b="${RUST_BUILD^^}"
 	t="${t//-/_}"
@@ -95,17 +94,18 @@ do_configure() {
 
 do_build() {
 	_toolchain_env
-	"${CARGO}" build --release --locked --target "${RUST_TARGET}" -p monokulo-lws --bin monokulo-lws
+	"${CARGO}" build --release --locked --target "${RUST_TARGET}" -p monokulo-bell --bin monokulo-bell
 }
 
 do_install() {
 	vmkdir ${_app}/bin 755
 	vmkdir ${_app}/libexec 755
 	vmkdir ${_app}/panels 755
-	install -m 755 target/${RUST_TARGET}/release/monokulo-lws "${DESTDIR}/${_app}/libexec/monokulo-lws"
-	install -m 755 "${FILESDIR}/monokulo-lws" "${DESTDIR}/${_app}/bin/monokulo-lws"
+	install -m 755 target/${RUST_TARGET}/release/monokulo-bell \
+		"${DESTDIR}/${_app}/libexec/monokulo-bell"
+	install -m 755 "${FILESDIR}/monokulo-bell" "${DESTDIR}/${_app}/bin/monokulo-bell"
 	install -m 644 "${FILESDIR}/manifest.toml" "${DESTDIR}/${_app}/manifest.toml"
 	sed -i "s/@VERSION@/${version}/" "${DESTDIR}/${_app}/manifest.toml"
 	install -m 644 "${FILESDIR}/settings.lua" "${DESTDIR}/${_app}/settings.lua"
-	install -m 644 "${FILESDIR}/panels/scan.lua" "${DESTDIR}/${_app}/panels/scan.lua"
+	install -m 644 "${FILESDIR}/panels/bell.lua" "${DESTDIR}/${_app}/panels/bell.lua"
 }

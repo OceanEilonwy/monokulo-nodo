@@ -420,7 +420,7 @@ mod tests {
                 path: "snapshots/2026.12/aarch64".into(),
                 repodata_sha256: hex::encode(Sha256::digest(b"index")),
             }],
-            packages: vec![PackagePin { name: "monokulo-base".into(), version: "0.1.0_2".into() }],
+            packages: vec![PackagePin { name: "nodo-base".into(), version: "0.1.0_2".into() }],
             withdraws: vec![],
         }
     }

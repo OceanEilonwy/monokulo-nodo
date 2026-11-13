@@ -10,7 +10,7 @@ use nodo_manifest::{HealthCheck, Manifest, Outbound};
 use nodo_settings::{load_settings, Access, Dependency, Installed, InstalledPackage, Limits, NetworkGrant, PortProtocol, Value};
 
 fn files() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/lws/files")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mk-lws/files")
 }
 
 fn manifest() -> Manifest {
@@ -38,7 +38,7 @@ fn cuprated() -> InstalledPackage {
 #[test]
 fn the_manifest_passes_feed_validation_and_names_its_files() {
     let m = manifest();
-    assert_eq!(m.id, "lws");
+    assert_eq!(m.id, "mk-lws");
     assert_eq!(m.exec[0], "bin/monokulo-lws");
     assert!(files().join("monokulo-lws").exists());
     assert_eq!(m.needs, ["monero-daemon"]);
@@ -61,8 +61,8 @@ fn settings_resolve_against_the_node_role() {
     let schema = loaded.schema().clone();
     let mut installed = Installed::default();
     installed.packages.insert("cuprated".into(), cuprated());
-    installed.packages.insert("lws".into(), InstalledPackage { manifest: manifest(), schema, values: BTreeMap::new() });
-    let resolved = installed.resolve("lws").unwrap();
+    installed.packages.insert("mk-lws".into(), InstalledPackage { manifest: manifest(), schema, values: BTreeMap::new() });
+    let resolved = installed.resolve("mk-lws").unwrap();
 
     assert_eq!(resolved.values["daemon_url"], Value::Url("http://127.0.0.1:18081".into()));
     for arg in ["--daemon=http://127.0.0.1:18081", "--create=auto", "--import=approve"] {
@@ -75,7 +75,7 @@ fn settings_resolve_against_the_node_role() {
     assert_eq!(
         resolved.network.iter().collect::<Vec<_>>(),
         [&NetworkGrant {
-            consumer: "lws".into(),
+            consumer: "mk-lws".into(),
             provider: "cuprated".into(),
             access: Access::Port { protocol: PortProtocol::Tcp, port: 18081 },
         }]

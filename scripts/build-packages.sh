@@ -8,7 +8,7 @@ if [ "${1:-}" = --changed ]; then only_list=1; shift; fi
 arch=${1:-aarch64}
 [ $# -gt 0 ] && shift
 # nodo-tools is listed because cuprated-service depends on it for nodo-confine.
-[ $# -gt 0 ] || set -- cuprated cuprated-service monokulo-base nodo-tools nodo-caddy nodo-ddns nodo-localnet
+[ $# -gt 0 ] || set -- cuprated cuprated-service nodo-base nodo-tools nodo-caddy nodo-ddns nodo-localnet
 [ -n "$only_list" ] || ensure_builder
 feed=$root/out/feed/$arch
 mkdir -p "$root/build/hostdir" "$feed" "$root/build/stamps"
