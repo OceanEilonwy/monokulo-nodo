@@ -1,0 +1,5 @@
+# Where nodo-sysupdate finds the signed system snapshots (docs/UPDATES.md, section 1). The
+# manifest there is signed with a key pinned in /usr/share/nodo/snapshot-pins.toml, and everything
+# else it names is pinned by hash, so the address only decides where updates come from.
+# A configuration file: an edit here survives updates of nodo-tools.
+server = "https://nodo.monokulo.com/snapshots"

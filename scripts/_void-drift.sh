@@ -20,12 +20,11 @@ repo)
 	arch=${2:?usage: _void-drift.sh repo <arch> <package>...}
 	shift 2
 	[ $# -gt 0 ] || exit 0
-	# A cross build takes its host tools from this machine's repository, so both count.
-	for a in $(printf '%s\n' "$arch" "$(xbps-uhelper arch)" | sort -u); do
-		case $a in aarch64) url=$VOID_MIRROR/current/aarch64 ;; *) url=$VOID_MIRROR/current ;; esac
-		XBPS_TARGET_ARCH=$a xbps-install -S -i -R "$url" >/dev/null
-		XBPS_TARGET_ARCH=$a xbps-checkvers -i -R "$url" -D "$vp" -sm "$@" | keep
-	done
+	# Only <arch>'s mirror: the caller passes a cross build's host tools with the host's
+	# architecture and its target packages with the target's.
+	case $arch in aarch64) url=$VOID_MIRROR/current/aarch64 ;; *) url=$VOID_MIRROR/current ;; esac
+	XBPS_TARGET_ARCH=$arch xbps-install -S -i -R "$url" >/dev/null
+	XBPS_TARGET_ARCH=$arch xbps-checkvers -i -R "$url" -D "$vp" -sm "$@" | keep
 	;;
 root)
 	dir=${2:?usage: _void-drift.sh root <dir>}

@@ -4,11 +4,14 @@
 #
 #   scripts/publish-snapshot.sh fetch  <name> <arch>...          copy Void's repodata and the packages images need
 #   scripts/publish-snapshot.sh import <name> <arch> <repodata>  use a Void index fetched elsewhere, without packages
+#   scripts/publish-snapshot.sh index  <name> <arch>...          copy Void's index; devices download packages from Void's mirror
 #   scripts/publish-snapshot.sh nodo   <name> <arch> <xbps-key.pem> [package-dir]
 #                                                                 add this project's packages, signed for xbps
 #   scripts/publish-snapshot.sh test   <name> <board>            build an image from only the snapshot
 #   scripts/publish-snapshot.sh sign   <name> <channel> <serial> <secret-key> [yes|no] [--untested] [--withdraws <name>]...
 #   scripts/publish-snapshot.sh publish <name> <channel>         make it the channel's newest snapshot
+#   scripts/publish-snapshot.sh restart <name> <previous|none> [arch]
+#                                                                 yes if the kernel, libc or init changed
 #
 # The server's files land under $SNAPSHOT_ROOT (default out/):
 #
@@ -23,7 +26,16 @@
 # sign and nodo are the steps that need them.
 #
 # import is for tests and for snapshots in which no Void package changes: the index is served,
-# but a device that needed a Void package from it would find none. --untested is only for
+# but a device that needed a Void package from it would find none.
+#
+# index is what the T6N's published snapshots use (docs/UPDATES.md, "Hosting"): Void's index is
+# copied exactly as Void signed it and pinned by the manifest, and the manifest names Void's
+# mirror as where its packages are downloaded from. xbps checks each package against the pinned
+# index and Void's .sig2, so the mirror decides only whether a package can be downloaded. The
+# packages themselves (linux-firmware-network alone is 440 MiB) are never copied, which keeps a
+# snapshot a few megabytes plus this project's packages. Void removes superseded packages from its
+# mirror, so a snapshot made this way stays installable only while its Void versions are current
+# there; CI publishes a new one every week for that reason. --untested is only for
 # throwaway test keys; it skips the rule that a snapshot is signed only as it was tested.
 #
 # Withdrawing a bad snapshot: sign an older, good snapshot again under a new, higher serial with
@@ -83,6 +95,21 @@ import)
 	echo "imported the Void index for $arch, without packages"
 	rm -f "$stamp"
 	;;
+index)
+	[ $# -gt 0 ] || { echo "name at least one architecture" >&2; exit 2; }
+	case $VOID_MIRROR in https://* | http://*) ;; *) echo "index needs VOID_MIRROR to be a web address" >&2; exit 2 ;; esac
+	for arch in "$@"; do
+		plain "$arch" architecture
+		dir=$(repodir "$arch")
+		mkdir -p "$dir"
+		# Exactly as Void signed it: the manifest pins these bytes.
+		curl -fsS --retry 3 -o "$dir/$arch-repodata.new" "$(upstream "$arch")/$arch-repodata"
+		mv "$dir/$arch-repodata.new" "$dir/$arch-repodata"
+		upstream "$arch" > "$dir/mirror"
+		echo "copied the Void index for $arch; packages come from $(upstream "$arch")"
+	done
+	rm -f "$stamp"
+	;;
 nodo)
 	arch=${1:?architecture}
 	key=${2:?the xbps signing key, an RSA private key in PEM form}
@@ -121,13 +148,33 @@ test)
 	rel=${snap#"$root/"}
 	feed=/src/out/feed/$BOARD_ARCH
 	[ -s "$nodo/$BOARD_ARCH-repodata" ] && feed=/src/$rel/nodo/$BOARD_ARCH
+	voidrepo=/src/$rel
+	mirrorfile=$(repodir "$BOARD_ARCH")/mirror
+	if [ -s "$mirrorfile" ]; then
+		# Made by index: the image installs Void's packages from the mirror, which must still serve
+		# the very index the snapshot copied, before the build and after it.
+		voidrepo=$VOID_MIRROR
+		same_index() {
+			curl -fsS --retry 3 "$(cat "$mirrorfile")/$BOARD_ARCH-repodata" | cmp -s - "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata"
+		}
+		same_index || { echo "Void's mirror moved on since the index was copied; make the snapshot again" >&2; exit 1; }
+	fi
 	# The same build as scripts/build-image.sh, with the snapshot as the only repositories.
 	docker run --rm --name "nodo-snapshot-test-$name-$board" \
-		-e "BOARD=$board" -e "VOID_MIRROR=/src/$rel" -e "NODO_REPO=$feed" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+		-e "BOARD=$board" -e "VOID_MIRROR=$voidrepo" -e "NODO_REPO=$feed" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 		-v "$root:/src" "$@" "$BUILDER" /src/scripts/_build-image-inner.sh
-	if [ "$board" = qemu-virt ]; then
-		"$root/tests/qemu-boot-test.sh" qemu-virt
+	if [ -s "$mirrorfile" ]; then
+		same_index || { echo "Void's mirror moved on during the test build; make the snapshot again" >&2; exit 1; }
 	fi
+	img=$root/out/images/$board/monokulo-$board-sd.img
+	case $board in
+	qemu-virt) "$root/tests/qemu-boot-test.sh" qemu-virt ;;
+	nanopc-t6n) "$root/tests/inspect-t6n-platform.sh" "$img" ;;
+	nanopc-t6n-mainline)
+		"$root/tests/inspect-t6n-platform.sh" "$img"
+		"$root/tests/inspect-t6n-mainline.sh" "$img"
+		;;
+	esac
 	for index in "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata" "$nodo/$BOARD_ARCH-repodata"; do
 		[ -s "$index" ] && sha256sum "$index" | cut -d" " -f1 >> "$stamp"
 	done
@@ -173,7 +220,10 @@ sign)
 				set -- "$@" "pkg:${pv%-*}=${pv##*-}"
 			done ;;
 		esac
-		set -- "$@" "$repo=${dir#"$out/"}=$index"
+		entry="$repo=${dir#"$out/"}=$index"
+		# A Void index copied by index names the mirror its packages come from.
+		[ -s "$dir/mirror" ] && entry="$entry=$(cat "$dir/mirror")"
+		set -- "$@" "$entry"
 	done
 	[ $# -gt 0 ] || { echo "nothing to sign" >&2; exit 1; }
 	# shellcheck disable=SC2086 # each word is one withdraws:<name> argument, checked by plain above
@@ -196,6 +246,30 @@ publish)
 	mv "$out/channels/$channel/.manifest.toml.sig.new" "$out/channels/$channel/manifest.toml.sig"
 	mv "$out/channels/$channel/.manifest.toml.new" "$out/channels/$channel/manifest.toml"
 	echo "channel $channel now offers $name"
+	;;
+restart)
+	# Prints yes when moving from <previous> (a snapshot name under the same root, or none) to
+	# this snapshot replaces the kernel, libc or init, which sign then records as needs-restart.
+	previous=${1:?the previous snapshot, or none}
+	arch=${2:-aarch64}
+	plain "$arch" architecture
+	[ "$previous" = none ] && { echo yes; exit 0; }
+	plain "$previous" "previous snapshot"
+	prev=$out/snapshots/$previous
+	[ -d "$prev" ] || { echo yes; exit 0; }
+	ensure_builder
+	versions() {
+		# $1: a snapshot directory. One "name version" line per package that needs a restart.
+		docker run --rm -e "ARCH=$arch" -v "$1:/snap:ro" "$BUILDER" sh -euc '
+			for d in /snap/current/aarch64 /snap/current /snap/nodo/$ARCH; do
+				[ -s "$d/$ARCH-repodata" ] || continue
+				for p in glibc musl runit runit-void linux-mainline-rk3588 linux-nanopc-t6n linux6.18; do
+					v=$(XBPS_TARGET_ARCH=$ARCH xbps-query -i --repository="$d" -p pkgver "$p" 2>/dev/null) || continue
+					echo "$p $v"
+				done
+			done | sort -u'
+	}
+	if [ "$(versions "$snap")" = "$(versions "$prev")" ]; then echo no; else echo yes; fi
 	;;
 *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac

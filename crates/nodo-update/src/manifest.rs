@@ -212,6 +212,13 @@ pub struct RepoEntry {
     pub path: String,
     /// SHA-256 of `<arch>-repodata` exactly as tested. xbps verifies packages against it.
     pub repodata_sha256: String,
+    /// Where xbps downloads this repository's packages, when not from `path`: an absolute
+    /// `https://` or `http://` address, such as Void's own mirror. The index still comes from
+    /// `path` and must match `repodata_sha256`, and xbps checks every package against that index
+    /// and its `.sig2`, so a mirror only decides whether packages can be downloaded, never which.
+    /// Left out when absent, so manifests without one keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
 }
 
 pub const VOID_REPO: &str = "void";
@@ -265,6 +272,17 @@ fn name_ok(text: &str) -> bool {
         && !text.starts_with(['.', '-'])
 }
 
+/// An absolute address for downloading packages: http(s), a host, no query, fragment, spaces or
+/// quotes, and no trailing slash (xbps appends `/<file>`).
+fn mirror_ok(url: &str) -> bool {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"));
+    let Some(rest) = rest else { return false };
+    url.len() <= MAX_PATH_LEN
+        && !url.ends_with('/')
+        && rest.split('/').next().is_some_and(|host| !host.is_empty())
+        && url.bytes().all(|b| b.is_ascii_graphic() && !matches!(b, b'?' | b'#' | b'"' | b'\\' | b'\'' | b'<' | b'>'))
+}
+
 /// A relative path that cannot leave the server's base directory or carry URL syntax.
 fn repo_path_ok(path: &str) -> bool {
     path.len() <= MAX_PATH_LEN && !path.is_empty() && path.split('/').all(name_ok)
@@ -304,6 +322,9 @@ impl SnapshotManifest {
             }
             if !repo_path_ok(&repo.path) {
                 return Err(invalid(format!("unsafe repository path {:?}", repo.path)));
+            }
+            if repo.mirror.as_deref().is_some_and(|m| !mirror_ok(m)) {
+                return Err(invalid(format!("unsafe repository mirror {:?}", repo.mirror)));
             }
             if decode_hex::<32>(&repo.repodata_sha256).is_none() {
                 return Err(invalid("repodata_sha256 must be 64 lowercase hex digits"));
@@ -419,6 +440,7 @@ mod tests {
                 name: VOID_REPO.into(),
                 path: "snapshots/2026.12/aarch64".into(),
                 repodata_sha256: hex::encode(Sha256::digest(b"index")),
+                mirror: None,
             }],
             packages: vec![PackagePin { name: "nodo-base".into(), version: "0.1.0_2".into() }],
             withdraws: vec![],
@@ -524,6 +546,32 @@ mod tests {
         assert!(parsed.repos_for("x86_64").is_empty());
         m.repo[0].name = "no thing".into();
         assert!(SnapshotManifest::parse(m.to_toml().as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_repository_may_name_a_mirror_for_its_packages() {
+        assert!(!sample().to_toml().contains("mirror"), "a manifest without a mirror keeps its old form");
+        let mut m = sample();
+        m.repo[0].mirror = Some("https://repo-fastly.voidlinux.org/current/aarch64".into());
+        let parsed = SnapshotManifest::parse(m.to_toml().as_bytes()).unwrap();
+        assert_eq!(parsed.repo[0].mirror.as_deref(), Some("https://repo-fastly.voidlinux.org/current/aarch64"));
+        for bad in [
+            "ftp://mirror/x",
+            "https://",
+            "https:///path",
+            "https://mirror/x/",
+            "https://mirror/x?y=1",
+            "https://mirror/x#y",
+            "https://mir ror/x",
+            "https://mirror/\"x",
+            "/srv/void",
+            "repo-fastly.voidlinux.org/current",
+        ] {
+            m.repo[0].mirror = Some(bad.into());
+            assert!(SnapshotManifest::parse(m.to_toml().as_bytes()).is_err(), "{bad}");
+        }
+        m.repo[0].mirror = Some(format!("https://m/{}", "a".repeat(MAX_PATH_LEN)));
+        assert!(SnapshotManifest::parse(m.to_toml().as_bytes()).is_err(), "too long");
     }
 
     #[test]

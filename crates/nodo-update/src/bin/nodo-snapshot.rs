@@ -72,10 +72,12 @@ fn manifest(args: &[String]) -> Result<(), String> {
             packages.push(PackagePin { name: name.into(), version: version.into() });
             continue;
         }
-        let mut parts = arg.splitn(3, '=');
+        // An optional fourth part names a mirror the packages are downloaded from.
+        let mut parts = arg.splitn(4, '=');
         let (Some(arch), Some(path), Some(file)) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(format!("{arg}: expected <arch>[/<repo-name>]=<repo-path>=<repodata-file>"));
+            return Err(format!("{arg}: expected <arch>[/<repo-name>]=<repo-path>=<repodata-file>[=<mirror>]"));
         };
+        let mirror = parts.next().map(str::to_owned);
         let index = fs::read(file).map_err(|e| format!("{file}: {e}"))?;
         let (arch, name) = arch.split_once('/').unwrap_or((arch, nodo_update::manifest::VOID_REPO));
         repo.push(RepoEntry {
@@ -83,6 +85,7 @@ fn manifest(args: &[String]) -> Result<(), String> {
             name: name.into(),
             path: path.into(),
             repodata_sha256: hex::encode(Sha256::digest(&index)),
+            mirror,
         });
     }
     let published = now();

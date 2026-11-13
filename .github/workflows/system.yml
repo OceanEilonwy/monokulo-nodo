@@ -1,0 +1,409 @@
+# Builds the T6N's base packages and publishes them as a signed system snapshot at
+# https://nodo.monokulo.com/snapshots, the update server every T6N image trusts
+# (packages/nodo-tools/files/system-update.toml and snapshot-pins.toml). docs/UPDATES.md,
+# section 1, describes snapshots; scripts/publish-snapshot.sh does the work.
+#
+# Jobs, so that third-party code never runs where a key is:
+#   build     compiles feed/base-packages for aarch64. No secrets.
+#   sign-repo signs those packages as the snapshot's nodo repository. Key: NODO_SNAPSHOT_XBPS_KEY.
+#   test      copies Void's index, builds a T6N image from only the snapshot and inspects it.
+#             No secrets. This is the test run a snapshot must pass before it is signed.
+#   publish   signs the manifest (key: NODO_SNAPSHOT_SIGNING_KEY), makes it the stable channel's
+#             newest snapshot and deploys the site, with the feed's half copied from the live site.
+#
+# A push to main makes a snapshot when a base package changed. Every Monday one is made anyway:
+# devices download Void's packages from Void's mirror, which drops superseded versions, so the
+# newest snapshot must stay recent (docs/UPDATES.md, "Hosting"). A pull request or branch run
+# builds and tests with a throwaway key and publishes nothing.
+name: system
+
+on:
+  push:
+    branches: [main]
+  # A pull request that changes what goes into the image is built and tested the same way, with a
+  # throwaway key; sign-repo and publish only run on main, where the keys' environment allows it.
+  pull_request:
+    paths:
+      - feed/base-packages
+      - packages/**
+      - boards/nanopc-t6n-mainline/**
+      - scripts/publish-snapshot.sh
+      - scripts/_build-image-inner.sh
+      - scripts/_build-packages-inner.sh
+      - tests/inspect-t6n-*.sh
+      - .github/workflows/system.yml
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CHANNEL: stable
+  BOARD: nanopc-t6n-mainline
+  # The snapshots kept on the server, newest first: the current one and two to withdraw back to.
+  KEEP_SNAPSHOTS: 3
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    outputs:
+      make: ${{ steps.todo.outputs.make }}
+      name: ${{ steps.todo.outputs.name }}
+      serial: ${{ steps.todo.outputs.serial }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore built packages
+        id: out
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/stamps
+            out/feed/aarch64
+          key: system-out-aarch64-${{ hashFiles('feed/base-packages', 'packages/**', 'Cargo.lock', 'crates/**', 'versions.env', 'scripts/_build-packages-inner.sh') }}
+          restore-keys: system-out-aarch64-
+
+      - name: List what needs building
+        id: todo
+        run: |
+          base=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' feed/base-packages | tr '\n' ' ')
+          # shellcheck disable=SC2086
+          todo=$(scripts/build-packages.sh --changed aarch64 $base)
+          echo "to build: ${todo:-nothing}"
+          echo "todo=$todo" >> "$GITHUB_OUTPUT"
+          make=false
+          if [ "${{ github.event_name }}" != push ] || [ -n "$todo" ]; then make=true; fi
+          echo "make a snapshot: $make"
+          echo "make=$make" >> "$GITHUB_OUTPUT"
+          # Serials only ever increase, and the name says when it was made.
+          now=$(date -u +%s)
+          echo "serial=$(date -u -d "@$now" +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+          echo "name=$(date -u -d "@$now" +%Y.%m.%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Free disk space
+        if: steps.todo.outputs.todo != ''
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Restore the build cache
+        id: hostdir
+        if: steps.todo.outputs.todo != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/hostdir
+            !build/hostdir/sccache
+            !build/hostdir/ccache
+          key: system-hostdir-aarch64-${{ hashFiles('feed/base-packages', 'packages/**', 'versions.env', 'scripts/_build-packages-inner.sh') }}
+          restore-keys: system-hostdir-aarch64-
+
+      - name: Restore the compiler caches
+        id: compile
+        if: steps.todo.outputs.todo != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: system-compile-aarch64-${{ hashFiles('feed/base-packages', 'packages/**', 'Cargo.lock', 'crates/**', 'versions.env', 'scripts/_build-packages-inner.sh', 'scripts/_xbps-src-sccache.sh') }}
+          restore-keys: |
+            system-compile-aarch64-
+
+      - name: Restore the builder image
+        id: builder
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/builder-image.tar.zst
+          key: feed-builder-${{ hashFiles('docker/builder.Dockerfile', 'versions.env') }}
+
+      - name: Load the builder image
+        if: steps.builder.outputs.cache-hit == 'true'
+        run: zstd -dc build/builder-image.tar.zst | docker load
+
+      - name: Build
+        id: build
+        if: steps.todo.outputs.todo != ''
+        env:
+          SCCACHE_CACHE_SIZE: 1536M
+          CCACHE_MAXSIZE: 1G
+        run: |
+          # shellcheck disable=SC2046
+          scripts/build-packages.sh aarch64 $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' feed/base-packages)
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.todo.outputs.todo != '' && steps.build.outcome == 'success' && steps.compile.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: ${{ steps.compile.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: failure() && steps.build.outcome == 'failure'
+        with:
+          path: |
+            build/hostdir/sccache
+            build/hostdir/ccache
+          key: ${{ steps.compile.outputs.cache-primary-key }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save the builder image
+        if: steps.builder.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2016
+          bash -c '. scripts/lib.sh && ensure_builder && docker save "$(builder_tag)"' scripts/lib.sh | zstd -T0 -3 -o build/builder-image.tar.zst
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.builder.outputs.cache-hit != 'true'
+        with:
+          path: build/builder-image.tar.zst
+          key: ${{ steps.builder.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.todo.outputs.todo != '' && steps.hostdir.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/hostdir
+            !build/hostdir/sccache
+            !build/hostdir/ccache
+          key: ${{ steps.hostdir.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.out.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/stamps
+            out/feed/aarch64
+          key: ${{ steps.out.outputs.cache-primary-key }}
+
+      # GitHub Pages refuses files over 100 MB.
+      - name: Collect the base packages
+        if: steps.todo.outputs.make == 'true'
+        run: |
+          mkdir -p out/base
+          sed -e 's/#.*//' -e '/^[[:space:]]*$/d' feed/base-packages | while read -r pkg; do
+            newest=$(ls out/feed/aarch64/"$pkg"-[0-9]*.aarch64.xbps | sort -V | tail -n 1)
+            cp "$newest" out/base/
+          done
+          ls -l out/base
+          big=$(find out/base -type f -size +95M)
+          if [ -n "$big" ]; then echo "::error::over the Pages file limit: $big"; exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.todo.outputs.make == 'true'
+        with:
+          name: base-aarch64
+          path: out/base
+          retention-days: 7
+          if-no-files-found: error
+
+  sign-repo:
+    needs: build
+    if: needs.build.outputs.make == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: base-aarch64
+          path: out/base
+
+      - name: Restore the builder image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/builder-image.tar.zst
+          key: feed-builder-${{ hashFiles('docker/builder.Dockerfile', 'versions.env') }}
+          fail-on-cache-miss: true
+
+      - run: zstd -dc build/builder-image.tar.zst | docker load
+
+      # The key exists only in this step, in a 0600 file, mounted read-only into xbps-rindex.
+      - name: Sign the nodo repository
+        env:
+          NODO_SNAPSHOT_XBPS_KEY: ${{ secrets.NODO_SNAPSHOT_XBPS_KEY }}
+        run: |
+          umask 077
+          key=$(mktemp "$RUNNER_TEMP/xbps-key.XXXXXX")
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$NODO_SNAPSHOT_XBPS_KEY" > "$key"
+          SNAPSHOT_ROOT=out/snap scripts/publish-snapshot.sh nodo "${{ needs.build.outputs.name }}" aarch64 "$key" out/base
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snapshot-nodo
+          path: out/snap/snapshots/${{ needs.build.outputs.name }}/nodo/aarch64
+          retention-days: 7
+          if-no-files-found: error
+
+  test:
+    needs: [build, sign-repo]
+    if: ${{ !cancelled() && needs.build.outputs.make == 'true' && needs.build.result == 'success' && needs.sign-repo.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      restart: ${{ steps.restart.outputs.restart }}
+    env:
+      NAME: ${{ needs.build.outputs.name }}
+      SNAPSHOT_ROOT: ${{ github.workspace }}/out/site/snapshots
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space and install the inspection tools
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo apt-get update -q
+          sudo apt-get install -yq device-tree-compiler e2fsprogs fdisk
+          df -h /
+
+      - name: Restore the builder image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/builder-image.tar.zst
+          key: feed-builder-${{ hashFiles('docker/builder.Dockerfile', 'versions.env') }}
+          fail-on-cache-miss: true
+
+      - run: zstd -dc build/builder-image.tar.zst | docker load
+
+      # The snapshots already published, to compare with: does this one replace the kernel?
+      - name: Copy the published snapshots
+        run: scripts/pages-site.sh pull out/site system
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: base-aarch64
+          path: out/base
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.sign-repo.result == 'success'
+        with:
+          name: snapshot-nodo
+          path: out/site/snapshots/snapshots/${{ needs.build.outputs.name }}/nodo/aarch64
+
+      # A branch run has no key: it signs with a throwaway one, so the same image build is tested.
+      - name: Sign with a throwaway key (branch runs only)
+        if: needs.sign-repo.result != 'success'
+        run: |
+          key=$(mktemp "$RUNNER_TEMP/throwaway.XXXXXX")
+          openssl genrsa -out "$key" 2048 2>/dev/null
+          scripts/publish-snapshot.sh nodo "$NAME" aarch64 "$key" out/base
+          rm -f "$key"
+
+      - name: Copy Void's index
+        run: scripts/publish-snapshot.sh index "$NAME" aarch64
+
+      - name: Build and inspect a T6N image from only the snapshot
+        run: scripts/publish-snapshot.sh test "$NAME" "$BOARD"
+
+      - name: Does it need a restart
+        id: restart
+        run: |
+          prev=$(ls "$SNAPSHOT_ROOT/snapshots" | grep -vxF "$NAME" | sort | tail -n 1)
+          restart=$(scripts/publish-snapshot.sh restart "$NAME" "${prev:-none}" aarch64)
+          echo "previous snapshot: ${prev:-none}; needs a restart: $restart"
+          echo "restart=$restart" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.sign-repo.result == 'success'
+        with:
+          name: snapshot
+          path: out/site/snapshots/snapshots/${{ needs.build.outputs.name }}
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [build, test]
+    if: ${{ !cancelled() && needs.test.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      NAME: ${{ needs.build.outputs.name }}
+      SNAPSHOT_ROOT: ${{ github.workspace }}/out/site/snapshots
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Copy the published snapshots
+        run: scripts/pages-site.sh pull out/site system
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: snapshot
+          path: out/site/snapshots/snapshots/${{ needs.build.outputs.name }}
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: system-sign-${{ hashFiles('Cargo.lock') }}
+          restore-keys: system-sign-
+
+      # sign refuses unless every index is the one the test run stamped. The key exists only in
+      # this step, in a 0600 file under the runner's temp directory.
+      - name: Sign and publish the snapshot
+        env:
+          NODO_SNAPSHOT_SIGNING_KEY: ${{ secrets.NODO_SNAPSHOT_SIGNING_KEY }}
+        run: |
+          umask 077
+          key=$(mktemp "$RUNNER_TEMP/snapshot-key.XXXXXX")
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$NODO_SNAPSHOT_SIGNING_KEY" > "$key"
+          scripts/publish-snapshot.sh sign "$NAME" "$CHANNEL" "${{ needs.build.outputs.serial }}" "$key" "${{ needs.test.outputs.restart }}"
+          rm -f "$key"
+          umask 022
+          scripts/publish-snapshot.sh publish "$NAME" "$CHANNEL"
+          # The device checks it exactly as published, against the pinned keys.
+          cargo run -q --release -p nodo-update --bin nodo-snapshot -- verify \
+            "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml" packages/nodo-tools/files/snapshot-pins.toml aarch64
+          cat "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml"
+
+      - name: Keep the newest snapshots
+        run: |
+          ls "$SNAPSHOT_ROOT/snapshots" | sort -r | tail -n +$((KEEP_SNAPSHOTS + 1)) | while read -r old; do
+            echo "removing $old"
+            rm -rf "${SNAPSHOT_ROOT:?}/snapshots/$old"
+          done
+
+      - name: Write the site
+        run: |
+          rm -f "$SNAPSHOT_ROOT"/snapshots/*/tested
+          scripts/pages-site.sh list out/site system snapshots
+          scripts/pages-site.sh pull out/site feed
+          find out/site -type f -printf '%s\t%P\n' | sort -n | tail -n 20
+          total=$(du -sb out/site | cut -f1)
+          echo "site: $total bytes of the 1 GB Pages limit"
+          [ "$total" -lt 900000000 ] || { echo "::error::the site is near the Pages size limit"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: out/site
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

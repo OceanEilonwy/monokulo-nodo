@@ -13,11 +13,6 @@ on:
 permissions:
   contents: read
 
-# One deployment at a time; a newer push waits rather than cancelling one half deployed.
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
     name: build ${{ matrix.arch }}
@@ -189,6 +184,11 @@ jobs:
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # One deployment at a time, shared with system.yml's: each copies the other's half of the site
+    # from the live site, so they must not overlap. A newer one waits rather than cancelling.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       contents: read
       pages: write
@@ -253,6 +253,9 @@ jobs:
         run: |
           # shellcheck disable=SC2086
           scripts/publish-feed.sh site ${{ steps.archs.outputs.archs }}
+          # This workflow's half of the site, and system.yml's snapshots copied from the live one.
+          scripts/pages-site.sh list out/site feed index.html CNAME signing-key.pub.pem feed
+          scripts/pages-site.sh pull out/site system
           find out/site -type f -printf '%s\t%P\n' | sort -n
           total=$(du -sb out/site | cut -f1)
           echo "site: $total bytes of the 1 GB Pages limit"

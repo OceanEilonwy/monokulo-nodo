@@ -1,0 +1,15 @@
+# Which signed system snapshots this device trusts (docs/UPDATES.md, section 1). Shipped read-only
+# with nodo-tools; a key rotation statement published on the channel replaces these keys on the
+# device, and a newer image raises min_serial but never lowers it.
+#
+# Two Ed25519 keys, either of which can sign (threshold 1): the first signs in CI, in the
+# github-pages environment (secret NODO_SNAPSHOT_SIGNING_KEY); the second is kept offline, for
+# replacing the first if it is ever lost or exposed.
+channel = "stable"
+keys = [
+	"61dbdcfa99ef2c759ecd53774125ae74860b0ebf57c340b21b7d2e519434af52",
+	"34aceb43252e0b484f42957525e053ed55e160322b2dbfefe4e941c9a386d021",
+]
+threshold = 1
+# Images are built from main, not from a snapshot, so they accept any published serial.
+min_serial = 0

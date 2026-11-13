@@ -228,6 +228,7 @@ mod tests {
                 name: "void".into(),
                 path: format!("snapshots/{serial}/aarch64"),
                 repodata_sha256: "00".repeat(32),
+                mirror: None,
             }],
             packages: vec![PackagePin { name: "nodo-base".into(), version: "0.1.0_1".into() }],
             withdraws: vec![],
@@ -390,5 +391,18 @@ mod tests {
         state.accept(&b, &s, "aarch64", None).unwrap();
         let text = toml::to_string(&state).unwrap();
         assert_eq!(toml::from_str::<TrustState>(&text).unwrap(), state);
+    }
+
+    /// The pins nodo-tools ships to every device parse, and trust two distinct keys, either of
+    /// which may sign, on the channel the publishing workflow signs for.
+    #[test]
+    fn the_shipped_pins_parse() {
+        let text = include_str!("../../../packages/nodo-tools/files/snapshot-pins.toml");
+        let pins: Pins = toml::from_str(text).expect("snapshot-pins.toml parses");
+        assert_eq!(pins.channel, "stable");
+        assert_eq!(pins.keys.len(), 2);
+        assert_eq!(pins.threshold, 1);
+        let workflow = include_str!("../../../.github/workflows/system.yml");
+        assert!(workflow.contains("CHANNEL: stable"), "the workflow signs for the pinned channel");
     }
 }

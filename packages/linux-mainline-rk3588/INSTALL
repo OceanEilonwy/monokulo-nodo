@@ -1,0 +1,52 @@
+# The T6N's bootloader reads the kernel and the device tree from their own partitions, "kernel"
+# and "resource" on the card, not from the root filesystem. So installing or updating this package
+# on a running board copies kernel.img and resource.img there; the modules already went to
+# /usr/lib/modules with the package. The image builder writes the partitions itself, and has no
+# such partitions while it installs packages, so there this does nothing.
+#
+# Before writing, the partitions' current contents are kept in /var/lib/nodo/boot/previous, for
+# putting the old kernel back by hand (docs/UPDATES.md, "Kernel updates on the T6N"). The new
+# kernel runs after the next restart. Paths are relative: xbps runs this from the root directory.
+case "${ACTION}" in
+post)
+	boot=./usr/share/monokulo/boot
+	[ -s "$boot/kernel.img" ] && [ -s "$boot/resource.img" ] || exit 0
+	# A partition named <name> on the disk that holds the root filesystem, or nothing.
+	partition() {
+		root=$(awk '$2 == "/" { print $1 }' /proc/mounts | tail -n 1)
+		disk=$(basename "$(readlink -f "/sys/class/block/${root##*/}/..")" 2>/dev/null) || return 0
+		for uevent in /sys/class/block/"$disk"/"$disk"*/uevent; do
+			[ -f "$uevent" ] || continue
+			grep -qx "PARTNAME=$1" "$uevent" || continue
+			dev=/dev/$(sed -n 's/^DEVNAME=//p' "$uevent")
+			[ -b "$dev" ] && echo "$dev"
+		done
+	}
+	kernel=$(partition kernel)
+	resource=$(partition resource)
+	[ -n "$kernel" ] && [ -n "$resource" ] || exit 0
+	fits() { [ "$(stat -c %s "$1")" -le "$(blockdev --getsize64 "$2")" ]; }
+	fits "$boot/kernel.img" "$kernel" && fits "$boot/resource.img" "$resource" || {
+		echo "linux-mainline-rk3588: the kernel or device tree does not fit its partition; not written" >&2
+		exit 1
+	}
+	same() { head -c "$(stat -c %s "$1")" "$2" | cmp -s - "$1"; }
+	if same "$boot/kernel.img" "$kernel" && same "$boot/resource.img" "$resource"; then
+		exit 0
+	fi
+	mkdir -p ./var/lib/nodo/boot/previous
+	chmod 700 ./var/lib/nodo/boot
+	cat "$kernel" > ./var/lib/nodo/boot/previous/kernel.part
+	cat "$resource" > ./var/lib/nodo/boot/previous/resource.part
+	write() {
+		dd if="$1" of="$2" bs=1M conv=fsync status=none && same "$1" "$2" || {
+			echo "linux-mainline-rk3588: writing $2 failed; /var/lib/nodo/boot/previous has its old contents" >&2
+			exit 1
+		}
+	}
+	write "$boot/resource.img" "$resource"
+	write "$boot/kernel.img" "$kernel"
+	sync
+	echo "linux-mainline-rk3588: the new kernel is in place and runs after the next restart"
+	;;
+esac

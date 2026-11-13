@@ -269,7 +269,8 @@ fn verify_repositories(
         verified.push(Verified {
             name: repo.name.clone(),
             offers,
-            url: source.repository_url(&repo.path),
+            // Packages come from the mirror when the manifest names one; the index above did not.
+            url: repo.mirror.clone().unwrap_or_else(|| source.repository_url(&repo.path)),
             key: XbpsKey {
                 fingerprint: colon_hex(&key.fingerprint.to_string()),
                 pem: key.pem().to_vec(),
