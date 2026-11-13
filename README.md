@@ -6,6 +6,7 @@ Rust codebase and signed xbps packages.
 **Status: early development. It has not yet been proven on real hardware. Do not rely on it for funds.**
 
 - [Architecture and decisions](docs/ARCHITECTURE.md)
+- [The app feed](docs/FEED.md), published at https://nodo.monokulo.com
 - [TUI design](docs/design/tui/)
 
 ## Building

@@ -110,6 +110,17 @@ codebase, and signed xbps packages from user-added feeds.
   comparing the fingerprint with the publisher catches. Downloads are bounded in size and time,
   follow at most five redirects to any host (GitHub release downloads use two), and never from HTTPS
   down to HTTP.
+- **Default feed:** Every image ships the project's app feed, `https://nodo.monokulo.com/feed`
+  (GitHub Pages), in `/usr/share/nodo/default-feeds.toml` from nodo-tools, with its key's
+  fingerprint. The helper adds it once, already pinned to that key, so there is no trust on first
+  use; the address is then remembered, so a feed the owner removed never comes back and a
+  fingerprint changed in a later image never replaces a pin (another key from the server is the
+  normal key change). CI signs it (`.github/workflows/feed.yml`, `scripts/publish-feed.sh`) with a
+  key kept as an Actions secret, and runs every package through the device's install review before
+  deploying. Unlike the system keys, which UPDATES.md keeps offline, anyone who can get a workflow
+  run on `main` can sign for this feed. That is accepted because feed packages are untrusted on the
+  device anyway (gate, permissions, no downgrades), while a snapshot is trusted with the whole
+  system. [FEED.md](FEED.md) covers publishing, the key and adding an app.
 - **Auto-update:** Off by default and chosen per package, within a scheduled window. It never installs
   an update that needs new permissions, has a changed feed key, fails install checks, is on hold or needs
   a system restart, and it waits while the device is locked or low on disk. A failed update rolls back
@@ -201,6 +212,7 @@ codebase, and signed xbps packages from user-added feeds.
 ## Layout
 
 - `packages/`: xbps recipes.
+- `feed/`: the app feed's package list and public key ([FEED.md](FEED.md)); `.github/workflows/feed.yml` publishes it.
 - `boards/`, `scripts/`, `tests/`: image builds and test tiers (`scripts/test.sh fast|vm|full`).
   Images take Void's packages from the live mirror (`VOID_MIRROR`), and xbps-src builds ours
   against the void-packages recipes at `VOID_PACKAGES_REV`. A Void dependency whose mirror version

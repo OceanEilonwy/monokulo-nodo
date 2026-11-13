@@ -3,7 +3,8 @@
 # root, and checks what the image adds on top of the boot path: the platform packages and the
 # services started at boot, nodo-localnet's dhcpcd block, restricted RPC on loopback, cuprated
 # under nodo-confine, nodo-report's abstract socket list, and the GPU's group, udev rule and
-# (on the mainline card only) Vulkan. The image is only read.
+# (on the mainline card only) Vulkan, and the default app feed with its pinned key. The image is
+# only read.
 #   tests/inspect-t6n-platform.sh out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
 # Needs sfdisk, debugfs and python3 (3.11 or later) on the machine running it.
 set -u
@@ -33,6 +34,15 @@ for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service nodo-bas
 done
 ! grep -q '^mk-pay ' "$tmp/pkgs"
 result "Monokulo (mk-pay) is not preinstalled; it comes through the helper from a feed" "$?"
+# The app feed is a default source with its key pinned from the start; the repository's file
+# is tied to feed/signing-key.pub.pem by nodo-helper's tests.
+repo=$(cd "$(dirname "$0")/.." && pwd)
+want=$(sed -n 's/^fingerprint *= *"\(.*\)"/\1/p' "$repo/packages/nodo-tools/files/default-feeds.toml")
+show 'cat /usr/share/nodo/default-feeds.toml' > "$tmp/default-feeds.toml"
+got=$(sed -n 's/^fingerprint *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml")
+echo "== default feed: $(sed -n 's/^address *= *"\(.*\)"/\1/p' "$tmp/default-feeds.toml") key $got"
+grep -qx 'address = "https://nodo.monokulo.com/feed"' "$tmp/default-feeds.toml" && [ -n "$got" ] && [ "$got" = "$want" ]
+result "the app feed nodo.monokulo.com/feed ships as a default, pinned to $want" "$?"
 
 # sshd refuses root when root's shell is missing; the first T6N cards had /bin/bash without bash.
 root_shell=$(show 'cat /etc/passwd' | awk -F: '$1 == "root" { print $7 }')
