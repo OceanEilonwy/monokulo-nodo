@@ -614,6 +614,11 @@ fn run_bounded(
     timeout: Duration,
     limit: u64,
 ) -> SysResult<Vec<u8>> {
+    // Its own process group, so a timeout also kills what it started: a shell that forks the
+    // command it runs (dash, Void's /bin/sh) would otherwise leave a grandchild holding stdout
+    // open, and the reads below would wait for that grandchild instead of the deadline.
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
     let mut child = cmd
         .spawn()
         .map_err(|e| SysError(format!("settings worker: {e}")))?;
@@ -648,6 +653,12 @@ fn run_bounded(
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 Ok(None) => {
+                    if let Some(group) = rustix::process::Pid::from_raw(child.id() as i32) {
+                        let _ = rustix::process::kill_process_group(
+                            group,
+                            rustix::process::Signal::KILL,
+                        );
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err(SysError("settings code took too long".to_owned()));
@@ -840,8 +851,10 @@ mod tests {
 
     #[test]
     fn bounded_runner_kills_a_child_that_hangs() {
+        // `; true` stops any shell from exec'ing sleep, so sleep is a grandchild holding stdout,
+        // as it is under dash.
         let mut cmd = command("sh");
-        cmd.args(["-c", "sleep 30"]).stdin(Stdio::piped());
+        cmd.args(["-c", "sleep 30; true"]).stdin(Stdio::piped());
         let started = std::time::Instant::now();
         let e = run_bounded(cmd, b"", Duration::from_millis(200), 1024).unwrap_err();
         assert!(e.0.contains("too long"), "{e}");

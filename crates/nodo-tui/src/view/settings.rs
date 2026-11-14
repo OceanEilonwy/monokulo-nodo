@@ -7,7 +7,7 @@ use ratatui::text::Span;
 
 use super::layout::{Item, Page};
 use super::pad;
-use super::v3::{heading, inset, quiet, setting, toggle, trail, Card, Screen3};
+use super::v3::{field_target, heading, inset, quiet, setting, toggle, trail, Card, Screen3};
 use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState, Tab};
 use crate::hit::{Click, Target};
 use crate::model::*;
@@ -155,6 +155,7 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
     let mut search = vec![t.d(pad("Search", 9))];
     search.extend(inset(t, state.query.text(), 30, None, !state.list_focused));
     card.row(t, search);
+    screen.targets.push(field_target("Search", 9, 30));
     card.blank(t);
     let path_width = visible.iter().map(|o| o.path.chars().count()).max().unwrap_or(0).clamp(16, 40) + 2;
     for (index, option) in visible.iter().enumerate() {
