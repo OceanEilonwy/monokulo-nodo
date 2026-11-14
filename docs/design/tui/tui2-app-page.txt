@@ -2,15 +2,13 @@
     Home     Apps 2     Web     System                                                                 monokulo-nodo
 
 
-    Apps  ›  mk-pay
+    Apps  ›  mk-pay                                                        Restart       Stop        Remove…  
 
 
        mk-pay   Payments for your shop
        ●  Running for 3 days   ·   open at https://pay.example.com
 
        Version 0.2 is ready   fixes receipts in some currencies                                       Update   
-
-                                                                 Restart          Stop           Remove…   
 
 
 
@@ -33,4 +31,6 @@
 
 
 
-    Click a section.   Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back
+
+
+    Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back

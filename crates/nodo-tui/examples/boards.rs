@@ -136,7 +136,9 @@ fn board(scene: Scene, width: u16, height: u16, theme: &Theme) -> (String, u32, 
     let grid_w = (f32::from(width) * FONT_PX * 0.6).ceil() as u32;
     let grid_h = (f32::from(height) * ROW_PX).ceil() as u32;
     let w = grid_w + 2 * PAD_PX;
-    let h = grid_h + 2 * PAD_PX + CAPTION_PX;
+    // Narrow boards wrap their caption onto more lines.
+    let caption = if width < 100 { CAPTION_PX + 48 } else { CAPTION_PX };
+    let h = grid_h + 2 * PAD_PX + caption;
     let size = format!("{width}×{height}");
     let html = format!(
         r#"<!doctype html>
@@ -227,7 +229,7 @@ fn main() {
     for scene in Scene::ALL {
         emit(scene, 120, 36, "");
     }
-    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps, Scene::T2SourceKeyChanged] {
+    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps, Scene::T2SourceKeyChanged, Scene::T2Sources, Scene::T2AppPage] {
         emit(scene, 80, 24, "-80x24");
     }
     // Board names and sizes, one per line, for laying them out on the canvas.

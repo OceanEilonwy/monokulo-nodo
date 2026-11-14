@@ -348,10 +348,10 @@ impl Scene {
             Scene::T2AppAbout => "Clickable: Install (primary), \"Show details\" (permissions in full), the breadcrumb.",
             Scene::T2Review => "Clickable: the passphrase box, Install (primary), Cancel, \"Show details\".",
             Scene::T2Installing => "Clickable: the breadcrumb and tabs; installing carries on if you leave.",
-            Scene::T2AppPage => "Clickable: Update (primary), Restart, Stop, Remove (destructive, asks first), each section row. Hover shown on the Settings row.",
+            Scene::T2AppPage => "Clickable: Restart, Stop, Remove (destructive, asks first) on the breadcrumb row; at 80 columns they fold into \"⋯ More\". Update (primary), each section row. Hover shown on the Settings row.",
             Scene::T2Unlock => "Clickable: the passphrase box and Unlock.",
-            Scene::T2Sources => "Clickable: Add a source (primary), each On/Off box, Remove on each row, Try again, \"Show details\" (keys). Hover shown on Alice's apps.",
-            Scene::T2SourcesDetails => "Clickable: the same, and \"Hide details\".",
+            Scene::T2Sources => "Clickable: Add a source (primary, top right of the list, so it stays in view however many sources there are), each card's On/Off box and Remove, Try again, \"Show keys\". Hover shown on Alice's apps' card.",
+            Scene::T2SourcesDetails => "Clickable: the same, and \"Hide keys\".",
             Scene::T2SourceAdd => "Clickable: the address box (focus to paste), Check (primary), Cancel.",
             Scene::T2SourceCheck => "Clickable: Add source (primary), Cancel.",
             Scene::T2SourceErrors => "Clickable: in the Add card, the address box and Check again.",
@@ -1220,18 +1220,26 @@ struct Card {
     rows: Vec<Item>,
     /// Where the card's own button row starts, so fitting a short terminal keeps it.
     buttons_at: Option<usize>,
+    /// The card's fill: the card surface, or the hover surface while the pointer is over it.
+    bg: Color,
 }
 
 impl Card {
     fn new(page_width: u16) -> Self {
         let width = usize::from(page_width).saturating_sub(2 * MARGIN.len());
-        Card { width, rows: Vec::new(), buttons_at: None }
+        Card { width, rows: Vec::new(), buttons_at: None, bg: S.card }
     }
 
     /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
     /// keeping its indent, so the fill always stays a rectangle.
     fn row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
-        self.row_on(t, spans, S.card);
+        self.row_on(t, spans, self.bg);
+    }
+
+    /// The whole card as it looks under the mouse pointer.
+    fn hovered(mut self) -> Self {
+        self.bg = S.hover;
+        self
     }
 
     /// A row as it looks under the mouse pointer: the whole row one step lighter. The keyboard's
@@ -1246,6 +1254,15 @@ impl Card {
         let [_, button, _] = button_rows(t, label, is_primary, ButtonStyle::Rounded, width, S.card);
         let room = self.width.saturating_sub(6);
         let used = width_of(&spans) + width_of(&button);
+        if used + 2 > room {
+            // Too narrow for both: the text keeps its row and the button gets its own, still
+            // right-aligned.
+            self.row(t, spans);
+            let mut own = vec![t.n(" ".repeat(room.saturating_sub(width_of(&button))))];
+            own.extend(button);
+            self.row(t, own);
+            return;
+        }
         spans.push(t.n(" ".repeat(room.saturating_sub(used))));
         spans.extend(button);
         self.row(t, spans);
@@ -1867,6 +1884,25 @@ fn top2(t: &Theme, tab: &str, badge: Option<(&str, usize)>, w: u16) -> Page {
     Page::new(Line::default(), Line::default()).plain(vec![row, Item::Blank])
 }
 
+/// The breadcrumb row with the page's own actions at its right end, on the content margin. When
+/// they don't fit beside the breadcrumb (80 columns), they fold into one "⋯ More" button that
+/// opens them as a list.
+fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, bool)], w: u16) -> Item {
+    let Item::Text(left) = trail(t, parts) else { unreachable!() };
+    let actions: Vec<(&str, bool)> = if w >= 100 { actions.to_vec() } else { vec![("⋯ More", false)] };
+    let width = actions.iter().map(|(l, _)| l.trim_start_matches(['!', '~']).chars().count()).max().unwrap_or(0) + 4;
+    let mut right = Vec::new();
+    for (index, (label, primary)) in actions.iter().enumerate() {
+        if index > 0 {
+            right.push(t.n("  "));
+        }
+        let [_, middle, _] = button_rows(t, label, *primary, ButtonStyle::Rounded, width, t.ground);
+        right.extend(middle);
+    }
+    right.push(t.n(MARGIN));
+    Item::Row(left, Line::from(right))
+}
+
 /// A page of several cards stacked with a blank row between them.
 fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<Item>, keys: &str) -> Page {
     let mut items = before;
@@ -2131,7 +2167,6 @@ fn t2_app_page(t: &Theme, w: u16) -> Page {
     status.blank(t);
     status.row_with_button(t, vec![t.a("Version 0.2 is ready"), t.d("   fixes receipts in some currencies")], "Update", true);
     status.blank(t);
-    status.buttons(t, &[("Restart", false), ("Stop", false), ("!Remove…", false)]);
     let mut sections = Card::new(w);
     sections.blank(t);
     for (index, (name, summary)) in [
@@ -2153,8 +2188,8 @@ fn t2_app_page(t: &Theme, w: u16) -> Page {
         }
     }
     sections.blank(t);
-    let before = vec![Item::Blank, trail(t, &["Apps", "mk-pay"]), Item::Blank];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Click a section.   Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back")
+    let before = vec![Item::Blank, trail_actions(t, &["Apps", "mk-pay"], &[("Restart", false), ("Stop", false), ("!Remove…", false)], w), Item::Blank];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back")
 }
 
 fn t2_app_remove(t: &Theme, w: u16, h: u16) -> Page {
@@ -2287,45 +2322,57 @@ fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
     }
 }
 
-fn t2_sources(t: &Theme, w: u16, h: u16, details: bool) -> Page {
-    let mut card = Card::new(w);
-    card.blank(t);
-    // name, address, apps, enabled, problem, key
-    type SourceRow<'a> = (&'a str, &'a str, &'a str, bool, Option<&'a str>, &'a str);
+fn t2_sources(t: &Theme, w: u16, _h: u16, details: bool) -> Page {
+    // name, address, apps, enabled, problem, key, built in
+    type SourceRow<'a> = (&'a str, &'a str, &'a str, bool, Option<&'a str>, &'a str, bool);
     let rows: [SourceRow; 3] = [
-        ("monokulo", "nodo.monokulo.com/feed", "5 apps · built in", true, None, MONOKULO_FP),
-        ("Alice's apps", "apps.alice.example/feed", "2 apps", true, Some("Couldn't reach it since yesterday"), ALICE_FP),
-        ("Test builds", "192.168.1.40:8080/feed", "1 app", false, None, "4a:11:0e:93:5c:28:b7:f0:62:d9:13:8e:a4:07:5b:c1"),
+        ("monokulo", "nodo.monokulo.com/feed", "5 apps", true, None, MONOKULO_FP, true),
+        ("Alice's apps", "apps.alice.example/feed", "2 apps", true, Some("Couldn't reach it since yesterday"), ALICE_FP, false),
+        ("Test builds", "192.168.1.40:8080/feed", "1 app", false, None, "4a:11:0e:93:5c:28:b7:f0:62:d9:13:8e:a4:07:5b:c1", false),
     ];
-    for (index, (name, address, count, enabled, problem, fp)) in rows.into_iter().enumerate() {
-        if index > 0 {
-            card.blank(t);
-        }
-        let mut first = vec![t.b(pad(name, 15)), t.n(pad(address, 28)), t.d(pad(count, 18))];
-        first.extend(toggle(t, enabled));
-        first.push(t.n("   "));
-        first.push(Span::styled("  Remove  ", Style::new().fg(t.fg).bg(S.raised)));
+    let mut cards = Vec::new();
+    for (index, (name, address, count, enabled, problem, fp, built_in)) in rows.into_iter().enumerate() {
+        let mut card = Card::new(w);
         if index == 1 {
-            card.hover_row(t, first);
-        } else {
-            card.row(t, first);
+            card = card.hovered();
         }
+        card.blank(t);
+        let mut head = vec![t.b(name.to_owned())];
+        if built_in {
+            head.push(t.d("   built in"));
+        }
+        let used = width_of(&head);
+        head.push(t.n(" ".repeat(48usize.saturating_sub(used))));
+        head.extend(toggle(t, enabled));
+        let room = card.width.saturating_sub(6);
+        let remove = Span::styled("  Remove  ", Style::new().fg(t.fg).bg(S.raised));
+        let used = width_of(&head) + 10;
+        head.push(t.n(" ".repeat(room.saturating_sub(used))));
+        head.push(remove);
+        card.row(t, head);
+        card.row(t, vec![t.d(format!("{address}   ·   {count}"))]);
         if let Some(problem) = problem {
-            card.row(t, vec![t.n(" ".repeat(15)), t.e(format!("✕ {problem}")), t.d("   · Try again")]);
+            card.blank(t);
+            card.row(t, vec![t.e(format!("✕  {problem}")), t.n("   "), t.a("Try again")]);
         }
         if details {
-            card.row(t, vec![t.n(" ".repeat(15)), t.d(format!("Key  {}", fingerprint_groups(fp)))]);
+            card.blank(t);
+            card.row(t, vec![t.d(format!("Key   {}", fingerprint_groups(fp)))]);
         }
+        card.blank(t);
+        cards.push(card);
     }
-    card.blank(t);
-    card.row(t, vec![t.a(if details { "Hide details ‹" } else { "Show details ›" })]);
-    card.blank(t);
-    card.buttons(t, &[("Add a source", true)]);
-    let mut before = sources_trail(t, &[]);
-    before.push(heading(t, "Sources"));
+    let heading_row = {
+        let [_, middle, _] = button_rows(t, "Add a source", true, ButtonStyle::Rounded, 18, t.ground);
+        let mut right = middle;
+        right.push(t.n(MARGIN));
+        Item::Row(Line::from(vec![margin(t), t.b("Sources")]), Line::from(right))
+    };
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "Sources"]), Item::Blank, heading_row];
     before.push(quiet(t, "Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed."));
     before.push(Item::Blank);
-    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↑↓ choose  Space on/off  a add  x remove  d details  Esc back", w, h)
+    let after = vec![Item::Blank, line(vec![margin(t), t.a(if details { "Hide keys ‹" } else { "Show keys ›" })])];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, after, "Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  Esc back")
 }
 
 fn t2_source_add(t: &Theme, w: u16, h: u16) -> Page {
