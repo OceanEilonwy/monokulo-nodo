@@ -14,6 +14,7 @@ for f in glob.glob("packages/*/files/*.toml"): tomllib.load(open(f,"rb"))'
 step "service layout" sh -c 'for d in packages/*/files/*/; do [ -f "$d/run" ] || continue; [ -x "$d/run" ] && [ -x "$d/log/run" ] || { echo "$d: run and log/run must be executable"; exit 1; }; grep -q "^exec </dev/null" "$d/run" || { echo "$d: run must detach stdin"; exit 1; }; ! grep -q bwrap "$d/run" || [ -x "$d/control/t" ] || { echo "$d: control/t is required for bwrap services"; exit 1; }; done'
 step "nodo-report with and without nodo-healthd" sh tests/nodo-report.sh
 step "nodo-tui opens only for interactive SSH logins" sh tests/nodo-tui-profile.sh
+step "a fixed Ethernet address from the board serial" sh tests/nodo-fixed-mac.sh
 step "dhcpcd block for nodo-local: install, upgrade, removal" sh tests/dhcpcd-nodo-local.sh
 # Both T6N cards carry the platform and start the helper, so they differ only in the kernel.
 step "T6N boards carry the platform" sh -c 'for b in nanopc-t6n nanopc-t6n-mainline; do

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Gives wired interfaces that have no burned-in address a fixed one, derived from the board's
+# serial number, so the router hands the Nodo the same IP after every boot and port forwards and
+# DHCP reservations keep working. The NanoPC-T6N's RTL8125B has no programmed address, so the
+# kernel picks a random one at each boot.
+#
+# Only addresses with the "locally administered" bit set are replaced (random ones always have
+# it); a card with a real, globally unique address keeps it. The new address is locally
+# administered and unicast, and the same for the same board and interface every time.
+#
+# NODO_ROOT points at another root for tests. Usage: nodo-fixed-mac [--print]
+set -eu
+root=${NODO_ROOT:-}
+print_only=
+[ "${1:-}" = --print ] && print_only=1
+
+serial=$(tr -d '\0' <"$root/proc/device-tree/serial-number" 2>/dev/null || true)
+[ -n "$serial" ] || { echo "nodo-fixed-mac: no serial number; keeping the kernel's addresses" >&2; exit 0; }
+
+for dev in "$root"/sys/class/net/*; do
+	[ -e "$dev/device" ] || continue          # skip lo, bridges and other virtual interfaces
+	[ -d "$dev/wireless" ] && continue        # Wi-Fi keeps its own (often randomised on purpose)
+	[ "$(cat "$dev/type" 2>/dev/null)" = 1 ] || continue   # Ethernet only
+	name=${dev##*/}
+	current=$(cat "$dev/address")
+	first=$(printf '%d' "0x${current%%:*}")
+	[ $((first & 2)) -ne 0 ] || continue      # a burned-in, globally unique address: keep it
+	hex=$(printf 'nodo-mac:%s:%s' "$serial" "$name" | sha256sum | cut -c1-12)
+	b0=$(( (0x$(printf %s "$hex" | cut -c1-2) & 0xfc) | 0x02 ))   # unicast, locally administered
+	mac=$(printf '%02x:%s:%s:%s:%s:%s' "$b0" \
+		"$(printf %s "$hex" | cut -c3-4)" "$(printf %s "$hex" | cut -c5-6)" "$(printf %s "$hex" | cut -c7-8)" \
+		"$(printf %s "$hex" | cut -c9-10)" "$(printf %s "$hex" | cut -c11-12)")
+	if [ -n "$print_only" ]; then
+		echo "$name $mac"
+	elif [ "$current" != "$mac" ]; then
+		ip link set dev "$name" address "$mac" && echo "nodo-fixed-mac: $name $mac"
+	fi
+done

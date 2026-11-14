@@ -44,6 +44,13 @@ codebase, and signed xbps packages from user-added feeds.
   helper reads `get_info` from it for Home, since the TUI may not. The firewall opens only P2P
   (18080) inbound. cuprated-service's default `Cuprated.toml` and the helper's template in
   nodo-tools must agree, which `crates/nodo-install/tests/cuprated_package.rs` checks.
+- **Ethernet address:** the T6N's RTL8125B has no programmed address, so the kernel picks a random
+  one every boot and the router hands out a new IP each time. `/etc/runit/core-services/03-nodo-fixed-mac.sh`
+  runs `/usr/libexec/nodo/nodo-fixed-mac` after udev and before dhcpcd: every wired card whose
+  address is locally administered (random) gets a fixed, locally administered unicast address
+  from SHA-256 of the board serial (`/proc/device-tree/serial-number`) and the interface name. A
+  card with a burned-in address, Wi-Fi and virtual interfaces are left alone. So DHCP reservations
+  and port forwards keep working (`tests/nodo-fixed-mac.sh`).
 - **Images:** nodo-base keeps its `dhcpcd-nodo-local.conf` at the end of `/etc/dhcpcd.conf`
   (dhcpcd owns that file and has no include): its INSTALL script puts the block there between
   marker lines on every install, upgrade and re-install, replacing an older copy, including the
