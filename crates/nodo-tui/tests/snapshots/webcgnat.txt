@@ -1,6 +1,7 @@
 
     Home     Apps 2     Web     System 1                                           monokulo-nodo
 
+
     Apps  ›  shop  ›  Hosting
 
     The internet can't reach your Nodo
@@ -14,7 +15,6 @@
        Show details ›
 
                                                   Check again             Use Tor instead
-
 
 
 

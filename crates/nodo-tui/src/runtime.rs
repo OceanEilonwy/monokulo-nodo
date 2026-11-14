@@ -34,6 +34,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         Response::Services(services) => services,
         other => return Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
     };
+    let (providers, providers_error) = split(backend.providers());
     Ok(Snapshot {
         services,
         overview: backend.overview(),
@@ -41,13 +42,22 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         feeds: backend.feeds(),
         updates: backend.updates(),
         web: backend.web(),
-        providers: backend.providers(),
+        providers,
+        providers_error,
         connected: backend.connected_providers(),
         log_sources: backend.log_sources(),
         auto_update: backend.auto_update(),
         unavailable: backend.unavailable(),
         system_note: backend.system_note(),
     })
+}
+
+/// A list, or no list and why, as the snapshot keeps them.
+fn split<T>(result: Result<Vec<T>, String>) -> (Vec<T>, Option<String>) {
+    match result {
+        Ok(list) => (list, None),
+        Err(e) => (Vec::new(), Some(e)),
+    }
 }
 
 fn refresh<T: Backend + ScreenData>(backend: &mut T) -> Event {
@@ -190,6 +200,7 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let result = backend.add_provider(&provider, domain.as_deref(), &api_key, &secret_key);
             vec![Event::ProviderAdded(result), refresh(backend)]
         }
+        Effect::LoadProviders => vec![Event::ProvidersLoaded(backend.providers())],
         Effect::RemoveProvider(id) => vec![Event::ProviderRemoved(backend.remove_provider(&id)), refresh(backend)],
         Effect::RefreshProvider(id) => vec![Event::ProviderRefreshed(backend.refresh_provider(&id)), refresh(backend)],
         Effect::SaveAcme { settings, dns01 } => {

@@ -697,6 +697,9 @@ pub struct Snapshot {
     pub updates: Vec<UpdateItem>,
     pub web: WebOverview,
     pub providers: Vec<Provider>,
+    /// Why the provider catalog could not be read, so the add flow says so instead of offering
+    /// an empty list.
+    pub providers_error: Option<String>,
     /// The provider accounts the owner connected.
     pub connected: Vec<ConnectedProvider>,
     pub log_sources: Vec<String>,
@@ -788,7 +791,8 @@ pub trait ScreenData {
     fn drive_action(&mut self, action: DriveAction) -> Result<Document, String>;
 
     fn web(&self) -> WebOverview;
-    fn providers(&self) -> Vec<Provider>;
+    /// The companies a provider account can be added at, or why they could not be read.
+    fn providers(&self) -> Result<Vec<Provider>, String>;
     /// The provider accounts connected, with their domains.
     fn connected_providers(&self) -> Vec<ConnectedProvider>;
     /// Connects one more provider account. The helper lists the domains the key controls, which also
