@@ -421,6 +421,13 @@ impl Manage {
         self.reload();
     }
 
+    /// Opens straight onto System › Screen (the logo tile's options, from arranging).
+    pub fn open_at_screen_settings(&mut self) {
+        self.open();
+        self.tab = 3;
+        self.stack = vec![Screen::System, Screen::ScreenSettings];
+    }
+
     pub fn close(&mut self) {
         self.open = false;
         self.keyboard = None;
@@ -621,8 +628,14 @@ impl Manage {
             self.prefs.timeout_index = n;
             self.idle_return = self.prefs.timeout();
             self.prefs.save();
+        } else if id == "screen-brightness" {
+            self.prefs.brightness_index = n;
+            self.prefs.save();
         } else if id == "screen-dim" {
             self.prefs.dim_index = n;
+            self.prefs.save();
+        } else if id == "logo-style" {
+            self.prefs.logo_style = if n == 1 { crate::screen_prefs::LogoStyle::Text } else { crate::screen_prefs::LogoStyle::Drawn };
             self.prefs.save();
         } else if let Some(key) = id.strip_prefix("choice:") {
             if let Some(form) = &self.edit.form {
@@ -675,6 +688,14 @@ impl Manage {
                 }
             }
             "problems" => self.problems_only = on,
+            "logo-shimmer" => {
+                self.prefs.logo_shimmer = on;
+                self.prefs.save();
+            }
+            "logo-name" => {
+                self.prefs.logo_name = on;
+                self.prefs.save();
+            }
             "wifi" => self.change("Switching Wi-Fi", move |d| {
                 d.call(Request::SetWifiEnabled { enabled: on })?;
                 Ok(String::new())
@@ -1575,9 +1596,18 @@ impl Manage {
                 title: "Screen".into(),
                 actions: Vec::new(),
                 cards: vec![card(
+                    "Nodo logo tile",
+                    "Add it from Arrange like any panel; at the full size it is a wallpaper.",
+                    vec![
+                        segments("logo-style", "Style", &["Drawn".to_owned(), "Text".to_owned()], usize::from(self.prefs.logo_style == crate::screen_prefs::LogoStyle::Text)),
+                        toggle("logo-shimmer:", "Shimmer", "The boot splash's glint, on the text style", self.prefs.logo_shimmer),
+                        toggle("logo-name:", "Show the name", "", self.prefs.logo_name),
+                    ],
+                ), card(
                     "",
                     "",
                     vec![
+                        segments("screen-brightness", "Brightness", &crate::screen_prefs::BRIGHTNESS_LABELS.map(String::from), self.prefs.brightness_index),
                         segments("screen-timeout", "Go back to the tiles after", &crate::screen_prefs::TIMEOUT_LABELS.map(String::from), self.prefs.timeout_index),
                         segments("screen-dim", "Dim when idle to", &crate::screen_prefs::DIM_LABELS.map(String::from), self.prefs.dim_index),
                         text(

@@ -37,6 +37,8 @@ pub enum Button {
     /// Opens management (the gear).
     Manage,
     Arrange,
+    /// While arranging with the logo tile selected.
+    LogoOptions,
     ShutDown,
     Hide,
     /// Takes Hide's place for a few seconds after a panel is hidden.
@@ -59,6 +61,8 @@ pub enum Effect {
     SaveLayout,
     PowerOff,
     OpenManage,
+    /// Opens System › Screen, where the logo tile's options are.
+    LogoOptions,
 }
 
 /// Keys, as the window reports them.
@@ -145,8 +149,43 @@ pub enum PickerRow {
     Panel(PanelKey),
 }
 
+/// How the built-in Nodo logo tile draws, from System › Screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogoLook {
+    /// The boot splash's block logo instead of the drawn one.
+    pub text: bool,
+    pub shimmer: bool,
+    pub name: bool,
+    /// The glint's position now, while it crosses the text logo.
+    pub frame: Option<i32>,
+}
+
+impl Default for LogoLook {
+    fn default() -> Self {
+        Self { text: false, shimmer: true, name: true, frame: None }
+    }
+}
+
+/// The built-in logo tile's key.
+pub fn logo_key() -> PanelKey {
+    PanelKey::new(nodo_panels::BUILTIN_PACKAGE, "logo")
+}
+
+/// The logo tile, offered on every screen: 2 x 2 up to the whole grid, so it can be a wallpaper.
+pub fn logo_offered() -> Offered {
+    Offered {
+        key: logo_key(),
+        title: "Nodo logo".into(),
+        refresh: std::time::Duration::from_secs(3600),
+        rule: SizeRule { min: [2, 2], max: [8, 4], initial: [4, 4] },
+        source: nodo_manifest::PanelSource::Device {},
+        script: Ok(String::new()),
+    }
+}
+
 pub struct App {
     pub offered: Vec<Offered>,
+    pub logo: LogoLook,
     pub rules: BTreeMap<PanelKey, SizeRule>,
     pub layout: Layout,
     pub states: BTreeMap<PanelKey, PanelState>,
@@ -185,6 +224,7 @@ impl App {
             drag: None,
             add_at: None,
             picker_row: 0,
+            logo: LogoLook::default(),
             picker_keys: false,
             shutdown: Shutdown::default(),
             press: None,
@@ -222,6 +262,7 @@ impl App {
     pub fn button_label(&self, button: Button, now: Instant) -> String {
         match button {
             Button::Manage => "Manage".into(),
+            Button::LogoOptions => "Logo options".into(),
             Button::Arrange => "Arrange".into(),
             Button::ShutDown => "⏻ Shut down".into(),
             Button::Hide => "Hide".into(),
@@ -247,6 +288,9 @@ impl App {
             Mode::View => vec![(Button::Manage, 224.0), (Button::Arrange, 224.0), (Button::ShutDown, 260.0)],
             Mode::Edit => {
                 let mut list = Vec::new();
+                if self.selected.and_then(|i| self.layout.placements.get(i)).is_some_and(|p| p.key == logo_key()) {
+                    list.push((Button::LogoOptions, 300.0));
+                }
                 if self.undo.is_some() {
                     list.push((Button::Undo, geometry::button_width(&self.button_label(Button::Undo, now), 440.0)));
                 } else {
@@ -393,6 +437,7 @@ impl App {
     pub fn act(&mut self, button: Button, now: Instant) -> Effect {
         match button {
             Button::Manage => return Effect::OpenManage,
+            Button::LogoOptions => return Effect::LogoOptions,
             Button::Arrange => self.start_editing(),
             Button::ShutDown => {
                 self.mode = Mode::Confirm;

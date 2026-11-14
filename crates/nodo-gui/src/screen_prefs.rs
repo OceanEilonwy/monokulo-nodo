@@ -10,6 +10,8 @@ pub const TIMEOUT_LABELS: [&str; 4] = ["1 min", "2 min", "5 min", "Never"];
 const TIMEOUTS: [u64; 4] = [60, 120, 300, 0];
 pub const DIM_LABELS: [&str; 4] = ["Off", "10%", "20%", "40%"];
 const DIMS: [u8; 4] = [0, 10, 20, 40];
+pub const BRIGHTNESS_LABELS: [&str; 4] = ["40%", "60%", "80%", "100%"];
+const BRIGHTNESS: [u8; 4] = [40, 60, 80, 100];
 
 /// How the Nodo logo tile draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -26,6 +28,7 @@ pub enum LogoStyle {
 pub struct Prefs {
     pub timeout_index: usize,
     pub dim_index: usize,
+    pub brightness_index: usize,
     pub logo_style: LogoStyle,
     pub logo_shimmer: bool,
     pub logo_name: bool,
@@ -35,7 +38,7 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { timeout_index: 1, dim_index: 2, logo_style: LogoStyle::Drawn, logo_shimmer: true, logo_name: true, path: None }
+        Self { timeout_index: 1, dim_index: 2, brightness_index: 3, logo_style: LogoStyle::Drawn, logo_shimmer: true, logo_name: true, path: None }
     }
 }
 
@@ -44,6 +47,7 @@ impl Prefs {
         let mut prefs: Prefs = std::fs::read_to_string(&path).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
         prefs.timeout_index = prefs.timeout_index.min(TIMEOUTS.len() - 1);
         prefs.dim_index = prefs.dim_index.min(DIMS.len() - 1);
+        prefs.brightness_index = prefs.brightness_index.min(BRIGHTNESS.len() - 1);
         prefs.path = Some(path);
         prefs
     }
@@ -64,6 +68,11 @@ impl Prefs {
             0 => Duration::from_secs(86_400),
             s => Duration::from_secs(s),
         }
+    }
+
+    /// The screen's brightness in use, in percent.
+    pub fn brightness(&self) -> u8 {
+        BRIGHTNESS[self.brightness_index]
     }
 
     /// The idle brightness in percent; 0 keeps the screen bright.

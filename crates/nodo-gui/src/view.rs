@@ -69,6 +69,10 @@ pub struct Tile {
     pub arranging: bool,
     pub selected: bool,
     pub size_text: String,
+    /// 0 a panel, 1 the drawn logo, 2 the text logo.
+    pub logo: i32,
+    pub logo_frame: Option<i32>,
+    pub logo_name: bool,
 }
 
 impl Tile {
@@ -97,6 +101,9 @@ impl Tile {
             arranging: false,
             selected: false,
             size_text: String::new(),
+            logo: 0,
+            logo_frame: None,
+            logo_name: false,
         }
     }
 
@@ -133,6 +140,9 @@ impl Tile {
             arranging: self.arranging,
             selected: self.selected,
             size_text: self.size_text.clone().into(),
+            logo: self.logo,
+            logo_image: if self.logo == 2 { crate::screenshot::text_logo(self.logo_frame) } else { slint::Image::default() },
+            logo_name: self.logo_name,
         }
     }
 }
@@ -172,6 +182,15 @@ fn viewing_tile(app: &App, index: usize, now: Instant) -> Tile {
     let status = output.and_then(|o| o.status);
 
     let mut t = Tile::empty(rect, app.title_of(&p.key).to_uppercase());
+    if p.key == crate::state::logo_key() {
+        t.title = String::new();
+        t.outline_width = 0.0;
+        t.logo = if app.logo.text { 2 } else { 1 };
+        t.logo_frame = if app.logo.text && app.logo.shimmer { app.logo.frame } else { None };
+        t.logo_name = app.logo.name;
+        let _ = now;
+        return t;
+    }
     if p.key.package != nodo_panels::BUILTIN_PACKAGE {
         t.package = p.key.package.clone();
     }
@@ -404,6 +423,7 @@ pub fn buttons(app: &App, now: Instant) -> Vec<ButtonLine> {
         .map(|(b, rect)| {
             let (label, count, sub, kind, icon) = match b {
                 Button::Manage => ("Manage".to_string(), String::new(), "", 0, 2),
+                Button::LogoOptions => ("Logo options".to_string(), String::new(), "", 0, 2),
                 Button::Arrange => ("Arrange".to_string(), String::new(), "", 0, 3),
                 Button::ShutDown => (app.button_label(b, now), String::new(), "", 1, 0),
                 Button::Hide | Button::Cancel => (app.button_label(b, now), String::new(), "", 2, 0),

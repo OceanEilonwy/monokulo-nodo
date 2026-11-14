@@ -62,6 +62,10 @@ export struct TileView {
     arranging: bool,
     selected: bool,
     size-text: string,
+    // The built-in Nodo logo tile: 0 a panel, 1 drawn, 2 the boot splash's block logo.
+    logo: int,
+    logo-image: image,
+    logo-name: bool,
 }
 
 export struct CellView {
@@ -341,6 +345,34 @@ component Tile inherits Rectangle {
     border-color: t.outline;
     background: Palette.ground;
     clip: true;
+
+    if t.logo > 0 && !t.arranging: VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        property <length> side: min(t.w, t.h - (t.logo-name ? 80px : 0px)) * 0.82;
+        HorizontalLayout {
+            alignment: center;
+            if t.logo == 1: Image {
+                source: @image-url("logo.svg");
+                width: side;
+                height: side;
+            }
+            if t.logo == 2: Image {
+                source: t.logo-image;
+                image-rendering: pixelated;
+                width: side;
+                height: side;
+            }
+        }
+        if t.logo-name: Text {
+            text: t.logo == 2 ? "n o d o" : "nodo";
+            horizontal-alignment: center;
+            font-size: min(56px, side * 0.14);
+            font-weight: 700;
+            letter-spacing: t.logo == 2 ? 0px : 6px;
+            color: Palette.accent;
+        }
+    }
 
     // Title row: the name in capitals and a status dot.
     Text {

@@ -154,6 +154,7 @@ pub fn sample(now: Instant) -> App {
         panel("nodo", "updates", "Updates", [2, 1], [4, 1], [2, 1], 60),
         panel("nodo", "tor", "Tor", [1, 1], [2, 1], [1, 1], 30),
         panel("mk-pay", "refunds", "Refunds", [2, 1], [4, 2], [2, 1], 60),
+        crate::state::logo_offered(),
     ];
     let place = |package: &str, id: &str, x, y, w, h| Placement { key: PanelKey::new(package, id), x, y, w, h };
     let layout = Layout {
@@ -217,8 +218,34 @@ fn centre(r: geometry::Rect) -> (f32, f32) {
 pub fn scene(name: &str, now: Instant) -> Result<App, String> {
     let mut app = sample(now);
     let device = 4;
+    let logo = crate::state::logo_key();
+    let at = |key: &PanelKey, x, y, w, h| Placement { key: key.clone(), x, y, w, h };
     match name {
         "view" => {}
+        "logo" | "logo-text" | "logo-options" => {
+            app.layout.placements = vec![
+                at(&logo, 0, 0, 4, 4),
+                at(&PanelKey::new("cuprated", "sync"), 4, 0, 4, 2),
+                at(&PanelKey::new("mk-pay", "today"), 4, 2, 2, 2),
+                at(&PanelKey::new("mk-bell", "bell"), 6, 2, 2, 1),
+                at(&PanelKey::new("mk-lws", "scanner"), 6, 3, 2, 1),
+            ];
+            if name == "logo-text" {
+                app.logo.text = true;
+                app.logo.frame = Some(56);
+            }
+            if name == "logo-options" {
+                app.act(Button::Arrange, now);
+                let (x, y) = centre(geometry::cells(0, 0, 1, 1));
+                app.touch_down(x, y, now);
+                app.touch_up();
+            }
+        }
+        "logo-full" => {
+            app.layout.placements = vec![at(&logo, 0, 0, 8, 4)];
+            app.logo.text = true;
+            app.logo.frame = Some(30);
+        }
         "arrange" | "drag" | "hidden" | "add" => {
             app.act(Button::Arrange, now);
             let p = &app.layout.placements[device];

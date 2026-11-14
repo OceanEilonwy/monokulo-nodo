@@ -250,7 +250,15 @@ struct Runtime {
 impl Runtime {
     fn set_backlight(&self, level: backlight::Level) {
         if let Some(device) = &self.backlight {
-            if let Err(e) = device.set(level, self.dimmer.percent) {
+            // System › Screen: the brightness in use, and how far idle dims it (Off never dims).
+            let bright = self.manage.prefs.brightness();
+            let dim = self.manage.prefs.dim_percent();
+            let (level, percent) = match level {
+                backlight::Level::Dim if dim > 0 => (backlight::Level::Dim, dim.min(bright)),
+                _ if bright >= 100 => (backlight::Level::Full, 100),
+                _ => (backlight::Level::Dim, bright),
+            };
+            if let Err(e) = device.set(level, percent) {
                 log(&format!("backlight: {e}"));
             }
         }
@@ -271,6 +279,7 @@ impl Runtime {
                 power_off(self.power_tx.clone());
             }
             Effect::OpenManage => self.manage.open(),
+            Effect::LogoOptions => self.manage.open_at_screen_settings(),
         }
     }
 
@@ -321,7 +330,7 @@ impl Runtime {
         for placement in &self.app.layout.placements {
             let key = &placement.key;
             let (Some(panel), Some(state)) = (self.app.offered(key), self.app.states.get(key)) else { continue };
-            if state.next_due <= now && !self.in_flight.contains(key) {
+            if state.next_due <= now && !self.in_flight.contains(key) && *key != state::logo_key() {
                 self.in_flight.insert(key.clone());
                 let _ = self.jobs.send(Job { panel: panel.clone(), history: state.history() });
             }
@@ -356,6 +365,13 @@ impl Runtime {
         }
         self.app.tick(now);
         self.manage.poll(self.worker.as_ref());
+        let prefs = &self.manage.prefs;
+        self.app.logo = state::LogoLook {
+            text: prefs.logo_style == screen_prefs::LogoStyle::Text,
+            shimmer: prefs.logo_shimmer,
+            name: prefs.logo_name,
+            frame: glint(),
+        };
         if let Some(level) = self.dimmer.tick(now, self.app.mode == Mode::View && !self.manage.open) {
             self.set_backlight(level);
         }
@@ -379,7 +395,8 @@ fn main() -> ExitCode {
             }
         };
     }
-    let (offered, problems) = nodo_panels::discover(&Roots::default());
+    let (mut offered, problems) = nodo_panels::discover(&Roots::default());
+    offered.push(state::logo_offered());
     for problem in &problems {
         log(problem);
     }
@@ -536,7 +553,13 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
         let runtime = Rc::clone(&runtime);
         let show = Rc::clone(&show);
         ui.on_m_segment(move |id, n| {
-            runtime.borrow_mut().manage.segment(&id, n.max(0) as usize);
+            {
+                let mut r = runtime.borrow_mut();
+                r.manage.segment(&id, n.max(0) as usize);
+                if id == "screen-brightness" {
+                    r.set_backlight(backlight::Level::Full);
+                }
+            }
             show();
         });
     }
@@ -624,4 +647,10 @@ pub(crate) fn show_manage(ui: &MainWindow, manage: &manage::Manage, shown: &mut 
         ui.set_m_scroll(0.0);
     }
     ui.set_manage_open(true);
+}
+
+/// Where the boot splash's glint is now: it crosses the text logo in a second, every four.
+fn glint() -> Option<i32> {
+    let ms = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis()) % 4000;
+    (ms < 1000).then(|| -20 + (ms as i32) * 152 / 1000)
 }
