@@ -347,7 +347,9 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 if provider.domains.is_empty() {
                     row.push(t.d("no domains".to_owned()));
                 }
-                let remove = super::v3::button(t, "Remove", false, 10, t.card);
+                let remove_click = Click::Pick { index, then: Some(KeyCode::Char('x')) };
+                let mut remove_target = Vec::new();
+                let remove = super::v3::button_target(t, "Remove", false, 10, t.card, &remove_click, &mut remove_target);
                 let room = card.width.saturating_sub(4);
                 let used = super::v3::width_of(&row) + super::v3::width_of(&remove);
                 if used + 2 <= room {
@@ -362,7 +364,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                     card.row(t, alone);
                 }
                 ct.push(Target::row(label_text.clone(), Click::Pick { index, then: None }));
-                ct.push(Target::button("Remove", Click::Pick { index, then: Some(KeyCode::Char('x')) }));
+                ct.extend(remove_target);
                 let held: Vec<String> = provider
                     .domains
                     .iter()

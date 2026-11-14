@@ -158,8 +158,7 @@ impl Card {
                 if index > 0 {
                     spans.push(t.n("   "));
                 }
-                spans.extend(button(t, label, *primary, *width, self.surface));
-                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+                spans.extend(button_target(t, label, *primary, *width, self.surface, click, targets));
             }
             let used = width_of(&spans);
             let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
@@ -170,12 +169,11 @@ impl Card {
                 if index > 0 {
                     self.blank(t);
                 }
-                let spans = button(t, label, *primary, equal.min(room.saturating_sub(2)), self.surface);
+                let spans = button_target(t, label, *primary, equal.min(room.saturating_sub(2)), self.surface, click, targets);
                 let used = width_of(&spans);
                 let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
                 out.extend(spans);
                 self.row(t, out);
-                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
             }
         }
         self.blank(t);
@@ -186,9 +184,8 @@ impl Card {
     pub fn inline_button(&mut self, t: &Theme, label: &str, indent: usize, click: Click, targets: &mut Vec<Target>) {
         let width = label.chars().count() + 6;
         let mut out = vec![t.n(" ".repeat(indent))];
-        out.extend(button(t, label, true, width, self.surface));
+        out.extend(button_target(t, label, true, width, self.surface, &click, targets));
         self.row(t, out);
-        targets.push(Target::button(label, click));
         if self.buttons_at.is_none() {
             self.buttons_at = Some(self.rows.len() - 1);
         }
@@ -198,10 +195,9 @@ impl Card {
     /// (80 columns), the text keeps its row and the button gets its own, still right-aligned.
     pub fn row_with_button(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, label: &str, primary: bool, click: Click, targets: &mut Vec<Target>) {
         let width = label.trim_start_matches('!').chars().count() + 6;
-        let button = button(t, label, primary, width, self.surface);
+        let button = button_target(t, label, primary, width, self.surface, &click, targets);
         let room = self.width.saturating_sub(6);
         let used = width_of(&spans) + width_of(&button);
-        targets.push(Target::button(label.trim_start_matches('!'), click));
         if used + 2 > room {
             self.row(t, spans);
             let mut own = vec![t.n(" ".repeat(room.saturating_sub(width_of(&button))))];
@@ -329,6 +325,36 @@ pub fn button(t: &Theme, label: &str, primary: bool, width: usize, under: Color)
         vec![Span::styled(CAP_LEFT, cap), Span::styled(centred(label, width), fill), Span::styled(CAP_RIGHT, cap)]
     } else {
         vec![Span::styled(centred(label, width + 2), fill)]
+    }
+}
+
+/// A button as `button` draws it, with its click target over exactly the drawn cells. While the
+/// work this button started is still running (`App::pending`), it shows the hourglass in front of
+/// its label, dimmed, and has no target, so it cannot be pressed twice.
+pub fn button_target(t: &Theme, label: &str, primary: bool, width: usize, under: Color, click: &Click, targets: &mut Vec<Target>) -> Vec<Span<'static>> {
+    if let Some((_, ticks)) = super::pending().filter(|(pending, _)| pending == click) {
+        return pending_button(t, label, width, under, ticks);
+    }
+    targets.push(Target::button(label.trim_start_matches('!'), click.clone()).drawn(width));
+    button(t, label, primary, width, under)
+}
+
+/// A pressed button whose work is running: the hourglass, turning every half second, in place of
+/// the focus mark before its label, on a dim raised fill. As wide as the button it replaces.
+pub fn pending_button(t: &Theme, label: &str, width: usize, under: Color, ticks: u64) -> Vec<Span<'static>> {
+    let bare = label.trim_start_matches('!');
+    let bare = bare.strip_prefix("▸ ").unwrap_or(bare);
+    let glyph = if (ticks / (crate::app::TICKS_PER_SECOND / 2).max(1)) % 2 == 0 { "⧗" } else { "⧖" };
+    let text = format!("{glyph} {bare}");
+    if t.is_mono() {
+        return vec![Span::styled(format!("[{}]", centred(&text, width)), Style::new().add_modifier(Modifier::DIM))];
+    }
+    let fill = Style::new().fg(t.dim).bg(t.raised);
+    if t.rounded {
+        let cap = Style::new().fg(t.raised).bg(under);
+        vec![Span::styled(CAP_LEFT, cap), Span::styled(centred(&text, width), fill), Span::styled(CAP_RIGHT, cap)]
+    } else {
+        vec![Span::styled(centred(&text, width + 2), fill)]
     }
 }
 
@@ -478,8 +504,7 @@ pub fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, Click)], more:
         if index > 0 {
             right.push(t.n("  "));
         }
-        right.extend(button(t, label, false, width, t.ground));
-        targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+        right.extend(button_target(t, label, false, width, t.ground, click, targets));
     }
     right.push(t.n(MARGIN));
     Item::Row(left, Line::from(right))
@@ -488,9 +513,8 @@ pub fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, Click)], more:
 /// A heading with one button at the right end of its row, on the content margin.
 pub fn heading_button(t: &Theme, text: &str, label: &str, click: Click, targets: &mut Vec<Target>) -> Item {
     let width = label.chars().count() + 6;
-    let mut right = button(t, label, true, width, t.ground);
+    let mut right = button_target(t, label, true, width, t.ground, &click, targets);
     right.push(t.n(MARGIN));
-    targets.push(Target::button(label, click));
     Item::Row(Line::from(vec![margin(t), t.b(text.to_owned())]), Line::from(right))
 }
 
