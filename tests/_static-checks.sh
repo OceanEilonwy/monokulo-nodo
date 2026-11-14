@@ -15,6 +15,7 @@ step "service layout" sh -c 'for d in packages/*/files/*/; do [ -f "$d/run" ] ||
 step "nodo-report with and without nodo-healthd" sh tests/nodo-report.sh
 step "nodo-tui opens only for interactive SSH logins" sh tests/nodo-tui-profile.sh
 step "a fixed Ethernet address from the board serial" sh tests/nodo-fixed-mac.sh
+step "the snapshot test retries only when Void published meanwhile" sh tests/snapshot-retry.sh
 step "dhcpcd block for nodo-local: install, upgrade, removal" sh tests/dhcpcd-nodo-local.sh
 # Both T6N cards carry the platform and start the helper, so they differ only in the kernel.
 step "T6N boards carry the platform" sh -c 'for b in nanopc-t6n nanopc-t6n-mainline; do

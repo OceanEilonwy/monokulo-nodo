@@ -8,6 +8,8 @@
 #   scripts/publish-snapshot.sh nodo   <name> <arch> <xbps-key.pem> [package-dir]
 #                                                                 add this project's packages, signed for xbps
 #   scripts/publish-snapshot.sh test   <name> <board>            build an image from only the snapshot
+#   scripts/publish-snapshot.sh index-and-test <name> <board> <arch>
+#                                                                 index, then test; again if Void published meanwhile
 #   scripts/publish-snapshot.sh sign   <name> <channel> <serial> <secret-key> [yes|no] [--untested] [--withdraws <name>]...
 #   scripts/publish-snapshot.sh publish <name> <channel>         make it the channel's newest snapshot
 #   scripts/publish-snapshot.sh restart <name> <previous|none> [arch]
@@ -162,10 +164,26 @@ test)
 		# Made by index: the image installs Void's packages from the mirror, which must still serve
 		# the very index the snapshot copied, before the build and after it.
 		voidrepo=$VOID_MIRROR
+		# 0: the mirror serves the copied index; 1: it serves another one (Void published since);
+		# anything else: it could not be read. The index is downloaded whole before comparing: a
+		# pipe into `cmp -s` stops reading at the first difference, which made curl report
+		# "(23) Failure writing output" on top of the real message.
 		same_index() {
-			curl -fsS --retry 3 "$(cat "$mirrorfile")/$BOARD_ARCH-repodata" | cmp -s - "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata"
+			now=$(mktemp)
+			if ! curl -fsS --retry 3 -o "$now" "$(cat "$mirrorfile")/$BOARD_ARCH-repodata"; then
+				rm -f "$now"
+				return 2
+			fi
+			if cmp -s "$now" "$(repodir "$BOARD_ARCH")/$BOARD_ARCH-repodata"; then rc=0; else rc=1; fi
+			rm -f "$now"
+			return "$rc"
 		}
-		same_index || { echo "Void's mirror moved on since the index was copied; make the snapshot again" >&2; exit 1; }
+		# Exit 75 (EX_TEMPFAIL) only for "Void published in the meantime", which index-and-test
+		# retries with a fresh copy of the index; a mirror that can't be read fails as usual.
+		rc=0
+		same_index || rc=$?
+		[ "$rc" = 1 ] && { echo "Void's mirror moved on since the index was copied; make the snapshot again" >&2; exit 75; }
+		[ "$rc" = 0 ] || { echo "could not read Void's index from the mirror" >&2; exit 1; }
 	fi
 	# The same build as scripts/build-image.sh, with the snapshot as the only repositories.
 	mkdir -p "$root/out/images/$board"
@@ -174,7 +192,10 @@ test)
 		-e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 		-v "$root:/src" "$@" "$BUILDER" /src/scripts/_build-image-inner.sh
 	if [ -s "$mirrorfile" ]; then
-		same_index || { echo "Void's mirror moved on during the test build; make the snapshot again" >&2; exit 1; }
+		rc=0
+		same_index || rc=$?
+		[ "$rc" = 1 ] && { echo "Void's mirror moved on during the test build; make the snapshot again" >&2; exit 75; }
+		[ "$rc" = 0 ] || { echo "could not read Void's index from the mirror" >&2; exit 1; }
 	fi
 	img=$root/out/images/$board/monokulo-$board-sd.img
 	case $board in
@@ -266,6 +287,27 @@ publish)
 		mv "$out/channels/$channel/.keys.toml.new" "$out/channels/$channel/keys.toml"
 	fi
 	echo "channel $channel now offers $name"
+	;;
+index-and-test)
+	# index then test, again with a fresh copy of Void's index when Void published in the
+	# meantime (test's exit 75), up to $SNAPSHOT_TEST_ATTEMPTS times (default 3). Every other
+	# failure stops at once. The index that passed is the one test stamped, so sign accepts
+	# exactly what was tested and nothing older or newer.
+	board=${1:?board to test, for example nanopc-t6n-mainline}
+	arch=${2:?architecture of the Void index}
+	attempts=${SNAPSHOT_TEST_ATTEMPTS:-3}
+	# Tests replace the two steps with a stand-in (tests/snapshot-retry.sh).
+	self=${PUBLISH_SNAPSHOT_SELF:-$0}
+	n=1
+	while :; do
+		"$self" index "$name" "$arch"
+		rc=0
+		"$self" test "$name" "$board" || rc=$?
+		[ "$rc" = 0 ] && exit 0
+		if [ "$rc" != 75 ] || [ "$n" -ge "$attempts" ]; then exit "$rc"; fi
+		echo "attempt $n of $attempts: Void published while testing; copying its index again and retrying" >&2
+		n=$((n + 1))
+	done
 	;;
 restart)
 	# Prints yes when moving from <previous> (a snapshot name under the same root, or none) to

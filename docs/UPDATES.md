@@ -28,6 +28,11 @@ channels/<channel>/keys.toml{,.sig}       an optional key rotation statement
    as a second repository, indexed and signed with `xbps-rindex` in the builder container.
 3. `test <name> <board>` builds an image using only the snapshot's two repositories, and for
    `qemu-virt` boots it with the existing boot test. A stamp records the hash of every index tested.
+   For a snapshot made by `index`, the mirror must serve the copied index before and after the
+   build; if Void published in between, `test` exits 75. `index-and-test <name> <board> <arch>`,
+   which CI uses, then copies the index again and retries, up to `SNAPSHOT_TEST_ATTEMPTS` (3)
+   times; any other failure stops at once (`tests/snapshot-retry.sh`). The index that passed is
+   the one stamped, so `sign` accepts exactly what was tested.
 4. `sign <name> <channel> <serial> <key> [yes|no]` refuses unless each index still matches its
    test stamp, then writes `manifest.toml` and signs it with `nodo-snapshot` (Ed25519). Every
    package of the `nodo` repository is pinned by version. `--untested` skips the stamp, for
