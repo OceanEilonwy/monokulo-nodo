@@ -362,6 +362,134 @@ fn every_screen_shows_the_four_tabs() {
     }
 }
 
+fn draw_with(app: &nodo_tui::app::App, theme: &Theme, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            nodo_tui::view::render(frame, app, theme);
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// A button's click target is the button as drawn, one row and every cell of its fill (and caps),
+/// never a box of padding around its label.
+#[test]
+fn every_button_target_is_exactly_the_drawn_button() {
+    let plain = Theme::truecolor();
+    for theme in [plain, plain.with_rounded(true)] {
+        let fills = [theme.accent, theme.raised, theme.danger];
+        let mut seen = 0;
+        let mut add_provider = false;
+        // Every screen, and Hosting with no provider yet, where the reported "Add a provider" is.
+        let cases = ScreenId::ALL.into_iter().map(|id| (id, false)).chain([(ScreenId::WebExposure, true)]);
+        for (id, no_provider) in cases {
+            for (width, height) in [(100, 32), (80, 24)] {
+                let (mut app, _) = fixture(id);
+                if let (true, nodo_tui::app::Screen::WebExposure(state)) = (no_provider, &mut app.screen) {
+                    state.has_provider = false;
+                    state.draft.public = true;
+                }
+                app.size = (width, height);
+                let buffer = draw_with(&app, &theme, width, height);
+                for hit in app.hits.borrow().iter().filter(|hit| hit.button.is_some()) {
+                    let r = hit.rect;
+                    let label = hit.button.as_deref().unwrap();
+                    assert_eq!(r.height, 1, "{} {label}: one row", id.slug());
+                    let inner = if theme.rounded { r.x + 1..r.x + r.width - 1 } else { r.x..r.x + r.width };
+                    let fill = buffer[(inner.start, r.y)].bg;
+                    assert!(fills.contains(&fill), "{} {label}: drawn on {fill:?}", id.slug());
+                    assert!(inner.clone().all(|x| buffer[(x, r.y)].bg == fill), "{} {label}: a gap in {r:?}", id.slug());
+                    if theme.rounded {
+                        assert_eq!(buffer[(r.x, r.y)].fg, fill, "{} {label}: left cap", id.slug());
+                        assert_eq!(buffer[(r.x + r.width - 1, r.y)].fg, fill, "{} {label}: right cap", id.slug());
+                    }
+                    for x in [r.x.checked_sub(1), Some(r.x + r.width)].into_iter().flatten().filter(|x| *x < width) {
+                        let beside = &buffer[(x, r.y)];
+                        assert_ne!(beside.bg, fill, "{} {label}: the button goes on past {r:?}", id.slug());
+                    }
+                    add_provider |= label == "Add a provider";
+                    seen += 1;
+                }
+            }
+        }
+        assert!(seen > 40, "buttons were checked: {seen}");
+        assert!(add_provider, "the inline Add a provider button was checked");
+    }
+}
+
+#[test]
+fn hovering_a_button_lightens_the_button_itself() {
+    let theme = Theme::truecolor().with_rounded(true);
+    for id in [ScreenId::Review, ScreenId::WebConfirm, ScreenId::AppRemove, ScreenId::Settings, ScreenId::AppPage] {
+        let (mut app, _) = fixture(id);
+        let before = draw_with(&app, &theme, 100, 32);
+        let hits = app.hits.borrow().clone();
+        assert!(hits.iter().any(|hit| hit.button.is_some()), "{}: has buttons", id.slug());
+        for hit in hits.iter().filter(|hit| hit.button.is_some()) {
+            app.hover = Some(hit.rect);
+            let after = draw_with(&app, &theme, 100, 32);
+            let r = hit.rect;
+            for x in r.x..r.x + r.width {
+                let (old, new) = (&before[(x, r.y)], &after[(x, r.y)]);
+                if x == r.x || x == r.x + r.width - 1 {
+                    assert_eq!(new.fg, theme.lift(old.fg), "{}: cap of {:?}", id.slug(), hit.button);
+                    assert_eq!(new.bg, old.bg);
+                } else {
+                    assert_eq!(new.bg, theme.lift(old.bg), "{}: fill of {:?}", id.slug(), hit.button);
+                }
+            }
+            assert_eq!(after[(r.x, r.y + 1)].bg, before[(r.x, r.y + 1)].bg, "{}: the row below stays", id.slug());
+        }
+    }
+}
+
+#[test]
+fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result() {
+    use crossterm::event::KeyCode;
+    use nodo_tui::app::{Effect, Event, MouseKind};
+    use nodo_tui::fixtures::press;
+    use nodo_tui::hit::Click;
+    use nodo_tui::update::update;
+
+    let theme = Theme::truecolor();
+    let (mut app, _) = fixture(ScreenId::Unlock);
+    // Past the fixture's wait after a wrong passphrase.
+    app.ticks = 1_000;
+    for c in "correct horse".chars() {
+        update(&mut app, press(KeyCode::Char(c)));
+    }
+    let unlock = |app: &nodo_tui::app::App| app.hits.borrow().iter().find(|hit| hit.button.as_deref() == Some("Unlock")).cloned();
+    draw_with(&app, &theme, 100, 32);
+    assert!(unlock(&app).is_some());
+
+    let effects = update(&mut app, press(KeyCode::Enter));
+    assert!(matches!(effects.as_slice(), [Effect::Unlock(_)]), "{effects:?}");
+    assert_eq!(app.pending.as_ref().map(|p| &p.click), Some(&Click::Key(KeyCode::Enter)));
+    let screen = text(&draw_with(&app, &theme, 100, 32));
+    assert!(screen.contains("⧗ Unlock"), "{screen}");
+    assert!(unlock(&app).is_none(), "a pending button is not a target");
+    assert!(update(&mut app, press(KeyCode::Enter)).is_empty(), "its key is ignored while it runs");
+
+    update(&mut app, Event::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned()))));
+    assert_eq!(app.pending, None, "the result ends it");
+    let screen = text(&draw_with(&app, &theme, 100, 32));
+    assert!(!screen.contains('⧗'), "{screen}");
+
+    // A click marks it the same way, and leaving the screen ends it.
+    app.ticks = 2_000;
+    for c in "correct horse".chars() {
+        update(&mut app, press(KeyCode::Char(c)));
+    }
+    draw_with(&app, &theme, 100, 32);
+    let hit = unlock(&app).expect("the button is back");
+    let effects = update(&mut app, Event::Mouse { kind: MouseKind::Down, column: hit.rect.x, row: hit.rect.y });
+    assert!(matches!(effects.as_slice(), [Effect::Unlock(_)]), "{effects:?}");
+    assert!(app.pending.is_some());
+    update(&mut app, press(KeyCode::Esc));
+    assert_eq!(app.pending, None, "leaving the screen ends it");
+}
+
 /// A radio the helper could not read says why, with a way to ask again, rather than asking
 /// forever; one with no answer yet says so without guessing why.
 #[test]

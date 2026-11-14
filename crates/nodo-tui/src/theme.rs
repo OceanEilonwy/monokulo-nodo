@@ -113,6 +113,24 @@ impl Theme {
         self.mono
     }
 
+    /// A fill one step lighter, for a button under the pointer: RGB moves a fifth of the way to
+    /// white, the 256-colour cube one step up each axis, the grey ramp two steps.
+    pub fn lift(&self, colour: Color) -> Color {
+        match colour {
+            Color::Rgb(r, g, b) => {
+                let up = |c: u8| c + (255 - c) / 5;
+                Color::Rgb(up(r), up(g), up(b))
+            }
+            Color::Indexed(index @ 16..=231) => {
+                let cube = index - 16;
+                let up = |c: u8| (c + 1).min(5);
+                Color::Indexed(16 + 36 * up(cube / 36) + 6 * up(cube / 6 % 6) + up(cube % 6))
+            }
+            Color::Indexed(index @ 232..=255) => Color::Indexed(index.saturating_add(2)),
+            other => other,
+        }
+    }
+
     pub fn base(&self) -> Style {
         Style::new().fg(self.fg).bg(self.ground)
     }
@@ -245,6 +263,17 @@ mod tests {
         assert!(!RoundedButtons::Off.resolve(Some("xterm-kitty"), None, true));
         assert!(RoundedButtons::On.resolve(Some("linux"), None, false));
         assert!(!Theme::mono().with_rounded(true).rounded, "no colour means no caps to draw");
+    }
+
+    #[test]
+    fn lift_is_lighter_in_both_colour_modes() {
+        let t = Theme::truecolor();
+        assert_eq!(t.lift(t.accent), Color::Rgb(0xF4, 0xB5, 0x61));
+        let t = Theme::ansi256();
+        assert_eq!(t.lift(t.accent), Color::Indexed(222));
+        assert_eq!(t.lift(t.raised), Color::Indexed(239));
+        assert_eq!(t.lift(t.danger), Color::Indexed(95));
+        assert_eq!(Theme::mono().lift(Color::Reset), Color::Reset);
     }
 
     #[test]

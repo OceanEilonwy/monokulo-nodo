@@ -1249,6 +1249,15 @@ pub struct Overlay {
     pub scroll: usize,
 }
 
+/// A button whose press started work that is still running: it is drawn with the hourglass and
+/// cannot be pressed again until a result arrives, the screen changes or the worker goes idle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    /// What the button does, which is how the view finds it.
+    pub click: crate::hit::Click,
+    pub screen: ScreenId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct App {
     pub screen: Screen,
@@ -1262,6 +1271,8 @@ pub struct App {
     pub ticks: u64,
     /// The backend is busy with a request. Restarts and settings changes can take minutes.
     pub working: bool,
+    /// The button whose work is running, if any.
+    pub pending: Option<Pending>,
     /// Where the last drawn screen can be clicked. Set by the view, read by mouse events.
     pub hits: std::cell::RefCell<Vec<crate::hit::Hit>>,
     /// The click target under the mouse pointer, drawn with a hover fill.
@@ -1313,6 +1324,7 @@ impl App {
             should_quit: false,
             ticks: 0,
             working: false,
+            pending: None,
             hits: std::cell::RefCell::new(Vec::new()),
             hover: None,
         }
