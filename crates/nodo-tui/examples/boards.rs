@@ -227,7 +227,7 @@ fn main() {
     for scene in Scene::ALL {
         emit(scene, 120, 36, "");
     }
-    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet] {
+    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps] {
         emit(scene, 80, 24, "-80x24");
     }
     // Board names and sizes, one per line, for laying them out on the canvas.

@@ -1,0 +1,36 @@
+
+    Home     Apps     Web     System                                                                   monokulo-nodo
+
+
+    Four tabs instead of six
+    Logs and Feeds stop being tabs; an app's settings, hosting, logs and updates live on its own page.
+
+
+       Home     What needs you, and that everything else is fine.
+                was Home: same tab, much less on it
+
+
+
+       Apps     Your installed apps. Click one for its own page:
+                · Hosting (who can open it)  ·  Settings  ·  Logs  ·  Update
+                · Get apps: search what you can install; Sources (the old Feeds)
+                merges Packages, Feeds, per-app Logs and per-app Updates
+
+
+
+       Web      Sites online, and Domain providers. (Web flow v3, approved.)
+
+
+
+       System   The Nodo itself:
+                · Updates for the Nodo (system base, automatic updates, rollbacks)
+                · Backups  ·  Network (Wi-Fi, Bluetooth)  ·  Device logs
+                takes the Updates and Logs tabs' Nodo-wide parts
+
+
+
+
+
+
+
+    Click a tab, or press 1 2 3 4.

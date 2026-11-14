@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps
+
+    Search    wallet                                                                                       Sources ›
+
+
+       mk-lws       Light wallet server for Monero wallets    Installed
+
+       feather-ws   Server for Feather Wallet
+
+       mk-pay       Accept Monero in your shop                Installed
+
+
+    3 of 14 apps from your sources match. Click one to see what it does before installing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Type to search.   Keys: ↑↓ choose  ↵ open  s sources  Esc back

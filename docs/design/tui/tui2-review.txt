@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  feather-ws  ›  Install
+
+
+       Install feather-ws?
+
+       It will be able to:
+       ✓  Read from your Monero node
+       ✓  Use the internet   to reach other Monero nodes
+       ✓  Keep 2 GB on the drive   locked with your device passphrase
+
+       It can't see your other apps or their data. You can remove it at any time.
+
+       Passphrase    ••••••••
+
+       Show details ›
+
+                                                                                   Cancel          Install   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type the passphrase  ↵ install  Esc cancel

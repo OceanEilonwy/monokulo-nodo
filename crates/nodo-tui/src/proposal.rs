@@ -59,10 +59,25 @@ pub enum Scene {
     V3ProviderKey,
     V3ProviderDone,
     V3Buttons,
+    B1Home,
+    B1Search,
+    B1Detail,
+    B1Review,
+    B1Installing,
+    B1Unlock,
+    T2Nav,
+    T2Home,
+    T2Apps,
+    T2GetApps,
+    T2AppAbout,
+    T2Review,
+    T2Installing,
+    T2AppPage,
+    T2Unlock,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 29] = [
+    pub const ALL: [Scene; 44] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -92,6 +107,21 @@ impl Scene {
         Scene::V3ProviderKey,
         Scene::V3ProviderDone,
         Scene::V3Buttons,
+        Scene::B1Home,
+        Scene::B1Search,
+        Scene::B1Detail,
+        Scene::B1Review,
+        Scene::B1Installing,
+        Scene::B1Unlock,
+        Scene::T2Nav,
+        Scene::T2Home,
+        Scene::T2Apps,
+        Scene::T2GetApps,
+        Scene::T2AppAbout,
+        Scene::T2Review,
+        Scene::T2Installing,
+        Scene::T2AppPage,
+        Scene::T2Unlock,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -125,6 +155,21 @@ impl Scene {
             Scene::V3ProviderKey => "web3-provider-key",
             Scene::V3ProviderDone => "web3-provider-done",
             Scene::V3Buttons => "web3-buttons",
+            Scene::B1Home => "tui1-home",
+            Scene::B1Search => "tui1-search",
+            Scene::B1Detail => "tui1-detail",
+            Scene::B1Review => "tui1-review",
+            Scene::B1Installing => "tui1-installing",
+            Scene::B1Unlock => "tui1-unlock",
+            Scene::T2Nav => "tui2-nav",
+            Scene::T2Home => "tui2-home",
+            Scene::T2Apps => "tui2-apps",
+            Scene::T2GetApps => "tui2-get-apps",
+            Scene::T2AppAbout => "tui2-app-about",
+            Scene::T2Review => "tui2-review",
+            Scene::T2Installing => "tui2-installing",
+            Scene::T2AppPage => "tui2-app-page",
+            Scene::T2Unlock => "tui2-unlock",
         }
     }
 
@@ -164,12 +209,46 @@ impl Scene {
             Scene::V3ProviderKey => "9 · Add a provider: paste the key",
             Scene::V3ProviderDone => "10 · Added: the domains this key controls",
             Scene::V3Buttons => "Buttons: rounded flat fill, and the fallback",
+            Scene::B1Home => "Before: Home today",
+            Scene::B1Search => "Before: Search packages",
+            Scene::B1Detail => "Before: Package detail",
+            Scene::B1Review => "Before: Review permissions",
+            Scene::B1Installing => "Before: Install progress",
+            Scene::B1Unlock => "Before: Unlock after reboot",
+            Scene::T2Nav => "Navigation: four tabs instead of six",
+            Scene::T2Home => "Home: what needs you, then that the rest is fine",
+            Scene::T2Apps => "Apps: installed apps",
+            Scene::T2GetApps => "Get apps: search what you can install",
+            Scene::T2AppAbout => "An app before installing: what it does, what it needs",
+            Scene::T2Review => "Install review: permissions in plain words",
+            Scene::T2Installing => "Installing: progress in plain steps",
+            Scene::T2AppPage => "An app's page: status, its one action, then Hosting, Settings, Logs",
+            Scene::T2Unlock => "Unlock after a restart",
         }
     }
 
     /// Version 3 screens, for grouping on the canvas.
     pub fn is_v3(self) -> bool {
         self.slug().starts_with("web3")
+    }
+
+    /// Screens drawn with the surface palette: web flow v3 and the simplified TUI.
+    pub fn is_surface(self) -> bool {
+        self.is_v3() || self.slug().starts_with("tui2")
+    }
+
+    /// Today's screen a "before" board shows, rendered by the real nodo-tui.
+    pub fn before(self) -> Option<ScreenId> {
+        Some(match self {
+            Scene::V1Overview => ScreenId::WebSites,
+            Scene::B1Home => ScreenId::Main,
+            Scene::B1Search => ScreenId::Search,
+            Scene::B1Detail => ScreenId::Detail,
+            Scene::B1Review => ScreenId::Review,
+            Scene::B1Installing => ScreenId::Installing,
+            Scene::B1Unlock => ScreenId::Unlock,
+            _ => return None,
+        })
     }
 
     /// What a click does on this screen, printed on the board.
@@ -188,6 +267,15 @@ impl Scene {
             Scene::V3ProviderKey => "Clickable: the two key boxes (focus to type or paste), Connect.",
             Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
             Scene::V3Buttons => "The chosen rounded buttons, the no-Nerd-Font fallback, and the first v3 blocks for comparison.",
+            Scene::T2Nav => "Clickable: the four tabs; each section line opens it.",
+            Scene::T2Home => "Clickable: Review updates (the one primary), each app row (opens its page), the tabs.",
+            Scene::T2Apps => "Clickable: each app row (opens its page), \"Get apps\", the tabs. Scroll wheel scrolls.",
+            Scene::T2GetApps => "Clickable: the search box (focus to type), each result (opens it), \"Sources\" (the old Feeds).",
+            Scene::T2AppAbout => "Clickable: Install (primary), \"Show details\" (permissions in full), the breadcrumb.",
+            Scene::T2Review => "Clickable: the passphrase box, Install (primary), Cancel, \"Show details\".",
+            Scene::T2Installing => "Clickable: the breadcrumb and tabs; installing carries on if you leave.",
+            Scene::T2AppPage => "Clickable: Update (primary), each section row (Hosting, Settings, Logs), Restart, Stop, Remove.",
+            Scene::T2Unlock => "Clickable: the passphrase box and Unlock.",
             _ => "",
         }
     }
@@ -199,12 +287,14 @@ pub fn render(scene: Scene, width: u16, height: u16, theme: &Theme) -> Buffer {
     let (app, _) = fixture(ScreenId::WebSites);
     terminal
         .draw(|frame| {
-            if scene == Scene::V1Overview {
-                view::render(frame, &app, theme);
-            } else if scene.is_v3() {
+            if let Some(id) = scene.before() {
+                let (before, _) = fixture(id);
+                view::render(frame, &before, theme);
+            } else if scene.is_surface() {
                 let w = frame.area().width;
                 let h = frame.area().height;
-                draw_v3(frame, theme, v3_page(&app, theme, scene, w, h));
+                let page = if scene.is_v3() { v3_page(&app, theme, scene, w, h) } else { tui2_page(theme, scene, w, h) };
+                draw_v3(frame, theme, page);
             } else {
                 let area = frame.area();
                 frame.buffer_mut().set_style(area, theme.base());
@@ -230,12 +320,14 @@ pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
     let result = (|| -> io::Result<()> {
         loop {
             terminal.draw(|frame| {
-                if scene == Scene::V1Overview {
-                    view::render(frame, &app, &theme);
-                } else if scene.is_v3() {
+                if let Some(id) = scene.before() {
+                    let (before, _) = fixture(id);
+                    view::render(frame, &before, &theme);
+                } else if scene.is_surface() {
                     let w = frame.area().width;
                     let h = frame.area().height;
-                    draw_v3(frame, &theme, v3_page(&app, &theme, scene, w, h));
+                    let page = if scene.is_v3() { v3_page(&app, &theme, scene, w, h) } else { tui2_page(&theme, scene, w, h) };
+                    draw_v3(frame, &theme, page);
                 } else {
                     let area = frame.area();
                     frame.buffer_mut().set_style(area, theme.base());
@@ -1602,6 +1694,324 @@ fn v3_buttons(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Simplified TUI (batch 1: navigation, Home, Apps). Four tabs instead of six:
+//   Home    what needs you, and that everything else is fine
+//   Apps    installed apps; each app's page holds its Hosting, Settings, Logs and updates;
+//           "Get apps" finds new ones, and its Sources replace the Feeds tab
+//   Web     as in web flow v3: sites online, Domain providers
+//   System  updates for the Nodo itself, backups, network, device logs
+// The Logs and Feeds tabs disappear (logs live on each app and under System; feeds are an app
+// source). Updates leave their tab: app updates show on the app and on Home, system ones under
+// System. Same visual system as v3.
+
+const TABS2: [&str; 4] = ["Home", "Apps", "Web", "System"];
+
+/// The four-tab strip, same look as v3's.
+fn top2(t: &Theme, tab: &str, badge: Option<(&str, usize)>, w: u16) -> Page {
+    let mut tabs = vec![t.n("  ")];
+    for each in TABS2 {
+        let extra = match badge {
+            Some((name, n)) if name == each && n > 0 => format!(" {n}"),
+            _ => String::new(),
+        };
+        if each == tab {
+            tabs.push(Span::styled(format!("  {each}{extra}  "), Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
+        } else {
+            tabs.push(t.n(format!("  {each}")));
+            if !extra.is_empty() {
+                tabs.push(t.a(extra));
+            }
+            tabs.push(t.n("  "));
+        }
+        tabs.push(t.n(" "));
+    }
+    let row = if w >= 100 {
+        Item::Row(Line::from(tabs), Line::from(vec![t.d("monokulo-nodo"), t.n(MARGIN)]))
+    } else {
+        Item::Text(Line::from(tabs))
+    };
+    Page::new(Line::default(), Line::default()).plain(vec![row, Item::Blank])
+}
+
+/// A page of several cards stacked with a blank row between them.
+fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<Item>, keys: &str) -> Page {
+    let mut items = before;
+    for (index, card) in cards.into_iter().enumerate() {
+        if index > 0 {
+            items.push(Item::Blank);
+        }
+        items.extend(card.items(t));
+    }
+    items.extend(after);
+    page.plain(items).footers(action_bar(t, keys))
+}
+
+/// A progress bar of whole cells: done cells filled with the accent, the rest inset.
+fn bar(t: &Theme, fraction: f32, width: usize) -> Vec<Span<'static>> {
+    let done = ((fraction.clamp(0.0, 1.0)) * width as f32).round() as usize;
+    vec![
+        Span::styled(" ".repeat(done), Style::new().bg(t.accent)),
+        Span::styled(" ".repeat(width - done), Style::new().bg(S.field)),
+    ]
+}
+
+fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
+    match scene {
+        Scene::T2Nav => t2_nav(t, w),
+        Scene::T2Home => t2_home(t, w),
+        Scene::T2Apps => t2_apps(t, w),
+        Scene::T2GetApps => t2_get_apps(t, w),
+        Scene::T2AppAbout => t2_app_about(t, w, h),
+        Scene::T2Review => t2_review(t, w, h),
+        Scene::T2Installing => t2_installing(t, w, h),
+        Scene::T2AppPage => t2_app_page(t, w),
+        Scene::T2Unlock => t2_unlock(t, w, h),
+        _ => Page::new(Line::default(), Line::default()),
+    }
+}
+
+fn t2_nav(t: &Theme, w: u16) -> Page {
+    let section = |title: &str, now: &str, holds: &[&str], from: &str| {
+        let mut card = Card::new(w);
+        card.blank(t);
+        card.row(t, vec![t.b(pad(title, 9)), t.n(now.to_owned())]);
+        for item in holds {
+            card.row(t, vec![t.n(" ".repeat(9)), t.d(format!("· {item}"))]);
+        }
+        if !from.is_empty() {
+            card.row(t, vec![t.n(" ".repeat(9)), t.a(from.to_owned())]);
+        }
+        card.blank(t);
+        card
+    };
+    let cards = vec![
+        section("Home", "What needs you, and that everything else is fine.", &[], "was Home: same tab, much less on it"),
+        section(
+            "Apps",
+            "Your installed apps. Click one for its own page:",
+            &["Hosting (who can open it)  ·  Settings  ·  Logs  ·  Update", "Get apps: search what you can install; Sources (the old Feeds)"],
+            "merges Packages, Feeds, per-app Logs and per-app Updates",
+        ),
+        section("Web", "Sites online, and Domain providers. (Web flow v3, approved.)", &[], ""),
+        section(
+            "System",
+            "The Nodo itself:",
+            &["Updates for the Nodo (system base, automatic updates, rollbacks)", "Backups  ·  Network (Wi-Fi, Bluetooth)  ·  Device logs"],
+            "takes the Updates and Logs tabs' Nodo-wide parts",
+        ),
+    ];
+    let before = vec![
+        Item::Blank,
+        heading(t, "Four tabs instead of six"),
+        quiet(t, "Logs and Feeds stop being tabs; an app's settings, hosting, logs and updates live on its own page."),
+        Item::Blank,
+    ];
+    stack(t, top2(t, "Home", None, w), before, cards, Vec::new(), "Click a tab, or press 1 2 3 4.")
+}
+
+fn t2_home(t: &Theme, w: u16) -> Page {
+    let mut needs = Card::new(w);
+    needs.blank(t);
+    needs.row(t, vec![t.b("2 app updates are ready")]);
+    needs.row(t, vec![t.d("mk-pay and kringle. Each keeps its settings and can be rolled back.")]);
+    needs.blank(t);
+    needs.buttons(t, &[("Review updates", true)]);
+    let mut fine = Card::new(w);
+    fine.blank(t);
+    fine.row(t, vec![t.o("✓  "), t.b("Everything else is running")]);
+    fine.blank(t);
+    for (name, state) in [
+        ("cuprated", "Syncing the Monero chain · 63%"),
+        ("mk-pay", "Running · open at https://pay.example.com"),
+        ("mk-lws", "Running"),
+        ("kringle", "Running"),
+    ] {
+        fine.row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+    }
+    fine.blank(t);
+    fine.row(t, vec![t.d("Storage 27% used of 2 TB   ·   Temperature 48 °C   ·   Up 3 days")]);
+    fine.blank(t);
+    let before = vec![Item::Blank, heading(t, "Good afternoon"), Item::Blank];
+    stack(t, top2(t, "Home", Some(("Apps", 2)), w), before, vec![needs, fine], Vec::new(), "Keys: ↵ review updates  Tab move  1-4 tabs")
+}
+
+fn t2_apps(t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, what, state)) in [
+        ("cuprated", "Monero node", "Syncing · 63%"),
+        ("mk-pay", "Payments for your shop", "Update ready"),
+        ("mk-lws", "Light wallet server", "Running"),
+        ("mk-bell", "Payment alerts", "Running"),
+        ("kringle", "Tip jar", "Update ready"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            card.blank(t);
+        }
+        let status = if state == "Update ready" { t.a(pad(state, 14)) } else { t.d(pad(state, 14)) };
+        card.row(t, vec![t.b(pad(name, 12)), t.n(pad(what, 28)), status, t.d("›")]);
+    }
+    card.blank(t);
+    let before = vec![
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t), t.b("Installed")]), Line::from(vec![t.a("Get apps ›"), t.n(MARGIN)])),
+        Item::Blank,
+    ];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], Vec::new(), "Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps")
+}
+
+fn t2_get_apps(t: &Theme, w: u16) -> Page {
+    let mut search = vec![t.d(pad("Search", 9))];
+    search.extend(inset(t, "wallet", 40, None));
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, what, tag)) in [
+        ("mk-lws", "Light wallet server for Monero wallets", "Installed"),
+        ("feather-ws", "Server for Feather Wallet", ""),
+        ("mk-pay", "Accept Monero in your shop", "Installed"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            card.blank(t);
+        }
+        card.row(t, vec![t.b(pad(name, 13)), t.n(pad(what, 42)), t.d(tag.to_owned())]);
+    }
+    card.blank(t);
+    let before = vec![
+        Item::Blank,
+        trail(t, &["Apps", "Get apps"]),
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t)].into_iter().chain(search).collect::<Vec<_>>()), Line::from(vec![t.a("Sources ›"), t.n(MARGIN)])),
+        Item::Blank,
+    ];
+    let after = vec![Item::Blank, quiet(t, "3 of 14 apps from your sources match. Click one to see what it does before installing.")];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], after, "Type to search.   Keys: ↑↓ choose  ↵ open  s sources  Esc back")
+}
+
+fn t2_app_about(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("feather-ws"), t.d("   Server for Feather Wallet · from monokulo · 18 MB")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Lets Feather Wallet on your phone or computer use your own Monero node instead of a")]);
+    card.row(t, vec![t.n("stranger's, so nobody else sees which wallet is yours.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("It will:")]);
+    for item in ["Read from your Monero node", "Use the internet to reach other Monero nodes", "Keep 2 GB of data on the drive"] {
+        card.row(t, vec![t.n(format!("  ·  {item}"))]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Install", true)]);
+    let before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "feather-ws"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↵ install  d details  Esc back", w, h)
+}
+
+fn t2_review(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Install feather-ws?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It will be able to:")]);
+    for (item, note) in [
+        ("Read from your Monero node", ""),
+        ("Use the internet", "to reach other Monero nodes"),
+        ("Keep 2 GB on the drive", "locked with your device passphrase"),
+    ] {
+        card.row(t, vec![t.o("✓  "), t.n(item.to_owned()), t.d(if note.is_empty() { String::new() } else { format!("   {note}") })]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d("It can't see your other apps or their data. You can remove it at any time.")]);
+    card.blank(t);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "••••••••", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Install", true)]);
+    let before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "feather-ws", "Install"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: type the passphrase  ↵ install  Esc cancel", w, h)
+}
+
+fn t2_installing(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Installing feather-ws")]);
+    card.blank(t);
+    let mut progress = bar(t, 0.6, 50);
+    progress.push(t.d("   60%"));
+    card.row(t, progress);
+    card.blank(t);
+    for (mark, text) in [("✓", "Downloaded and checked"), ("✓", "Space made on the drive"), ("›", "Starting it"), ("○", "Making sure it answers")] {
+        let span = match mark {
+            "✓" => t.o(format!("{mark}  ")),
+            "›" => t.a(format!("{mark}  ")),
+            _ => t.d(format!("{mark}  ")),
+        };
+        card.row(t, vec![span, if mark == "○" { t.d(text.to_owned()) } else { t.n(text.to_owned()) }]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d("You can leave this page; it carries on.")]);
+    card.blank(t);
+    let before = vec![Item::Blank, trail(t, &["Apps", "feather-ws"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Esc back (installing continues)", w, h)
+}
+
+fn t2_app_page(t: &Theme, w: u16) -> Page {
+    let mut status = Card::new(w);
+    status.blank(t);
+    status.row(t, vec![t.b("mk-pay"), t.d("   Payments for your shop")]);
+    status.row(t, vec![t.o("●  "), t.n("Running for 3 days   ·   open at https://pay.example.com")]);
+    status.blank(t);
+    status.row(t, vec![t.a("Version 0.2 is ready"), t.d("   fixes receipts in some currencies")]);
+    status.blank(t);
+    status.buttons(t, &[("Update", true)]);
+    let mut sections = Card::new(w);
+    sections.blank(t);
+    for (index, (name, summary)) in [
+        ("Hosting", "Home network and internet"),
+        ("Settings", "Store name, currency, 4 more"),
+        ("Logs", "Last problem: none"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            sections.blank(t);
+        }
+        sections.row(t, vec![t.b(pad(name, 12)), t.d(pad(summary, 40)), t.d("›")]);
+    }
+    sections.blank(t);
+    let after = vec![Item::Blank, line(vec![margin(t), t.d("Restart  ·  Stop  ·  Remove")])];
+    let before = vec![Item::Blank, trail(t, &["Apps", "mk-pay"]), Item::Blank];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], after, "Click a section.   Keys: ↑↓ choose  ↵ open  u update  Esc back")
+}
+
+fn t2_unlock(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Unlock your Nodo")]);
+    card.blank(t);
+    card.row(t, vec![t.n("The Nodo restarted. Your apps' data is locked until you type the device passphrase.")]);
+    card.row(t, vec![t.d("cuprated is already running; mk-pay, mk-lws and kringle start after you unlock.")]);
+    card.blank(t);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.buttons(t, &[("Unlock", true)]);
+    let before = vec![Item::Blank, Item::Blank];
+    fit_page(t, top2(t, "Home", None, w), before, card, Vec::new(), "Keys: type the passphrase  ↵ unlock", w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1614,8 +2024,9 @@ mod tests {
             for (w, h) in [(120, 36), (80, 24)] {
                 let buffer = render(scene, w, h, &t);
                 let text: String = buffer.content().iter().map(|c| c.symbol()).collect();
+                // Today's screens without a tab bar (package detail, review…) are drawn as they are.
                 assert!(
-                    text.contains("Web"),
+                    scene.before().is_some() || text.contains("Web"),
                     "{} at {w}x{h} lost its header",
                     scene.slug()
                 );
@@ -1637,12 +2048,17 @@ mod tests {
             Scene::V3Blocked => Some("Use Tor instead"),
             Scene::V3ProviderKey => Some("Connect"),
             Scene::V3ProviderDone => Some("Back to mk-pay"),
+            Scene::T2Home => Some("Review updates"),
+            Scene::T2AppAbout | Scene::T2Review => Some("Install"),
+            Scene::T2AppPage => Some("Update"),
+            Scene::T2Unlock => Some("Unlock"),
             _ => None,
         };
-        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
             assert!(!scene.clickable().is_empty(), "{}", scene.slug());
             let (app, _) = fixture(ScreenId::WebSites);
-            assert_eq!(v3_page(&app, &t, scene, 120, 36).footer.len(), 1, "{}: the footer is only the keys", scene.slug());
+            let page = if scene.is_v3() { v3_page(&app, &t, scene, 120, 36) } else { tui2_page(&t, scene, 120, 36) };
+            assert_eq!(page.footer.len(), 1, "{}: the footer is only the keys", scene.slug());
             if let Some(label) = main(scene) {
                 for (w, h) in [(120u16, 36u16), (80, 24)] {
                     let b = render(scene, w, h, &t);
@@ -1657,7 +2073,7 @@ mod tests {
     fn v3_surfaces_are_rectangles_at_both_sizes() {
         // Every row of a card is filled from the same first to the same last column: no steps.
         let t = Theme::truecolor();
-        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
             for (w, h) in [(120u16, 36u16), (80, 24)] {
                 let b = render(scene, w, h, &t);
                 let mut edges = std::collections::BTreeSet::new();

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay
+
+
+       mk-pay   Payments for your shop
+       ●  Running for 3 days   ·   open at https://pay.example.com
+
+       Version 0.2 is ready   fixes receipts in some currencies
+
+                                                                                                      Update   
+
+
+
+       Hosting     Home network and internet               ›
+
+       Settings    Store name, currency, 4 more            ›
+
+       Logs        Last problem: none                      ›
+
+
+    Restart  ·  Stop  ·  Remove
+
+
+
+
+
+
+
+
+
+
+
+    Click a section.   Keys: ↑↓ choose  ↵ open  u update  Esc back

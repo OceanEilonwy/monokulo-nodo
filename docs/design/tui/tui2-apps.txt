@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Installed                                                                                             Get apps ›
+
+
+       cuprated    Monero node                 Syncing · 63% ›
+
+       mk-pay      Payments for your shop      Update ready  ›
+
+       mk-lws      Light wallet server         Running       ›
+
+       mk-bell     Payment alerts              Running       ›
+
+       kringle     Tip jar                     Update ready  ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps
