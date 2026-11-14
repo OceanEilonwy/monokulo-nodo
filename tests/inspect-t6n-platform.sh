@@ -208,6 +208,11 @@ if [ "$tty1" != agetty-tty1 ]; then
 	show "cat /etc/profile.d/nodo-tui.sh" | grep -q SSH_TTY || { echo "  missing: /etc/profile.d/nodo-tui.sh"; r=1; }
 	show "cat /etc/profile" | grep -q "/etc/profile.d/" || { echo "  /etc/profile does not read /etc/profile.d"; r=1; }
 	result "an interactive SSH login opens nodo-tui" "$r"
+	r=0
+	for f in /usr/libexec/nodo/nodo-fixed-mac /etc/runit/core-services/03-nodo-fixed-mac.sh; do
+		show "stat $f" | grep -q 'Type: regular' || { echo "  missing: $f"; r=1; }
+	done
+	result "Ethernet gets a fixed address from the board serial before dhcpcd starts" "$r"
 	# This card takes base updates as system snapshots; the timer only checks unless the owner
 	# turns automatic system updates on.
 	case " $links " in *" nodo-systemupdate "*) r=0 ;; *) r=1 ;; esac

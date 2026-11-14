@@ -94,8 +94,13 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         };
         page.footer.insert(0, Item::Text(Line::from(span(t, format!("{symbol} {}", notice.text)))));
     }
+    // The busy mark goes in front of the header's right-hand text instead of taking a footer row:
+    // requests run often (following a log polls constantly), and a row that comes and goes made
+    // the whole page jump. The right-hand text is right-aligned, so what was there stays put.
     if app.working {
-        page.footer.insert(0, Item::Text(Line::from(t.d("⧗ Working…"))));
+        let mut spans = vec![t.d("⧗ Working…"), Span::raw("   ")];
+        spans.append(&mut page.right.spans);
+        page.right = Line::from(spans);
     }
     let area_shown = match &app.screen {
         Screen::Search(_) => Some(Area::Catalog),
