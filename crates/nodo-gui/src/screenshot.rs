@@ -32,14 +32,15 @@ pub const NO_PIN_SCENE: &str = "u-no-pin";
 
 /// Touch screen GUI v2 (ui/design2.slint): every screen with proper Slint controls, mock data.
 pub const G2_SCENES: &[&str] = &[
-    "g-widgets", "g-wp-logo", "g-wp-logo-panels", "g-home", "g-unlock", "g-apps", "g-get-apps", "g-about",
-    "g-install", "g-installing", "g-app", "g-remove", "g-settings", "g-settings-pick", "g-settings-kbd",
+    "g-widgets", "g-tiles-logo", "g-tiles-full", "g-tiles-full-k1", "g-tiles-full-k2", "g-tiles-full-k3",
+    "g-tile-settings", "g-tiles-add", "g-home", "g-unlock", "g-apps", "g-get-apps", "g-about",
+    "g-install", "g-installing", "g-app", "g-remove", "g-settings", "g-combo-open", "g-ref-open", "g-ref-manual", "g-ref-empty", "g-settings-kbd",
     "g-rolled-back", "g-sources", "g-add-source", "g-source-check", "g-source-errors", "g-key-changed",
     "g-remove-builtin", "g-web", "g-hosting", "g-hosting-domain", "g-providers", "g-add-provider",
     "g-provider-key", "g-provider-done", "g-checks", "g-confirm", "g-online", "g-blocked-isp", "g-system",
     "g-updates", "g-auto", "g-undo", "g-update-rolled-back", "g-logs", "g-backups", "g-backing-up",
     "g-restore", "g-network", "g-wifi-join", "g-ssh-keys", "g-screen", "g-rejected", "g-capability",
-    "g-no-drive", "g-pin", "g-pin-wrong", "g-lockout", "g-no-pin",
+    "g-no-drive", "g-pin", "g-pin-wrong", "g-no-pin",
 ];
 
 fn is_design(name: &str) -> bool {
@@ -221,6 +222,12 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
     if G2_SCENES.contains(&name) {
         let board = DesignBoard2::new().map_err(|e| e.to_string())?;
         board.set_scene(name.into());
+        board.set_text_logo(text_logo(match name {
+            "g-tiles-full-k1" => Some(30),
+            "g-tiles-full-k2" => Some(56),
+            "g-tiles-full-k3" => Some(82),
+            _ => None,
+        }));
         board.show().map_err(|e| e.to_string())?;
         window.request_redraw();
         window.draw_if_needed(|renderer| {
@@ -257,6 +264,20 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
     });
     ui.hide().map_err(|e| e.to_string())?;
     Ok(buffer)
+}
+
+/// The boot splash's logo grid as an image, one pixel per cell (Slint scales it pixelated), with
+/// the glint at `t` (`None` is the logo at rest). Shared with nodo-splash: the same grid, frames
+/// and palette.
+pub fn text_logo(t: Option<i32>) -> slint::Image {
+    let grid = nodo_splash::frame(&nodo_splash::logo(), t);
+    let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(nodo_splash::SIZE as u32, nodo_splash::SIZE as u32);
+    for (pixel, v) in buffer.make_mut_slice().iter_mut().zip(grid.iter().flatten()) {
+        let rgb = nodo_splash::PALETTE[usize::from(*v)];
+        let a = if *v == 0 { 0 } else { 255 };
+        *pixel = slint::Rgba8Pixel { r: (rgb >> 16) as u8, g: (rgb >> 8) as u8, b: rgb as u8, a };
+    }
+    slint::Image::from_rgba8(buffer)
 }
 
 /// The proposed "Manage" button, left of the top bar's other buttons (design only).

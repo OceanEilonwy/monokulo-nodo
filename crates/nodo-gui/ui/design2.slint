@@ -874,7 +874,7 @@ component GNav inherits Rectangle {
             horizontal-stretch: 1;
         }
         Rectangle {
-            width: 300px;
+            width: lock == 2 ? 300px : 220px;
             border-radius: 20px;
             background: lock == 1 ? G.ok-fill : G.raised;
             border-width: 1px;
@@ -907,7 +907,7 @@ component GNav inherits Rectangle {
                     }
                 }
                 Tx {
-                    text: lock == 0 ? "Locked" : lock == 1 ? "Unlocked · 4:12" : "No screen PIN";
+                    text: lock == 0 ? "Locked" : lock == 1 ? "Unlocked" : "No screen PIN";
                     font-size: 24px;
                     font-weight: 600;
                     color: lock == 1 ? G.ok : G.dim;
@@ -1111,7 +1111,7 @@ component PinPad inherits Rectangle {
             Tx {
                 horizontal-alignment: center;
                 height: 34px;
-                text: state == 0 ? "to update mk-pay" : state == 1 ? "That PIN isn't right · 4 tries left" : "Try again in 4:51, or unlock from SSH";
+                text: state == 0 ? "to update mk-pay" : "That's not the PIN. Try again.";
                 font-size: 24px;
                 color: state == 1 ? G.err : G.dim;
             }
@@ -1212,154 +1212,368 @@ component PinPad inherits Rectangle {
 
 // ------------------------------------------------------------------ wallpapers
 
-component WpLogo inherits Rectangle {
-    in property <bool> panels;
-    background: G.ground;
-    HorizontalLayout {
-        x: 40px;
-        y: 28px;
-        width: 1840px;
-        height: 80px;
-        spacing: 18px;
-        Tx {
-            text: "monokulo-nodo";
-            font-size: 26px;
-            font-weight: 600;
-            color: G.fg;
-        }
-        Tx {
-            text: "Thu 13 Nov · 14:32";
-            font-size: 26px;
-            color: G.dim;
-        }
-        Rectangle {
-            horizontal-stretch: 1;
-        }
-        GButton {
-            label: "Manage";
-            icon: "☰";
-            kind: 1;
-            w: 230px;
-        }
-        GButton {
-            label: "Shut down";
-            icon: "⏻";
-            kind: 2;
-            w: 250px;
-        }
-    }
-    if !panels: Rectangle {
-        Logo2 {
-            x: (1920px - 540px) / 2;
-            y: 210px;
-            width: 540px;
-            height: 540px;
-        }
-        Tx {
-            x: 0;
-            y: 790px;
-            width: 1920px;
-            height: 70px;
-            horizontal-alignment: center;
-            text: "nodo";
-            font-size: 56px;
-            font-weight: 700;
-            letter-spacing: 14px;
-            color: #FF6600;
-        }
-        Rectangle {
-            x: (1920px - 760px) / 2;
-            y: 890px;
-            width: 760px;
-            height: 64px;
-            border-radius: 32px;
-            background: G.card;
-            border-width: 1px;
-            border-color: G.edge;
-            HorizontalLayout {
+
+// A setting that takes its value from another app: shows the linked app and what it provides.
+// state: 0 linked and running, 1 open, 2 manual address, 3 nothing offers it
+component RefField inherits VerticalLayout {
+    in property <string> label;
+    in property <int> state;
+    spacing: 10px;
+    Tx { text: label; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+    Rectangle {
+        height: 104px;
+        border-radius: 20px;
+        background: state == 1 ? G.raised : G.surface;
+        border-width: state == 1 ? 3px : 1px;
+        border-color: state == 1 ? G.accent : state == 3 ? #F2A33A80 : G.line;
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 24px;
+            spacing: 20px;
+            VerticalLayout {
                 alignment: center;
-                spacing: 18px;
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 14px;
-                        height: 14px;
-                        border-radius: 7px;
-                        background: G.ok;
-                    }
-                }
-                Tx {
-                    text: "All 4 apps running · node 63% synced · 48 °C";
-                    font-size: 24px;
-                    color: G.dim;
+                Rectangle {
+                    width: 64px;
+                    height: 64px;
+                    border-radius: 16px;
+                    background: state == 2 ? G.info-fill : state == 3 ? #2A2116 : #2A1A0C;
+                    if state == 0 || state == 1: Logo2 { x: 8px; y: 8px; width: 48px; height: 48px; }
+                    if state == 2: Sym { text: "⌁"; color: G.info; font-size: 30px; }
+                    if state == 3: Sym { text: "?"; color: G.accent; font-size: 30px; }
                 }
             }
-        }
-    }
-    if panels: Rectangle {
-        Logo2 {
-            x: 140px;
-            y: 230px;
-            width: 600px;
-            height: 600px;
-        }
-        Tx {
-            x: 140px;
-            y: 860px;
-            width: 600px;
-            height: 70px;
-            horizontal-alignment: center;
-            text: "nodo";
-            font-size: 56px;
-            font-weight: 700;
-            letter-spacing: 14px;
-            color: #FF6600;
-        }
-        for p[i] in [
-            { t: "Monero node", big: "63%", unit: "synced", note: "2,190,400 of 3,478,000 · about 7 h", c: #F2A33A, bar: 0.63 },
-            { t: "Payments today", big: "4.82", unit: "XMR", note: "37 paid · 2 waiting", c: #6FD6B3, bar: -1 },
-            { t: "Device", big: "48", unit: "°C", note: "SSD 27% · up 3 days", c: #6FD6B3, bar: 0.27 }
-        ]: GCard {
-            x: 900px;
-            y: 170px + i * 285px;
-            width: 900px;
-            height: 255px;
-            background: #0B0D0F;
             VerticalLayout {
-                padding: 32px;
-                spacing: 8px;
-                Tx {
-                    text: p.t;
-                    font-size: 22px;
-                    font-weight: 600;
-                    color: G.dim;
-                }
+                alignment: center;
+                spacing: 4px;
+                horizontal-stretch: 1;
                 HorizontalLayout {
                     spacing: 14px;
                     alignment: start;
-                    Tx {
-                        text: p.big;
-                        font-size: 72px;
-                        font-weight: 700;
-                        color: p.c;
+                    Tx { text: state == 2 ? "An address you entered" : state == 3 ? "No app offers a Monero node yet" : "cuprated"; font-size: 27px; font-weight: 600; color: state == 3 ? G.accent : G.bright; }
+                    if state <= 1: VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 130px;
+                            height: 32px;
+                            border-radius: 16px;
+                            background: G.ok-fill;
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: G.ok; } }
+                                Tx { text: "Running"; font-size: 19px; font-weight: 600; color: G.ok; }
+                            }
+                        }
                     }
-                    Tx {
-                        text: p.unit;
-                        font-size: 28px;
-                        color: G.dim;
-                        vertical-alignment: bottom;
-                    }
-                }
-                if p.bar >= 0: GProgress {
-                    value: p.bar;
-                    height: 10px;
                 }
                 Tx {
-                    text: p.note;
+                    text: state == 2 ? "http://192.168.1.50:18081 · reached a Monero node at height 3,478,012" : state == 3 ? "Install one, or enter a node's address yourself" : "Monero node on this Nodo · 127.0.0.1:18081";
                     font-size: 22px;
                     color: G.dim;
+                    font-family: state == 3 ? "Inter" : G.mono;
                 }
             }
+            Tx { text: state == 3 ? "Choose" : "Change"; font-size: 24px; font-weight: 600; color: G.accent; }
+            Sym { text: state == 1 ? "▴" : "▾"; color: G.dim; font-size: 26px; }
+        }
+    }
+}
+
+// The reference picker's popup: compatible providers, grouped.
+component RefMenu inherits Rectangle {
+    in property <bool> empty;
+    border-radius: 24px;
+    background: G.raised;
+    border-width: 1px;
+    border-color: #FFFFFF1E;
+    drop-shadow-blur: 48px;
+    drop-shadow-offset-y: 18px;
+    drop-shadow-color: #000000D0;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 2px;
+        alignment: start;
+        if !empty: Tx { text: "ON THIS NODO"; font-size: 19px; font-weight: 700; letter-spacing: 1.2px; color: G.faint; height: 44px; x: 20px; }
+        if !empty: Rectangle {
+            height: 96px;
+            border-radius: 16px;
+            background: #2A2116;
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 24px;
+                spacing: 18px;
+                Sym { text: "✓"; color: G.accent; width: 32px; }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Tx { text: "cuprated"; font-size: 26px; font-weight: 600; color: G.bright; }
+                        VerticalLayout { alignment: center; Rectangle { width: 150px; height: 30px; border-radius: 15px; background: G.accent; Tx { text: "Recommended"; font-size: 18px; font-weight: 700; color: G.on-accent; horizontal-alignment: center; } } }
+                    }
+                    Tx { text: "Monero node · 127.0.0.1:18081"; font-size: 21px; color: G.dim; font-family: G.mono; }
+                }
+                Tx { text: "● Running"; font-size: 21px; color: G.ok; }
+            }
+        }
+        if !empty: Rectangle {
+            height: 96px;
+            border-radius: 16px;
+            opacity: 0.55;
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 24px;
+                spacing: 18px;
+                Rectangle { width: 32px; }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Tx { text: "monerod"; font-size: 26px; font-weight: 600; color: G.bright; }
+                    Tx { text: "Stopped · start it in Apps to use it here"; font-size: 21px; color: G.dim; }
+                }
+                Tx { text: "○ Stopped"; font-size: 21px; color: G.dim; }
+            }
+        }
+        if !empty: Rectangle { height: 1px; background: G.line; }
+        if !empty: Tx { text: "NOT INSTALLED YET"; font-size: 19px; font-weight: 700; letter-spacing: 1.2px; color: G.faint; height: 44px; }
+        if !empty: Rectangle {
+            height: 96px;
+            border-radius: 16px;
+            background: G.pressed;
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 16px;
+                spacing: 18px;
+                Rectangle { width: 32px; }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Tx { text: "monero-lite"; font-size: 26px; font-weight: 600; color: G.bright; }
+                    Tx { text: "A small pruned node · from monokulo · 30 GB"; font-size: 21px; color: G.dim; }
+                }
+                VerticalLayout { alignment: center; GButton { label: "Install"; kind: 1; w: 160px; height: 64px; } }
+            }
+        }
+        if empty: VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+            Tx { text: "No app on this Nodo offers a Monero node"; font-size: 28px; font-weight: 600; color: G.bright; }
+            Tx { text: "cuprated is a full Monero node from your monokulo source. It takes a few days to sync."; font-size: 22px; color: G.dim; wrap: word-wrap; }
+            HorizontalLayout { alignment: start; GButton { label: "Get cuprated"; w: 280px; } }
+        }
+        Rectangle { height: 1px; background: G.line; }
+        Rectangle {
+            height: 88px;
+            border-radius: 16px;
+            HorizontalLayout {
+                padding-left: 20px;
+                spacing: 18px;
+                Sym { text: "⌁"; color: G.info; width: 32px; }
+                Tx { text: "Enter an address myself…"; font-size: 25px; font-weight: 600; color: G.info; }
+            }
+        }
+    }
+}
+
+
+// A settings gear, drawn as a vector (Material "settings" outline, Apache 2.0).
+component GearIcon inherits Path {
+    in property <color> tint: G.fg;
+    width: 30px;
+    height: 30px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: tint;
+    fill-rule: evenodd;
+    commands: "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z";
+}
+
+// Four small tiles: Arrange.
+component GridIcon inherits Rectangle {
+    in property <color> tint: G.fg;
+    width: 28px;
+    height: 28px;
+    for j in [0, 1, 2, 3]: Rectangle {
+        x: Math.mod(j, 2) * 16px;
+        y: Math.floor(j / 2) * 16px;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border-width: 2.5px;
+        border-color: tint;
+    }
+}
+
+// ------------------------------------------------------------------ the tile screen (everything is tiles)
+
+// One grid cell is 217 px with 16 px gaps, starting at (36, 132): the real geometry (src/geometry.rs).
+component TileBox inherits Rectangle {
+    in property <int> cx;
+    in property <int> cy;
+    in property <int> cw: 2;
+    in property <int> ch: 1;
+    in property <string> title;
+    in property <bool> selected;
+    in property <bool> arranging;
+    x: 36px + cx * 233px;
+    y: 132px + cy * 233px;
+    width: cw * 217px + (cw - 1) * 16px;
+    height: ch * 217px + (ch - 1) * 16px;
+    border-radius: 20px;
+    border-width: selected ? 4px : 2px;
+    border-color: selected ? G.accent : #3A4045;
+    background: arranging && !selected ? #0A0C0E : transparent;
+    if title != "": Tx {
+        x: 24px;
+        y: 14px;
+        height: 34px;
+        text: title;
+        font-family: G.mono;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 1.3px;
+        color: G.dim;
+    }
+    @children
+}
+
+// The Nodo logo as a tile: drawn (vector) or text (the boot splash grid), centred, square.
+component LogoTile inherits TileBox {
+    in property <bool> text-style;
+    in property <image> grid;
+    property <length> side: Math.min(self.width, self.height) - (self.height > 600px ? 200px : 70px);
+    if !text-style: Logo2 {
+        x: (parent.width - side) / 2;
+        y: (parent.height - side) / 2 - (parent.height > 600px ? 40px : 0px);
+        width: side;
+        height: side;
+    }
+    if text-style: Image {
+        x: (parent.width - side) / 2;
+        y: (parent.height - side) / 2 - (parent.height > 600px ? 40px : 0px);
+        width: side;
+        height: side;
+        source: grid;
+        image-rendering: pixelated;
+    }
+    if root.height > 600px: Tx {
+        x: 0;
+        y: parent.height - 120px;
+        width: parent.width;
+        height: 60px;
+        horizontal-alignment: center;
+        text: text-style ? "n o d o" : "nodo";
+        font-family: text-style ? G.mono : "Inter";
+        font-size: 48px;
+        font-weight: 700;
+        letter-spacing: text-style ? 0px : 12px;
+        color: #FF6600;
+    }
+}
+
+component ValueTile inherits TileBox {
+    in property <string> big;
+    in property <string> unit;
+    in property <color> big-color: G.ok;
+    in property <string> note;
+    in property <float> bar: -1;
+    HorizontalLayout {
+        x: 24px;
+        y: 56px;
+        height: 90px;
+        spacing: 12px;
+        alignment: start;
+        Tx { text: big; font-family: G.mono; font-size: parent.height > 300px ? 72px : 54px; font-weight: 700; color: big-color; }
+        Tx { text: unit; font-family: G.mono; font-size: 24px; color: G.dim; vertical-alignment: bottom; }
+    }
+    if bar >= 0: GProgress {
+        x: 24px;
+        y: 160px;
+        width: parent.width - 48px;
+        height: 8px;
+        value: bar;
+    }
+    Tx {
+        x: 24px;
+        y: parent.height - 52px;
+        width: parent.width - 48px;
+        height: 32px;
+        text: note;
+        font-family: G.mono;
+        font-size: 20px;
+        color: G.dim;
+        overflow: elide;
+    }
+}
+
+// The tile screen's top bar: resting (Manage, Arrange, Shut down) or arranging (Hide, + Add, Save).
+component TileBar inherits Rectangle {
+    in property <bool> arranging;
+    x: 36px;
+    y: 24px;
+    width: 1848px;
+    height: 88px;
+    HorizontalLayout {
+        spacing: 24px;
+        if !arranging: Tx { text: "monokulo-nodo"; font-family: G.mono; font-size: 26px; font-weight: 700; }
+        if !arranging: Tx { text: "192.168.1.155"; font-family: G.mono; font-size: 24px; color: G.dim; }
+        if arranging: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 150px;
+                height: 40px;
+                background: G.accent;
+                Tx { text: "Arrange"; font-family: G.mono; font-size: 26px; font-weight: 700; color: G.on-accent; horizontal-alignment: center; }
+            }
+        }
+        if arranging: Tx { text: "Tap a tile; drag it, or its corner to resize. The gear opens its options."; font-family: G.mono; font-size: 22px; color: G.dim; }
+        Rectangle { horizontal-stretch: 1; }
+        if !arranging: Tx { text: "thu 13 nov  14:32"; font-family: G.mono; font-size: 26px; }
+        if arranging: HorizontalLayout {
+            spacing: 24px;
+            for b in [{ l: "Hide", k: 0 }, { l: "+ Add panel  2", k: 0 }, { l: "Save", k: 3 }]: Rectangle {
+                width: b.l.character-count > 10 ? 300px : 236px;
+                border-radius: 20px;
+                border-width: b.k == 3 ? 0px : 2px;
+                border-color: #3A4045;
+                background: b.k == 3 ? #86BEFF : transparent;
+                Tx { text: b.l; font-family: G.mono; font-size: 24px; font-weight: 700; horizontal-alignment: center; color: b.k == 3 ? #0B1420 : G.fg; }
+            }
+        }
+        if !arranging: Rectangle {
+            width: 236px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #3A4045;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 14px;
+                VerticalLayout { alignment: center; GearIcon { } }
+                Tx { text: "Manage"; font-family: G.mono; font-size: 24px; font-weight: 700; }
+            }
+        }
+        if !arranging: Rectangle {
+            width: 236px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #3A4045;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 14px;
+                VerticalLayout { alignment: center; GridIcon { } }
+                Tx { text: "Arrange"; font-family: G.mono; font-size: 24px; font-weight: 700; }
+            }
+        }
+        if !arranging: Rectangle {
+            width: 236px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #7A3A33;
+            Tx { text: "⏻ Shut down"; font-family: G.mono; font-size: 24px; font-weight: 700; horizontal-alignment: center; color: G.err; }
         }
     }
 }
@@ -1372,10 +1586,172 @@ export component DesignBoard2 inherits Window {
     background: G.ground;
     default-font-family: "Inter";
     in property <string> scene;
+    // The text logo for this scene (a glint frame for the shimmer keyframes), set by Rust.
+    in property <image> text-logo;
 
-    // ---- wallpapers
-    if scene == "g-wp-logo": WpLogo { panels: false; }
-    if scene == "g-wp-logo-panels": WpLogo { panels: true; }
+    // ---- the tile screen: the logo is a tile like any other
+    if scene == "g-tiles-logo": Rectangle {
+        TileBar { }
+        LogoTile { cx: 0; cy: 0; cw: 4; ch: 4; title: ""; text-style: false; }
+        ValueTile { cx: 4; cy: 0; cw: 4; ch: 2; title: "MONERO NODE"; big: "63%"; unit: "synced"; big-color: G.accent; bar: 0.63; note: "2,190,400 / 3,478,000 · about 7 h"; }
+        ValueTile { cx: 4; cy: 2; cw: 2; ch: 1; title: "PAYMENTS TODAY"; big: "4.82"; unit: "XMR"; note: "37 paid · 2 waiting"; }
+        ValueTile { cx: 6; cy: 2; cw: 2; ch: 1; title: "BELL"; big: "Ringing"; unit: ""; note: "last 0.8 s ago"; }
+        ValueTile { cx: 4; cy: 3; cw: 4; ch: 1; title: "DEVICE"; big: "48"; unit: "°C"; note: "ssd 27% · mem 6.1 / 31 GB · up 3 d"; }
+    }
+    if scene == "g-tiles-full" || scene == "g-tiles-full-k1" || scene == "g-tiles-full-k2" || scene == "g-tiles-full-k3": Rectangle {
+        TileBar { }
+        LogoTile { cx: 0; cy: 0; cw: 8; ch: 4; title: ""; text-style: true; grid: text-logo; border-width: 0px; }
+        if scene != "g-tiles-full": Note {
+            text: scene == "g-tiles-full-k1" ? "Shimmer keyframe 1 of 3: the glint enters top left (nodo-splash's own frames)" : scene == "g-tiles-full-k2" ? "Shimmer keyframe 2 of 3: across the hex core; the centre steps up to pale #FFE2C4" : "Shimmer keyframe 3 of 3: leaving bottom right; 1 s sweep, 3 s rest, repeating";
+        }
+    }
+    if scene == "g-tile-settings": Rectangle {
+        TileBar { arranging: true; }
+        LogoTile { cx: 0; cy: 0; cw: 4; ch: 4; title: ""; text-style: true; grid: text-logo; selected: true; arranging: true; }
+        ValueTile { cx: 4; cy: 0; cw: 4; ch: 2; title: "MONERO NODE"; big: "63%"; unit: "synced"; big-color: G.accent; bar: 0.63; note: "4 × 2"; arranging: true; }
+        ValueTile { cx: 4; cy: 2; cw: 2; ch: 1; title: "PAYMENTS TODAY"; big: "4.82"; unit: "XMR"; note: "2 × 1"; arranging: true; }
+        ValueTile { cx: 6; cy: 2; cw: 2; ch: 1; title: "BELL"; big: "Ringing"; unit: ""; note: "2 × 1"; arranging: true; }
+        ValueTile { cx: 4; cy: 3; cw: 4; ch: 1; title: "DEVICE"; big: "48"; unit: "°C"; note: "4 × 1"; arranging: true; }
+        // the selected tile's options button and resize grip
+        Rectangle {
+            x: 36px + 4 * 217px + 3 * 16px - 108px;
+            y: 132px + 20px;
+            width: 88px;
+            height: 88px;
+            border-radius: 44px;
+            background: G.accent;
+            GearIcon { x: 22px; y: 22px; width: 44px; height: 44px; tint: G.on-accent; }
+        }
+        Rectangle {
+            x: 36px + 4 * 217px + 3 * 16px - 104px;
+            y: 132px + 4 * 217px + 3 * 16px - 104px;
+            width: 104px;
+            height: 104px;
+            border-radius: 20px;
+            background: #2A2116;
+            Sym { text: "⇲"; font-size: 46px; color: G.accent; }
+        }
+        GScrim { opacity: 0.7; }
+        Rectangle {
+            x: 1920px - 760px;
+            y: 0;
+            width: 760px;
+            height: 1080px;
+            background: G.card;
+            border-width: 1px;
+            border-color: #FFFFFF1E;
+            drop-shadow-blur: 60px;
+            drop-shadow-color: #000000E0;
+            VerticalLayout {
+                padding: 48px;
+                spacing: 26px;
+                alignment: start;
+                Tx { text: "Nodo logo"; font-size: 40px; font-weight: 700; color: G.bright; height: 56px; }
+                Tx { text: "Built in · 4 × 4 · any size from 2 × 2 to the whole screen"; font-size: 22px; color: G.dim; height: 32px; }
+                VerticalLayout {
+                    spacing: 12px;
+                    Tx { text: "Style"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+                    GSegmented { options: ["Drawn", "Text, as at boot"]; selected: 1; }
+                }
+                HorizontalLayout {
+                    height: 104px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Tx { text: "Shimmer"; font-size: 27px; font-weight: 600; color: G.bright; }
+                        Tx { text: "A glint every 4 seconds, as during boot"; font-size: 22px; color: G.dim; }
+                    }
+                    VerticalLayout { alignment: center; GSwitch { on: true; } }
+                }
+                HorizontalLayout {
+                    height: 104px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Tx { text: "Show the name"; font-size: 27px; font-weight: 600; color: G.bright; }
+                        Tx { text: "\"n o d o\" under the logo, when the tile is tall enough"; font-size: 22px; color: G.dim; }
+                    }
+                    VerticalLayout { alignment: center; GSwitch { on: true; } }
+                }
+                Rectangle { height: 40px; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Hide tile"; kind: 1; w: 220px; }
+                    GButton { label: "Done"; w: 200px; }
+                }
+            }
+        }
+        Note { text: "Options slide in from the right (200 ms). Changes show on the tile at once; Save in the bar keeps the layout."; }
+    }
+    if scene == "g-tiles-add": Rectangle {
+        Tx { x: 36px; y: 24px; height: 88px; text: "Add a panel"; font-family: G.mono; font-size: 36px; font-weight: 700; color: G.bright; }
+        Tx { x: 420px; y: 24px; height: 88px; text: "Tap one to place it in the first free space."; font-family: G.mono; font-size: 22px; color: G.dim; }
+        Rectangle {
+            x: 1884px - 236px;
+            y: 24px;
+            width: 236px;
+            height: 88px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #3A4045;
+            Tx { text: "Cancel"; font-family: G.mono; font-size: 24px; font-weight: 700; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            x: 36px;
+            y: 140px;
+            width: 1848px;
+            spacing: 16px;
+            alignment: start;
+            Tx { text: "NODO"; font-family: G.mono; font-size: 22px; font-weight: 700; color: G.dim; height: 40px; letter-spacing: 1.3px; }
+            for r[i] in [
+                { t: "Nodo logo", d: "The logo, drawn or as at boot, with an optional shimmer", z: "2×2 to 8×4", hl: true },
+                { t: "Updates", d: "What's waiting for the Nodo and your apps", z: "2×1 to 4×1", hl: false },
+                { t: "Tor", d: "Whether Tor is running", z: "1×1 to 2×1", hl: false }
+            ]: Rectangle {
+                height: 120px;
+                border-radius: 20px;
+                border-width: r.hl ? 4px : 2px;
+                border-color: r.hl ? G.accent : #3A4045;
+                background: r.hl ? #2A2116 : transparent;
+                HorizontalLayout {
+                    padding-left: 28px;
+                    padding-right: 28px;
+                    spacing: 28px;
+                    if i == 0: VerticalLayout { alignment: center; Logo2 { width: 84px; height: 84px; } }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Tx { text: r.t; font-family: G.mono; font-size: 28px; font-weight: 700; color: G.bright; }
+                        Tx { text: r.d; font-family: G.mono; font-size: 22px; color: G.dim; }
+                    }
+                    Tx { text: r.z; font-family: G.mono; font-size: 22px; color: G.dim; }
+                }
+            }
+            Tx { text: "MK-PAY"; font-family: G.mono; font-size: 22px; font-weight: 700; color: G.dim; height: 56px; letter-spacing: 1.3px; vertical-alignment: bottom; }
+            Rectangle {
+                height: 120px;
+                border-radius: 20px;
+                border-width: 2px;
+                border-color: #3A4045;
+                HorizontalLayout {
+                    padding-left: 28px;
+                    padding-right: 28px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Tx { text: "Refunds"; font-family: G.mono; font-size: 28px; font-weight: 700; color: G.bright; }
+                        Tx { text: "Refunds waiting to be sent"; font-family: G.mono; font-size: 22px; color: G.dim; }
+                    }
+                    Tx { text: "2×1 to 4×2"; font-family: G.mono; font-size: 22px; color: G.dim; }
+                }
+            }
+        }
+    }
 
     // ---- Home
     if scene == "g-home": Rectangle {
@@ -1624,35 +2000,31 @@ export component DesignBoard2 inherits Window {
         }
         Note { text: "Dialogs fade the screen behind and rise in (180 ms). Remove is red and never the default."; }
     }
-    if scene == "g-settings" || scene == "g-settings-pick" || scene == "g-settings-kbd": Rectangle {
+    if scene == "g-settings" || scene == "g-settings-kbd" || scene == "g-ref-open" || scene == "g-ref-manual" || scene == "g-ref-empty" || scene == "g-combo-open": Rectangle {
+        property <bool> kbd: scene == "g-settings-kbd" || scene == "g-ref-manual";
         GNav { tab: 1; lock: 1; }
         GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
-        GCard {
+        if !kbd: GCard {
             x: 64px;
             y: 290px;
             width: 1792px;
-            height: scene == "g-settings-kbd" ? 340px : 730px;
+            height: 740px;
             VerticalLayout {
                 padding: 40px;
                 spacing: 20px;
                 HorizontalLayout {
                     spacing: 32px;
-                    GInput { label: "Store name"; value: scene == "g-settings-kbd" ? "Corner Café" : "Corner Cafe"; focused: scene == "g-settings-kbd"; horizontal-stretch: 1; }
-                    if scene != "g-settings-kbd": GCombo { label: "Currency"; value: "EUR"; sub: "Euro"; width: 520px; }
+                    GInput { label: "Store name"; value: "Corner Cafe"; horizontal-stretch: 1; }
+                    GCombo { label: "Currency"; value: "EUR"; sub: "Euro"; width: 520px; open: scene == "g-combo-open"; }
                 }
-                if scene != "g-settings-kbd": GInput { label: "Wallet address"; value: "48daf1rG3hEQb7…tUvb"; mono: true; error: "That isn't a Monero address. It starts with 4 or 8 and is 95 characters long."; }
-                if scene != "g-settings-kbd": HorizontalLayout {
+                GInput { label: "Wallet address"; value: "48daf1rG3hEQb7…tUvb"; mono: true; error: "That isn't a Monero address. It starts with 4 or 8 and is 95 characters long."; }
+                HorizontalLayout {
                     spacing: 32px;
-                    GCombo { label: "Monero node"; value: "cuprated"; sub: "on this Nodo"; open: scene == "g-settings-pick"; horizontal-stretch: 1; }
+                    RefField { label: "Monero node"; state: scene == "g-ref-open" ? 1 : scene == "g-ref-empty" ? 3 : 0; horizontal-stretch: 1; }
                     VerticalLayout {
                         spacing: 10px;
                         Tx { text: "Confirmations"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
                         GStepper { value: "10"; }
-                    }
-                    VerticalLayout {
-                        spacing: 10px;
-                        Tx { text: "Email receipts"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
-                        Rectangle { height: 80px; width: 120px; GSwitch { on: true; } }
                     }
                 }
                 Rectangle { vertical-stretch: 1; }
@@ -1664,20 +2036,61 @@ export component DesignBoard2 inherits Window {
                 }
             }
         }
-        if scene == "g-settings-pick": GMenu {
-            x: 104px;
-            y: 400px;
-            width: 900px;
+        if scene == "g-settings-kbd": GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 340px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 20px;
+                GInput { label: "Store name"; value: "Corner Café"; focused: true; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Save"; w: 220px; }
+                }
+            }
+        }
+        if scene == "g-ref-manual": GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 340px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 18px;
+                GInput { label: "Monero node: enter an address yourself"; value: "http://192.168.1.50:18081"; mono: true; focused: true; help: "✓ Reached a Monero node at height 3,478,012 · it isn't on this Nodo, so it can see which wallet is yours"; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Back to the list"; kind: 3; w: 280px; }
+                    GButton { label: "Use this node"; w: 280px; }
+                }
+            }
+        }
+        if kbd: GKeyboard { }
+        if scene == "g-ref-open": RefMenu { x: 104px; y: 836px - 540px; width: 1240px; height: 530px; }
+        if scene == "g-ref-empty": RefMenu { x: 104px; y: 836px - 340px; width: 1240px; height: 330px; empty: true; }
+        if scene == "g-combo-open": GMenu {
+            x: 1296px;
+            y: 420px;
+            width: 520px;
             selected: 0;
             items: [
-                { t: "cuprated", s: "on this Nodo", v: "recommended" },
-                { t: "monerod", s: "on this Nodo", v: "stopped", tone: 0, hover: true },
-                { t: "Another node…", s: "type its address", v: "" }
+                { t: "EUR", s: "Euro" },
+                { t: "USD", s: "US dollar", hover: true },
+                { t: "GBP", s: "Pound sterling" },
+                { t: "CHF", s: "Swiss franc" },
+                { t: "XMR", s: "Prices in Monero" }
             ];
         }
-        if scene == "g-settings-kbd": GKeyboard { }
-        if scene == "g-settings": Note { text: "Save stays disabled while a field has an error. Errors appear under the field as you type."; }
-        if scene == "g-settings-pick": Note { text: "A dropdown opens as a raised menu next to its box, upward near the bottom edge (120 ms); the current choice is ticked; tapping outside closes it."; }
+        if scene == "g-settings": Note { text: "Save stays disabled while a field has an error. Monero node is a reference: it takes its value from another app."; }
+        if scene == "g-ref-open": Note { text: "Grouped: on this Nodo (recommended first, a stopped one greyed with why), not installed yet, or an address you type."; }
+        if scene == "g-combo-open": Note { text: "A plain dropdown: a raised menu under its box (120 ms), the current choice ticked, the one under the finger lit."; }
+        if scene == "g-ref-empty": Note { text: "Nothing on this Nodo offers it yet: get an app that does, or type a node's address."; }
+        if scene == "g-ref-manual": Note { text: "Typing an address checks it as you go, and says what it means for privacy."; }
     }
     if scene == "g-rolled-back": Rectangle {
         GNav { tab: 1; lock: 1; }
@@ -2464,54 +2877,9 @@ export component DesignBoard2 inherits Window {
     }
     if scene == "g-screen": Rectangle {
         GNav { tab: 3; lock: 1; }
-        GHeader { crumbs: ["System"]; title: "Screen"; }
+        GHeader { crumbs: ["System"]; title: "Screen"; sub: "The screen always shows your tiles. The Nodo logo is a tile too: add it in Arrange."; }
         GBody {
-            top: 300px;
-            GCard {
-                height: 400px;
-                VerticalLayout {
-                    padding: 36px;
-                    spacing: 20px;
-                    Tx { text: "Wallpaper"; font-size: 30px; font-weight: 700; color: G.bright; }
-                    HorizontalLayout {
-                        spacing: 24px;
-                        height: 280px;
-                        GRadioCard {
-                            title: "Panels";
-                            sub: "Your apps' tiles";
-                            for j in [0, 1, 2, 3]: Rectangle {
-                                x: 24px + Math.mod(j, 2) * 130px;
-                                y: 24px + Math.floor(j / 2) * 70px;
-                                width: 120px;
-                                height: 60px;
-                                border-radius: 10px;
-                                border-width: 2px;
-                                border-color: #3A4045;
-                            }
-                        }
-                        GRadioCard {
-                            title: "Logo";
-                            sub: "The Nodo and one status line";
-                            selected: true;
-                            Logo2 { x: 24px; y: 16px; width: 150px; height: 150px; }
-                        }
-                        GRadioCard {
-                            title: "Logo and panels";
-                            sub: "The logo beside three tiles";
-                            Logo2 { x: 24px; y: 24px; width: 130px; height: 130px; }
-                            for j in [0, 1, 2]: Rectangle {
-                                x: 170px;
-                                y: 24px + j * 46px;
-                                width: 140px;
-                                height: 38px;
-                                border-radius: 8px;
-                                border-width: 2px;
-                                border-color: #3A4045;
-                            }
-                        }
-                    }
-                }
-            }
+            top: 340px;
             GCard {
                 height: 330px;
                 VerticalLayout {
@@ -2519,23 +2887,24 @@ export component DesignBoard2 inherits Window {
                     spacing: 18px;
                     HorizontalLayout {
                         height: 56px;
-                        Tx { text: "Brightness"; font-size: 26px; font-weight: 600; color: G.bright; width: 320px; }
+                        Tx { text: "Brightness"; font-size: 26px; font-weight: 600; color: G.bright; width: 420px; }
                         GSlider { value: 0.8; horizontal-stretch: 1; }
                         Tx { text: "80%"; color: G.dim; width: 100px; horizontal-alignment: right; }
                     }
                     HorizontalLayout {
                         height: 56px;
-                        Tx { text: "Dim when idle to"; font-size: 26px; font-weight: 600; color: G.bright; width: 320px; }
+                        Tx { text: "Dim when idle to"; font-size: 26px; font-weight: 600; color: G.bright; width: 420px; }
                         GSlider { value: 0.2; horizontal-stretch: 1; }
                         Tx { text: "20%"; color: G.dim; width: 100px; horizontal-alignment: right; }
                     }
                     HorizontalLayout {
                         height: 80px;
-                        Tx { text: "Back to the wallpaper after"; font-size: 26px; font-weight: 600; color: G.bright; width: 420px; }
+                        Tx { text: "Back to the tiles after"; font-size: 26px; font-weight: 600; color: G.bright; width: 420px; }
                         GSegmented { options: ["1 min", "2 min", "5 min", "Never"]; selected: 1; horizontal-stretch: 1; }
                     }
                 }
             }
+            GList { rows: [{ t: "Screen PIN", s: "On · changes from this screen ask for it", chev: true }, { t: "Arrange the tiles", s: "Opens the tile screen in Arrange", chev: true }]; }
         }
     }
 
@@ -2589,10 +2958,11 @@ export component DesignBoard2 inherits Window {
     }
 
     // ---- unlocking changes
-    if scene == "g-pin" || scene == "g-pin-wrong" || scene == "g-lockout": Rectangle {
+    if scene == "g-pin" || scene == "g-pin-wrong": Rectangle {
         GNav { tab: 1; lock: 0; }
         GHeader { crumbs: ["Apps"]; title: "mk-pay"; sub: "Payments for your shop"; }
-        PinPad { state: scene == "g-pin" ? 0 : scene == "g-pin-wrong" ? 1 : 2; }
+        PinPad { state: scene == "g-pin" ? 0 : 1; }
+        if scene == "g-pin-wrong": Note { text: "A wrong PIN shakes the dots (300 ms) and clears them for another go. There is no limit: only someone at the screen can try."; }
     }
     if scene == "g-no-pin": Rectangle {
         GNav { tab: 3; lock: 2; }
@@ -2608,7 +2978,7 @@ export component DesignBoard2 inherits Window {
             }
             GInfo {
                 title: "How it protects you";
-                body: "After 5 wrong tries the screen waits 5 minutes, then longer. Changes lock again 5 minutes after the last touch. Shut down always works.";
+                body: "Only the screen itself can check a PIN, so nothing else on the Nodo can guess it. Changes lock again after a few minutes without a touch. Shut down always works.";
                 tone: 4;
                 h: 170px;
             }
