@@ -1,0 +1,36 @@
+Web › Advanced                                                                                             monokulo-nodo
+┌ Web address ─────────────────────────────────────────────┐┌ Home network and Tor ────────────────────────────────────┐
+│ Domain                                       example.com ││ Trust page                             http://nodo.local │
+│ Provider                        Porkbun (API key stored) ││ Local CA         created 2026-11-13, root valid 10 years │
+│ Home address     203.0.113.42, record updated 3 days ago ││ Tor                                            ✓ running │
+│ Open ports   80, 443 (because mk-pay is on the internet) │└──────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────┘
+┌ Certificates ────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Name                      Issued by                                                                         Expires │
+│  pay.example.com           Let's Encrypt (DNS-01, Porkbun)                                              ✓ in 61 days │
+│  mk-pay.local              This Nodo's local CA                                                          ✓ in 6 days │
+│  mk-lws.local              This Nodo's local CA                                                          ✓ in 6 days │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+c change provider  k replace key  r renew now  Esc back

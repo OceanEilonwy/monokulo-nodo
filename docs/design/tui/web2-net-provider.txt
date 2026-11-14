@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet
+┌ Anyone on the internet ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 2 of 4   ✓ Address  ›  Provider  ›  Checks  ›  Confirm                                                          │
+│                                                                                                                      │
+│ ✓ example.com is managed at Porkbun                                                                                  │
+│                                                                                                                      │
+│ So the Nodo can keep the address pointing home by itself, give it a Porkbun API key.                                 │
+│ Create one at porkbun.com › Account › API Access, and turn on API access for example.com.                            │
+│                                                                                                                      │
+│ API key       [pk1_••••••••••••••••••••                ]                                                             │
+│ Secret key     sk1_••••••••                                                                                          │
+│                                                                                                                      │
+│ The keys stay on this Nodo, sealed with the device passphrase.                                                       │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Back   ▸Check
+Tab next field  ↵ check  Esc back

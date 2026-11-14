@@ -1,0 +1,36 @@
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
+
+    Packages  ›  mk-pay  ›  Hosting
+
+    Ready to put mk-pay on the internet
+
+
+       ✓  Porkbun accepted the key
+       ✓  pay.example.com points to your home
+       ✓  The internet can reach your Nodo
+       ✓  Secure connection ready
+
+       Anyone will be able to open https://pay.example.com
+       Visitors can see your home's internet address. The Nodo keeps everything up to date itself.
+
+       Show details ›
+
+                                                                    Cancel               Put mk-pay online   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ put online  Esc cancel

@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet                                                                             ✕ Key refused
+┌ Anyone on the internet ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 2 of 4   ✓ Address  ›  Provider  ›  Checks  ›  Confirm                                                          │
+│                                                                                                                      │
+│ ✕ Porkbun didn't accept the key                                                                                      │
+│                                                                                                                      │
+│ Check that:                                                                                                          │
+│   · both keys were copied in full (they start with pk1_ and sk1_)                                                    │
+│   · API access is turned on for example.com in Porkbun's domain list                                                 │
+│                                                                                                                      │
+│ API key       [pk1_••••••••••••••••••••                ]                                                             │
+│ Secret key                                                                                                           │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Back   ▸Try again
+Tab next field  ↵ try again  d details  Esc back

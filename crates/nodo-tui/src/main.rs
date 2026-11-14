@@ -83,7 +83,20 @@ fn main() -> ExitCode {
             "--mock" => mock = true,
             "--no-drive" => no_drive = true,
             "--screen" => {
-                let Some(id) = args.next().as_deref().and_then(ScreenId::from_slug) else {
+                let slug = args.next();
+                // The web flow v2 proposal: static mock screens, shown until a key is pressed.
+                if let Some(scene) = slug.as_deref().and_then(nodo_tui::proposal::Scene::from_slug) {
+                    let colorterm = std::env::var("COLORTERM").ok();
+                    let theme = Theme::detect(colorterm.as_deref(), std::env::var_os("NO_COLOR").is_some());
+                    return match nodo_tui::proposal::show(scene, theme) {
+                        Ok(()) => ExitCode::SUCCESS,
+                        Err(error) => {
+                            eprintln!("nodo-tui: {error}");
+                            ExitCode::FAILURE
+                        }
+                    };
+                }
+                let Some(id) = slug.as_deref().and_then(ScreenId::from_slug) else {
                     eprint!("Unknown screen.\n\n{}", usage());
                     return ExitCode::from(2);
                 };

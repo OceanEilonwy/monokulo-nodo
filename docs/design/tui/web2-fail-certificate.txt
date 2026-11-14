@@ -1,0 +1,36 @@
+Web › mk-pay                                                                                              ◆ Almost ready
+┌ Secure connection pending ───────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ mk-pay is online at https://pay.example.com                                                                        │
+│ ◆ Getting the secure connection                                                                    next try in 4 min │
+│                                                                                                                      │
+│ Until it's ready, browsers show visitors a warning. This usually takes a minute or two;                              │
+│ the Nodo keeps trying by itself and tells you if it gives up.                                                        │
+│                                                                                                                      │
+│ Last try: the certificate service couldn't confirm the address yet. Press d for details.                             │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+r try now  d details  Esc back

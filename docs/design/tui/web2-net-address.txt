@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet
+┌ Anyone on the internet ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 1 of 4   Address  ›  Provider  ›  Checks  ›  Confirm                                                            │
+│                                                                                                                      │
+│ Which web address should mk-pay use?                                                                                 │
+│                                                                                                                      │
+│ Web address    pay.example.com                                                                                       │
+│                                                                                                                      │
+│ Use a domain you own, from a shop such as Porkbun, Namecheap or Cloudflare.                                          │
+│ A part in front (pay.) lets other apps use the same domain.                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Back   ▸Next
+↵ next  Esc back

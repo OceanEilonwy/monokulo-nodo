@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet                                                                          ✕ Can't continue
+┌ Your provider isn't supported ───────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 2 of 4   ✓ Address  ›  Provider  ›  Checks  ›  Confirm                                                          │
+│                                                                                                                      │
+│ ✕ example.com is managed at Hover                                                                                    │
+│                                                                                                                      │
+│ Hover has no way for the Nodo to update your address automatically, so it can't be set up.                           │
+│                                                                                                                      │
+│ You can:                                                                                                             │
+│ ▸ Move example.com's settings to a supported provider (free at Cloudflare)                                           │
+│   Use a private link through Tor instead                                                                             │
+│   Choose another web address                                                                                         │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ choose  ↵ go  p supported providers  Esc back

@@ -1,0 +1,36 @@
+Web › mk-pay › Who can open it                                                                                ● 1 change
+┌ Who should be able to open mk-pay? ──────────────────────────────────────────────────────────────────────────────────┐
+│  [x] Devices at home                                                                                                 │
+│      Phones and computers on your Wi-Fi or network cable.                                                            │
+│      Address: https://mk-pay.local                                                                                   │
+│                                                                                                                      │
+│  [ ] Anyone with a private link, through Tor                                                                         │
+│      Opens only in Tor Browser. Doesn't reveal where the Nodo is.                                                    │
+│                                                                                                                      │
+│ ▸[x] Anyone on the internet, at my own web address                                                                   │
+│      Needs a web address you own, like pay.example.com.                                                              │
+│      Visitors can see your home's internet address.                                                                  │
+│                                                                                                                      │
+│  Pick any combination.                                                                                               │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Cancel   ▸Continue
+Space tick  ↑↓ move  ↵ continue  Esc cancel

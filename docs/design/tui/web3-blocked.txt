@@ -1,0 +1,36 @@
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
+
+    Packages  ›  mk-pay  ›  Hosting
+
+    The internet can't reach your Nodo
+
+
+       Your internet provider shares one address between many homes, so visitors stop at the
+       provider and never reach you. Router settings can't change this.
+
+       A private Tor link still works on this connection.
+
+       Show details ›
+
+                                                                     Check again           Use Tor instead   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ use Tor  c check again  Esc back
