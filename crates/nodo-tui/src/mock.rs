@@ -78,6 +78,10 @@ pub struct MockBackend {
     pub update_history: Vec<nodo_api::UpdateEvent>,
     /// Makes a USB restore fail with this reason, as a pulled drive would.
     pub restore_failure: Option<String>,
+    /// Makes reading the provider catalog fail with this reason.
+    pub providers_failure: Option<String>,
+    /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
+    pub radios_failure: Option<String>,
     pub wifi: nodo_api::WifiStatus,
     /// Networks in range, with the passphrase each accepts.
     pub access_points: Vec<(nodo_api::WifiNetwork, String)>,
@@ -166,6 +170,8 @@ impl MockBackend {
                 kind: nodo_api::UpdateEventKind::RolledBack { reason: s("bell did not pass its health check") },
             }],
             restore_failure: None,
+            providers_failure: None,
+            radios_failure: None,
             wifi: sample_wifi(),
             access_points: sample_access_points(),
             bluetooth: sample_bluetooth(),
@@ -449,6 +455,9 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),
+            Request::WifiStatus | Request::BluetoothStatus if self.radios_failure.is_some() => {
+                Err(ApiError::Failed(self.radios_failure.clone().unwrap_or_default()))
+            }
             Request::WifiStatus => Ok(Response::Wifi(self.wifi.clone())),
             Request::SetWifiEnabled { enabled } => {
                 self.wifi.enabled = enabled;
@@ -1188,8 +1197,11 @@ impl ScreenData for MockBackend {
         self.web.clone()
     }
 
-    fn providers(&self) -> Vec<Provider> {
-        sample_providers()
+    fn providers(&self) -> Result<Vec<Provider>, String> {
+        match &self.providers_failure {
+            Some(reason) => Err(reason.clone()),
+            None => Ok(sample_providers()),
+        }
     }
 
     fn connected_providers(&self) -> Vec<ConnectedProvider> {

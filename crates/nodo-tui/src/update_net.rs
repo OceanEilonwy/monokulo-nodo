@@ -12,8 +12,10 @@ use crate::app::*;
 use crate::secret::Input;
 
 pub(super) fn open_network(app: &mut App) -> Vec<Effect> {
-    push(app, Screen::Network(NetworkState::new()));
-    vec![Effect::LoadNetwork]
+    let mut state = NetworkState::new();
+    let effects = state.ask_again(app.ticks);
+    push(app, Screen::Network(state));
+    effects
 }
 
 pub(super) fn network_input(state: &mut NetworkState) -> Option<&mut Input> {
@@ -35,6 +37,10 @@ pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         pop(app);
         return vec![Effect::Refresh];
+    }
+    // Works even while the first answer is still awaited, since that may never come.
+    if key.code == KeyCode::Char('r') && state.can_ask_again() {
+        return state.ask_again(app.ticks);
     }
     if state.busy.is_some() {
         return Vec::new();
@@ -77,11 +83,7 @@ pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 }
             }
         }
-        KeyCode::Char('g') => {
-            state.error = None;
-            state.busy = Some("Reading the radios…".to_owned());
-            return vec![Effect::LoadNetwork];
-        }
+        KeyCode::Char('g') => return state.ask_again(app.ticks),
         KeyCode::Char('o') => return toggle_radio(app),
         KeyCode::Char('s') => {
             state.error = None;
@@ -282,11 +284,19 @@ pub(super) fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
 }
 
 /// Polls while something happens in the background: a pairing waiting for the owner, or a
-/// network that has not given an address yet.
-pub(super) fn on_tick(app: &App) -> Vec<Effect> {
-    let Screen::Network(state) = &app.screen else {
+/// network that has not given an address yet. A radio still unanswered after
+/// [`NO_ANSWER_TICKS`] says so instead of asking forever.
+pub(super) fn on_tick(app: &mut App) -> Vec<Effect> {
+    let Screen::Network(state) = &mut app.screen else {
         return Vec::new();
     };
+    if app.ticks.saturating_sub(state.asked_at) >= NO_ANSWER_TICKS {
+        for read in [&mut state.wifi_read, &mut state.bluetooth_read] {
+            if *read == RadioRead::Asking {
+                *read = RadioRead::NoAnswer;
+            }
+        }
+    }
     if state.busy.is_some() || app.ticks % TICKS_PER_SECOND != 0 {
         return Vec::new();
     }
@@ -321,13 +331,31 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
     match event {
         Event::NetworkLoaded { wifi, bluetooth } => {
             state.busy = None;
+            // A radio with nothing shown yet says why in its panel; one already shown keeps its
+            // last status, with the error under it.
             match wifi {
-                Ok(status) => state.wifi = Some(status),
-                Err(e) => state.error = Some(e),
+                Ok(status) => {
+                    state.wifi = Some(status);
+                    state.wifi_read = RadioRead::Read;
+                }
+                Err(e) => {
+                    if state.wifi.is_some() {
+                        state.error = Some(e.clone());
+                    }
+                    state.wifi_read = RadioRead::Failed(e);
+                }
             }
             match bluetooth {
-                Ok(status) => state.bluetooth = Some(status),
-                Err(e) => state.error = Some(e),
+                Ok(status) => {
+                    state.bluetooth = Some(status);
+                    state.bluetooth_read = RadioRead::Read;
+                }
+                Err(e) => {
+                    if state.bluetooth.is_some() {
+                        state.error = Some(e.clone());
+                    }
+                    state.bluetooth_read = RadioRead::Failed(e);
+                }
             }
         }
         Event::WifiChanged { result, quiet } => {

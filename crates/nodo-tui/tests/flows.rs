@@ -421,6 +421,32 @@ fn providers_without_an_api_cannot_be_connected_and_offer_no_guided_move() {
 }
 
 #[test]
+fn adding_a_provider_says_why_there_is_no_list_and_reads_it_again() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.providers_failure = Some("the helper is not running".to_owned());
+    app.data = load_snapshot(&mut mock).unwrap();
+    keys(&mut app, &mut mock, &[KeyCode::Char('p'), KeyCode::Char('a')]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Couldn't read the providers: the helper is not running"), "{screen}");
+    assert!(!screen.contains("Cloudflare"), "{screen}");
+
+    // Opening the add flow again asks the helper again.
+    mock.providers_failure = None;
+    keys(&mut app, &mut mock, &[ESC, KeyCode::Char('p'), KeyCode::Char('a')]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Cloudflare"), "{screen}");
+    assert!(!screen.contains("Couldn't read the providers"), "{screen}");
+}
+
+#[test]
+fn an_empty_provider_catalog_says_so() {
+    let (mut app, _mock) = fixture(ScreenId::WebProviders);
+    app.data.providers.clear();
+    let screen = screen_text(&app);
+    assert!(screen.contains("No providers are offered."), "{screen}");
+}
+
+#[test]
 fn hosting_without_a_provider_adds_one_and_comes_back() {
     let (mut app, mut mock) = without_a_provider();
     keys(&mut app, &mut mock, &[DOWN, ENTER, DOWN, DOWN, SPACE]);
@@ -2212,6 +2238,53 @@ fn radios_that_are_off_or_missing_say_so() {
     key(&mut app, &mut mock, KeyCode::Char('o'));
     assert!(mock.bluetooth.enabled);
     assert!(screen_text(&app).contains("Not discoverable"), "{}", screen_text(&app));
+}
+
+#[test]
+fn radios_the_helper_cannot_read_say_why_and_can_be_asked_again() {
+    let (mut app, mut mock) = loaded();
+    mock.radios_failure = Some("the helper is not running".to_owned());
+    key(&mut app, &mut mock, KeyCode::Char('w'));
+    let screen = screen_text(&app);
+    assert!(!screen.contains("Asking the helper"), "{screen}");
+    assert_eq!(screen.matches("The helper could not say: the helper is not running").count(), 2, "{screen}");
+    assert!(screen.contains("Try again") && screen.contains("r try again"), "{screen}");
+    let Screen::Network(state) = &app.screen else { panic!("expected network") };
+    assert!(state.busy.is_none(), "{state:?}");
+
+    // The keyboard asks again...
+    mock.calls.clear();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(mock.calls.iter().any(|c| matches!(c, Request::WifiStatus)));
+    assert!(screen_text(&app).contains("could not say"));
+
+    // ...and so does a click, which finds the helper back.
+    mock.radios_failure = None;
+    click(&mut app, &mut mock, "Try again");
+    let screen = screen_text(&app);
+    assert!(screen.contains("● Joined home-5G"), "{screen}");
+    assert!(screen.contains("K380 Keyboard"), "{screen}");
+    assert!(!screen.contains("Try again"), "{screen}");
+}
+
+#[test]
+fn radios_with_no_answer_say_so_after_a_while_instead_of_asking_forever() {
+    let (mut app, _mock) = loaded();
+    // The answer never arrives: the effect is left unperformed, as behind a slow request.
+    assert_eq!(update(&mut app, press(KeyCode::Char('w'))), vec![Effect::LoadNetwork]);
+    assert!(screen_text(&app).contains("Asking the helper…"));
+    for _ in 0..NO_ANSWER_TICKS - 1 {
+        update(&mut app, Event::Tick);
+    }
+    assert!(screen_text(&app).contains("Asking the helper…"), "not before the wait is over");
+    update(&mut app, Event::Tick);
+    let screen = screen_text(&app);
+    assert!(!screen.contains("Asking the helper"), "{screen}");
+    assert_eq!(screen.matches("No answer from the helper yet.").count(), 2, "{screen}");
+    // Other keys wait for the answer, but asking again does not.
+    assert!(update(&mut app, press(KeyCode::Char('s'))).is_empty());
+    assert_eq!(update(&mut app, press(KeyCode::Char('r'))), vec![Effect::LoadNetwork]);
+    assert!(screen_text(&app).contains("Asking the helper…"));
 }
 
 #[test]

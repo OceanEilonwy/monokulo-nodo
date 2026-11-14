@@ -84,6 +84,8 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 wifi: Some(mock.wifi.clone()),
                 networks: mock.wifi_networks(),
                 bluetooth: Some(bluetooth),
+                wifi_read: crate::app::RadioRead::Read,
+                bluetooth_read: crate::app::RadioRead::Read,
                 busy: None,
                 ..NetworkState::new()
             })

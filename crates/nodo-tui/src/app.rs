@@ -465,10 +465,29 @@ pub struct WifiPrompt {
     pub passphrase: Input,
 }
 
+/// Where reading one radio's state from the helper stands, kept apart from the status itself so
+/// a panel with nothing to show yet can tell asking from failing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RadioRead {
+    Asking,
+    /// Asked [`NO_ANSWER_TICKS`] ago and still no answer. The helper does one thing at a time,
+    /// so the answer may only be waiting behind something slower.
+    NoAnswer,
+    Failed(String),
+    Read,
+}
+
+/// How long the Network screen waits for the radios before saying there is no answer yet.
+pub const NO_ANSWER_TICKS: u64 = 10 * TICKS_PER_SECOND;
+
 /// Wi-Fi and Bluetooth: both radios, the networks in range and the saved ones, and devices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkState {
     pub wifi: Option<nodo_api::WifiStatus>,
+    pub wifi_read: RadioRead,
+    pub bluetooth_read: RadioRead,
+    /// The tick the radios were last asked for.
+    pub asked_at: u64,
     /// The last scan, strongest first.
     pub networks: Vec<nodo_api::WifiNetwork>,
     pub bluetooth: Option<nodo_api::BluetoothStatus>,
@@ -485,6 +504,9 @@ impl NetworkState {
     pub fn new() -> Self {
         Self {
             wifi: None,
+            wifi_read: RadioRead::Asking,
+            bluetooth_read: RadioRead::Asking,
+            asked_at: 0,
             networks: Vec::new(),
             bluetooth: None,
             focus: NetworkFocus::Wifi,
@@ -526,6 +548,22 @@ impl NetworkState {
         let wifi = self.wifi.as_ref()?;
         (wifi.link == nodo_api::WifiLink::Connected).then_some(())?;
         wifi.ssid.as_deref()
+    }
+
+    /// Whether a radio with nothing to show failed or went unanswered, so asking again helps.
+    pub fn can_ask_again(&self) -> bool {
+        let stuck = |read: &RadioRead| matches!(read, RadioRead::NoAnswer | RadioRead::Failed(_));
+        (self.wifi.is_none() && stuck(&self.wifi_read)) || (self.bluetooth.is_none() && stuck(&self.bluetooth_read))
+    }
+
+    /// Asks for both radios again, counting the wait from tick `now`.
+    pub fn ask_again(&mut self, now: u64) -> Vec<Effect> {
+        self.error = None;
+        self.busy = Some("Reading the radios…".to_owned());
+        self.wifi_read = RadioRead::Asking;
+        self.bluetooth_read = RadioRead::Asking;
+        self.asked_at = now;
+        vec![Effect::LoadNetwork]
     }
 
     pub fn pairing_running(&self) -> bool {
@@ -1365,6 +1403,8 @@ pub enum Effect {
     CheckReachability { site: String, going_public: bool },
     /// `domain` only for a provider that cannot list its domains.
     AddProvider { provider: String, domain: Option<String>, api_key: Secret, secret_key: Secret },
+    /// Reads the provider catalog again, as the add flow opens.
+    LoadProviders,
     RemoveProvider(String),
     RefreshProvider(String),
     /// `dns01` holds the provider's separate certificate credentials, when it needs them.
@@ -1467,6 +1507,7 @@ pub enum Event {
     PublicHostSet(Result<(), String>),
     Reachability { site: String, going_public: bool, result: Reachability },
     ProviderAdded(Result<ConnectedProvider, String>),
+    ProvidersLoaded(Result<Vec<Provider>, String>),
     ProviderRemoved(Result<(), String>),
     ProviderRefreshed(Result<ConnectedProvider, String>),
     AcmeSaved(Result<(), String>),

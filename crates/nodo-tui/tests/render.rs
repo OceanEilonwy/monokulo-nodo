@@ -361,3 +361,34 @@ fn every_screen_shows_the_four_tabs() {
         }
     }
 }
+
+/// A radio the helper could not read says why, with a way to ask again, rather than asking
+/// forever; one with no answer yet says so without guessing why.
+#[test]
+fn unread_radios_show_why_instead_of_asking_forever() {
+    use nodo_tui::app::{RadioRead, Screen};
+    let (mut app, _) = fixture(ScreenId::Network);
+    let Screen::Network(state) = &mut app.screen else { panic!("expected network") };
+    state.wifi = None;
+    state.wifi_read = RadioRead::Failed("connection refused".to_owned());
+    state.bluetooth = None;
+    state.bluetooth_read = RadioRead::NoAnswer;
+    let (buffer, report) = draw(&app, 100, 32);
+    let screen = text(&buffer);
+    assert!(report.fits(), "{report:?}\n{screen}");
+    assert!(!screen.contains("Asking the helper"), "{screen}");
+    assert!(screen.contains("The helper could not say: connection refused"), "{screen}");
+    assert!(screen.contains("No answer from the helper yet."), "{screen}");
+    assert_eq!(screen.matches("Try again").count(), 2, "{screen}");
+}
+
+/// A provider catalog that could not be read says why on the step that lists it.
+#[test]
+fn an_unreadable_provider_catalog_says_why() {
+    let (mut app, _) = fixture(ScreenId::WebProviders);
+    app.data.providers.clear();
+    app.data.providers_error = Some("the helper is not running".to_owned());
+    let screen = screen_text(&app);
+    assert!(screen.contains("Couldn't read the providers: the helper is not running"), "{screen}");
+    assert!(!screen.contains("No providers are offered."), "{screen}");
+}

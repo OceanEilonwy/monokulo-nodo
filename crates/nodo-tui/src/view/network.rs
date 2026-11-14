@@ -2,13 +2,15 @@
 //! bordered panels, the focused one in the accent colour, a passphrase field while joining, and
 //! key hints in the footer.
 
+use crossterm::event::KeyCode;
 use nodo_api::{BluetoothStatus, PairingStage, WifiLink, WifiSecurity, WifiStatus};
 use ratatui::text::{Line, Span};
 
 use super::layout::{Item, Page, Panel};
 use super::more::{bullet, crumbs, error_items, row};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{NetworkFocus, NetworkState, WifiRow};
+use crate::app::{NetworkFocus, NetworkState, RadioRead, WifiRow};
+use crate::hit::{Click, Target};
 use crate::theme::Theme;
 
 /// Signal strength as bars, so it reads without numbers too.
@@ -76,12 +78,34 @@ fn wifi_status_line(t: &Theme, wifi: &WifiStatus) -> Item {
     Item::Row(Line::from(left), Line::from(t.d(format!("{} ", wifi.interface.as_deref().unwrap_or("")))))
 }
 
-fn wifi_panel(t: &Theme, state: &NetworkState) -> Panel {
+/// What a panel with no status yet shows: still asking, or why there is nothing, with a way to
+/// ask again. Returns whether it offered "Try again", which is then a click target.
+fn not_read(t: &Theme, read: &RadioRead, items: &mut Vec<Item>) -> bool {
+    let why = match read {
+        RadioRead::Asking | RadioRead::Read => {
+            items.push(Item::Text(Line::from(t.d(" Asking the helper…"))));
+            return false;
+        }
+        // Neutral on purpose: the helper may only be busy with an earlier, slower request.
+        RadioRead::NoAnswer => t.a(" ▲ No answer from the helper yet."),
+        RadioRead::Failed(e) => t.e(format!(" ✕ The helper could not say: {e}")),
+    };
+    items.push(Item::Text(Line::from(why)));
+    items.push(Item::Text(Line::from(vec![t.n(" "), t.a(TRY_AGAIN), t.d("   or press r")])));
+    true
+}
+
+const TRY_AGAIN: &str = "Try again";
+
+fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
     let focused = state.focus == NetworkFocus::Wifi;
     let mut items = Vec::new();
     let Some(wifi) = &state.wifi else {
-        items.push(Item::Text(Line::from(t.d(" Asking the helper…"))));
-        return if focused { Panel::accent("Wi-Fi", items) } else { Panel::new("Wi-Fi", items) };
+        let again = not_read(t, &state.wifi_read, &mut items);
+        if focused {
+            items.extend(error_items(t, &state.error));
+        }
+        return (if focused { Panel::accent("Wi-Fi", items) } else { Panel::new("Wi-Fi", items) }, again);
     };
     items.push(wifi_status_line(t, wifi));
     if let Some(prompt) = &state.prompt {
@@ -142,9 +166,9 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> Panel {
     }
     if focused {
         items.extend(error_items(t, &state.error));
-        Panel::accent("Wi-Fi", items)
+        (Panel::accent("Wi-Fi", items), false)
     } else {
-        Panel::new("Wi-Fi", items)
+        (Panel::new("Wi-Fi", items), false)
     }
 }
 
@@ -171,11 +195,12 @@ fn pairing_line(t: &Theme, bt: &BluetoothStatus) -> Option<Item> {
     Some(Item::Text(line))
 }
 
-fn bluetooth_panel(t: &Theme, state: &NetworkState) -> Panel {
+fn bluetooth_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
     let focused = state.focus == NetworkFocus::Bluetooth;
     let mut items = Vec::new();
+    let mut again = false;
     match &state.bluetooth {
-        None => items.push(Item::Text(Line::from(t.d(" Asking the helper…")))),
+        None => again = not_read(t, &state.bluetooth_read, &mut items),
         Some(bt) if bt.unavailable.is_some() => {
             items.push(Item::Text(Line::from(vec![t.a(" ▲ "), t.n(bt.unavailable.clone().unwrap_or_default())])));
         }
@@ -222,9 +247,9 @@ fn bluetooth_panel(t: &Theme, state: &NetworkState) -> Panel {
     }
     if focused {
         items.extend(error_items(t, &state.error));
-        Panel::accent("Bluetooth", items)
+        (Panel::accent("Bluetooth", items), again)
     } else {
-        Panel::new("Bluetooth", items)
+        (Panel::new("Bluetooth", items), again)
     }
 }
 
@@ -240,10 +265,18 @@ pub fn network(t: &Theme, state: &NetworkState) -> Page {
         bullet(t, "Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept."),
         bullet(t, "Bluetooth is never discoverable. Only pairings you start here can happen."),
     ];
+    let (wifi, wifi_again) = wifi_panel(t, state);
+    let (bluetooth, bluetooth_again) = bluetooth_panel(t, state);
     let mut page = Page::new(header, right)
-        .panel(wifi_panel(t, state).grow())
-        .panel(bluetooth_panel(t, state))
+        .panel(wifi.grow())
+        .panel(bluetooth)
         .panel(Panel::new("About wireless", about));
+    // One target per "Try again" drawn, in order, since both panels can show one.
+    for shown in [wifi_again, bluetooth_again] {
+        if shown {
+            page = page.target(Target::text(TRY_AGAIN, Click::Key(KeyCode::Char('r'))));
+        }
+    }
     if let Some(busy) = &state.busy {
         page = page.footer(Item::Text(Line::from(t.d(format!("⧗ {busy}")))));
     }
@@ -269,5 +302,9 @@ pub fn network(t: &Theme, state: &NetworkState) -> Page {
             ("Esc", "back"),
         ],
     };
-    page.footer(Item::Text(hints(t, keys)))
+    let mut keys = keys.to_vec();
+    if state.can_ask_again() {
+        keys.insert(keys.len() - 1, ("r", "try again"));
+    }
+    page.footer(Item::Text(hints(t, &keys)))
 }

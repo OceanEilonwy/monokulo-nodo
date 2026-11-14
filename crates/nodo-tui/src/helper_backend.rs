@@ -742,14 +742,17 @@ impl ScreenData for HelperBackend {
     }
 
 
-    fn providers(&self) -> Vec<Provider> {
-        let list = self.dns_providers();
-        if list.is_empty() {
-            if let Err(e) = self.ask(Request::ListDnsProviders) {
+    fn providers(&self) -> Result<Vec<Provider>, String> {
+        let list = match self.ask(Request::ListDnsProviders) {
+            Ok(Response::DnsProviders(list)) => list,
+            Ok(other) => return Err(format!("unexpected reply: {other:?}")),
+            Err(e) => {
                 self.missing(Area::Providers, &e);
+                return Err(e.to_string());
             }
-        }
-        list.into_iter()
+        };
+        Ok(list
+            .into_iter()
             .map(|p| {
                 let ddns = if !p.dynamic_dns {
                     Capability::NoApi
@@ -778,7 +781,7 @@ impl ScreenData for HelperBackend {
                     lists_domains: p.lists_domains,
                 }
             })
-            .collect()
+            .collect())
     }
 
     fn connected_providers(&self) -> Vec<ConnectedProvider> {

@@ -1686,6 +1686,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         },
         KeyCode::Char('p') if !state.focus.is_text() => {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
+            return vec![Effect::LoadProviders];
         }
         KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
         KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
@@ -1943,6 +1944,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             web::on_reachability(app, site, going_public, result);
         }
         Event::ProviderAdded(result) => return web::on_provider_added(app, result),
+        Event::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
         Event::ProviderRemoved(result) => return web::on_provider_removed(app, result),
         Event::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
         Event::AcmeSaved(result) => match result {
