@@ -148,3 +148,21 @@ If the old key leaked, also say so: anything signed with it after the leak is su
    with a throwaway key and run `check-feed` on it, or install it in the dev VM.
 3. Add the name to `feed/packages` and merge. The next run builds it, the check runs it through
    the device's review, and the page lists it.
+
+## Feeds of other projects
+
+Another project can build its own signed feed with these scripts, without copying recipes into
+`packages/`:
+
+- `NODO_EXTRA_PACKAGES=/abs/path/srcpkgs` adds a directory of recipes laid out like
+  void-packages' `srcpkgs/` (a subpackage is a symlink to its recipe). `build-packages.sh`
+  hashes, builds and stamps them like this repository's own; a recipe in `packages/` wins on a
+  clash. A subpackage is built with its recipe and copied to `out/feed/<arch>` beside it; name
+  the recipe, not the subpackage, to `build-packages.sh`.
+- `publish-feed.sh` reads its package list from `FEED_PACKAGES` (default `feed/packages`; list
+  subpackages beside their recipe), signs with the signer name `FEED_SIGNER` (default
+  `monokulo-nodo feed`), and `check` requires the fingerprint `FEED_FINGERPRINT` (default: the
+  one images pin). The key is still the argument to `sign`.
+
+Such a feed is not added to devices by default: the owner adds it (`ProbeFeed`, compare the
+fingerprint, `AddFeed`). Pingers is the first user (its `docs/deploy-nodo.md`).

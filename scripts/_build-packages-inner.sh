@@ -3,6 +3,11 @@
 set -eu
 trap 'chown -R "$HOST_UID:$HOST_GID" /src/build/hostdir /src/out' EXIT
 vp=/work/void-packages
+# Third-party recipes first (NODO_EXTRA_PACKAGES, mounted at /extra), so this project's win on a
+# clash. cp -R keeps a subpackage's symlink a symlink.
+if [ -d /extra ]; then
+	cp -R /extra/. "$vp/srcpkgs/"
+fi
 cp -r /src/packages/* "$vp/srcpkgs/"
 cd "$vp"
 echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
@@ -32,7 +37,7 @@ fi
 # xbps-src cross-compiles only when the target differs from this machine.
 cross=
 [ "$ARCH" = "$(xbps-uhelper arch)" ] || cross="-a $ARCH"
-own=$(ls /src/packages)
+own=$(ls /src/packages; [ ! -d /extra ] || ls /extra)
 # The hostdir is a local repository that xbps-src prefers to the mirror. A Void package in it can
 # only be a dependency xbps-src once compiled from an older recipe, which would hide the mirror's
 # version from every later build, so only this project's packages stay.
@@ -99,7 +104,13 @@ for pkg in $PKGS; do
 	[ "$rc" = 0 ] || exit "$rc"
 done
 feed="/src/out/feed/$ARCH"
-for pkg in $PKGS; do
+# A recipe's subpackages (srcpkgs/<name> symlinked to it) come out of the same build.
+subpackages() {
+	for link in srcpkgs/*; do
+		if [ -L "$link" ] && [ "$(readlink "$link")" = "$1" ]; then basename "$link"; fi
+	done
+}
+for pkg in $(for recipe in $PKGS; do echo "$recipe"; subpackages "$recipe"; done); do
 	rm -f "$feed/$pkg"-[0-9]*.xbps
 	# The hostdir keeps every revision ever built. Copy only the newest: the index below registers
 	# files in name order with -f, so an older revision copied alongside (nodo-tools_8 sorts after

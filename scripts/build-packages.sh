@@ -13,6 +13,11 @@ feed=$root/out/feed/$arch
 mkdir -p "$root/build/hostdir" "$feed" "$root/build/stamps"
 todo=
 for pkg in "$@"; do
+	# A subpackage is built, stamped and copied with its recipe (_build-packages-inner.sh).
+	if is_subpackage "$pkg"; then
+		echo "$pkg is a subpackage; name its recipe, $(basename "$(recipe_dir "$pkg")"), instead" >&2
+		exit 2
+	fi
 	want=$(pkg_hash "$pkg")
 	if [ "$(cat "$root/build/stamps/$pkg.$arch" 2>/dev/null)" = "$want" ] && ls "$feed/$pkg"-[0-9]*.xbps >/dev/null 2>&1; then
 		[ -n "$only_list" ] || echo "up to date: $pkg"
@@ -26,9 +31,12 @@ if [ -n "$only_list" ]; then echo $todo; exit 0; fi
 # Only now, so a run with nothing to build never builds the builder image.
 ensure_builder
 # The compiler cache sizes pass through when set (see _build-packages-inner.sh).
+# Third-party recipes (lib.sh) are mounted read-only at /extra.
+set --
+[ -z "${NODO_EXTRA_PACKAGES:-}" ] || set -- -v "$NODO_EXTRA_PACKAGES:/extra:ro"
 docker run --rm -e "ARCH=$arch" -e "PKGS=$todo" -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
 	-e SCCACHE_CACHE_SIZE -e CCACHE_MAXSIZE \
-	-v "$root:/src" "$BUILDER" /src/scripts/_build-packages-inner.sh
+	-v "$root:/src" "$@" "$BUILDER" /src/scripts/_build-packages-inner.sh
 # Record the recipe hash from before the build, so edits made during it trigger a rebuild.
 for pkg in $todo; do
 	eval "printf '%s\n' \"\$stamp_$(printf %s "$pkg" | tr -c 'a-zA-Z0-9' _)\"" > "$root/build/stamps/$pkg.$arch"
