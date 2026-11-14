@@ -2973,6 +2973,7 @@ dependencies = [
  "nodo-manifest",
  "nodo-panels",
  "nodo-power",
+ "nodo-splash",
  "png 0.17.16",
  "serde",
  "signal-hook",

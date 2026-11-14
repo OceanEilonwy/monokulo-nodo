@@ -1408,6 +1408,193 @@ component GridIcon inherits Rectangle {
     }
 }
 
+
+// ------------------------------------------------------------------ references: one generic feature
+// Any text, number or address setting may hold $(package.setting) references, alone or mixed with
+// text. They show as chips: app · setting, and the value it resolves to now. Rust resolves them.
+
+// state: 0 resolves, 1 broken (red, with why), 2 secret granted
+component Chip inherits Rectangle {
+    in property <string> app;
+    in property <string> setting;
+    in property <string> value;
+    in property <int> state;
+    in property <bool> selected;
+    height: 56px;
+    min-width: row.preferred-width + 40px;
+    preferred-width: row.preferred-width + 40px;
+    horizontal-stretch: 0;
+    border-radius: 14px;
+    background: state == 1 ? G.err-fill : selected ? #3A2C18 : #2A2116;
+    border-width: selected ? 2px : 1px;
+    border-color: state == 1 ? #A8574C : selected ? G.accent : #F2A33A66;
+    row := HorizontalLayout {
+        x: 14px;
+        spacing: 8px;
+        Tx { text: app; font-family: G.mono; font-size: 21px; font-weight: 700; color: state == 1 ? G.err : G.accent; }
+        Tx { text: "·"; font-size: 21px; color: G.faint; }
+        Tx { text: setting; font-family: G.mono; font-size: 21px; color: state == 1 ? G.err : G.bright; }
+        if value != "": Tx { text: state == 1 ? "  " + value : "→ " + value; font-family: state == 1 ? "Inter" : G.mono; font-size: 20px; color: state == 1 ? G.err : G.dim; }
+    }
+}
+
+component InsertRef inherits Rectangle {
+    width: 72px;
+    height: 60px;
+    border-radius: 14px;
+    background: G.raised;
+    border-width: 1px;
+    border-color: G.edge;
+    Sym { text: "{ }"; font-size: 24px; color: G.accent; }
+}
+
+// One row in the reference picker.
+export struct PR {
+    app: string,
+    name: string,
+    desc: string,
+    kind: string,
+    value: string,
+    ok: bool,
+    why: string,
+    hl: bool,
+    secret: bool,
+    // The app's heading above its first row.
+    head: bool,
+}
+
+component PickRow inherits Rectangle {
+    in property <PR> r;
+    height: 92px;
+    border-radius: 14px;
+    background: r.hl ? G.hover : transparent;
+    opacity: r.ok || r.secret ? 1.0 : 0.5;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 20px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                Tx { text: r.app + "." + r.name; font-family: G.mono; font-size: 24px; font-weight: 700; color: G.bright; }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: kindt.preferred-width + 20px;
+                        height: 28px;
+                        border-radius: 8px;
+                        background: G.surface;
+                        border-width: 1px;
+                        border-color: G.line;
+                        kindt := Tx { text: r.kind; font-size: 17px; color: G.dim; horizontal-alignment: center; }
+                    }
+                }
+                if !r.secret: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 84px;
+                        height: 28px;
+                        border-radius: 8px;
+                        background: G.info-fill;
+                        Tx { text: "public"; font-size: 17px; font-weight: 600; color: G.info; horizontal-alignment: center; }
+                    }
+                }
+            }
+            Tx { text: r.ok || r.secret ? r.desc : r.why; font-size: 20px; color: r.ok || r.secret ? G.dim : G.err; }
+        }
+        if !r.secret: Tx { text: r.value; font-family: G.mono; font-size: 22px; color: G.fg; }
+        if r.secret: Tx { text: "Needs your approval · Grant…"; font-size: 21px; font-weight: 600; color: G.accent; }
+    }
+}
+
+// The one generic picker, searchable, grouped by app. Shown as a sheet from the right.
+component RefPicker inherits Rectangle {
+    in property <string> target;
+    in property <string> query;
+    in property <string> filter;
+    in property <[PR]> rows;
+    in property <[PR]> secrets;
+    x: 1920px - 1060px;
+    y: 0;
+    width: 1060px;
+    height: 1080px;
+    background: G.card;
+    border-width: 1px;
+    border-color: #FFFFFF1E;
+    drop-shadow-blur: 60px;
+    drop-shadow-color: #000000E0;
+    VerticalLayout {
+        padding: 36px;
+        spacing: 16px;
+        alignment: start;
+        HorizontalLayout {
+            height: 56px;
+            Tx { text: "Insert a reference"; font-size: 34px; font-weight: 700; color: G.bright; }
+            Rectangle { horizontal-stretch: 1; }
+            Sym { text: "✕"; color: G.dim; width: 56px; }
+        }
+        Tx { text: "into " + target; font-size: 22px; color: G.dim; height: 30px; }
+        GInput { value: query; placeholder: "Search apps, settings, descriptions or values"; focused: true; }
+        if filter != "": Tx { text: filter; font-size: 20px; color: G.dim; height: 30px; }
+        for r in rows: VerticalLayout {
+            spacing: 0px;
+            if r.head: Tx { text: r.app; font-size: 19px; font-weight: 700; letter-spacing: 1.2px; color: G.faint; height: 44px; vertical-alignment: bottom; }
+            PickRow { r: r; }
+        }
+        if secrets.length > 0: VerticalLayout {
+            spacing: 0px;
+            HorizontalLayout {
+                height: 40px;
+                spacing: 10px;
+                Tx { text: "SECRETS · NOT PUBLIC"; font-size: 18px; font-weight: 700; letter-spacing: 1.2px; color: G.faint; }
+            }
+            for r in secrets: PickRow { r: r; }
+        }
+        Tx { text: "Get more apps that provide values ›"; font-size: 22px; color: G.accent; height: 44px; }
+    }
+}
+
+// A settings field whose value may be text, references, or both.
+component RefFieldShell inherits VerticalLayout {
+    in property <string> label;
+    in property <string> help;
+    in property <bool> focused;
+    in property <bool> error;
+    spacing: 10px;
+    Tx { text: label; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+    Rectangle {
+        height: 84px;
+        border-radius: 18px;
+        background: G.field;
+        border-width: focused || error ? 3px : 1px;
+        border-color: error ? G.err : focused ? G.accent : G.line;
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 12px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                horizontal-stretch: 1;
+                @children
+            }
+            VerticalLayout { alignment: center; InsertRef { } }
+        }
+    }
+    if help != "": Tx { text: help; font-size: 21px; color: error ? G.err : G.dim; height: 28px; }
+}
+
+component MonoT inherits Text {
+    font-family: G.mono;
+    font-size: 24px;
+    color: G.bright;
+    vertical-alignment: center;
+}
+
 // ------------------------------------------------------------------ the tile screen (everything is tiles)
 
 // One grid cell is 217 px with 16 px gaps, starting at (36, 132): the real geometry (src/geometry.rs).
@@ -2108,6 +2295,183 @@ export component DesignBoard2 inherits Window {
             }
         }
         GToast { text: "Settings undone · mk-pay is running again"; tone: 2; }
+    }
+
+
+    // ---- generic references
+    if scene == "g-refs-field" || scene == "g-refs-invalid" || scene == "g-refs-save" || scene == "g-refs-picker" || scene == "g-refs-search" || scene == "g-refs-typed" || scene == "g-refs-grant": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
+        GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 740px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 18px;
+                RefFieldShell {
+                    label: "Monero node address";
+                    help: "Text and references together. Each chip shows what it resolves to now.";
+                    MonoT { text: "http://"; }
+                    VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_host"; value: "127.0.0.1"; } }
+                    MonoT { text: ":"; }
+                    VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_port"; value: "18081"; } }
+                    MonoT { text: "/json_rpc"; }
+                }
+                HorizontalLayout {
+                    spacing: 32px;
+                    RefFieldShell {
+                        label: "Payout address";
+                        help: "One reference: the address follows the wallet app.";
+                        horizontal-stretch: 1;
+                        VerticalLayout { alignment: center; Chip { app: "mk-wallet"; setting: "primary_address"; value: "48daf1r…tUvb"; } }
+                    }
+                    RefFieldShell {
+                        label: "Confirmations";
+                        width: 560px;
+                        help: "A plain value.";
+                        MonoT { text: "10"; }
+                    }
+                }
+                RefFieldShell {
+                    label: "Order webhook";
+                    error: true;
+                    help: "✕ old-shop was removed, so this reference has no value. Tap it to replace or remove it.";
+                    VerticalLayout { alignment: center; Chip { app: "old-shop"; setting: "webhook_url"; value: "app removed"; state: 1; selected: scene == "g-refs-invalid"; } }
+                    MonoT { text: "/orders"; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Save"; w: 220px; state: scene == "g-refs-field" || scene == "g-refs-invalid" ? 3 : 0; }
+                }
+            }
+        }
+        if scene == "g-refs-field": Note { text: "Any text, number or address setting can hold references. The { } button (or typing $( ) inserts one. Save waits while a reference is broken."; }
+        if scene == "g-refs-invalid": Rectangle {
+            x: 104px;
+            y: 826px;
+            width: 1100px;
+            height: 236px;
+            border-radius: 24px;
+            background: G.raised;
+            border-width: 1px;
+            border-color: #FFFFFF1E;
+            drop-shadow-blur: 48px;
+            drop-shadow-offset-y: 16px;
+            drop-shadow-color: #000000D0;
+            VerticalLayout {
+                padding: 28px;
+                spacing: 8px;
+                Tx { text: "old-shop · webhook_url"; font-family: G.mono; font-size: 26px; font-weight: 700; color: G.err; }
+                Tx { text: "old-shop was removed, so this reference has no value and mk-pay can't save. Pick another app's setting, take it out, or type a value instead."; font-size: 22px; color: G.dim; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 16px;
+                    GButton { label: "Replace…"; w: 200px; }
+                    GButton { label: "Remove"; kind: 1; w: 190px; }
+                    GButton { label: "Type a value instead"; kind: 3; w: 330px; }
+                }
+            }
+        }
+        if scene == "g-refs-picker" || scene == "g-refs-search" || scene == "g-refs-typed" || scene == "g-refs-grant": GScrim { opacity: 0.6; }
+        if scene == "g-refs-picker" || scene == "g-refs-grant": RefPicker {
+            target: "mk-pay · Monero node address (text)";
+            query: "";
+            rows: [
+                { head: true, app: "cuprated", name: "rpc_host", desc: "Address it answers RPC on", kind: "text", value: "127.0.0.1", ok: true, hl: true },
+                { app: "cuprated", name: "rpc_port", desc: "RPC port", kind: "number", value: "18081", ok: true },
+                { app: "cuprated", name: "network", desc: "Mainnet or testnet", kind: "choice", value: "mainnet", ok: true },
+                { head: true, app: "mk-wallet", name: "primary_address", desc: "The wallet's main address", kind: "address", value: "48daf1r…tUvb", ok: true },
+                { head: true, app: "mk-lws", name: "url", desc: "Where wallets reach it", kind: "url", value: "https://mk-lws.local", ok: true }
+            ];
+            secrets: [{ app: "cuprated", name: "rpc_password", desc: "", kind: "secret", value: "", ok: false, secret: true }];
+        }
+        if scene == "g-refs-search": RefPicker {
+            target: "mk-pay · Monero node address (text)";
+            query: "port";
+            rows: [
+                { head: true, app: "cuprated", name: "rpc_port", desc: "RPC port", kind: "number", value: "18081", ok: true, hl: true },
+                { app: "cuprated", name: "p2p_port", desc: "Port other nodes connect to", kind: "number", value: "18080", ok: true },
+                { head: true, app: "mk-lws", name: "port", desc: "Port wallets connect to", kind: "number", value: "8443", ok: true },
+                { head: true, app: "kringle", name: "listen_port", desc: "Port of the tip page", kind: "number", value: "8090", ok: true }
+            ];
+            secrets: [];
+        }
+        if scene == "g-refs-typed": RefPicker {
+            target: "mk-pay · Confirmations (number)";
+            query: "";
+            filter: "Numbers first. Others are dimmed: a number field can't hold them.";
+            rows: [
+                { head: true, app: "cuprated", name: "rpc_port", desc: "RPC port", kind: "number", value: "18081", ok: true, hl: true },
+                { app: "cuprated", name: "sync_threads", desc: "Threads used to sync", kind: "number", value: "4", ok: true },
+                { head: true, app: "mk-lws", name: "scan_interval", desc: "Seconds between wallet scans", kind: "number", value: "30", ok: true },
+                { app: "cuprated", name: "rpc_host", desc: "", kind: "text", value: "127.0.0.1", ok: false, why: "Text, and this field takes a number" },
+                { app: "mk-lws", name: "url", desc: "", kind: "url", value: "https://mk-lws.local", ok: false, why: "An address, and this field takes a number" }
+            ];
+            secrets: [];
+        }
+        if scene == "g-refs-grant": GScrim { }
+        if scene == "g-refs-grant": GDialog {
+            title: "Let mk-pay use cuprated's RPC password?";
+            body: "rpc_password is a secret: it is never shown, and only apps you approve can use it. mk-pay will receive it when it starts. You can take this back in mk-pay's settings at any time.";
+            primary: "Grant";
+            secondary: "Cancel";
+            h: 470px;
+        }
+        if scene == "g-refs-save": GScrim { }
+        if scene == "g-refs-save": GDialog {
+            title: "Save mk-pay's settings?";
+            body: "These references change what mk-pay can reach:";
+            primary: "Save";
+            secondary: "Cancel";
+            h: 560px;
+            VerticalLayout {
+                spacing: 10px;
+                for l in ["mk-pay will be able to reach cuprated's RPC (127.0.0.1:18081).", "cuprated becomes a dependency: it can't be removed while mk-pay uses it.", "mk-pay follows mk-wallet's address when it changes."]: HorizontalLayout {
+                    spacing: 14px;
+                    height: 48px;
+                    Sym { text: "•"; color: G.accent; width: 24px; }
+                    Tx { text: l; font-size: 24px; color: G.fg; }
+                }
+            }
+        }
+        if scene == "g-refs-picker": Note { text: "One picker for every field: searchable, grouped by app, each setting with its type, a public badge and its current value."; }
+        if scene == "g-refs-grant": Note { text: "Secrets never show as values; using one asks for a grant first."; }
+    }
+    if scene == "g-refs-auto": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GCard {
+            x: 64px;
+            y: 150px;
+            width: 1792px;
+            height: 220px;
+            VerticalLayout {
+                padding: 40px;
+                RefFieldShell {
+                    label: "Monero node address";
+                    focused: true;
+                    MonoT { text: "http://$(cu"; }
+                    VerticalLayout { alignment: center; Rectangle { width: 3px; height: 36px; background: G.accent; } }
+                }
+            }
+        }
+        GMenu {
+            x: 104px;
+            y: 360px;
+            width: 1000px;
+            selected: -1;
+            items: [
+                { t: "cuprated.rpc_host", s: "text", v: "127.0.0.1", hover: true },
+                { t: "cuprated.rpc_port", s: "number", v: "18081" },
+                { t: "All references…", s: "", v: "", tone: 1 }
+            ];
+        }
+        GKeyboard { }
+        Note { text: "Typing $( suggests references as you type; Enter or a tap inserts the chip at the cursor."; }
     }
 
     // ---- Sources

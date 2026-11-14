@@ -35,6 +35,8 @@ pub const G2_SCENES: &[&str] = &[
     "g-widgets", "g-tiles-logo", "g-tiles-full", "g-tiles-full-k1", "g-tiles-full-k2", "g-tiles-full-k3",
     "g-tile-settings", "g-tiles-add", "g-home", "g-unlock", "g-apps", "g-get-apps", "g-about",
     "g-install", "g-installing", "g-app", "g-remove", "g-settings", "g-combo-open", "g-ref-open", "g-ref-manual", "g-ref-empty", "g-settings-kbd",
+    "g-refs-field", "g-refs-auto", "g-refs-picker", "g-refs-search", "g-refs-typed", "g-refs-grant",
+    "g-refs-invalid", "g-refs-save",
     "g-rolled-back", "g-sources", "g-add-source", "g-source-check", "g-source-errors", "g-key-changed",
     "g-remove-builtin", "g-web", "g-hosting", "g-hosting-domain", "g-providers", "g-add-provider",
     "g-provider-key", "g-provider-done", "g-checks", "g-confirm", "g-online", "g-blocked-isp", "g-system",
