@@ -31,27 +31,33 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
     let names = crate::update::installed_apps(app);
     let mut card = Card::new(t, w);
     card.blank(t);
-    let name_width = names.iter().map(|n| n.chars().count()).max().unwrap_or(0).clamp(10, 20) + 2;
-    let what_width = usize::from(w).saturating_sub(56 + name_width).clamp(16, 34);
-    for (index, name) in names.iter().enumerate() {
+    let rows: Vec<(String, bool, bool)> = names
+        .iter()
+        .map(|name| {
+            let has_update = app.data.updates.iter().any(|u| &u.name == name && !u.held);
+            let (state, bad) = app_state(app, name);
+            if has_update { ("Update ready".to_owned(), false, true) } else { (state, bad, false) }
+        })
+        .collect();
+    let cols = Columns::fit(&card, names.iter().map(String::as_str), rows.iter().map(|(s, _, _)| s.as_str()), 3);
+    for (index, (name, (state, bad, update))) in names.iter().zip(&rows).enumerate() {
         if index > 0 {
             card.blank(t);
         }
         if index == selected {
             card.focus_here();
         }
-        let has_update = app.data.updates.iter().any(|u| &u.name == name && !u.held);
-        let (state, bad) = app_state(app, name);
-        let status = if has_update {
-            t.a(pad("Update ready", 20))
-        } else if bad {
-            t.e(pad(&state, 20))
+        let shown = pad(&truncate(state, cols.status), cols.status);
+        let status = if *update {
+            t.a(shown)
+        } else if *bad {
+            t.e(shown)
         } else {
-            t.d(pad(&truncate(&state, 19), 20))
+            t.d(shown)
         };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
-        let what = truncate(&tagline(app, name), what_width - 2);
-        card.row(t, vec![lead, t.b(pad(name, name_width)), t.n(pad(&what, what_width)), status, t.d("›")]);
+        let what = truncate(&tagline(app, name), cols.what);
+        card.row_end(t, vec![lead, t.b(pad(name, cols.name)), t.n(what)], vec![status, t.d("  ›")]);
         screen.targets.push(Target::card_row(name.clone(), pick(index)));
     }
     if names.is_empty() {
@@ -59,6 +65,34 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
     }
     card.blank(t);
     screen.stack(t, vec![card], "Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps", w, h)
+}
+
+/// The columns of a list row on a card: the focus marker, a name, what it is for, and a status,
+/// with `tail` cells after the status (such as "  ›") on the card's inner padding. Name and
+/// status are as wide as their longest, within limits; what it is for takes the rest. When room
+/// is short what it is for is cut first, then the status.
+struct Columns {
+    name: usize,
+    what: usize,
+    status: usize,
+}
+
+impl Columns {
+    const NAME_MAX: usize = 24;
+    const STATUS_MAX: usize = 28;
+    const WHAT_MIN: usize = 12;
+    const STATUS_MIN: usize = 8;
+
+    fn fit<'a>(card: &Card, names: impl Iterator<Item = &'a str>, statuses: impl Iterator<Item = &'a str>, tail: usize) -> Self {
+        let name = names.map(|s| s.chars().count()).max().unwrap_or(0).min(Self::NAME_MAX) + 2;
+        let mut status = statuses.map(|s| s.chars().count()).max().unwrap_or(0).min(Self::STATUS_MAX);
+        // The marker, the name, two cells before the status, and the tail.
+        let avail = card.inner().saturating_sub(2 + name + 2 + tail);
+        if avail.saturating_sub(status) < Self::WHAT_MIN {
+            status = status.min(avail.saturating_sub(Self::WHAT_MIN).max(Self::STATUS_MIN));
+        }
+        Columns { name, what: avail.saturating_sub(status), status }
+    }
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -138,7 +172,8 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
             sections.row(t, vec![lead, t.d(pad(section, 12)), t.d("This app has no web page to put online")]);
             continue;
         }
-        sections.row(t, vec![lead, t.b(pad(section, 12)), t.d(pad(&summary, 40)), t.d("›")]);
+        let room = sections.inner().saturating_sub(2 + 12 + 3);
+        sections.row_end(t, vec![lead, t.b(pad(section, 12)), t.d(truncate(&summary, room))], vec![t.d("›")]);
         screen.targets.push(Target::card_row(*section, pick(index)));
     }
     sections.blank(t);
@@ -239,8 +274,12 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    let name_width = results.iter().map(|pkg| pkg.id.name.chars().count()).max().unwrap_or(0).clamp(10, 20) + 2;
-    let what_width = usize::from(w).saturating_sub(35 + name_width).clamp(20, 44);
+    let tag_of = |status: &PackageStatus| match status {
+        PackageStatus::Installed => "Installed",
+        PackageStatus::UpdateReady => "Update ready",
+        PackageStatus::Available => "",
+    };
+    let cols = Columns::fit(&card, results.iter().map(|pkg| pkg.id.name.as_str()), results.iter().map(|pkg| tag_of(&pkg.status)), 0);
     for (index, pkg) in results.iter().enumerate() {
         if index > 0 {
             card.blank(t);
@@ -249,13 +288,9 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
         if selected {
             card.focus_here();
         }
-        let tag = match pkg.status {
-            PackageStatus::Installed => "Installed",
-            PackageStatus::UpdateReady => "Update ready",
-            PackageStatus::Available => "",
-        };
+        let tag = tag_of(&pkg.status);
         let lead = if selected { t.a("▸ ") } else { t.n("  ") };
-        card.row(t, vec![lead, t.b(pad(&pkg.id.name, name_width)), t.n(pad(&truncate(&pkg.tagline, what_width - 2), what_width)), t.d(tag.to_owned())]);
+        card.row_end(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&pkg.tagline, cols.what))], vec![t.d(tag.to_owned())]);
         screen.targets.push(Target::card_row(pkg.id.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
     }
     if results.is_empty() {

@@ -7,7 +7,7 @@ use ratatui::text::Span;
 
 use super::layout::{Item, Page};
 use super::pad;
-use super::v3::{field_target, heading, inset, quiet, setting, toggle, trail, Card, Screen3};
+use super::v3::{field_target, heading, inset, quiet, setting_aside, toggle, trail, Card, Screen3};
 use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState, Tab};
 use crate::hit::{Click, Target};
 use crate::model::*;
@@ -19,6 +19,9 @@ const PICK: &str = "▾ Pick from an app";
 
 /// Long values such as addresses are cut in the form, so the column stays readable.
 const VALUE_MAX: usize = 34;
+
+/// A number's box, wide enough for a port or a count of days.
+const NUMBER_WIDTH: usize = 6;
 
 fn shown(text: &str) -> String {
     if text.chars().count() > VALUE_MAX {
@@ -38,7 +41,8 @@ fn control(t: &Theme, field: &Field, value: &FieldValue, editing: Option<&str>) 
         (FieldKind::Toggle, FieldValue::Bool(on)) => toggle(t, *on),
         (FieldKind::Choice(_), FieldValue::Text(text)) => inset(t, text, 28, Some("▾"), false),
         (FieldKind::Number { .. } | FieldKind::Port, FieldValue::Text(text)) => {
-            let mut spans = vec![Span::styled(format!("  {text}  "), Style::new().fg(t.fg).bg(t.field))];
+            // One width for every number's box, so − and + line up from row to row.
+            let mut spans = vec![Span::styled(format!("  {}  ", pad(text, NUMBER_WIDTH)), Style::new().fg(t.fg).bg(t.field))];
             spans.extend([t.n("   "), t.a("−"), t.n("   "), t.a("+")]);
             spans
         }
@@ -108,12 +112,10 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         }
         let typing = (index == state.selected).then_some(editing.as_deref()).flatten();
         let label = if index == state.selected { format!("▸ {}", field.label) } else { format!("  {}", field.label) };
-        let mut spans = control(t, field, &state.draft[index], typing);
         let picker = index == state.selected && field.kind.takes_reference();
-        if picker {
-            spans.extend([t.n("   "), t.a(PICK)]);
-        }
-        setting(&mut card, t, &label, spans, hint(t, state, index));
+        // The picker link sits under the control, right-aligned with it.
+        let aside = if picker { vec![t.a(PICK)] } else { Vec::new() };
+        setting_aside(&mut card, t, &label, control(t, field, &state.draft[index], typing), aside, hint(t, state, index));
         screen.targets.push(Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
         if picker {
             screen.targets.push(Target::text(PICK, Click::Key(KeyCode::F(4))));

@@ -362,6 +362,51 @@ fn every_screen_shows_the_four_tabs() {
     }
 }
 
+/// A settings form drawn tall enough for every field, at `width` columns, with some labels
+/// replaced and the port's value set.
+fn settings_at(width: u16, relabel: &[(usize, &str)], port: Option<&str>) -> String {
+    let (mut app, _) = fixture(ScreenId::Settings);
+    if let nodo_tui::app::Screen::Settings(state) = &mut app.screen {
+        for (index, label) in relabel {
+            state.form.fields[*index].label = (*label).to_owned();
+        }
+        if let Some(port) = port {
+            state.draft[1] = nodo_tui::model::FieldValue::Text(port.to_owned());
+        }
+    }
+    app.size = (width, 60);
+    text(&draw(&app, width, 60).0)
+}
+
+/// Every control ends on the card's inner right padding, three cells inside the card, which
+/// ends on the page margin: its last cell, text or an inset box's fill, is at `width - 8`,
+/// whatever the terminal's width.
+#[test]
+fn settings_controls_are_right_aligned_at_any_width() {
+    let labels = ["Daemon RPC", "API port", "Log level", "Payment address", "Webhook secret", "Allow LAN access"];
+    let field = Theme::truecolor().field;
+    for width in [80u16, 100, 160] {
+        let (mut app, _) = fixture(ScreenId::Settings);
+        app.size = (width, 60);
+        let buffer = draw(&app, width, 60).0;
+        let screen = text(&buffer);
+        for label in labels {
+            let mut y = screen.lines().position(|line| line.contains(label)).unwrap_or_else(|| panic!("{label} at {width}:\n{screen}"));
+            // A wide control at 80 columns takes the row under its label.
+            if screen.lines().nth(y).is_some_and(|line| line.ends_with(label)) {
+                y += 1;
+            }
+            let last = (0..width).rev().find(|&x| {
+                let cell = &buffer[(x, y as u16)];
+                cell.symbol() != " " || cell.bg == field
+            });
+            // "[x] On " ends in a blank, so that On and Off have the same width.
+            let end = if label == "Allow LAN access" { width - 9 } else { width - 8 };
+            assert_eq!(last, Some(end), "{label} at {width} does not end on the padding:\n{screen}");
+        }
+    }
+}
+
 fn draw_with(app: &nodo_tui::app::App, theme: &Theme, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
     terminal
@@ -444,6 +489,94 @@ fn hovering_a_button_lightens_the_button_itself() {
     }
 }
 
+/// A number's box has one width, so − and + stay in the same columns whatever the value.
+#[test]
+fn number_steppers_line_up_whatever_the_value() {
+    let column = |port: &str| {
+        let screen = settings_at(100, &[], Some(port));
+        let row = screen.lines().find(|line| line.contains("API port")).expect("label shown").to_owned();
+        (row.chars().position(|c| c == '−'), row.chars().position(|c| c.is_ascii_digit()))
+    };
+    assert_eq!(column("8"), column("18081"));
+}
+
+/// The help sits under the label, in the left column, never under the control.
+#[test]
+fn settings_help_wraps_under_the_label() {
+    for width in [80u16, 100, 160] {
+        let screen = settings_at(width, &[], None);
+        let lines: Vec<&str> = screen.lines().collect();
+        let at = lines.iter().position(|line| line.contains("API port")).expect("label shown");
+        let label_col = lines[at].find("API port").expect("label");
+        assert_eq!(lines[at + 1].find("Port for the local payment API."), Some(label_col), "help not under the label at {width}:\n{screen}");
+        let at = lines.iter().position(|line| line.contains("Log level")).expect("label shown");
+        let control_col = lines[at].find("info").expect("value");
+        for help in lines[at + 1..].iter().take_while(|line| !line.trim().is_empty()) {
+            assert_eq!(help.find(|c: char| c != ' '), Some(label_col), "help not under the label at {width}:\n{screen}");
+            assert!(help.chars().count() < control_col, "help runs under the control at {width}:\n{screen}");
+        }
+    }
+}
+
+/// Labels longer than the old 24-cell column ("Delete groups after (days)") never touch their
+/// control: beside it with a gap when there is room, or with the control on the next row.
+#[test]
+fn long_setting_labels_never_overlap_their_control() {
+    let long = [(0, "Restricted RPC on the network"), (1, "Delete groups after (days)"), (3, "Address to send payouts to")];
+    for width in [80u16, 100, 160] {
+        let screen = settings_at(width, &long, None);
+        for (_, label) in long {
+            let row = screen.lines().find(|line| line.contains(label)).unwrap_or_else(|| panic!("{label} at {width}:\n{screen}"));
+            let after = row.split(label).nth(1).unwrap_or_default();
+            assert!(after.is_empty() || after.starts_with("   "), "{label} touches its control at {width}:\n{screen}");
+        }
+        let row = screen.lines().find(|line| line.contains("Delete groups after (days)")).expect("label shown");
+        assert!(row.ends_with("−   +"), "the number left its label's row at {width}:\n{screen}");
+    }
+}
+
+/// The installed apps fill a wide terminal, "›" on the card's right padding, and still fit on
+/// one row each at 80 columns, the tagline cut before the status.
+#[test]
+fn app_rows_fill_the_width_and_fit_at_80() {
+    for width in [80u16, 100, 160] {
+        let (mut app, _) = fixture(ScreenId::Apps);
+        app.size = (width, 40);
+        let (buffer, report) = draw(&app, width, 40);
+        let screen = text(&buffer);
+        assert!(report.fits(), "{width}: {report:?}\n{screen}");
+        for (name, status) in [("cuprated", "Running"), ("moneropay", "Update ready"), ("bell", "Keeps stopping"), ("monerod", "Stopped")] {
+            let row = screen.lines().find(|line| line.contains(name)).unwrap_or_else(|| panic!("{name} at {width}:\n{screen}"));
+            assert!(row.contains(status) && row.ends_with('›'), "{name} at {width}: status or › missing:\n{screen}");
+            assert_eq!(row.chars().count(), usize::from(width) - 7, "{name} at {width}: › is not on the padding:\n{screen}");
+        }
+    }
+    let (mut app, _) = fixture(ScreenId::Apps);
+    app.size = (160, 40);
+    let screen = text(&draw(&app, 160, 40).0);
+    assert!(screen.contains("Alerts when a wallet receives"), "a tagline is cut at 160:\n{screen}");
+}
+
+/// A long tagline and a long status at 80 columns: the tagline is cut first, the status kept.
+#[test]
+fn app_rows_cut_the_tagline_before_the_status_at_80() {
+    let (mut app, _) = fixture(ScreenId::Apps);
+    if let Some(pkg) = app.data.catalog.iter_mut().find(|pkg| pkg.id.name == "cuprated") {
+        pkg.tagline = "A Monero node written in Rust, fast to sync and light on memory".to_owned();
+    }
+    if let Some(svc) = app.data.services.iter_mut().find(|svc| svc.id == "cuprated") {
+        svc.detail = "synced to block 3,141,592".to_owned();
+    }
+    app.size = (80, 40);
+    let (buffer, report) = draw(&app, 80, 40);
+    let screen = text(&buffer);
+    assert!(report.fits(), "{report:?}\n{screen}");
+    let row = screen.lines().find(|line| line.contains("cuprated")).expect("shown");
+    assert!(row.contains("A Monero node") && row.contains('…'), "the tagline is not cut:\n{screen}");
+    assert!(row.contains("Running · up 2d 5h · synced") && row.ends_with('›'), "the status is lost:\n{screen}");
+    assert_eq!(row.chars().count(), 73, "the row does not fit:\n{screen}");
+}
+
 #[test]
 fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result() {
     use crossterm::event::KeyCode;
@@ -519,4 +652,18 @@ fn an_unreadable_provider_catalog_says_why() {
     let screen = screen_text(&app);
     assert!(screen.contains("Couldn't read the providers: the helper is not running"), "{screen}");
     assert!(!screen.contains("No providers are offered."), "{screen}");
+}
+
+/// The link to pick a value from an app sits right-aligned under the selected field's control,
+/// never beside it, so the control keeps its place on the card's padding.
+#[test]
+fn the_pick_link_sits_under_the_control() {
+    for width in [80u16, 100, 160] {
+        let screen = settings_at(width, &[], None);
+        let lines: Vec<&str> = screen.lines().collect();
+        let at = lines.iter().position(|line| line.contains("▸ Payment address")).expect("selected field shown");
+        assert!(!lines[at].contains("Pick from an app"), "the link is beside the control at {width}:\n{screen}");
+        let link = lines[at + 1..at + 3].iter().find(|line| line.contains("▾ Pick from an app")).unwrap_or_else(|| panic!("no link at {width}:\n{screen}"));
+        assert!(link.ends_with("▾ Pick from an app") && link.chars().count() == usize::from(width) - 7, "the link is not right-aligned at {width}:\n{screen}");
+    }
 }

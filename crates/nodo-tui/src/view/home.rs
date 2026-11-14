@@ -153,6 +153,8 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
     let tick = if problems || apps.is_empty() { t.n("") } else { t.o("✓  ") };
     fine.row(t, vec![tick, t.b(summary.to_owned())]);
     fine.blank(t);
+    // As wide as the longest name, so a long one never runs into its state.
+    let name_width = apps.iter().map(|(_, id)| id.chars().count() + 2).max().unwrap_or(0).max(14);
     for (index, id) in &apps {
         let (state, bad) = app_state(app, id);
         let lead = if *index == selected { t.a("▸ ") } else { t.n("  ") };
@@ -160,7 +162,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
             fine.focus_here();
         }
         let state_span = if bad { t.e(state) } else { t.d(state) };
-        fine.row(t, vec![lead, t.n(pad(id, 14)), state_span]);
+        fine.row(t, vec![lead, t.n(pad(id, name_width)), state_span]);
         screen.targets.push(Target::card_row(*id, Click::Pick { index: *index, then: Some(KeyCode::Enter) }));
     }
     if apps.is_empty() {
