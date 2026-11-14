@@ -12,7 +12,6 @@ use nodo_api::{ApiError, Exposure};
 use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
 use crate::model::*;
-use crate::secret::Input;
 
 /// Opens the Hosting screen of a site. Returns false when there is no such site.
 pub(super) fn open_hosting(app: &mut App, site: &str) -> bool {
@@ -608,6 +607,5 @@ pub(super) fn hosting_from_detail(app: &mut App, package: &str) -> Vec<Effect> {
     if !open_hosting(app, package) {
         notice(app, NoticeKind::Info, format!("{package} has no web page to put online."));
     }
-    let _ = Input::plain("");
     Vec::new()
 }

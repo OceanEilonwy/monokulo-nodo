@@ -781,7 +781,7 @@ fn secrets_cannot_be_given_a_reference() {
     focus_field(&mut app, WEBHOOK);
     key(&mut app, &mut mock, KeyCode::Char('$'));
     assert_eq!(app.screen.id(), ScreenId::Settings);
-    assert!(screen_text(&app).contains("This field cannot use a reference."));
+    assert!(screen_text(&app).contains("This setting cannot take a value from another app."));
 }
 
 #[test]
@@ -1013,6 +1013,70 @@ fn the_reference_picker_can_fall_back_to_typing_a_value() {
     keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('t')]);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
     assert!(state.editing.is_some());
+}
+
+#[test]
+fn the_pick_link_beside_a_field_opens_the_picker_with_the_search_focused() {
+    let (mut app, mut mock) = settings_app();
+    assert!(screen_text(&app).contains("F4 pick from an app"));
+    click(&mut app, &mut mock, "Pick from an app");
+    let Screen::Reference(state) = &app.screen else { panic!("the link opens the picker") };
+    assert!(!state.list_focused, "typing filters straight away");
+    type_text(&mut app, &mut mock, "18089");
+    let Screen::Reference(state) = &app.screen else { panic!("expected reference") };
+    assert_eq!(state.visible().len(), 1, "the search matches values too");
+    key(&mut app, &mut mock, ENTER);
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert_eq!(
+        state.draft[0],
+        FieldValue::Reference { path: "monero-daemon.restricted_rpc_url".to_owned(), resolved: "http://127.0.0.1:18089".to_owned() }
+    );
+}
+
+#[test]
+fn f4_opens_the_picker_while_typing_and_a_pick_ends_the_typing() {
+    let (mut app, mut mock) = settings_app();
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "$");
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert!(state.editing.as_ref().is_some_and(|input| input.text().ends_with('$')), "$ types while editing");
+    assert!(screen_text(&app).contains("F4 pick from an app"));
+    key(&mut app, &mut mock, KeyCode::F(4));
+    assert_eq!(app.screen.id(), ScreenId::Reference);
+    key(&mut app, &mut mock, ESC);
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert!(state.editing.is_some(), "Esc goes back to what was being typed");
+
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL)));
+    assert_eq!(app.screen.id(), ScreenId::Reference, "Ctrl-. does the same where the terminal reports it");
+    type_text(&mut app, &mut mock, "wallet");
+    key(&mut app, &mut mock, ENTER);
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert!(state.editing.is_none());
+    assert!(matches!(&state.draft[0], FieldValue::Reference { path, .. } if path == "wallet-rpc.url"));
+}
+
+#[test]
+fn a_port_field_can_take_a_number_from_another_app() {
+    let (mut app, mut mock) = settings_app();
+    focus_field(&mut app, API_PORT);
+    click(&mut app, &mut mock, "Pick from an app");
+    let Screen::Reference(state) = &app.screen else { panic!("a port offers the picker") };
+    assert_eq!(state.list.expects, "a number");
+    key(&mut app, &mut mock, ENTER);
+    dispatch(&mut app, &mut mock, ctrl('s'));
+    assert!(mock.calls.iter().any(|call| sent_values(call).contains(&("api_port".to_owned(), "$(wallet-rpc.port)".to_owned()))));
+}
+
+#[test]
+fn toggles_choices_and_secrets_offer_no_picker() {
+    let (mut app, mut mock) = settings_app();
+    for index in [2, WEBHOOK, 5] {
+        focus_field(&mut app, index);
+        assert!(!screen_text(&app).contains("Pick from an app"));
+        key(&mut app, &mut mock, KeyCode::F(4));
+        assert_eq!(app.screen.id(), ScreenId::Settings);
+    }
 }
 
 #[test]

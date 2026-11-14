@@ -64,6 +64,30 @@ fn reference_path(text: &str) -> Option<&str> {
     text.strip_prefix("$(")?.strip_suffix(')')
 }
 
+/// Whether a setting of kind `target` can refer to one of kind `source`, as nodo-settings resolves
+/// it: an exact reference keeps its type, and anything but a secret widens into text.
+fn reference_fits(target: &SettingKind, source: &SettingKind) -> bool {
+    match (target, source) {
+        (_, SettingKind::Secret) => false,
+        (SettingKind::Text, _) => true,
+        (SettingKind::Int { .. }, SettingKind::Int { .. }) => true,
+        _ => std::mem::discriminant(target) == std::mem::discriminant(source),
+    }
+}
+
+/// What the picker says a field expects.
+fn expects(kind: &SettingKind) -> &'static str {
+    match kind {
+        SettingKind::Text => "any text",
+        SettingKind::Int { .. } => "a number",
+        SettingKind::Bool => "on or off",
+        SettingKind::Choice(_) => "one of its choices",
+        SettingKind::MoneroAddress => "a Monero address",
+        SettingKind::Url => "a URL",
+        SettingKind::Secret => "a secret",
+    }
+}
+
 /// Maps the helper's form field to the TUI's. Secrets only ever arrive as set or unset.
 pub fn field(f: SettingField) -> Field {
     let kind = match f.kind {
@@ -459,15 +483,24 @@ impl ScreenData for HelperBackend {
     }
 
     /// Public settings of every other package with settings, by package id and by each role it
-    /// provides. Secrets are never public, so none appear.
-    fn references(&self, package: &str, _field: &str) -> ReferenceList {
+    /// provides, that fit the field being set. Secrets are never public, so none appear.
+    fn references(&self, package: &str, field_key: &str) -> ReferenceList {
+        let target = match self.ask(Request::SettingsForm { package: package.to_owned() }) {
+            Ok(Response::SettingsForm(form)) => form.fields.into_iter().find(|f| f.name == field_key).map(|f| f.kind),
+            _ => None,
+        };
         let mut options = Vec::new();
+        let mut hidden_wrong_type = 0;
         for p in self.packages().into_iter().filter(|p| p.has_settings && p.id != package) {
             let Ok(Response::SettingsForm(form)) = self.ask(Request::SettingsForm { package: p.id.clone() }) else {
                 continue;
             };
             for f in form.fields {
                 let Some(public) = f.public_name.clone() else { continue };
+                if target.as_ref().is_some_and(|target| !reference_fits(target, &f.kind)) {
+                    hidden_wrong_type += 1;
+                    continue;
+                }
                 let value = match &field(f).value {
                     FieldValue::Text(text) => text.clone(),
                     FieldValue::Bool(b) => b.to_string(),
@@ -490,7 +523,8 @@ impl ScreenData for HelperBackend {
                 });
             }
         }
-        ReferenceList { expects: String::new(), options, hidden_wrong_type: 0, hidden_secrets: 0 }
+        let expects = target.as_ref().map_or_else(String::new, |kind| expects(kind).to_owned());
+        ReferenceList { expects, options, hidden_wrong_type, hidden_secrets: 0 }
     }
 
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
@@ -1060,6 +1094,19 @@ mod tests {
             default: default.map(str::to_owned),
             public_name: None,
         }
+    }
+
+    #[test]
+    fn references_offered_are_those_the_settings_resolver_accepts() {
+        let int = || SettingKind::Int { min: None, max: None };
+        assert!(reference_fits(&SettingKind::Url, &SettingKind::Url));
+        assert!(!reference_fits(&SettingKind::Url, &SettingKind::Text), "text does not narrow into a URL");
+        assert!(reference_fits(&int(), &SettingKind::Int { min: Some(1), max: Some(65535) }));
+        assert!(!reference_fits(&int(), &SettingKind::Url));
+        assert!(reference_fits(&SettingKind::Text, &int()), "anything widens into text");
+        assert!(reference_fits(&SettingKind::Text, &SettingKind::Url));
+        assert!(!reference_fits(&SettingKind::Text, &SettingKind::Secret));
+        assert!(reference_fits(&SettingKind::MoneroAddress, &SettingKind::MoneroAddress));
     }
 
     #[test]

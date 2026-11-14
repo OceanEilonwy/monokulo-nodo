@@ -5,17 +5,17 @@
     Installed                                                                         Get apps ›
 
 
-       ▸ cuprated      Monero node in Rust           Running         ›
+       ▸ cuprated      Monero node in Rust           Running · up 2d 5h  ›
 
-         tor           Onion routing                 Running         ›
+         tor           Onion routing                 Running · up 3h 12m ›
 
-         moneropay     Payment gateway for Monero    Update ready    ›
+         moneropay     Payment gateway for Monero    Update ready        ›
 
-         wallet-relay  Relay for remote wallets      Update ready    ›
+         wallet-relay  Relay for remote wallets      Update ready        ›
 
-         bell          Alerts when a wallet receiv…  Keeps stopping  ›
+         bell          Alerts when a wallet receiv…  Keeps stopping      ›
 
-         monerod       The reference Monero node     Stopped         ›
+         monerod       The reference Monero node     Stopped             ›
 
 
 

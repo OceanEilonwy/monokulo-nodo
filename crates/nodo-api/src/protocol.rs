@@ -362,6 +362,7 @@ mod tests {
                 detail: "d".into(),
                 roles: vec!["monero-daemon".into()],
                 origin: Origin::System,
+                uptime_secs: Some(83166),
             }])),
             Ok(Response::RolledBack(Rollback {
                 stage: RollbackStage::HealthCheck,

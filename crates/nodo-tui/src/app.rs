@@ -673,8 +673,15 @@ pub struct ReferenceState {
 }
 
 impl ReferenceState {
+    /// The options matching the search, by path or by value, ignoring case, so both "daemon" and
+    /// "18081" find the Monero node.
     pub fn visible(&self) -> Vec<&ReferenceOption> {
-        self.list.options.iter().filter(|option| option.path.contains(self.query.text())).collect()
+        let query = self.query.text().to_lowercase();
+        self.list
+            .options
+            .iter()
+            .filter(|option| option.path.to_lowercase().contains(&query) || option.value.to_lowercase().contains(&query))
+            .collect()
     }
 }
 
