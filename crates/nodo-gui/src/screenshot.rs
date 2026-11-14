@@ -20,6 +20,76 @@ use slint::Model;
 
 pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "confirm", "progress", "failed", "off"];
 
+/// The real management screens, over nodo-tui's mock backend, as the device draws them.
+pub const MANAGE_SCENES: &[&str] = &[
+    "r-tiles", "r-home", "r-apps", "r-app", "r-settings", "r-field-menu", "r-refs", "r-keyboard", "r-get-apps",
+    "r-about", "r-install", "r-sources", "r-add-source", "r-web", "r-hosting", "r-providers", "r-system",
+    "r-updates", "r-auto", "r-undo", "r-logs", "r-log", "r-backups", "r-network", "r-ssh", "r-screen", "r-pin", "r-no-pin",
+];
+
+/// Drives management to the screen a scene shows.
+fn manage_scene(name: &str) -> crate::manage::Manage {
+    use crate::manage::{Manage, Worker};
+    let worker = Worker::start(Box::new(nodo_tui::mock::MockBackend::new()));
+    let mut m = Manage::new(Some(&worker));
+    m.open();
+    worker.drain_blocking(&mut m);
+    let first_app = m.first_app();
+    let steps: Vec<String> = match name {
+        "r-apps" => vec!["tab:1".into()],
+        "r-app" => vec!["tab:1".into(), "open:app:moneropay".into()],
+        "r-settings" | "r-field-menu" | "r-refs" | "r-keyboard" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:settings:moneropay".into()],
+        "r-get-apps" => vec!["tab:1".into(), "open:get-apps".into()],
+        "r-about" | "r-install" => vec!["tab:1".into(), "open:get-apps".into(), "about-first".into()],
+        "r-sources" => vec!["tab:1".into(), "open:get-apps".into(), "open:sources".into()],
+        "r-add-source" => vec!["tab:1".into(), "open:get-apps".into(), "open:sources".into(), "open:add-source".into()],
+        "r-web" => vec!["tab:2".into()],
+        "r-hosting" => vec!["tab:2".into(), "open:hosting:shop".into()],
+        "r-providers" => vec!["tab:2".into(), "open:providers".into()],
+        "r-system" => vec!["tab:3".into()],
+        "r-updates" => vec!["tab:3".into(), "open:updates".into()],
+        "r-auto" => vec!["tab:3".into(), "open:auto".into()],
+        "r-undo" => vec!["tab:3".into(), "open:undo".into()],
+        "r-logs" => vec!["tab:3".into(), "open:logs:".into()],
+        "r-log" => vec!["tab:3".into(), "open:logs:".into(), "log-first".into()],
+        "r-backups" => vec!["tab:3".into(), "open:backups".into()],
+        "r-network" => vec!["tab:3".into(), "open:network".into()],
+        "r-ssh" => vec!["tab:3".into(), "open:ssh".into()],
+        "r-screen" => vec!["tab:3".into(), "open:screen".into()],
+        _ => Vec::new(),
+    };
+    for step in steps {
+        if let Some(t) = step.strip_prefix("tab:") {
+            m.tab_clicked(t.parse().unwrap_or(0));
+        } else if step == "about-first" {
+            let id = m.first_catalog();
+            m.act(&format!("open:about:{id}"));
+        } else if step == "log-first" {
+            let s = m.first_log();
+            m.act(&format!("open:logs:{s}"));
+        } else {
+            m.act(&step);
+        }
+        worker.drain_blocking(&mut m);
+    }
+    match name {
+        "r-field-menu" => m.act(&format!("field:{}", m.first_field())),
+        "r-refs" => {
+            m.act("field-ref:daemon_rpc");
+            worker.drain_blocking(&mut m);
+        }
+        "r-keyboard" => m.act(&format!("field-type:{}", m.first_field())),
+        "r-install" => {
+            m.act("install");
+            worker.drain_blocking(&mut m);
+        }
+        "r-pin" => m.show_pin_for_design(true),
+        "r-no-pin" => m.show_pin_for_design(false),
+        _ => {}
+    }
+    m
+}
+
 /// Design boards for the touch management screens and wallpapers (ui/design.slint), mock data
 /// only. "wp-panels" is the real tile screen with the proposed Manage button added.
 pub const DESIGN_SCENES: [&str; 23] = [
@@ -254,11 +324,17 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
     ui.set_host("monokulo-nodo".into());
     ui.set_address("192.168.1.155".into());
     let now = Instant::now();
-    let app = scene(if name == "wp-panels" { "view" } else { name }, now)?;
+    let tiles = if name == "wp-panels" || name.starts_with("r-") { "view" } else { name };
+    let app = scene(tiles, now)?;
     let mut presenter = Presenter::new(&ui);
     presenter.show(&ui, &app, now, ("thu 13 nov", "14:32"));
     if name == "wp-panels" {
         add_manage_button(&ui);
+    }
+    if name.starts_with("r-") && name != "r-tiles" {
+        let manage = manage_scene(name);
+        let mut shown = None;
+        crate::show_manage(&ui, &manage, &mut shown);
     }
     ui.show().map_err(|e| e.to_string())?;
     window.request_redraw();

@@ -2970,10 +2970,12 @@ name = "nodo-gui"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nodo-api",
  "nodo-manifest",
  "nodo-panels",
  "nodo-power",
  "nodo-splash",
+ "nodo-tui",
  "png 0.17.16",
  "serde",
  "signal-hook",

@@ -403,7 +403,8 @@ pub fn buttons(app: &App, now: Instant) -> Vec<ButtonLine> {
     list.into_iter()
         .map(|(b, rect)| {
             let (label, count, sub, kind, icon) = match b {
-                Button::Arrange => ("Arrange".to_string(), String::new(), "", 0, 1),
+                Button::Manage => ("Manage".to_string(), String::new(), "", 0, 2),
+                Button::Arrange => ("Arrange".to_string(), String::new(), "", 0, 3),
                 Button::ShutDown => (app.button_label(b, now), String::new(), "", 1, 0),
                 Button::Hide | Button::Cancel => (app.button_label(b, now), String::new(), "", 2, 0),
                 Button::Undo => (app.button_label(b, now), String::new(), "", 4, 0),

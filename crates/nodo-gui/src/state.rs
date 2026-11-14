@@ -34,6 +34,8 @@ pub enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
+    /// Opens management (the gear).
+    Manage,
     Arrange,
     ShutDown,
     Hide,
@@ -56,6 +58,7 @@ pub enum Effect {
     None,
     SaveLayout,
     PowerOff,
+    OpenManage,
 }
 
 /// Keys, as the window reports them.
@@ -218,7 +221,8 @@ impl App {
     /// The label a top-bar button shows, which also sets its width.
     pub fn button_label(&self, button: Button, now: Instant) -> String {
         match button {
-            Button::Arrange => "☰ Arrange".into(),
+            Button::Manage => "Manage".into(),
+            Button::Arrange => "Arrange".into(),
             Button::ShutDown => "⏻ Shut down".into(),
             Button::Hide => "Hide".into(),
             Button::Undo => match &self.undo {
@@ -240,7 +244,7 @@ impl App {
     /// The top bar's buttons and their rectangles, right-aligned.
     pub fn banner_buttons(&self, now: Instant) -> Vec<(Button, Rect)> {
         let list: Vec<(Button, f32)> = match self.mode {
-            Mode::View => vec![(Button::Arrange, 224.0), (Button::ShutDown, 260.0)],
+            Mode::View => vec![(Button::Manage, 224.0), (Button::Arrange, 224.0), (Button::ShutDown, 260.0)],
             Mode::Edit => {
                 let mut list = Vec::new();
                 if self.undo.is_some() {
@@ -388,6 +392,7 @@ impl App {
     /// Does what a button does.
     pub fn act(&mut self, button: Button, now: Instant) -> Effect {
         match button {
+            Button::Manage => return Effect::OpenManage,
             Button::Arrange => self.start_editing(),
             Button::ShutDown => {
                 self.mode = Mode::Confirm;

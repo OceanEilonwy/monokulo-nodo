@@ -8,6 +8,8 @@
 mod backlight;
 mod config;
 mod geometry;
+mod manage;
+mod screen_prefs;
 mod screenshot;
 mod state;
 mod view;
@@ -239,6 +241,10 @@ struct Runtime {
     layout_seen: Option<SystemTime>,
     layout_checked: Instant,
     stop: Arc<AtomicBool>,
+    manage: manage::Manage,
+    worker: Option<manage::Worker>,
+    /// The management version last shown, so its models are only rebuilt on change.
+    manage_shown: Option<u64>,
 }
 
 impl Runtime {
@@ -264,6 +270,7 @@ impl Runtime {
                 log("shutting down, as asked on the screen");
                 power_off(self.power_tx.clone());
             }
+            Effect::OpenManage => self.manage.open(),
         }
     }
 
@@ -348,7 +355,8 @@ impl Runtime {
             }
         }
         self.app.tick(now);
-        if let Some(level) = self.dimmer.tick(now, self.app.mode == Mode::View) {
+        self.manage.poll(self.worker.as_ref());
+        if let Some(level) = self.dimmer.tick(now, self.app.mode == Mode::View && !self.manage.open) {
             self.set_backlight(level);
         }
     }
@@ -413,7 +421,24 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     let backlight = backlight::Device::find(Path::new("/sys/class/backlight"));
     let dimmer = backlight::Dimmer::new(&config.backlight, Instant::now());
     let layout_seen = modified(&options.layout);
+    let socket = std::env::var("NODO_SCREEN_SOCKET").unwrap_or_else(|_| nodo_api::SCREEN_SOCKET.to_owned());
+    let (worker, offline) = match nodo_tui::helper_backend::HelperBackend::connect(Path::new(&socket)) {
+        Ok(backend) => (Some(manage::Worker::start(Box::new(backend))), None),
+        Err(e) => {
+            log(&format!("management: cannot reach {socket}: {e}"));
+            (None, Some(format!("{socket}: {e}")))
+        }
+    };
+    let mut manage = manage::Manage::new(worker.as_ref());
+    if let Some(why) = offline {
+        manage.set_offline(why);
+    }
+    manage.prefs = screen_prefs::Prefs::load(options.layout.with_file_name("gui.toml"));
+    manage.idle_return = manage.prefs.timeout();
     let runtime = Rc::new(RefCell::new(Runtime {
+        manage,
+        worker,
+        manage_shown: None,
         app: App::new(offered, layout, Instant::now()),
         presenter: Presenter::new(&ui),
         options,
@@ -439,8 +464,9 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
             let Some(ui) = weak.upgrade() else { return };
             let mut r = runtime.borrow_mut();
             let (day, time) = clock();
-            let Runtime { app, presenter, .. } = &mut *r;
+            let Runtime { app, presenter, manage, manage_shown, .. } = &mut *r;
             presenter.show(&ui, app, Instant::now(), (&day, &time));
+            show_manage(&ui, manage, manage_shown);
         }
     };
     let show = Rc::new(show);
@@ -480,6 +506,65 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
         });
     }
 
+    // Management's callbacks: Slint reports the action, Manage decides.
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_act(move |id| {
+            {
+                let mut r = runtime.borrow_mut();
+                if id == "power" {
+                    r.manage.close();
+                    let effect = r.app.act(state::Button::ShutDown, Instant::now());
+                    r.apply(effect);
+                } else {
+                    r.manage.act(&id);
+                }
+            }
+            show();
+        });
+    }
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_toggled(move |id, on| {
+            runtime.borrow_mut().manage.toggled(&id, on);
+            show();
+        });
+    }
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_segment(move |id, n| {
+            runtime.borrow_mut().manage.segment(&id, n.max(0) as usize);
+            show();
+        });
+    }
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_tab_clicked(move |t| {
+            runtime.borrow_mut().manage.tab_clicked(t.max(0) as usize);
+            show();
+        });
+    }
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_crumb(move |i| {
+            runtime.borrow_mut().manage.crumb(i.max(0) as usize);
+            show();
+        });
+    }
+    {
+        let runtime = Rc::clone(&runtime);
+        let show = Rc::clone(&show);
+        ui.on_m_key(move |k| {
+            runtime.borrow_mut().manage.key(&k);
+            show();
+        });
+    }
+
     let timer = Timer::default();
     {
         let runtime = Rc::clone(&runtime);
@@ -502,4 +587,41 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     ui.run().map_err(|e| e.to_string())?;
     runtime.borrow().set_backlight(backlight::Level::Full);
     Ok(())
+}
+
+/// Pushes management's page to the window, only when something changed since the last time.
+pub(crate) fn show_manage(ui: &MainWindow, manage: &manage::Manage, shown: &mut Option<u64>) {
+    if !manage.open {
+        if shown.is_some() {
+            ui.set_manage_open(false);
+            *shown = None;
+        }
+        return;
+    }
+    if *shown == Some(manage.version) {
+        return;
+    }
+    let new_screen = shown.is_none();
+    *shown = Some(manage.version);
+    let page = manage.page();
+    let model = |v: Vec<SharedString>| slint::ModelRc::new(slint::VecModel::from(v));
+    ui.set_m_tab(manage.tab() as i32);
+    ui.set_m_badges(model(manage.badges().into_iter().map(SharedString::from).collect()));
+    ui.set_m_unlocked(manage.unlocked());
+    ui.set_m_pin_set(manage.pin_set());
+    ui.set_m_crumbs(model(page.crumbs.into_iter().map(SharedString::from).collect()));
+    ui.set_m_title(page.title.into());
+    ui.set_m_actions(slint::ModelRc::new(slint::VecModel::from(page.actions)));
+    ui.set_m_cards(slint::ModelRc::new(slint::VecModel::from(page.cards)));
+    let (toast, error) = manage.toast();
+    ui.set_m_toast(toast.into());
+    ui.set_m_toast_error(error);
+    ui.set_m_dialog(manage.dialog_view());
+    ui.set_m_picker(manage.picker_view());
+    ui.set_m_keyboard(manage.keyboard_view());
+    ui.set_m_pin(manage.pin_view());
+    if new_screen {
+        ui.set_m_scroll(0.0);
+    }
+    ui.set_manage_open(true);
 }
