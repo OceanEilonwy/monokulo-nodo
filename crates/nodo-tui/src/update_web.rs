@@ -12,7 +12,6 @@ use nodo_api::{ApiError, Exposure};
 use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
 use crate::model::*;
-use crate::secret::Input;
 
 /// Opens the Hosting screen of a site. Returns false when there is no such site.
 pub(super) fn open_hosting(app: &mut App, site: &str) -> bool {
@@ -170,7 +169,26 @@ fn open_add_provider(app: &mut App, return_to: Option<String>) -> Vec<Effect> {
     let mut state = ProvidersState::new("");
     state.return_to = return_to;
     push(app, Screen::WebProviders(state));
-    Vec::new()
+    vec![Effect::LoadProviders]
+}
+
+/// The provider catalog read again as the add flow opened. The list is only replaced while
+/// choosing the company, since the later steps hold an index into it.
+pub(super) fn on_providers_loaded(app: &mut App, result: Result<Vec<Provider>, String>) {
+    let picking = matches!(&app.screen, Screen::WebProviders(state) if state.stage == ProviderStage::Pick);
+    match result {
+        Ok(list) if picking || app.data.providers.is_empty() => {
+            app.data.providers = list;
+            app.data.providers_error = None;
+        }
+        Ok(_) => {}
+        Err(e) => app.data.providers_error = Some(e),
+    }
+    if let Screen::WebProviders(state) = &mut app.screen {
+        if state.stage == ProviderStage::Pick {
+            state.selected = state.selected.min(app.data.providers.len().saturating_sub(1));
+        }
+    }
 }
 
 /// The boxes of the key step: the domain only for a provider that cannot list its domains.
@@ -203,6 +221,7 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             KeyCode::Down | KeyCode::Up => step(&mut state.selected, connected.len(), key.code == KeyCode::Down),
             KeyCode::Char('a') | KeyCode::Enter => {
                 *state = ProvidersState { return_to: state.return_to.take(), ..ProvidersState::new("") };
+                return vec![Effect::LoadProviders];
             }
             KeyCode::Char('r') => {
                 if let Some(provider) = connected.get(state.selected) {
@@ -588,6 +607,5 @@ pub(super) fn hosting_from_detail(app: &mut App, package: &str) -> Vec<Effect> {
     if !open_hosting(app, package) {
         notice(app, NoticeKind::Info, format!("{package} has no web page to put online."));
     }
-    let _ = Input::plain("");
     Vec::new()
 }

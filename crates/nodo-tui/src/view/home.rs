@@ -18,14 +18,33 @@ pub(crate) fn app_state(app: &App, id: &str) -> (String, bool) {
         return ("Not running".to_owned(), false);
     };
     let base = match svc.state {
-        ServiceState::Running if svc.detail.is_empty() => "Running".to_owned(),
-        ServiceState::Running => format!("Running · {}", svc.detail),
+        ServiceState::Running => {
+            let mut parts = vec!["Running".to_owned()];
+            parts.extend(svc.uptime_secs.map(|secs| format!("up {}", uptime(secs))));
+            parts.extend((!svc.detail.is_empty()).then(|| svc.detail.clone()));
+            parts.join(" · ")
+        }
         ServiceState::Stopped => "Stopped".to_owned(),
         ServiceState::Failed => "Keeps stopping".to_owned(),
         ServiceState::Locked => "Locked until you unlock".to_owned(),
         ServiceState::Waiting => "Waiting for another app".to_owned(),
     };
     (base, svc.state == ServiceState::Failed)
+}
+
+/// How long an app has been up, in its two largest units, such as `3h 12m` or `2d 5h`.
+pub(crate) fn uptime(secs: u64) -> String {
+    let (days, hours, minutes) = (secs / 86400, secs / 3600 % 24, secs / 60 % 60);
+    let pair = |big: u64, big_unit: &str, small: u64, small_unit: &str| match small {
+        0 => format!("{big}{big_unit}"),
+        _ => format!("{big}{big_unit} {small}{small_unit}"),
+    };
+    match secs {
+        s if s < 60 => "under a minute".to_owned(),
+        s if s < 3600 => format!("{minutes}m"),
+        s if s < 86400 => pair(hours, "h", minutes, "m"),
+        _ => pair(days, "d", hours, "h"),
+    }
 }
 
 /// What an app is for, from its source's description.
@@ -200,4 +219,23 @@ pub fn no_drive(app: &App, t: &Theme, choice: usize) -> Page {
     card.buttons(t, &[("Check again", true, Click::Pick { index: 0, then: Some(KeyCode::Enter) })], &mut targets);
     screen.targets.extend(targets);
     screen.card(t, card, "Keys: ↵ check again  ↑↓ choose  l system log", w, h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uptime;
+
+    #[test]
+    fn uptime_uses_the_two_largest_units() {
+        assert_eq!(uptime(0), "under a minute");
+        assert_eq!(uptime(59), "under a minute");
+        assert_eq!(uptime(60), "1m");
+        assert_eq!(uptime(45 * 60 + 30), "45m");
+        assert_eq!(uptime(3600), "1h");
+        assert_eq!(uptime(3 * 3600 + 12 * 60 + 59), "3h 12m");
+        assert_eq!(uptime(86400), "1d");
+        assert_eq!(uptime(83166), "23h 6m");
+        assert_eq!(uptime(2 * 86400 + 5 * 3600 + 59 * 60), "2d 5h");
+        assert_eq!(uptime(400 * 86400), "400d");
+    }
 }

@@ -290,6 +290,12 @@ pub fn inset(t: &Theme, value: &str, width: usize, arrow: Option<&str>, focused:
     spans
 }
 
+/// The click target for a text box drawn as a label padded to `label_width` and then an
+/// `inset` `box_width` wide: the label and the whole box, with the marker a mono theme adds.
+pub fn field_target(label: &str, label_width: usize, box_width: usize) -> Target {
+    Target::field(label, (label_width + box_width + 3) as u16)
+}
+
 pub const CAP_LEFT: &str = "\u{E0B6}";
 pub const CAP_RIGHT: &str = "\u{E0B4}";
 
@@ -556,6 +562,12 @@ const SETTING_GAP: usize = 3;
 /// next row, so the two never overlap; so does a wide control that would leave the help a
 /// column too narrow to read (80 columns).
 pub fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, hint: Option<Span<'static>>) {
+    setting_aside(card, t, label, control, Vec::new(), hint);
+}
+
+/// A settings field with `aside`, such as a link, right-aligned under its control: on the help's
+/// first row when both fit there, otherwise on a row of its own under the control.
+pub fn setting_aside(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, aside: Vec<Span<'static>>, hint: Option<Span<'static>>) {
     let room = card.inner();
     // The help lines up with the label's text, after the focus marker's column.
     let indent = label.chars().take_while(|c| matches!(c, ' ' | '▸')).count();
@@ -567,14 +579,30 @@ pub fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'stati
         card.row(t, vec![t.n(label.to_owned())]);
         card.row_end(t, Vec::new(), control);
     }
-    if let Some(hint) = hint {
-        // Beside a control the help keeps to the left column, one measure for every field so the
-        // form reads as a column; under a control it has the card's width.
-        let column = if beside { left.min(room * 3 / 5) } else { room };
-        for wrapped in super::layout::wrap_line(&Line::from(hint), column.saturating_sub(indent).max(12)) {
-            let mut spans = vec![t.n(" ".repeat(indent))];
-            spans.extend(wrapped.spans);
-            card.row(t, spans);
+    // Beside a control the help keeps to the left column, one measure for every field so the
+    // form reads as a column; under a control it has the card's width.
+    let column = if beside { left.min(room * 3 / 5) } else { room };
+    let help: Vec<Vec<Span<'static>>> = hint
+        .map(|hint| {
+            super::layout::wrap_line(&Line::from(hint), column.saturating_sub(indent).max(12))
+                .into_iter()
+                .map(|wrapped| {
+                    let mut spans = vec![t.n(" ".repeat(indent))];
+                    spans.extend(wrapped.spans);
+                    spans
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut aside = (!aside.is_empty()).then_some(aside);
+    let first_fits = |first: &[Span<'static>], aside: &[Span<'static>]| width_of(first) + SETTING_GAP + width_of(aside) <= room;
+    if let Some(side) = aside.take_if(|side| help.first().is_none_or(|first| !first_fits(first, side))) {
+        card.row_end(t, Vec::new(), side);
+    }
+    for (index, spans) in help.into_iter().enumerate() {
+        match aside.take().filter(|_| index == 0) {
+            Some(side) => card.row_end(t, spans, side),
+            None => card.row(t, spans),
         }
     }
     card.blank(t);

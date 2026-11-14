@@ -207,6 +207,7 @@ fn help_document() -> Document {
             "w                Wi-Fi and Bluetooth, from Home",
             "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
+            "F4 or Ctrl-.     pick a setting's value from another app, in Settings",
             "",
             "The mouse works too: click, scroll, and hover to see what can be clicked.",
             "Ctrl-C           quit, from anywhere",
@@ -354,6 +355,9 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, APP_SECTIONS.len(), key.code == KeyCode::Down),
         KeyCode::Char('m') => state.more_open = true,
         KeyCode::Enter => match APP_SECTIONS[state.selected.min(APP_SECTIONS.len() - 1)] {
+            // An app without a web page shows Hosting as a dimmed row that says so; Enter on
+            // it stays put rather than flash a notice as if it had gone somewhere.
+            "Hosting" if !app.data.web.sites.iter().any(|site| site.package == name) => {}
             "Hosting" => return web::hosting_from_detail(app, &name),
             "Settings" => return vec![Effect::OpenSettings(name)],
             _ => return open_logs(app, &name),
@@ -1133,6 +1137,10 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    // F4 and Ctrl-. open the picker even while typing, so they never reach the box.
+    if opens_picker(key) {
+        return open_reference_picker(app);
+    }
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -1172,19 +1180,7 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Right if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
             start_field_edit(state, index, 1);
         }
-        KeyCode::Char('$') => {
-            let field = &state.form.fields[index];
-            // Secrets and non-text fields take no public reference, so only URLs offer the picker.
-            if field.kind == FieldKind::Url {
-                return vec![Effect::LoadReferences {
-                    package: state.form.package.clone(),
-                    field_index: index,
-                    field_key: field.key.clone(),
-                    field_label: field.label.clone(),
-                }];
-            }
-            fail(app, "This field cannot use a reference.");
-        }
+        KeyCode::Char('$') => return open_reference_picker(app),
         KeyCode::Char('z') => state.draft[index] = state.form.fields[index].value.clone(),
         KeyCode::Esc => {
             if state.changed_indices().is_empty() {
@@ -1202,6 +1198,33 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         _ => {}
     }
     Vec::new()
+}
+
+/// The keys that open the picker from the Settings form. F4 opens a drop-down in many programs
+/// and reaches every terminal. Ctrl-. only arrives where the terminal reports it (the kitty
+/// keyboard protocol, see `CrosstermMode`); elsewhere it types nothing or a plain dot.
+pub fn opens_picker(key: KeyEvent) -> bool {
+    key.code == KeyCode::F(4) || is_ctrl(key, '.')
+}
+
+/// Opens the picker for the selected field. Whatever is being typed stays, so Esc from the picker
+/// goes back to it.
+fn open_reference_picker(app: &mut App) -> Vec<Effect> {
+    let Screen::Settings(state) = &app.screen else {
+        return Vec::new();
+    };
+    let index = state.selected;
+    let field = &state.form.fields[index];
+    if !field.kind.takes_reference() {
+        fail(app, "This setting cannot take a value from another app.");
+        return Vec::new();
+    }
+    vec![Effect::LoadReferences {
+        package: state.form.package.clone(),
+        field_index: index,
+        field_key: field.key.clone(),
+        field_label: field.label.clone(),
+    }]
 }
 
 fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
@@ -1258,6 +1281,7 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 pop(app);
                 if let Screen::Settings(settings) = &mut app.screen {
                     settings.draft[field_index] = value;
+                    settings.editing = None;
                 }
             }
         }
@@ -1662,6 +1686,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         },
         KeyCode::Char('p') if !state.focus.is_text() => {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
+            return vec![Effect::LoadProviders];
         }
         KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
         KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
@@ -1919,6 +1944,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             web::on_reachability(app, site, going_public, result);
         }
         Event::ProviderAdded(result) => return web::on_provider_added(app, result),
+        Event::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
         Event::ProviderRemoved(result) => return web::on_provider_removed(app, result),
         Event::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
         Event::AcmeSaved(result) => match result {
@@ -2370,6 +2396,22 @@ fn pick(app: &mut App, index: usize) {
     }
 }
 
+/// A click on a text box: gives it the cursor, as `/` (or `w` for the update window) would from
+/// the rest of the screen, but presses nothing, so a box that already has the cursor keeps what
+/// was typed.
+fn focus_input_box(app: &mut App) -> Vec<Effect> {
+    match &mut app.screen {
+        Screen::Search(state) => state.list_focused = false,
+        Screen::Reference(state) => state.list_focused = false,
+        Screen::Logs(state) => state.finding = true,
+        Screen::AutoUpdate(state) if state.editing_window.is_none() => {
+            return on_key(app, KeyEvent::from(KeyCode::Char('w')));
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
 fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
     use crate::hit::Click;
     match click {
@@ -2382,6 +2424,13 @@ fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
         }
         Click::Key(code) => on_key(app, KeyEvent::from(code)),
         Click::Ctrl(c) => on_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)),
+        Click::Focus => {
+            if app.modal.is_some() || app.overlay.is_some() {
+                return Vec::new();
+            }
+            app.notice = None;
+            focus_input_box(app)
+        }
         Click::Pick { index, then } => {
             app.notice = None;
             match &mut app.modal {

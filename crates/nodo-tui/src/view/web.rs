@@ -278,6 +278,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     }
 
     screen.before = vec![
+        Item::Blank,
         trail(t, &["Apps", name, "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, "Hosting"),
@@ -379,6 +380,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             }
             card.buttons(t, &[("Add a provider", true, Click::Key(KeyCode::Char('a')))], &mut ct);
             screen.before = vec![
+                Item::Blank,
                 trail(t, &["Web", "Domain providers"], &mut screen.targets),
                 Item::Blank,
                 heading(t, "Domain providers"),
@@ -404,9 +406,20 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 card.row(t, vec![marker(t, focused), label(t, &pad(&provider.name, 14), focused), note]);
                 ct.push(Target::row(provider.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
             }
+            // An unavailable catalog is already named in the footer.
+            let error = app.data.providers_error.as_ref().filter(|_| app.data.unavailable(Area::Providers).is_none());
+            if let Some(error) = error {
+                if !app.data.providers.is_empty() {
+                    card.blank(t);
+                }
+                card.row(t, vec![t.e(format!("✕  Couldn't read the providers: {error}"))]);
+            } else if app.data.providers.is_empty() {
+                card.row(t, vec![t.d("No providers are offered.")]);
+            }
             card.blank(t);
             let first = if state.return_to.is_some() { "Apps" } else { "Web" };
             screen.before = vec![
+                Item::Blank,
                 trail(t, &[first, "Domain providers", "Add"], &mut screen.targets),
                 Item::Blank,
                 heading(t, "Where did you buy your web address?"),
@@ -457,6 +470,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             card.buttons(t, &[("Connect", true, Click::Key(KeyCode::Enter))], &mut ct);
             let instructions = provider.map(|p| p.instructions.clone()).unwrap_or_default();
             screen.before = vec![
+                Item::Blank,
                 trail(t, &["Web", "Domain providers", "Add", name], &mut screen.targets),
                 Item::Blank,
                 heading(t, &format!("Connect {name}")),
@@ -480,7 +494,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             let back = state.return_to.as_ref().map_or("Done".to_owned(), |site| format!("Back to {site}"));
             card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))], &mut ct);
             screen.before =
-                vec![trail(t, &["Web", "Domain providers", "Add", provider.as_str()], &mut screen.targets), Item::Blank, Item::Blank];
+                vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", provider.as_str()], &mut screen.targets), Item::Blank, Item::Blank];
             "Keys: ↵ continue"
         }
     };
@@ -540,6 +554,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
     card.buttons(t, &buttons, &mut ct);
     let title = if failed { "The internet can't reach your Nodo yet" } else { "Some checks couldn't be confirmed" };
     screen.before = vec![
+        Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, title),
@@ -588,6 +603,7 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     card.row(t, vec![t.d(format!("▸ {selected} is selected for the keyboard."))]);
     card.blank(t);
     screen.before = vec![
+        Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, &format!("Ready to put {} on the internet", state.site)),
@@ -627,6 +643,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
     card.blank(t);
     card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))], &mut ct);
     screen.before = vec![
+        Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, "The internet can't reach your Nodo"),
@@ -668,6 +685,6 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
     }
     card.blank(t);
     card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))], &mut ct);
-    screen.before = vec![trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
+    screen.before = vec![Item::Blank, trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
     screen.finish(t, card, ct, Vec::new(), "Keys: ↵ done  l logs  d certificates", w, h)
 }
