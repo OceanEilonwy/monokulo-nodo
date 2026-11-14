@@ -2078,7 +2078,7 @@ impl Manage {
             "Add a source",
             "Paste the address the publisher gave you. Nothing is installed yet: the Nodo first shows what it offers and its key.",
             vec![
-                MRow { id: "add-source".into(), title: "Address".into(), value: shared(&self.source_address), placeholder: "https://".into(), mono: true, ..row("field") },
+                MRow { id: "add-source".into(), title: "Address".into(), value: shared(&self.source_address), placeholder: "https://".into(), mono: true, selected: -1, ..row("field") },
             ],
         )];
         if let Some(p) = &self.probe {
@@ -2145,6 +2145,7 @@ impl Manage {
                     placeholder: shared(format!("e.g. {}.{}", site, domains.first().cloned().unwrap_or_else(|| "example.com".into()))),
                     mono: true,
                     sub: shared(format!("Your domains: {}", domains.join(", "))),
+                    selected: -1,
                     ..row("field")
                 });
             }
@@ -2177,6 +2178,7 @@ impl Manage {
                     title: shared(f),
                     value: shared(if self.provider_values.get(i).is_some_and(|v| !v.is_empty()) { "••••••••" } else { "" }),
                     placeholder: "Paste it here".into(),
+                    selected: -1,
                     ..row("field")
                 })
                 .collect();
