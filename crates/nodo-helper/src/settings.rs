@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use nodo_api::{ApiError, Response, SettingChange, SettingsForm};
+use nodo_api::{ApiError, ReferenceOption, Response, SettingChange, SettingPreview, SettingsForm};
 use nodo_gen::ResolvedGrants;
 use zeroize::Zeroizing;
 
@@ -113,6 +113,25 @@ pub trait SettingsPolicy: Send + Sync {
         Ok(0)
     }
 
+    /// Every setting `package` could reference in the other installed packages.
+    fn references(
+        &self,
+        _ctx: &SettingsContext,
+        _package: &Package,
+    ) -> Result<Vec<ReferenceOption>, ApiError> {
+        Ok(Vec::new())
+    }
+
+    /// What saving one change would resolve to and imply. Must not change anything.
+    fn preview(
+        &self,
+        _ctx: &SettingsContext,
+        _package: &Package,
+        _change: &SettingChange,
+    ) -> Result<SettingPreview, ApiError> {
+        Err(ApiError::Failed("previews are not available".into()))
+    }
+
     /// The resolved value of a package's public setting, as text.
     fn public_value(
         &self,
@@ -143,6 +162,23 @@ impl<S: System> Helper<S> {
             bindings: &bindings,
         };
         f(&ctx)
+    }
+
+    pub(crate) fn list_references(&self, id: &str) -> Result<Response, ApiError> {
+        let package = self.package(id)?;
+        let (packages, _) = self.packages()?;
+        let options = self.with_settings(&packages, |ctx| self.settings.references(ctx, &package))?;
+        Ok(Response::References(options))
+    }
+
+    pub(crate) fn preview_setting(&self, id: &str, change: &SettingChange) -> Result<Response, ApiError> {
+        let package = self.package(id)?;
+        if package.manifest.settings.is_none() {
+            return Err(ApiError::Failed(format!("{id} has no settings")));
+        }
+        let (packages, _) = self.packages()?;
+        let preview = self.with_settings(&packages, |ctx| self.settings.preview(ctx, &package, change))?;
+        Ok(Response::SettingPreview(preview))
     }
 
     pub(crate) fn settings_form(&self, id: &str) -> Result<Response, ApiError> {

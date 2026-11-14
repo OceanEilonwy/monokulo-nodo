@@ -1,6 +1,7 @@
 
     Home     Apps 2     Web     System 1
 
+
     Apps  ›  shop  ›  Hosting
 
     The internet can't reach your Nodo yet
@@ -17,8 +18,7 @@
 
        Your router needs to send web visitors to the Nodo. In its settings,
        forward:
-          Port 80   to 192.168.1.50:80
-       ↓ 7 more — scroll or make the window taller
+       ↓ 8 more — scroll or make the window taller
                              Check again           Use Tor instead   
 
     Keys: ↵ use Tor  r check again  d details  ? router help  Esc back

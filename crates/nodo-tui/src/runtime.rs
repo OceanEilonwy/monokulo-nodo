@@ -134,9 +134,31 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let form = backend.settings_form(&package);
             vec![Event::SettingsLoaded { package, form }]
         }
-        Effect::LoadReferences { package, field_index, field_key, field_label } => {
-            let list = backend.references(&package, &field_key);
-            vec![Event::ReferencesLoaded { package, field_index, field_label, list }]
+        Effect::LoadReferences { package } => {
+            let list = match backend.call(Request::ListReferences { package: package.clone() }) {
+                Ok(Response::References(options)) => crate::helper_backend::reference_list(options),
+                _ => ReferenceList::default(),
+            };
+            vec![Event::ReferencesLoaded { package, list }]
+        }
+        Effect::PreviewSetting { package, field_index, key, value } => {
+            // Secrets are never previewed, and a stored secret has no value to send.
+            let Some(input) = value.to_input().filter(|input| !matches!(input, nodo_api::SettingInput::Secret(_))) else {
+                return Vec::new();
+            };
+            let change = nodo_api::SettingChange { name: key, value: input };
+            match backend.call(Request::PreviewSetting { package: package.clone(), change }) {
+                Ok(Response::SettingPreview(preview)) => {
+                    let preview = crate::helper_backend::field_preview(&value, preview);
+                    vec![Event::SettingPreviewed { package, field_index, preview }]
+                }
+                _ => Vec::new(),
+            }
+        }
+        Effect::Grant { consumer, provider, setting } => {
+            let grant = nodo_api::SettingGrant { consumer, provider: provider.clone(), setting: setting.clone() };
+            let result = plain_result(backend.call(Request::SetGrant { grant, approved: true }));
+            vec![Event::Granted { provider, setting, result }]
         }
         Effect::ApplySettings { package, values } => {
             // Values with no wire form are stored secrets, and those never change here.

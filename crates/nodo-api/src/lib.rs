@@ -103,6 +103,15 @@ pub enum SettingLiteral {
     Bool(bool),
 }
 
+/// One piece of a value made of text and references. Text is never scanned for references, so
+/// a literal `$(` in it stays text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TemplatePart {
+    Text(String),
+    /// `$(target.setting)`, where `target` is a package id or a role.
+    Reference { target: String, setting: String },
+}
+
 /// A new value for one setting. A reference and a literal can never be confused, whatever the
 /// text holds, because they are different variants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +122,9 @@ pub enum SettingInput {
         target: String,
         setting: String,
     },
+    /// Text and references together, such as `http://` `$(cuprated.rpc-host)` `/json_rpc`. Only
+    /// for text and URL settings; the resolver checks the type of each piece.
+    Template(Vec<TemplatePart>),
     Secret(Secret),
     /// Go back to the package's default.
     Reset,
@@ -145,6 +157,11 @@ pub enum SettingCurrent {
         target: String,
         setting: String,
         /// The value it resolves to now, unless it is a secret or does not resolve.
+        resolved: Option<String>,
+    },
+    /// Text and references together.
+    Template {
+        parts: Vec<TemplatePart>,
         resolved: Option<String>,
     },
     SecretSet,
@@ -364,6 +381,69 @@ pub struct SettingGrant {
     pub consumer: String,
     pub provider: String,
     pub setting: String,
+}
+
+/// One setting a package may reference in another package, for a reference picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceOption {
+    pub package: String,
+    /// What goes in `$(package.reference)`: the public name, or the setting's own name for one
+    /// that needs a grant.
+    pub reference: String,
+    pub label: String,
+    pub help: String,
+    pub kind: SettingKind,
+    pub access: ReferenceAccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReferenceAccess {
+    /// Open to every package; `value` is what it resolves to now.
+    Public { value: Option<String> },
+    /// A secret or a non-public setting. Reading it needs the user's grant ([`Request::SetGrant`]
+    /// with the setting's own name). Its value is never listed.
+    NeedsGrant { secret: bool, granted: bool },
+}
+
+/// What one reference in a previewed value would do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReferenceStatus {
+    /// `value` is `None` for a secret.
+    Ok { provider: String, value: Option<String> },
+    NotInstalled,
+    NoSuchSetting { provider: String },
+    NeedsGrant { provider: String, setting: String, secret: bool },
+    TypeMismatch { expected: String, found: String },
+    Problem(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceCheck {
+    pub target: String,
+    pub setting: String,
+    pub status: ReferenceStatus,
+}
+
+/// Network or socket access a value would open, in words for a confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpliedAccess {
+    pub provider: String,
+    /// Such as "port 18081/tcp" or "socket /run/cuprated/rpc.sock".
+    pub what: String,
+}
+
+/// What saving one setting's value would do, without saving it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingPreview {
+    /// The resolved value; `None` for a secret or when it does not resolve.
+    pub resolved: Option<String>,
+    /// Why it does not resolve.
+    pub problem: Option<String>,
+    pub references: Vec<ReferenceCheck>,
+    /// Packages that would become dependencies, which the package does not depend on now.
+    pub new_dependencies: Vec<String>,
+    /// Access that would be opened, which the package does not have now.
+    pub new_access: Vec<ImpliedAccess>,
 }
 
 /// One site's addresses as the proxy serves them now.
@@ -762,6 +842,16 @@ pub enum Request {
         package: Option<String>,
     },
     ListGrants,
+    /// Everything `package` could reference in other installed packages.
+    ListReferences {
+        package: String,
+    },
+    /// What saving `change` for `package` would resolve to and imply. Changes nothing. A secret
+    /// value is refused rather than previewed.
+    PreviewSetting {
+        package: String,
+        change: SettingChange,
+    },
     /// Approves or revokes one package reading another's secret or non-public setting. The
     /// consumer is re-rendered and restarted, and rolls back on failure.
     SetGrant {
@@ -1087,6 +1177,8 @@ pub enum Response {
     NodeStatus(NodeStatus),
     RoleBindings(Vec<RoleBinding>),
     Grants(Vec<SettingGrant>),
+    References(Vec<ReferenceOption>),
+    SettingPreview(SettingPreview),
     FeedProbe(FeedProbe),
     FeedKeyChange(FeedKeyChange),
     Catalog(Vec<CatalogEntry>),
@@ -1205,6 +1297,8 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::SetRoleBinding { .. } => "set-role-binding",
         Request::ListGrants => "list-grants",
         Request::SetGrant { .. } => "set-grant",
+        Request::ListReferences { .. } => "list-references",
+        Request::PreviewSetting { .. } => "preview-setting",
         Request::UseDataDrive { .. } => "use-data-drive",
         Request::ProbeFeed { .. } => "probe-feed",
         Request::AddFeed { .. } => "add-feed",

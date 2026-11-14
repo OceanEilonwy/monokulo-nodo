@@ -764,6 +764,175 @@ fn endpoint_access(
     }
 }
 
+/// One setting another package may reference, as a reference picker lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogEntry {
+    pub package: String,
+    /// The name that goes in `$(package.name)`: the public name, or the setting's own name for
+    /// one that needs a grant.
+    pub reference: String,
+    /// The setting's own name.
+    pub setting: String,
+    pub label: String,
+    pub help: Option<String>,
+    pub ty: SettingType,
+    pub access: CatalogAccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogAccess {
+    /// Open to every package. `value` is what it resolves to now, if it resolves.
+    Public { value: Option<String> },
+    /// A secret or a non-public setting: the user must approve each package that reads it.
+    /// Its value is never listed, granted or not.
+    Grant { secret: bool, granted: bool },
+}
+
+/// What one reference in a value would do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceState {
+    /// `value` is `None` for a secret, which is never shown.
+    Resolves { provider: String, value: Option<String> },
+    /// No installed package is or provides the target.
+    NotInstalled,
+    NoSuchSetting { provider: String },
+    NeedsGrant { provider: String, setting: String, secret: bool },
+    TypeMismatch { expected: String, found: String },
+    /// The target resolves to something that is itself broken, or the name is ambiguous.
+    Problem(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceCheck {
+    pub reference: Reference,
+    pub state: ReferenceState,
+}
+
+/// What saving one value would produce, without saving it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preview {
+    /// The resolved value as text, `Ok(None)` when it is a secret, or why it does not resolve.
+    pub value: Result<Option<String>, String>,
+    pub references: Vec<ReferenceCheck>,
+    /// What the consumer would depend on and reach with this value, over all its settings.
+    pub dependencies: BTreeSet<Dependency>,
+    pub network: BTreeSet<NetworkGrant>,
+}
+
+impl Installed {
+    /// Everything `consumer` could reference in other packages. Public settings come with their
+    /// current value; secrets and non-public settings only with whether a grant exists.
+    pub fn catalog(&self, consumer: &str) -> Vec<CatalogEntry> {
+        let mut eval = Evaluator::new(self);
+        let mut entries = Vec::new();
+        for (id, package) in &self.packages {
+            if id == consumer {
+                continue;
+            }
+            for def in &package.schema.settings {
+                let secret = matches!(def.ty, SettingType::Secret);
+                let access = match (&def.public, secret) {
+                    (Some(_), false) => CatalogAccess::Public {
+                        value: eval.setting(id, &def.name).ok().map(|e| e.value.text()),
+                    },
+                    _ => CatalogAccess::Grant {
+                        secret,
+                        granted: self.grants.contains(&Grant {
+                            consumer: consumer.to_string(),
+                            provider: id.clone(),
+                            setting: def.name.clone(),
+                        }),
+                    },
+                };
+                let reference = match (&def.public, secret) {
+                    (Some(public), false) => public.clone(),
+                    _ => def.name.clone(),
+                };
+                entries.push(CatalogEntry {
+                    package: id.clone(),
+                    reference,
+                    setting: def.name.clone(),
+                    label: def.label.clone(),
+                    help: def.help.clone(),
+                    ty: def.ty.clone(),
+                    access,
+                });
+            }
+        }
+        entries
+    }
+
+    /// What giving `consumer.setting` the value `value` would do, reference by reference, without
+    /// changing anything. Nothing secret is ever returned.
+    pub fn preview(&self, consumer: &str, setting: &str, value: SettingValue) -> Result<Preview, ResolveError> {
+        let package = self.package(consumer)?;
+        let def = package.schema.setting(setting).ok_or_else(|| ResolveError::UnknownSetting {
+            package: consumer.to_string(),
+            setting: setting.to_string(),
+        })?;
+        let parts = match &value {
+            SettingValue::Template(text) => parse_template(text).map_err(|error| ResolveError::Template {
+                package: consumer.to_string(),
+                setting: setting.to_string(),
+                error,
+            })?,
+            SettingValue::Literal(_) => Vec::new(),
+        };
+        let mut copy = self.clone();
+        copy.packages.get_mut(consumer).expect("checked above").values.insert(setting.to_string(), value);
+
+        let mut eval = Evaluator::new(&copy);
+        let assembled = parts.len() > 1 || parts.iter().any(|p| matches!(p, Part::Literal(_)));
+        let mut references = Vec::new();
+        for part in &parts {
+            let Part::Reference(reference) = part else { continue };
+            let state = match eval.reference(consumer, reference) {
+                Ok(source) => {
+                    let found = source.value.type_name();
+                    let secret = matches!(source.value, Value::Secret(_));
+                    let fits = if assembled {
+                        matches!(def.ty, SettingType::String | SettingType::Url | SettingType::Secret)
+                            && (!secret || matches!(def.ty, SettingType::Secret))
+                    } else {
+                        convert(source.value.clone(), &def.ty).is_some()
+                    };
+                    if !fits {
+                        ReferenceState::TypeMismatch {
+                            expected: def.ty.name().to_string(),
+                            found: if assembled && !secret { "assembled text".to_string() } else { found.to_string() },
+                        }
+                    } else {
+                        let (provider, _) = copy.target(consumer, &reference.target).expect("it resolved");
+                        ReferenceState::Resolves {
+                            provider,
+                            value: (!secret).then(|| source.value.text()),
+                        }
+                    }
+                }
+                Err(ResolveError::UnknownPackage(_) | ResolveError::MissingProvider { .. }) => {
+                    ReferenceState::NotInstalled
+                }
+                Err(ResolveError::MissingSetting { provider, .. }) => ReferenceState::NoSuchSetting { provider },
+                Err(ResolveError::GrantRequired { provider, setting, secret, .. }) => {
+                    ReferenceState::NeedsGrant { provider, setting, secret }
+                }
+                Err(error) => ReferenceState::Problem(error.to_string()),
+            };
+            references.push(ReferenceCheck { reference: reference.clone(), state });
+        }
+
+        let value = match eval.setting(consumer, setting) {
+            Ok(evaluated) => Ok((!matches!(evaluated.value, Value::Secret(_))).then(|| evaluated.value.text())),
+            Err(error) => Err(error.to_string()),
+        };
+        let (dependencies, network) = match copy.resolve(consumer) {
+            Ok(resolved) => (resolved.dependencies, resolved.network),
+            Err(_) => (BTreeSet::new(), BTreeSet::new()),
+        };
+        Ok(Preview { value, references, dependencies, network })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1584,5 +1753,94 @@ mod tests {
     #[test]
     fn unknown_consumer_is_reported() {
         assert_eq!(only_error(&Installed::default(), "ghost"), ResolveError::UnknownPackage("ghost".into()));
+    }
+
+    fn template(text: &str) -> SettingValue {
+        SettingValue::Template(text.into())
+    }
+
+    #[test]
+    fn the_catalog_lists_public_values_and_locks_the_rest() {
+        let installed = world(vec![cuprated(), consumer("x", SettingType::Url)]);
+        let catalog = installed.catalog("shop");
+        assert!(catalog.iter().all(|e| e.package == "cuprated"), "the consumer itself is not listed");
+        let port = catalog.iter().find(|e| e.setting == "rpc_port").unwrap();
+        assert_eq!(port.reference, "rpc-port");
+        assert_eq!(port.access, CatalogAccess::Public { value: Some("18081".into()) });
+        let login = catalog.iter().find(|e| e.setting == "login").unwrap();
+        assert_eq!(login.access, CatalogAccess::Grant { secret: true, granted: false });
+        let hidden = catalog.iter().find(|e| e.setting == "hidden").unwrap();
+        assert_eq!(hidden.access, CatalogAccess::Grant { secret: false, granted: false });
+        assert_eq!(hidden.reference, "hidden");
+    }
+
+    #[test]
+    fn the_catalog_never_lists_a_secret_value_even_when_granted() {
+        let mut daemon = cuprated();
+        daemon.values.insert("login".into(), secret_value("hunter2"));
+        let mut installed = world(vec![daemon, consumer("x", SettingType::Secret)]);
+        installed.grants.insert(grant("shop", "cuprated", "login"));
+        let login = installed.catalog("shop").into_iter().find(|e| e.setting == "login").unwrap();
+        assert_eq!(login.access, CatalogAccess::Grant { secret: true, granted: true });
+        assert!(!format!("{:?}", installed.catalog("shop")).contains("hunter2"));
+    }
+
+    #[test]
+    fn a_preview_resolves_mixed_text_and_reports_each_reference() {
+        let installed = world(vec![cuprated(), consumer("x", SettingType::Url)]);
+        let preview = installed
+            .preview("shop", "daemon", template("http://127.0.0.1:$(cuprated.rpc-port)/json_rpc"))
+            .unwrap();
+        assert_eq!(preview.value, Ok(Some("http://127.0.0.1:18081/json_rpc".into())));
+        assert_eq!(
+            preview.references[0].state,
+            ReferenceState::Resolves { provider: "cuprated".into(), value: Some("18081".into()) }
+        );
+        assert_eq!(preview.dependencies.iter().map(|d| d.package.as_str()).collect::<Vec<_>>(), ["cuprated"]);
+        assert_eq!(preview.network.len(), 1, "reaching the RPC port is implied");
+    }
+
+    #[test]
+    fn a_preview_names_what_is_wrong_with_each_reference() {
+        let installed = world(vec![cuprated(), consumer("x", SettingType::Url)]);
+        let preview = installed
+            .preview("shop", "daemon", template("$(old-shop.url)/$(cuprated.nope)/$(cuprated.login)"))
+            .unwrap();
+        let states: Vec<_> = preview.references.iter().map(|r| r.state.clone()).collect();
+        assert_eq!(states[0], ReferenceState::NotInstalled);
+        assert_eq!(states[1], ReferenceState::NoSuchSetting { provider: "cuprated".into() });
+        assert_eq!(
+            states[2],
+            ReferenceState::NeedsGrant { provider: "cuprated".into(), setting: "login".into(), secret: true }
+        );
+        assert!(preview.value.is_err());
+    }
+
+    #[test]
+    fn a_preview_reports_type_mismatches() {
+        let installed = world(vec![cuprated(), consumer("x", INT)]);
+        let single = installed.preview("shop", "daemon", template("$(cuprated.name)")).unwrap();
+        assert!(matches!(single.references[0].state, ReferenceState::TypeMismatch { .. }));
+        let assembled = installed.preview("shop", "daemon", template("1$(cuprated.rpc-port)")).unwrap();
+        assert_eq!(
+            assembled.references[0].state,
+            ReferenceState::TypeMismatch { expected: INT.name().into(), found: "assembled text".into() }
+        );
+        let fits = installed.preview("shop", "daemon", template("$(cuprated.rpc-port)")).unwrap();
+        assert_eq!(fits.value, Ok(Some("18081".into())));
+    }
+
+    #[test]
+    fn a_preview_changes_nothing_and_hides_secrets() {
+        let mut daemon = cuprated();
+        daemon.values.insert("login".into(), secret_value("hunter2"));
+        let mut installed = world(vec![daemon, consumer("x", SettingType::Secret)]);
+        installed.grants.insert(grant("shop", "cuprated", "login"));
+        let before = format!("{:?}", installed.packages["shop"].values);
+        let preview = installed.preview("shop", "daemon", template("$(cuprated.login)")).unwrap();
+        assert_eq!(preview.value, Ok(None));
+        assert_eq!(preview.references[0].state, ReferenceState::Resolves { provider: "cuprated".into(), value: None });
+        assert!(!format!("{preview:?}").contains("hunter2"));
+        assert_eq!(format!("{:?}", installed.packages["shop"].values), before);
     }
 }

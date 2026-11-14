@@ -1,6 +1,7 @@
 
     Home     Apps 2     Web     System 1
 
+
     Apps  ›  shop  ›  Hosting
 
     Ready to put shop on the internet
@@ -15,8 +16,7 @@
        Records of it can stay online after you stop.
        Anyone can connect this address to your home, including your Monero
        node.
-       Public certificate logs list shop.example.com permanently.
-       ↓ 5 more — scroll or make the window taller
+       ↓ 6 more — scroll or make the window taller
                                Cancel              Put shop online   
 
        ▸ Cancel is selected for the keyboard.

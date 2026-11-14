@@ -73,7 +73,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::AddFeed => &["Its key", "Check this matches what the publisher gave you", "Add source"],
         ScreenId::FeedKey => &["Check before you trust", "is now signed with a different key", "Key you trust", "New key", "Keep the old key"],
         ScreenId::Settings => &["Settings", "restarts with the new settings", "Payment address", "Cancel", "Save"],
-        ScreenId::Reference => &["Pick daemon rpc from your apps", "monero-daemon.public_rpc_url", "Use it"],
+        ScreenId::Reference => &["Insert a reference", "cuprated.rpc_url", "SECRETS · NOT PUBLIC"],
         ScreenId::ApplyFailed => &["didn't start with the new settings, so they were undone", "Show log ›", "Edit again"],
         ScreenId::Updates => &["System  ›  Updates", "The Nodo", "Update and restart", "Apps", "Automatic updates ›", "Undo an update ›"],
         ScreenId::UpdateFailed => &["update didn't start, so", "Try again", "OK"],
@@ -654,16 +654,16 @@ fn an_unreadable_provider_catalog_says_why() {
     assert!(!screen.contains("No providers are offered."), "{screen}");
 }
 
-/// The link to pick a value from an app sits right-aligned under the selected field's control,
+/// Each field that takes a reference has a "+ reference" link, right-aligned under its control,
 /// never beside it, so the control keeps its place on the card's padding.
 #[test]
-fn the_pick_link_sits_under_the_control() {
+fn the_reference_link_sits_under_the_control() {
     for width in [80u16, 100, 160] {
         let screen = settings_at(width, &[], None);
         let lines: Vec<&str> = screen.lines().collect();
         let at = lines.iter().position(|line| line.contains("▸ Payment address")).expect("selected field shown");
-        assert!(!lines[at].contains("Pick from an app"), "the link is beside the control at {width}:\n{screen}");
-        let link = lines[at + 1..at + 3].iter().find(|line| line.contains("▾ Pick from an app")).unwrap_or_else(|| panic!("no link at {width}:\n{screen}"));
-        assert!(link.ends_with("▾ Pick from an app") && link.chars().count() == usize::from(width) - 7, "the link is not right-aligned at {width}:\n{screen}");
+        assert!(!lines[at].contains("+ reference"), "the link is beside the control at {width}:\n{screen}");
+        let link = lines[at + 1..at + 3].iter().find(|line| line.contains("+ reference")).unwrap_or_else(|| panic!("no link at {width}:\n{screen}"));
+        assert!(link.ends_with("+ reference") && link.chars().count() == usize::from(width) - 7, "the link is not right-aligned at {width}:\n{screen}");
     }
 }

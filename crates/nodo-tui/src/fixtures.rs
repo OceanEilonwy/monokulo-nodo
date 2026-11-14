@@ -49,10 +49,7 @@ fn typed(text: &str) -> Input {
 fn settings_design_state(mock: &MockBackend) -> SettingsState {
     let form = mock.settings_form("moneropay").expect("sample form");
     let mut state = SettingsState::new(form);
-    state.draft[0] = FieldValue::Reference {
-        path: "monero-daemon.public_rpc_url".to_owned(),
-        resolved: "http://127.0.0.1:18081".to_owned(),
-    };
+    state.draft[0] = FieldValue::reference("cuprated", "rpc_url");
     state.draft[3] = FieldValue::Text("48edfHu7V9Z84Y".to_owned());
     state.selected = 3;
     state
@@ -177,10 +174,14 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             package: "moneropay".to_owned(),
             field_index: 0,
             field_label: "Daemon RPC".to_owned(),
+            field_kind: FieldKind::Url,
+            mode: crate::app::PickMode::Insert,
+            assembled: false,
             list: sample_references(),
             query: typed("rpc"),
             list_focused: true,
             selected: 0,
+            granting: None,
         }),
         ScreenId::ApplyFailed => {
             let reason = "listen tcp :18081: bind: address already in use";

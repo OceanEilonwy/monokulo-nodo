@@ -9,16 +9,16 @@
     undone by themselves.
 
 
-                               rpc if it changes.
 
-         API port                5000     −   +
-                               Port for the local payment API.
+         API port                                        5000       −   +
+         Port for the local payment API.                      + reference
 
-         Log level              info                         ▾
-                               How much the service writes to its log.
+         Log level                        info                         ▾
+         How much the service writes
+         to its log.
 
-       ▸ Payment address        48edfHu7V9Z84Y
-       ↕ 13 more — scroll or make the window taller
+       ▸ Payment address                  48edfHu7V9Z84Y
+       ↕ 15 more — scroll or make the window taller
                                              Cancel          Save    
 
-    Keys: ↑↓ choose  ↵ edit  $ pick from an app  ctrl-s save  z undo  Esc back
+    Keys: ↑↓ choose  ↵ edit  Ctrl+R reference  ctrl-s save  z undo  Esc back

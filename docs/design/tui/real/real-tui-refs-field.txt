@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Settings
+
+    Settings                                                                                2 changes, not saved yet
+    moneropay restarts with the new settings. If it doesn't start, they're undone by themselves.
+
+
+
+       ▸ Daemon RPC                                      http:// cuprated·rpc_host : cuprated·rpc_port /json_rpc
+         Text and references together. Now:                                                           + reference
+         http://127.0.0.1:18081/json_rpc
+
+         API port                                                                                5000       −   +
+         Port for the local payment API.                                                              + reference
+
+         Log level                                                                info                         ▾
+         How much the service writes to its log.
+
+         Payment address                                                            old-shop·webhook_url /orders
+         Text and references together.                                                                + reference
+
+         Webhook secret                                                  ••••••••••••                      Change
+         Signs the webhooks this package sends.
+
+         Allow LAN access                                                                                 [x] On
+         Lets other devices on your network reach the API.
+
+                                                                                   Fix 1 broken reference to save
+                                                                                     Cancel          Save    
+
+
+
+    Keys: ↑↓ choose  ↵ edit  Ctrl+R reference  ctrl-s save  z undo  Esc back
