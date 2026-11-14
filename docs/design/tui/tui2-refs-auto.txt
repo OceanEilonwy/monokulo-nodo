@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+    Settings
+
+
+       Monero node address      http://$(cu▏                                                 + reference
+                               Typing $( suggests references at the cursor.
+
+                                        cuprated.rpc_host   text     127.0.0.1
+                                        cuprated.rpc_port   number   18081
+                                        All references…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ insert  Esc keep typing

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+
+       Save mk-pay's settings?
+
+       These references change what mk-pay can reach:
+
+       •  mk-pay will be able to reach cuprated's RPC (127.0.0.1:18081).
+       •  cuprated becomes a dependency: it can't be removed while mk-pay uses it.
+       •  mk-pay follows mk-wallet's address when it changes.
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ save  Esc back

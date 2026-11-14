@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into mk-pay · Monero node address (text)
+
+       Search     apps, settings, descriptions or values
+
+       CUPRATED
+       cuprated.rpc_host             text     public  Address it answers RPC on       127.0.0.1
+       cuprated.rpc_port             number   public  RPC port                        18081
+       cuprated.network              choice   public  Mainnet or testnet              mainnet
+
+       MK-WALLET
+       mk-wallet.primary_address     address  public  The wallet's main address       48daf1r…tUvb
+
+       MK-LWS
+       mk-lws.url                    url      public  Where wallets reach it          https://mk-lws.local
+
+       SECRETS · NOT PUBLIC
+       cuprated.rpc_password         secret           never shown                     Needs your approval · Grant…
+
+       Get more apps that provide values ›
+
+
+
+
+
+
+
+
+
+    Keys: type to search  ↑↓ choose  ↵ insert  Esc close

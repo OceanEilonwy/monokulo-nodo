@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into mk-pay · Monero node address (text)
+
+       Search     port▏
+
+       CUPRATED
+       cuprated.rpc_port             number   public  RPC port                        18081
+       cuprated.p2p_port             number   public  Port other nodes connect to     18080
+
+       MK-LWS
+       mk-lws.port                   number   public  Port wallets connect to         8443
+
+       KRINGLE
+       kringle.listen_port           number   public  Port of the tip page            8090
+
+       Get more apps that provide values ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type to search  ↑↓ choose  ↵ insert  Esc close

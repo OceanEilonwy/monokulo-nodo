@@ -59,6 +59,13 @@ tui2-app-remove.dc.html 1128 836
 tui2-settings.dc.html 1128 836
 tui2-settings-pick.dc.html 1128 836
 tui2-settings-rolled-back.dc.html 1128 836
+tui2-refs-field.dc.html 1128 836
+tui2-refs-auto.dc.html 1128 836
+tui2-refs-picker.dc.html 1128 836
+tui2-refs-search.dc.html 1128 836
+tui2-refs-typed.dc.html 1128 836
+tui2-refs-grant.dc.html 1128 836
+tui2-refs-save.dc.html 1128 836
 tui1-updates.dc.html 1128 836
 tui1-auto-update.dc.html 1128 836
 tui1-update-failed.dc.html 1128 836

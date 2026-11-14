@@ -91,6 +91,13 @@ pub enum Scene {
     T2Settings,
     T2SettingsPick,
     T2SettingsRolledBack,
+    T2RefsField,
+    T2RefsAuto,
+    T2RefsPicker,
+    T2RefsSearch,
+    T2RefsTyped,
+    T2RefsGrant,
+    T2RefsSave,
     B1Updates,
     B1AutoUpdate,
     B1UpdateFailed,
@@ -118,7 +125,7 @@ pub enum Scene {
 }
 
 impl Scene {
-    pub const ALL: [Scene; 85] = [
+    pub const ALL: [Scene; 92] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -180,6 +187,13 @@ impl Scene {
         Scene::T2Settings,
         Scene::T2SettingsPick,
         Scene::T2SettingsRolledBack,
+        Scene::T2RefsField,
+        Scene::T2RefsAuto,
+        Scene::T2RefsPicker,
+        Scene::T2RefsSearch,
+        Scene::T2RefsTyped,
+        Scene::T2RefsGrant,
+        Scene::T2RefsSave,
         Scene::B1Updates,
         Scene::B1AutoUpdate,
         Scene::B1UpdateFailed,
@@ -269,6 +283,13 @@ impl Scene {
             Scene::T2Settings => "tui2-settings",
             Scene::T2SettingsPick => "tui2-settings-pick",
             Scene::T2SettingsRolledBack => "tui2-settings-rolled-back",
+            Scene::T2RefsField => "tui2-refs-field",
+            Scene::T2RefsAuto => "tui2-refs-auto",
+            Scene::T2RefsPicker => "tui2-refs-picker",
+            Scene::T2RefsSearch => "tui2-refs-search",
+            Scene::T2RefsTyped => "tui2-refs-typed",
+            Scene::T2RefsGrant => "tui2-refs-grant",
+            Scene::T2RefsSave => "tui2-refs-save",
             Scene::B1Updates => "tui1-updates",
             Scene::B1AutoUpdate => "tui1-auto-update",
             Scene::B1UpdateFailed => "tui1-update-failed",
@@ -362,8 +383,15 @@ impl Scene {
             Scene::B1ApplyFailed => "Before: Settings rolled back",
             Scene::T2AppRemove => "Removing an app asks first, in plain words",
             Scene::T2Settings => "An app's Settings: every kind of field, an error shown in place",
-            Scene::T2SettingsPick => "Settings: picking a value from another app (cuprated)",
+            Scene::T2SettingsPick => "Superseded by generic references: picking a value from another app (cuprated)",
             Scene::T2SettingsRolledBack => "Settings undone because the app didn't start",
+            Scene::T2RefsField => "References in any field: text and chips mixed, a broken one in red",
+            Scene::T2RefsAuto => "Typing $(cu suggests references at the cursor",
+            Scene::T2RefsPicker => "One reference picker for every field, grouped by app",
+            Scene::T2RefsSearch => "The picker searching for \"port\" across apps",
+            Scene::T2RefsTyped => "A number field: numbers first, the rest dimmed with why",
+            Scene::T2RefsGrant => "A secret needs your approval before it can be used",
+            Scene::T2RefsSave => "Saving says what the references let the app reach",
             Scene::B1Updates => "Before: Updates",
             Scene::B1AutoUpdate => "Before: Auto-update",
             Scene::B1UpdateFailed => "Before: Update rolled back",
@@ -468,6 +496,13 @@ impl Scene {
             Scene::T2Settings => "Clickable: each box (focus to type), Currency and Monero node (open a list), Show, − and +, the On box, Save (primary), Cancel.",
             Scene::T2SettingsPick => "Clickable: each choice in the list; clicking outside closes it.",
             Scene::T2SettingsRolledBack => "Clickable: Edit again (primary), Keep as it is, \"Show log\".",
+            Scene::T2RefsField => "Clickable: each chip (opens Replace, Remove, Type a value instead), + reference on each field, Save (disabled while a reference is broken), Cancel.",
+            Scene::T2RefsAuto => "Clickable: each suggestion (inserts the chip), All references….",
+            Scene::T2RefsPicker => "Clickable: the search box, each setting row (inserts it), the secret row (opens the grant), Get more apps, Close.",
+            Scene::T2RefsSearch => "Clickable: the search box, each result.",
+            Scene::T2RefsTyped => "Clickable: each compatible row; dimmed rows say why they can't be used.",
+            Scene::T2RefsGrant => "Clickable: Grant (primary), Cancel.",
+            Scene::T2RefsSave => "Clickable: Save (primary), Cancel.",
             Scene::T2System => "Clickable: Review (primary), each row (Updates, Backups, Network, Device logs, About). Hover shown on Backups.",
             Scene::T2Updates => "Clickable: Update and restart (primary), each app's box, Update 2 apps, \"Automatic updates\", \"Undo an update\".",
             Scene::T2AutoUpdates => "Clickable: each On/Off box, the When list, Save (primary), Cancel.",
@@ -2089,6 +2124,13 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
         Scene::T2Settings => t2_settings(t, w, h, false),
         Scene::T2SettingsPick => t2_settings(t, w, h, true),
         Scene::T2SettingsRolledBack => t2_settings_rolled_back(t, w, h),
+        Scene::T2RefsField => t2_refs_field(t, w, h),
+        Scene::T2RefsAuto => t2_refs_auto(t, w, h),
+        Scene::T2RefsPicker => t2_refs_picker(t, w, h, Picker::All),
+        Scene::T2RefsSearch => t2_refs_picker(t, w, h, Picker::Search),
+        Scene::T2RefsTyped => t2_refs_picker(t, w, h, Picker::Number),
+        Scene::T2RefsGrant => t2_refs_grant(t, w, h),
+        Scene::T2RefsSave => t2_refs_save(t, w, h),
         Scene::T2System => t2_system(t, w, h),
         Scene::T2Updates => t2_updates(t, w, h),
         Scene::T2AutoUpdates => t2_auto_updates(t, w, h),
@@ -2417,6 +2459,216 @@ fn t2_settings(t: &Theme, w: u16, h: u16, picking: bool) -> Page {
     before.push(Item::Blank);
     let keys = if picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  ↵ save  Esc cancel" };
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), keys, w, h)
+}
+
+
+// ---- references: one generic feature for every field
+
+/// A reference chip: `app·setting`, then what it resolves to now (or why it can't).
+fn chip(t: &Theme, app: &str, setting: &str, value: &str, broken: bool) -> Vec<Span<'static>> {
+    let (fg, bg) = if broken { (t.err, S.danger) } else { (t.accent, Color::Rgb(0x2E, 0x24, 0x16)) };
+    let mut out = vec![
+        Span::styled(format!(" {app}"), Style::new().fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("·{setting} "), Style::new().fg(if broken { t.err } else { t.fg }).bg(bg)),
+    ];
+    if !value.is_empty() {
+        out.push(Span::styled(if broken { format!(" {value} ") } else { format!(" → {value} ") }, Style::new().fg(if broken { t.err } else { t.dim }).bg(S.field)));
+    }
+    out
+}
+
+/// A field that can hold text and references: its parts on the inset surface, then `+ reference`.
+fn ref_input(t: &Theme, parts: Vec<Span<'static>>, width: usize, focused: bool) -> Vec<Span<'static>> {
+    let mut out: Vec<Span<'static>> = vec![Span::styled(" ", Style::new().bg(S.field))];
+    let used: usize = 1 + width_of(&parts);
+    out.extend(parts);
+    if focused {
+        out.push(Span::styled("▏", Style::new().fg(t.accent).bg(S.field)));
+    }
+    out.push(Span::styled(" ".repeat(width.saturating_sub(used + usize::from(focused))), Style::new().bg(S.field)));
+    out.push(t.n("  "));
+    out.push(t.a("+ reference"));
+    out
+}
+
+fn text_on_field(t: &Theme, s: &str) -> Span<'static> {
+    Span::styled(s.to_owned(), Style::new().fg(t.fg).bg(S.field))
+}
+
+fn refs_settings_card(t: &Theme, w: u16, focus_auto: bool) -> Card {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let mut parts = vec![text_on_field(t, "http://")];
+    if focus_auto {
+        parts.push(text_on_field(t, "$(cu"));
+    } else {
+        parts.extend(chip(t, "cuprated", "rpc_host", "", false));
+        parts.push(text_on_field(t, ":"));
+        parts.extend(chip(t, "cuprated", "rpc_port", "", false));
+        parts.push(text_on_field(t, "/json_rpc"));
+    }
+    setting(&mut card, t, "Monero node address", ref_input(t, parts, 60, focus_auto), Some(if focus_auto { t.d("Typing $( suggests references at the cursor.") } else { t.d("Text and references together. Now: http://127.0.0.1:18081/json_rpc") }));
+    if focus_auto {
+        let list = Style::new().fg(t.fg).bg(S.raised);
+        let pad_left = " ".repeat(24 + 8);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!(" {} ", pad("cuprated.rpc_host   text     127.0.0.1", 46)), Style::new().fg(t.fg).bg(S.raised_hover))]);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!(" {} ", pad("cuprated.rpc_port   number   18081", 46)), list)]);
+        card.row(t, vec![t.n(pad_left), Span::styled(format!(" {} ", pad("All references…", 46)), Style::new().fg(t.accent).bg(S.raised))]);
+        card.blank(t);
+        return card;
+    }
+    setting(&mut card, t, "Payout address", ref_input(t, chip(t, "mk-wallet", "primary_address", "48daf1r…tUvb", false), 60, false), Some(t.d("One reference: the address follows the wallet app.")));
+    setting(&mut card, t, "Confirmations to wait", ref_input(t, vec![text_on_field(t, "10")], 60, false), Some(t.d("A plain value.")));
+    let mut broken = chip(t, "old-shop", "webhook_url", "app removed", true);
+    broken.push(text_on_field(t, "/orders"));
+    setting(&mut card, t, "Order webhook", ref_input(t, broken, 60, false), Some(t.e("✕ old-shop was removed. Click the chip: Replace, Remove, or Type a value.")));
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    card
+}
+
+fn t2_refs_field(t: &Theme, w: u16, h: u16) -> Page {
+    let card = refs_settings_card(t, w, false);
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank];
+    before.push(heading(t, "Settings"));
+    before.push(quiet(t, "Any text, number or address can use another app's public setting: type $( or click + reference."));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Tab move  $( or Ctrl+R insert a reference  ↵ save  Esc cancel", w, h)
+}
+
+fn t2_refs_auto(t: &Theme, w: u16, h: u16) -> Page {
+    let card = refs_settings_card(t, w, true);
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank];
+    before.push(heading(t, "Settings"));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↑↓ choose  ↵ insert  Esc keep typing", w, h)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Picker {
+    All,
+    Search,
+    Number,
+}
+
+fn t2_refs_picker(t: &Theme, w: u16, h: u16, mode: Picker) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let target = if mode == Picker::Number { "mk-pay · Confirmations to wait (number)" } else { "mk-pay · Monero node address (text)" };
+    card.row(t, vec![t.b("Insert a reference"), t.d(format!("   into {target}"))]);
+    card.blank(t);
+    let query = if mode == Picker::Search { "port" } else { "" };
+    let mut search = vec![t.d(pad("Search", 10))];
+    let mut boxed = vec![text_on_field(t, " ")];
+    if query.is_empty() {
+        boxed.push(Span::styled(pad("apps, settings, descriptions or values", 60), Style::new().fg(t.dim).bg(S.field)));
+    } else {
+        boxed.push(text_on_field(t, query));
+        boxed.push(Span::styled("▏", Style::new().fg(t.accent).bg(S.field)));
+        boxed.push(Span::styled(" ".repeat(60 - query.len() - 1), Style::new().bg(S.field)));
+    }
+    search.extend(boxed);
+    card.row(t, search);
+    if mode == Picker::Number {
+        card.row(t, vec![t.d("Numbers first; the others are dimmed because a number field can't hold them.")]);
+    }
+    card.blank(t);
+    type R<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, &'a str);
+    let rows: Vec<R> = match mode {
+        Picker::All => vec![
+            ("cuprated", "rpc_host", "text", "Address it answers RPC on", "127.0.0.1", ""),
+            ("cuprated", "rpc_port", "number", "RPC port", "18081", ""),
+            ("cuprated", "network", "choice", "Mainnet or testnet", "mainnet", ""),
+            ("mk-wallet", "primary_address", "address", "The wallet's main address", "48daf1r…tUvb", ""),
+            ("mk-lws", "url", "url", "Where wallets reach it", "https://mk-lws.local", ""),
+        ],
+        Picker::Search => vec![
+            ("cuprated", "rpc_port", "number", "RPC port", "18081", ""),
+            ("cuprated", "p2p_port", "number", "Port other nodes connect to", "18080", ""),
+            ("mk-lws", "port", "number", "Port wallets connect to", "8443", ""),
+            ("kringle", "listen_port", "number", "Port of the tip page", "8090", ""),
+        ],
+        Picker::Number => vec![
+            ("cuprated", "rpc_port", "number", "RPC port", "18081", ""),
+            ("cuprated", "sync_threads", "number", "Threads used to sync", "4", ""),
+            ("mk-lws", "scan_interval", "number", "Seconds between wallet scans", "30", ""),
+            ("cuprated", "rpc_host", "text", "", "127.0.0.1", "Text; the field takes a number"),
+            ("mk-lws", "url", "url", "", "https://mk-lws.local", "Address; field takes a number"),
+        ],
+    };
+    let mut last_app = "";
+    let mut first = true;
+    for (app, name, kind, desc, value, why) in rows {
+        if app != last_app && why.is_empty() {
+            if !first {
+                card.blank(t);
+            }
+            card.row(t, vec![t.d(app.to_uppercase())]);
+            last_app = app;
+        }
+        first = false;
+        let ok = why.is_empty();
+        let label = format!("{app}.{name}");
+        let spans = vec![
+            if ok { t.b(pad(&label, 30)) } else { t.d(pad(&label, 30)) },
+            t.d(pad(kind, 9)),
+            if ok { t.i(pad("public", 8)) } else { t.d(pad("", 8)) },
+            if ok { t.d(pad(desc, 32)) } else { t.e(pad(why, 32)) },
+            if ok { t.n(value.to_owned()) } else { t.d(value.to_owned()) },
+        ];
+        if first_hover(mode, &label) {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
+    }
+    if mode == Picker::All {
+        card.blank(t);
+        card.row(t, vec![t.d("SECRETS · NOT PUBLIC")]);
+        card.row(t, vec![t.d(pad("cuprated.rpc_password", 30)), t.d(pad("secret", 9)), t.d(pad("", 8)), t.d(pad("never shown", 32)), t.a("Needs your approval · Grant…")]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Get more apps that provide values ›")]);
+    card.blank(t);
+    let before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings", "Insert a reference"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: type to search  ↑↓ choose  ↵ insert  Esc close", w, h)
+}
+
+fn first_hover(mode: Picker, label: &str) -> bool {
+    match mode {
+        Picker::All => label == "cuprated.rpc_host",
+        Picker::Search | Picker::Number => label == "cuprated.rpc_port",
+    }
+}
+
+fn t2_refs_grant(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.a("▲  "), t.b("Let mk-pay use cuprated's RPC password?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("rpc_password is a secret: it is never shown, and only apps you approve can use it.")]);
+    card.row(t, vec![t.n("mk-pay receives it when it starts. You can take this back in mk-pay's settings.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Grant", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings", "Grant"]), Item::Blank], card, Vec::new(), "Keys: Esc cancel  (Grant asks for a click, not Enter)", w, h)
+}
+
+fn t2_refs_save(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Save mk-pay's settings?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("These references change what mk-pay can reach:")]);
+    card.blank(t);
+    for l in [
+        "mk-pay will be able to reach cuprated's RPC (127.0.0.1:18081).",
+        "cuprated becomes a dependency: it can't be removed while mk-pay uses it.",
+        "mk-pay follows mk-wallet's address when it changes.",
+    ] {
+        card.row(t, vec![t.a("•  "), t.n(l)]);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank], card, Vec::new(), "Keys: ↵ save  Esc back", w, h)
 }
 
 fn t2_settings_rolled_back(t: &Theme, w: u16, h: u16) -> Page {
@@ -3031,6 +3283,8 @@ mod tests {
             Scene::T2AppRemove => Some("Remove mk-pay"),
             Scene::T2Settings => Some("Save"),
             Scene::T2SettingsRolledBack => Some("Edit again"),
+            Scene::T2RefsGrant => Some("Grant"),
+            Scene::T2RefsSave => Some("Save"),
             Scene::T2System => Some("Review"),
             Scene::T2Updates => Some("Update and restart"),
             Scene::T2AutoUpdates => Some("Save"),

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+    Settings
+    Any text, number or address can use another app's public setting: type $( or click + reference.
+
+
+       Monero node address      http:// cuprated·rpc_host : cuprated·rpc_port /json_rpc      + reference
+                               Text and references together. Now: http://127.0.0.1:18081/json_rpc
+
+       Payout address            mk-wallet·primary_address  → 48daf1r…tUvb                   + reference
+                               One reference: the address follows the wallet app.
+
+       Confirmations to wait    10                                                           + reference
+                               A plain value.
+
+       Order webhook             old-shop·webhook_url  app removed /orders                   + reference
+                               ✕ old-shop was removed. Click the chip: Replace, Remove, or Type a value.
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  $( or Ctrl+R insert a reference  ↵ save  Esc cancel

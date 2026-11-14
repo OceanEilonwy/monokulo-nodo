@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into mk-pay · Confirmations to wait (number)
+
+       Search     apps, settings, descriptions or values
+       Numbers first; the others are dimmed because a number field can't hold them.
+
+       CUPRATED
+       cuprated.rpc_port             number   public  RPC port                        18081
+       cuprated.sync_threads         number   public  Threads used to sync            4
+
+       MK-LWS
+       mk-lws.scan_interval          number   public  Seconds between wallet scans    30
+       cuprated.rpc_host             text             Text; the field takes a number  127.0.0.1
+       mk-lws.url                    url              Address; field takes a number   https://mk-lws.local
+
+       Get more apps that provide values ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type to search  ↑↓ choose  ↵ insert  Esc close

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings  ›  Grant
+
+
+       ▲  Let mk-pay use cuprated's RPC password?
+
+       rpc_password is a secret: it is never shown, and only apps you approve can use it.
+       mk-pay receives it when it starts. You can take this back in mk-pay's settings.
+
+                                                                                     Cancel         Grant    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Esc cancel  (Grant asks for a click, not Enter)
