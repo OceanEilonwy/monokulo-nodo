@@ -1,0 +1,36 @@
+Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+
+    Web  ›  Domain providers  ›  Add
+
+    Where did you buy your web address?
+
+      Porkbun
+
+      Cloudflare
+
+      Namecheap
+      Needs your home's address on an allow list; we'll show you how.
+
+      Gandi
+
+      deSEC
+
+      Somewhere else? It can't be connected yet, but Tor works without a web address.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Click the company.   Keys: ↑↓ choose  ↵ next  Esc back

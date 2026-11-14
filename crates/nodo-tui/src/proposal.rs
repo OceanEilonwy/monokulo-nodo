@@ -1,17 +1,22 @@
-//! Web flow v2: a design proposal, mock only.
+//! Web flow proposals (v2, superseded, and v3), mock only.
 //!
 //! These screens are drawn by the real layout engine and theme, so the boards made from them
 //! (`examples/boards.rs`) show exactly what a terminal shows. Nothing here talks to the helper:
-//! every value is sample data. `nodo-tui --mock --screen web2-overview` opens one in a terminal.
+//! every value is sample data. `nodo-tui --mock --screen web3-sites` opens one in a terminal.
 //!
-//! The flow starts from an app, asks one question ("Who should be able to open it?"), and keeps
-//! the technical words (DNS-01, CA, ports, record values) behind `d` Details. Domains and
-//! certificates move to an Advanced screen.
+//! v3 follows the owner's structure: domain providers are added once (Web › Domain providers);
+//! the Web tab lists only the sites that are online, and a click opens that app's Hosting, where
+//! home network, Tor and internet are ticked and, for the internet, a provider's domain is picked.
+//! It is designed for the mouse as crossterm reports it (left click, drag, scroll wheel; no
+//! hover): every action is a whole row or a block three rows tall, and the action bar is pinned
+//! to the bottom so the main button stays on screen in a small terminal. Building it means
+//! turning on mouse capture in nodo-tui and hit-testing the rectangles each screen draws.
 
 use std::io;
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Terminal;
 
@@ -40,10 +45,23 @@ pub enum Scene {
     FailIsp,
     FailCertificate,
     Advanced,
+    // Web flow v3: the owner's structure, mouse first.
+    V3Web,
+    V3Hosting,
+    V3HostingInternet,
+    V3PickDomain,
+    V3NoProvider,
+    V3Confirm,
+    V3Online,
+    V3Blocked,
+    V3Providers,
+    V3AddProvider,
+    V3ProviderKey,
+    V3ProviderDone,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 16] = [
+    pub const ALL: [Scene; 28] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -60,6 +78,18 @@ impl Scene {
         Scene::FailIsp,
         Scene::FailCertificate,
         Scene::Advanced,
+        Scene::V3Web,
+        Scene::V3Hosting,
+        Scene::V3HostingInternet,
+        Scene::V3PickDomain,
+        Scene::V3NoProvider,
+        Scene::V3Confirm,
+        Scene::V3Online,
+        Scene::V3Blocked,
+        Scene::V3Providers,
+        Scene::V3AddProvider,
+        Scene::V3ProviderKey,
+        Scene::V3ProviderDone,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -80,6 +110,18 @@ impl Scene {
             Scene::FailIsp => "web2-fail-isp",
             Scene::FailCertificate => "web2-fail-certificate",
             Scene::Advanced => "web2-advanced",
+            Scene::V3Web => "web3-sites",
+            Scene::V3Hosting => "web3-hosting",
+            Scene::V3HostingInternet => "web3-hosting-internet",
+            Scene::V3PickDomain => "web3-pick-domain",
+            Scene::V3NoProvider => "web3-no-provider",
+            Scene::V3Confirm => "web3-confirm",
+            Scene::V3Online => "web3-online",
+            Scene::V3Blocked => "web3-blocked",
+            Scene::V3Providers => "web3-providers",
+            Scene::V3AddProvider => "web3-add-provider",
+            Scene::V3ProviderKey => "web3-provider-key",
+            Scene::V3ProviderDone => "web3-provider-done",
         }
     }
 
@@ -106,6 +148,42 @@ impl Scene {
             Scene::FailIsp => "Problem · your internet provider blocks it",
             Scene::FailCertificate => "Problem · secure connection still pending",
             Scene::Advanced => "10 · Advanced: addresses and certificates",
+            Scene::V3Web => "1 · Web: only the sites that are online",
+            Scene::V3Hosting => "2 · mk-lws: Hosting, home network on",
+            Scene::V3HostingInternet => "3 · mk-pay: Internet ticked, provider and domain chosen",
+            Scene::V3PickDomain => "4 · Choosing a domain from added providers",
+            Scene::V3NoProvider => "4b · Internet ticked, no provider yet",
+            Scene::V3Confirm => "5 · Checks done, one Put online button",
+            Scene::V3Online => "6 · Online",
+            Scene::V3Blocked => "Problem · the internet can't reach the Nodo",
+            Scene::V3Providers => "7 · Domain providers (from the Web tab)",
+            Scene::V3AddProvider => "8 · Add a provider: pick the company",
+            Scene::V3ProviderKey => "9 · Add a provider: paste the key",
+            Scene::V3ProviderDone => "10 · Added: the domains this key controls",
+        }
+    }
+
+    /// Version 3 screens, for grouping on the canvas.
+    pub fn is_v3(self) -> bool {
+        self.slug().starts_with("web3")
+    }
+
+    /// What a click does on this screen, printed on the board.
+    pub fn clickable(self) -> &'static str {
+        match self {
+            Scene::V3Web => "Clickable: each site row (opens the app's Hosting), the tabs, \"Domain providers\". Scroll wheel scrolls the list.",
+            Scene::V3Hosting => "Clickable: each choice row toggles its box, \"Show details\", the Save button, the tabs and breadcrumb.",
+            Scene::V3HostingInternet => "Clickable: choice rows, the Provider and Domain boxes (open a list), the address box (focus to type), Check and save.",
+            Scene::V3PickDomain => "Clickable: each domain row picks it; \"Add a provider\" opens that flow and comes back; clicking outside closes the list.",
+            Scene::V3NoProvider => "Clickable: the choice rows and the Add a provider button (comes back here when done).",
+            Scene::V3Confirm => "Clickable: Put mk-pay online (the only primary button), Cancel, \"Show details\".",
+            Scene::V3Online => "Clickable: the address (shown to copy), Done, \"Show details\".",
+            Scene::V3Blocked => "Clickable: Use Tor instead (primary), Check again.",
+            Scene::V3Providers => "Clickable: Add a provider (primary), Remove on each row.",
+            Scene::V3AddProvider => "Clickable: each company row. Scroll wheel scrolls the list.",
+            Scene::V3ProviderKey => "Clickable: the two key boxes (focus to type or paste), Connect.",
+            Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
+            _ => "",
         }
     }
 }
@@ -247,6 +325,18 @@ pub fn page(app: &App, t: &Theme, scene: Scene) -> Page {
         Scene::FailIsp => fail_isp(t),
         Scene::FailCertificate => fail_certificate(t),
         Scene::Advanced => advanced(t),
+        Scene::V3Web => v3_web(app, t),
+        Scene::V3Hosting => v3_hosting(t, false),
+        Scene::V3HostingInternet => v3_hosting(t, true),
+        Scene::V3PickDomain => v3_pick_domain(t),
+        Scene::V3NoProvider => v3_no_provider(t),
+        Scene::V3Confirm => v3_confirm(t),
+        Scene::V3Online => v3_online(t),
+        Scene::V3Blocked => v3_blocked(t),
+        Scene::V3Providers => v3_providers(app, t),
+        Scene::V3AddProvider => v3_add_provider(t),
+        Scene::V3ProviderKey => v3_provider_key(t),
+        Scene::V3ProviderDone => v3_provider_done(t),
     }
 }
 
@@ -834,6 +924,372 @@ fn advanced(t: &Theme) -> Page {
     )))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Web flow v3: providers are added once; the Web tab lists only sites that are online; hosting is
+// chosen in each app. Mouse first: every action is a block at least three rows tall or a whole
+// row, and the keys are one dim line at the bottom. One accent colour, one primary action.
+
+const MARGIN: &str = "    ";
+
+/// Adds several footer items: the action bar is pinned to the bottom, so the main button is
+/// always on screen, even when a small terminal hides part of the page.
+trait Footers {
+    fn footers(self, items: Vec<Item>) -> Self;
+}
+
+impl Footers for Page {
+    fn footers(mut self, items: Vec<Item>) -> Self {
+        self.footer.extend(items);
+        self
+    }
+}
+/// The fill behind text boxes and open lists: a step above the ground, below the border grey.
+const FIELD_BG: Color = Color::Rgb(0x24, 0x28, 0x2C);
+
+fn primary(t: &Theme) -> Style {
+    Style::new().fg(t.ground).bg(t.accent).add_modifier(Modifier::BOLD)
+}
+
+fn secondary(t: &Theme) -> Style {
+    Style::new().fg(t.fg).bg(t.border)
+}
+
+fn field_bg(t: &Theme) -> Style {
+    Style::new().fg(t.fg).bg(FIELD_BG)
+}
+
+fn blank_item() -> Item {
+    Item::Blank
+}
+
+fn line(spans: Vec<Span<'static>>) -> Item {
+    Item::Text(Line::from(spans))
+}
+
+fn margin(t: &Theme) -> Span<'static> {
+    t.n(MARGIN)
+}
+
+/// Buttons as solid blocks, three rows tall, side by side.
+fn buttons(t: &Theme, indent: &str, list: &[(&str, bool)]) -> Vec<Item> {
+    let mut rows: [Vec<Span<'static>>; 3] = [vec![t.n(format!("{MARGIN}{indent}"))], vec![t.n(format!("{MARGIN}{indent}"))], vec![t.n(format!("{MARGIN}{indent}"))]];
+    for (index, (label, is_primary)) in list.iter().enumerate() {
+        let style = if *is_primary { primary(t) } else { secondary(t) };
+        let width = label.chars().count() + 8;
+        if index > 0 {
+            for row in rows.iter_mut() {
+                row.push(t.n("   "));
+            }
+        }
+        rows[0].push(Span::styled(" ".repeat(width), style));
+        rows[1].push(Span::styled(format!("    {label}    "), style));
+        rows[2].push(Span::styled(" ".repeat(width), style));
+    }
+    rows.into_iter().map(line).collect()
+}
+
+/// A whole-row choice: tick box, name, and a quiet line under it. Clicking anywhere toggles it.
+fn choice(t: &Theme, on: bool, title: &str, note: &str) -> Vec<Item> {
+    let tick = if on { t.a("[x]") } else { t.d("[ ]") };
+    vec![
+        line(vec![margin(t), tick, t.n("  "), t.b(title.to_owned())]),
+        line(vec![margin(t), t.d(format!("     {note}"))]),
+        blank_item(),
+    ]
+}
+
+/// A label and a click-to-open box; `▾` marks a list.
+fn select(t: &Theme, indent: &str, label: &str, value: &str, open: bool) -> Item {
+    let arrow = if open { "▴" } else { "▾" };
+    line(vec![
+        margin(t),
+        t.n(indent.to_owned()),
+        t.d(pad(label, 12)),
+        Span::styled(format!(" {} {arrow} ", pad(value, 30)), field_bg(t)),
+    ])
+}
+
+fn input(t: &Theme, indent: &str, label: &str, value: &str, suffix: &str) -> Item {
+    let width = if suffix.is_empty() { 34 } else { 12 };
+    line(vec![
+        margin(t),
+        t.n(indent.to_owned()),
+        t.d(pad(label, 12)),
+        Span::styled(format!(" {} ", pad(value, width)), field_bg(t)),
+        t.n(suffix.to_owned()),
+    ])
+}
+
+fn heading(t: &Theme, text: &str) -> Item {
+    line(vec![margin(t), t.b(text.to_owned())])
+}
+
+fn quiet(t: &Theme, text: &str) -> Item {
+    line(vec![margin(t), t.d(text.to_owned())])
+}
+
+fn link(t: &Theme, text: &str) -> Item {
+    line(vec![margin(t), t.a(text.to_owned())])
+}
+
+fn trail(t: &Theme, parts: &[&str]) -> Item {
+    let mut spans = vec![margin(t)];
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            spans.push(t.d("  ›  "));
+        }
+        spans.push(if index + 1 == parts.len() { t.n((*part).to_owned()) } else { t.d((*part).to_owned()) });
+    }
+    line(spans)
+}
+
+fn keys(t: &Theme, text: &str) -> Item {
+    Item::Text(Line::from(t.d(format!(" {text}"))))
+}
+
+fn top(app: &App, t: &Theme, tab: Tab) -> Page {
+    Page::new(tab_bar(app, t, tab), Line::from(t.d("monokulo-nodo")))
+}
+
+fn v3_web(app: &App, t: &Theme) -> Page {
+    let mut items = vec![
+        blank_item(),
+        line(vec![margin(t), t.b(pad("Sites online", 92)), t.a("Domain providers ›")]),
+        blank_item(),
+    ];
+    for (name, address, who) in [
+        ("mk-pay", "https://pay.example.com", "Home network and internet"),
+        ("mk-lws", "https://mk-lws.local", "Home network"),
+        ("kringle", "http://kringlqx3v7…ylpd7qd.onion", "Tor"),
+    ] {
+        items.push(line(vec![margin(t), t.b(pad(name, 12)), t.n(pad(address, 34)), t.d(format!("{who}   ›"))]));
+        items.push(blank_item());
+    }
+    items.push(blank_item());
+    items.push(quiet(t, "To put another app online, open it in Packages."));
+    top(app, t, Tab::Web).plain(items).footer(keys(t, "Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers"))
+}
+
+fn hosting_intro(t: &Theme, app_name: &str) -> Vec<Item> {
+    vec![
+        blank_item(),
+        trail(t, &["Packages", app_name, "Hosting"]),
+        blank_item(),
+        heading(t, "Hosting"),
+        quiet(t, &format!("Choose who can open {app_name}. Any combination works.")),
+        blank_item(),
+    ]
+}
+
+fn v3_hosting(t: &Theme, internet: bool) -> Page {
+    let (name, home_note) = if internet {
+        ("mk-pay", "Phones and computers on your Wi-Fi.   https://mk-pay.local")
+    } else {
+        ("mk-lws", "Phones and computers on your Wi-Fi.   https://mk-lws.local")
+    };
+    let mut items = hosting_intro(t, name);
+    items.extend(choice(t, true, "Home network", home_note));
+    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
+    let mut internet_rows = choice(t, internet, "Internet", "Anyone, at a web address you own.");
+    if internet {
+        internet_rows.pop();
+        items.extend(internet_rows);
+        items.push(blank_item());
+        items.push(select(t, "     ", "Provider", "Porkbun", false));
+        items.push(select(t, "     ", "Domain", "example.com", false));
+        items.push(input(t, "     ", "Address", "pay", " .example.com"));
+        items.push(blank_item());
+        items.push(quiet(t, "     Visitors will be able to see your home's internet address."));
+        items.push(blank_item());
+    } else {
+        items.extend(internet_rows);
+    }
+    items.push(link(t, "Show details ›"));
+    items.push(blank_item());
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[(if internet { "Check and save" } else { "Save" }, true)])).footer(keys(t, "Keys: Tab move  Space tick  ↵ save  Esc back"))
+}
+
+fn top_tab(t: &Theme) -> Page {
+    let (app, _) = fixture(ScreenId::WebSites);
+    top(&app, t, Tab::Packages)
+}
+
+fn v3_pick_domain(t: &Theme) -> Page {
+    let mut items = hosting_intro(t, "mk-pay");
+    items.extend(choice(t, true, "Home network", "Phones and computers on your Wi-Fi.   https://mk-pay.local"));
+    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
+    let mut internet_rows = choice(t, true, "Internet", "Anyone, at a web address you own.");
+    internet_rows.pop();
+    items.extend(internet_rows);
+    items.push(blank_item());
+    items.push(select(t, "     ", "Provider", "Porkbun", false));
+    items.push(select(t, "     ", "Domain", "example.com", true));
+    let indent = format!("     {}", " ".repeat(12));
+    for (domain, provider, current) in
+        [("example.com", "Porkbun", true), ("shop-example.org", "Porkbun", false), ("myshop.net", "Cloudflare", false)]
+    {
+        let mark = if current { "✓" } else { " " };
+        items.push(line(vec![
+            margin(t),
+            t.n(indent.clone()),
+            Span::styled(format!(" {mark} {} {} ", pad(domain, 18), pad(provider, 12)), field_bg(t)),
+        ]));
+    }
+    items.push(line(vec![
+        margin(t),
+        t.n(indent.clone()),
+        Span::styled(format!(" {} ", pad("+ Add a provider…", 35)), Style::new().fg(t.accent).bg(FIELD_BG)),
+    ]));
+    items.push(blank_item());
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Check and save", true)])).footer(keys(t, "Keys: ↑↓ choose  ↵ pick  Esc close"))
+}
+
+fn v3_no_provider(t: &Theme) -> Page {
+    let mut items = hosting_intro(t, "mk-pay");
+    items.extend(choice(t, true, "Home network", "Phones and computers on your Wi-Fi.   https://mk-pay.local"));
+    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
+    let mut internet_rows = choice(t, true, "Internet", "Anyone, at a web address you own.");
+    internet_rows.pop();
+    items.extend(internet_rows);
+    items.push(blank_item());
+    items.push(line(vec![margin(t), t.n("     To use a web address you own, first add the company you bought it from.")]));
+    items.push(blank_item());
+    items.push(quiet(t, "     You'll come back here when it's added."));
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "     ", &[("Add a provider", true)])).footer(keys(t, "Keys: Tab move  Space tick  ↵ add a provider  Esc back"))
+}
+
+fn v3_confirm(t: &Theme) -> Page {
+    let mut items = vec![blank_item(), trail(t, &["Packages", "mk-pay", "Hosting"]), blank_item(), heading(t, "Ready to put mk-pay on the internet"), blank_item()];
+    for check in ["Porkbun accepted the key", "pay.example.com points to your home", "The internet can reach your Nodo", "Secure connection ready"] {
+        items.push(line(vec![margin(t), t.o("✓  "), t.n(check.to_owned())]));
+    }
+    items.push(blank_item());
+    items.push(line(vec![margin(t), t.n("Anyone will be able to open "), t.b("https://pay.example.com")]));
+    items.push(quiet(t, "Visitors can see your home's internet address. The Nodo keeps everything up to date by itself."));
+    items.push(blank_item());
+    items.push(link(t, "Show details ›"));
+    items.push(blank_item());
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Put mk-pay online", true), ("Cancel", false)])).footer(keys(t, "Keys: ↵ put online  Esc cancel"))
+}
+
+fn v3_online(t: &Theme) -> Page {
+    let items = vec![
+        blank_item(),
+        trail(t, &["Packages", "mk-pay", "Hosting"]),
+        blank_item(),
+        blank_item(),
+        line(vec![margin(t), t.o("✓  "), t.b("mk-pay is online")]),
+        blank_item(),
+        line(vec![margin(t), t.n("   https://pay.example.com")]),
+        line(vec![margin(t), t.n("   https://mk-pay.local")]),
+        blank_item(),
+        quiet(t, "   The Nodo renews the secure connection and follows your home's address by itself."),
+        blank_item(),
+        blank_item(),
+    ];
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "   ", &[("Done", true)])).footer(keys(t, "Keys: ↵ done"))
+}
+
+fn v3_blocked(t: &Theme) -> Page {
+    let items = vec![
+        blank_item(),
+        trail(t, &["Packages", "mk-pay", "Hosting"]),
+        blank_item(),
+        heading(t, "The internet can't reach your Nodo"),
+        blank_item(),
+        quiet(t, "Your internet provider shares one address between many homes, so visitors stop at the"),
+        quiet(t, "provider and never reach you. Router settings can't change this."),
+        blank_item(),
+        line(vec![margin(t), t.n("A private Tor link still works on this connection.")]),
+        blank_item(),
+        link(t, "Show details ›"),
+        blank_item(),
+    ];
+    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Use Tor instead", true), ("Check again", false)])).footer(keys(t, "Keys: ↵ use Tor  c check again  Esc back"))
+}
+
+fn v3_providers(app: &App, t: &Theme) -> Page {
+    let mut items = vec![
+        blank_item(),
+        trail(t, &["Web", "Domain providers"]),
+        blank_item(),
+        heading(t, "Domain providers"),
+        quiet(t, "The companies where you bought your web addresses. Add one once; then any app can use its domains."),
+        blank_item(),
+        blank_item(),
+    ];
+    for (name, domains) in [("Porkbun", "example.com   shop-example.org"), ("Cloudflare", "myshop.net")] {
+        items.push(line(vec![margin(t), t.b(pad(name, 14)), t.n(pad(domains, 44)), Span::styled("  Remove  ", secondary(t))]));
+        items.push(blank_item());
+    }
+    items.push(blank_item());
+    top(app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Add a provider", true)])).footer(keys(t, "Keys: ↑↓ choose  a add  x remove  Esc back"))
+}
+
+fn v3_add_provider(t: &Theme) -> Page {
+    let (app, _) = fixture(ScreenId::WebSites);
+    let mut items = vec![
+        blank_item(),
+        trail(t, &["Web", "Domain providers", "Add"]),
+        blank_item(),
+        heading(t, "Where did you buy your web address?"),
+        blank_item(),
+    ];
+    for (name, note) in [
+        ("Porkbun", ""),
+        ("Cloudflare", ""),
+        ("Namecheap", "Needs your home's address on an allow list; we'll show you how."),
+        ("Gandi", ""),
+        ("deSEC", ""),
+    ] {
+        items.push(line(vec![margin(t), t.n("  "), t.b(name.to_owned())]));
+        if !note.is_empty() {
+            items.push(line(vec![margin(t), t.d(format!("  {note}"))]));
+        }
+        items.push(blank_item());
+    }
+    items.push(line(vec![margin(t), t.d("  Somewhere else? It can't be connected yet, but Tor works without a web address.")]));
+    top(&app, t, Tab::Web).plain(items).footer(keys(t, "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back"))
+}
+
+fn v3_provider_key(t: &Theme) -> Page {
+    let (app, _) = fixture(ScreenId::WebSites);
+    let items = vec![
+        blank_item(),
+        trail(t, &["Web", "Domain providers", "Add", "Porkbun"]),
+        blank_item(),
+        heading(t, "Connect Porkbun"),
+        quiet(t, "Make a key at porkbun.com › Account › API Access, then paste both parts here."),
+        blank_item(),
+        input(t, "", "API key", "pk1_7f3a••••••••••••••••", ""),
+        blank_item(),
+        input(t, "", "Secret key", "", ""),
+        blank_item(),
+        quiet(t, "The key stays on this Nodo, locked with your device passphrase."),
+        blank_item(),
+    ];
+    top(&app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Connect", true)])).footer(keys(t, "Keys: Tab next box  ↵ connect  Esc back"))
+}
+
+fn v3_provider_done(t: &Theme) -> Page {
+    let (app, _) = fixture(ScreenId::WebSites);
+    let items = vec![
+        blank_item(),
+        trail(t, &["Web", "Domain providers", "Add", "Porkbun"]),
+        blank_item(),
+        line(vec![margin(t), t.o("✓  "), t.b("Porkbun is connected")]),
+        blank_item(),
+        quiet(t, "   This key can set up these web addresses:"),
+        blank_item(),
+        line(vec![margin(t), t.n("   example.com")]),
+        line(vec![margin(t), t.n("   shop-example.org")]),
+        blank_item(),
+        quiet(t, "   Missing one? Turn on API access for it at Porkbun, and it appears here."),
+        blank_item(),
+    ];
+    top(&app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "   ", &[("Back to mk-pay", true)])).footer(keys(t, "Keys: ↵ back to mk-pay"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,6 +1312,20 @@ mod tests {
     }
 
     #[test]
+    fn every_v3_screen_names_what_is_clickable_and_keeps_its_button_on_a_small_terminal() {
+        let t = Theme::truecolor();
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+            assert!(!scene.clickable().is_empty(), "{}", scene.slug());
+            let small = render(scene, 80, 24, &t);
+            let big = render(scene, 120, 36, &t);
+            let footer = |b: &Buffer, h: u16| -> String {
+                (h - 5..h).flat_map(|y| (0..b.area.width).map(move |x| (x, y))).map(|p| b[p].symbol().to_owned()).collect()
+            };
+            assert_eq!(footer(&small, 24).split_whitespace().collect::<Vec<_>>(), footer(&big, 36).split_whitespace().collect::<Vec<_>>(), "{}: the action bar differs at 80x24", scene.slug());
+        }
+    }
+
+    #[test]
     fn plain_language_screens_avoid_jargon_outside_details() {
         let t = Theme::truecolor();
         for scene in [
@@ -867,6 +1337,18 @@ mod tests {
             Scene::NetConfirm,
             Scene::FailIsp,
             Scene::FailCertificate,
+            Scene::V3Web,
+            Scene::V3Hosting,
+            Scene::V3HostingInternet,
+            Scene::V3PickDomain,
+            Scene::V3NoProvider,
+            Scene::V3Confirm,
+            Scene::V3Online,
+            Scene::V3Blocked,
+            Scene::V3Providers,
+            Scene::V3AddProvider,
+            Scene::V3ProviderKey,
+            Scene::V3ProviderDone,
         ] {
             let buffer = render(scene, 120, 36, &t);
             let text: String = buffer.content().iter().map(|c| c.symbol()).collect();

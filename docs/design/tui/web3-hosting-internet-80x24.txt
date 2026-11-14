@@ -1,0 +1,24 @@
+Home   Packages   Web  Feeds  Updates (3)  Logs                    monokulo-nodo
+
+    Packages  ›  mk-pay  ›  Hosting
+
+    Hosting
+    Choose who can open mk-pay. Any combination works.
+
+    [x]  Home network
+         Phones and computers on your Wi-Fi.   https://mk-pay.local
+
+    [ ]  Tor
+         A private link that opens in Tor Browser. It doesn't reveal your home.
+
+    [x]  Internet
+         Anyone, at a web address you own.
+
+         Provider     Porkbun                        ▾
+         Domain       example.com                    ▾
+↓ 6 more, enlarge the terminal to see them
+
+
+        Check and save
+
+ Keys: Tab move  Space tick  ↵ save  Esc back

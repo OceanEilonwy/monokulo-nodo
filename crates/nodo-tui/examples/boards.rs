@@ -20,7 +20,7 @@ use unicode_width::UnicodeWidthStr;
 const FONT_PX: f32 = 14.0;
 const ROW_PX: f32 = 18.0;
 const PAD_PX: u32 = 24;
-const CAPTION_PX: u32 = 76;
+const CAPTION_PX: u32 = 104;
 
 fn hex(color: Color, fallback: &str) -> String {
     match color {
@@ -112,7 +112,7 @@ body{{margin:0}}
 <div style="display:flex;flex-direction:column;gap:4px">
 <div style="font-size:18px;font-weight:700;color:#F2A33A">{title}</div>
 <div style="font-size:13px;color:#A3AAB0">Rendered by nodo-tui (ratatui) at {size} — exactly what a terminal shows; your terminal's font and colours may vary slightly. Try it: <code>nodo-tui --mock --screen {slug}</code></div>
-</div>
+{clickable}</div>
 <div class="term" style="width:{grid_w}px;height:{grid_h}px;background:{ground}">
 {grid}</div>
 </div>
@@ -129,6 +129,14 @@ renderVals() {{ return {{}}; }}
         slug = scene.slug(),
         ground = hex(theme.ground, "#101214"),
         grid = grid(&buffer, theme),
+        clickable = if scene.clickable().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<div style=\"font-size:13px;color:#D7DADC\">{} <span style=\"color:#A3AAB0\">(Mouse: left click, drag and the scroll wheel, as crossterm reports them; no hover.)</span></div>\n",
+                escape(scene.clickable())
+            )
+        },
     );
     (html, w, h)
 }
@@ -165,7 +173,7 @@ fn main() {
     for scene in Scene::ALL {
         emit(scene, 120, 36, "");
     }
-    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks] {
+    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet] {
         emit(scene, 80, 24, "-80x24");
     }
     // Board names and sizes, one per line, for laying them out on the canvas.

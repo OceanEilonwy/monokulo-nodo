@@ -1,0 +1,36 @@
+Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+
+    Web  ›  Domain providers  ›  Add  ›  Porkbun
+
+    Connect Porkbun
+    Make a key at porkbun.com › Account › API Access, then paste both parts here.
+
+    API key      pk1_7f3a••••••••••••••••
+
+    Secret key
+
+    The key stays on this Nodo, locked with your device passphrase.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        Connect
+
+ Keys: Tab next box  ↵ connect  Esc back
