@@ -4,7 +4,8 @@
 //! button's label) in the order they appear. After drawing, each target is found in the buffer at
 //! or after the previous one, so the rectangle that is hit is always exactly what was drawn, at
 //! any terminal size and however the layout wrapped. crossterm reports left clicks, drags and
-//! the scroll wheel, never hover, so nothing depends on hovering.
+//! the scroll wheel and pointer moves; a move over a target draws it with a hover fill, which only
+//! ever reinforces what the keyboard can already reach.
 
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
@@ -18,6 +19,9 @@ pub enum Click {
     Tab(Tab),
     /// The same as pressing this key on the current screen.
     Key(KeyCode),
+    /// The same as pressing Ctrl and this key: actions that must not reach a text box, such as
+    /// saving a form while a field is being typed in.
+    Ctrl(char),
     /// Moves the screen's selection or focus to `index`, then presses `then`, if any.
     Pick { index: usize, then: Option<KeyCode> },
 }
@@ -32,6 +36,9 @@ pub enum Area {
     /// The text with the cells around it and the rows above and below: buttons, whose rounded
     /// caps and padding are part of what one aims at.
     Button,
+    /// The width of a card (the page less its margins) on the text's row: rows inside a card,
+    /// so the hover fill stays on the card.
+    Card,
 }
 
 /// A click target as a screen declares it.
@@ -55,6 +62,10 @@ impl Target {
 
     pub fn button(find: impl Into<String>, click: Click) -> Self {
         Self { find: find.into(), area: Area::Button, click, rows_below: 0 }
+    }
+
+    pub fn card_row(find: impl Into<String>, click: Click) -> Self {
+        Self { find: find.into(), area: Area::Card, click, rows_below: 0 }
     }
 
     pub fn below(mut self, rows: u16) -> Self {
@@ -126,6 +137,10 @@ pub fn resolve(buffer: &Buffer, area: Rect, targets: &[Target]) -> Vec<Hit> {
         let rect = match target.area {
             Area::Text => Rect::new(x0, y, x1 - x0, 1 + below),
             Area::Row => Rect::new(area.x, y, area.width, 1 + below),
+            Area::Card => {
+                let margin = (crate::view::v3::MARGIN.len() as u16).min(area.width / 4);
+                Rect::new(area.x + margin, y, area.width - 2 * margin, 1 + below)
+            }
             Area::Button => {
                 let left = x0.saturating_sub(3).max(area.x);
                 let right = (x1 + 3).min(area.x + area.width);

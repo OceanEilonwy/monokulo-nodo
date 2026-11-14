@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  feather-ws
+
+
+       feather-ws   Server for Feather Wallet · from monokulo · 18 MB
+
+       Lets Feather Wallet on your phone or computer use your own Monero node instead of a
+       stranger's, so nobody else sees which wallet is yours.
+
+       It will:
+         ·  Read from your Monero node
+         ·  Use the internet to reach other Monero nodes
+         ·  Keep 2 GB of data on the drive
+
+       Show details ›
+
+                                                                                                     Install   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ install  d details  Esc back

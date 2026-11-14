@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Web  ›  Domains  ›  Local CA               ✓ Served at http://nodo.local
+
+
+       Trust page
+
+       Open on a phone or computer here  http://nodo.local
+       It offers this device's root certificate and short install steps for
+       Android, iPhone,
+       macOS, Windows, Linux and Firefox. It needs no port and no app.
+       Only the local network can open it, on the local address. It is
+       never public or on Tor.
+
+
+
+       SHA-256 fingerprint
+
+
+    ↓ 1 more — scroll
+
+    Keys: r refresh  Esc back

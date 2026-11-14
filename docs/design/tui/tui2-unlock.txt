@@ -1,0 +1,36 @@
+
+    Home     Apps     Web     System                                                                   monokulo-nodo
+
+
+
+
+       Unlock your Nodo
+
+       The Nodo restarted. Your apps' data is locked until you type the device passphrase.
+       cuprated is already running; mk-pay, mk-lws and kringle start after you unlock.
+
+       Passphrase
+
+                                                                                                      Unlock   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type the passphrase  ↵ unlock

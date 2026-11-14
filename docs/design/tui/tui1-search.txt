@@ -1,0 +1,36 @@
+Home   Packages   Web  Feeds  Updates (3)  Logs                                                            monokulo-nodo
+┌ Search ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ / pay                                                                       All feeds · Any status · 3 of 41 results │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Results ─────────────────────────────────────────────────────────────────────┐┌ Preview ─────────────────────────────┐
+│ ▸○ moneropay         official                     Payment gateway for Monero ││ moneropay                            │
+│  ● monokulo-pay      monokulo                 Accept payments from your node ││ From the official feed               │
+│  ○ paywall-relay     community                       Pay-to-use relay access ││                                      │
+│                                                                              ││ Payment gateway for Monero.          │
+│  ● installed   ○ available   ▲ update ready                                  ││ Runs against your local node.        │
+│  Feed names show where a package came from.                                  ││                                      │
+│  Same name in two feeds? Both are shown, and you pick one.                   ││ Version                        2.7.0 │
+│                                                                              ││ Size                           14 MB │
+│                                                                              ││ Needs                   ✓ daemon-rpc │
+│                                                                              ││                         ✓ wallet-rpc │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+│                                                                              ││                                      │
+└──────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
+type to filter  ↑↓ move  ↵ details  i install  f filter feed  Esc clear

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Home  ›  Set up this device                                                                          Step 1 of 2
+
+
+       Device passphrase
+
+       Passphrase
+
+
+
+       About the passphrase
+
+       ▸ One passphrase opens all encrypted storage after a restart.
+       ▸ Use at least 8 characters. A few unrelated words work well.
+       ▸ There is no default passphrase and no way to recover a lost one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ next  Ctrl-R restore from a USB backup  Ctrl-C quit

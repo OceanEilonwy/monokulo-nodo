@@ -1,0 +1,36 @@
+Updates › Auto-update                                                                          Next run tonight at 03:00
+┌ Schedule ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Check frequency   ‹ Daily ›                                                                                         │
+│  Install window    03:00 to 05:00 device time                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Update automatically ────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  [x] moneropay      official                                                                 Last updated 4 days ago │
+│  [x] cuprated       official                                                          Node restarts, dependents wait │
+│  [x] monokulo-pay   monokulo                                                                Last updated 12 days ago │
+│ ▸[ ] wallet-relay   community                                                    ▲ Runs new code without your review │
+│  [ ] system base    official                                                                   Off means notify only │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Always waits for you ────────────────────────────────────┐┌ If an update fails ──────────────────────────────────────┐
+│ ● New permissions requested                              ││ ▸ Previous version and data return                       │
+│ ● Feed signing key changed                               ││ ▸ That version is held                                   │
+│ ● Update fails install checks                            ││ ▸ Home shows what happened                               │
+│ ● A version you put on hold                              ││ ▸ Nothing tries that version again until you choose to   │
+│ ● System restart needed                                  ││                                                          │
+│ ● Device locked or disk low                              ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+│                                                          ││                                                          │
+└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+↑↓ move  Space toggle  w change window  h history  ↵ save  Esc back

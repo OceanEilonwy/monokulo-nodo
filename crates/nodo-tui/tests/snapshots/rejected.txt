@@ -1,32 +1,32 @@
-Install fast-sync-helper 1.0.0                                                        community feed
-┌ Not installed ───────────────────────────────────────────────────────────────────────────────────┐
-│ This package breaks the install rules, so nothing was changed on this device.                    │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Why it was rejected ─────────────────────────────────────────────────────────────────────────────┐
-│ ✕ Runs a setup script as root                                                                    │
-│    ./INSTALL                                                                                     │
-│                                                                                                  │
-│ ✕ Writes outside its own folder                                                                  │
-│    /etc/cron.d/fast-sync-helper                                                                  │
-│                                                                                                  │
-│ ✕ Tries to replace a system package                                                              │
-│    glibc 2.42                                                                                    │
-│                                                                                                  │
-│ ✓ Signature matches the feed's key                                                               │
-│    A valid signature shows who published it, not that it is safe.                                │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ What you can do ─────────────────────────────────────────────────────────────────────────────────┐
-│ There is no override for these rules. Report it to the feed's publisher, or remove the feed if   │
-│ you no longer trust it.                                                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-y copy report  f open feed  Esc back to search
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  fast-sync-helper
+
+
+       ▲  fast-sync-helper can't be installed
+
+       Its source signed it, but it breaks the Nodo's rules, and there's no override. Nothing
+       was installed. Tell the publisher of community if you think this is a mistake.
+
+       ✕ Runs a setup script as root — ./INSTALL
+       ✕ Writes outside its own folder — /etc/cron.d/fast-sync-helper
+       ✕ Tries to replace a system package — glibc 2.42
+
+                                                        Copy report               OK
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Esc OK  y copy report  f open its source

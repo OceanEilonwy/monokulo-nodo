@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Installed                                                     Get apps ›
+
+
+       ▸ cuprated      Monero node i…  Running         ›
+
+         tor           Onion routing   Running         ›
+
+         moneropay     Payment gatew…  Update ready    ›
+
+         wallet-relay  Relay for rem…  Update ready    ›
+
+         bell          Alerts when a…  Keeps stopping  ›
+
+         monerod       The reference…  Stopped         ›
+
+
+
+
+
+    Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps

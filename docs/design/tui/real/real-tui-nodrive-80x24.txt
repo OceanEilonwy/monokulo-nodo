@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+
+
+       ▲  The data drive isn't connected
+
+       Your apps keep their data on the SSD, so they're stopped until it's
+       back. Nothing on it has been touched.
+       The SSD labelled NODO_BLOCKCHAIN is not mounted at /media/monero.
+       cuprated will not start, so chain data cannot fill the system disk.
+
+       Stopped: moneropay, wallet-relay, bell. They start after the node
+       returns.
+
+         Check the drive without changing it   read-only
+         Repair the filesystem   can lose data; explains first and asks
+         Show what the Nodo sees
+
+                                                         Check again   
+
+
+    Keys: ↵ check again  ↑↓ choose  l system log

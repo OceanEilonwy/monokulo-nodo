@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Web  ›  Onion addresses                                    ● Tor running
+
+
+       Node
+
+       ▸ [x] cuprated      restricted RPC, port 18081  nod…xyz.onion:18081
+
+
+
+       Sites
+
+        [x] shop                  also local, public  http://abc…xyz.onion
+        [x] monokulo-pay          also local  http://def…uvw.onion
+        [ ] moneropay             also local  single address
+        [ ] wallet-relay            ◆ locked
+
+
+    ↓ 1 more — scroll
+
+    Keys: ↑↓ move  Space turn on or off  s node settings  g look again  Esc back

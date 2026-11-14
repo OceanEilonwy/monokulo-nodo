@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  moneropay
+
+
+       moneropay   Version 2.7.0 · from official · 14 MB
+
+       Payment gateway for Monero. Creates invoices and reports payments through a local API.
+
+       It will:
+         ·  Use daemon-rpc
+         ·  Use wallet-rpc
+         ·  Runs as: its own user, _moneropay
+         ·  Sandbox: Only its own data and declared paths
+         ·  Local network: Reach daemon RPC on this device
+         ·  Incoming ports: 5000, local network only
+         ·  Internet: None
+         ·  Keep its data locked; it needs the device passphrase after a restart
+
+       ✓ Its source's signature checks out
+
+                                                                                                     Install   
+
+
+
+
+
+
+
+
+
+
+
+    Keys: i install  c changes  v versions  Esc back

@@ -145,8 +145,25 @@ codebase, and signed xbps packages from user-added feeds.
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. Admin paths are always blocked on public and
   onion addresses.
+- **TUI navigation:** Four tabs, Home, Apps, Web and System (`1`–`4`, Tab, or a click). Home shows
+  what needs the owner first, one card and one button each (unlock, an app that keeps stopping, updates
+  ready), then the other apps and one line of device health. Apps lists the installed apps; each has
+  its own page with its update, Restart, Stop and Remove on the breadcrumb row (folded into "⋯ More"
+  under 100 columns), and rows for Hosting, Settings and Logs. Get apps (`g`) searches the sources,
+  and Sources (the old Feeds) sits under it, a card per source. System holds the Nodo's own update,
+  then Updates (the Nodo and the apps on one page, each with its own button), Backups, Network,
+  Device logs and About; automatic updates and undoing an update are reached from Updates. Every
+  screen uses the same pieces (`crates/nodo-tui/src/view/v3.rs`): surfaces instead of lines, cards
+  as even rectangles, inset fields, buttons inside the card they act on with a ▸ on the one Enter
+  presses, and one dim line of keys. Screens drawn as bordered panels (backups, restore, undo,
+  network, onion, setup, domains) go through one converter into the same look.
+- **Removing an app:** `RemovePackage` stops an app installed from a feed and removes its files,
+  manifest and installed record. Its data volumes stay on the drive, so installing it again brings
+  everything back; deleting data is never a side effect. Base system packages are refused, and so
+  is an app with a site still online (take it offline in Hosting first). The TUI asks first on its
+  own screen, with the focus on Cancel.
 - **Web screens (flow v3):** The TUI's Web tab lists only the sites that are online, each with who can
-  open it in words; clicking one, or pressing `h` on an installed app's page in Packages, opens that
+  open it in words; clicking one, or pressing `h` on an installed app's page in Apps, opens that
   app's Hosting. There the owner ticks Home network, Tor and Internet in any combination, and for the
   internet picks a domain from any connected provider with an address part (`pay` + `.example.com`). Home
   network and Tor apply at once; the internet only turns on after the reachability checks pass and

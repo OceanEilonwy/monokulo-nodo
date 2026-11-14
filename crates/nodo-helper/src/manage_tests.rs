@@ -440,6 +440,41 @@ fn an_approved_install_places_the_manifest_and_enables_the_service() {
 }
 
 #[test]
+fn removing_an_app_takes_away_its_files_and_record_but_keeps_its_data() {
+    let (h, packages) = installed();
+    h.sys.put("/data/demo/kept.db", b"orders");
+    let removed = call(&h, Request::RemovePackage { package: "demo".into() });
+    assert!(matches!(removed, Ok(Response::Ok)), "{removed:?}");
+    assert_eq!(packages.installed(), None);
+    assert!(packages.log().iter().any(|l| l == "remove demo"));
+    assert!(h.sys.get("/m/app/demo.toml").is_none(), "the manifest is gone");
+    assert!(h.sys.link("/service/demo").is_none(), "the service is no longer enabled");
+    assert!(h.sys.get("/data/demo/kept.db").is_some(), "its data stays on the drive");
+    let Ok(Response::Catalog(catalog)) = call(&h, Request::Catalog) else { panic!() };
+    assert_eq!(catalog[0].installed, None);
+    let again = call(&h, Request::RemovePackage { package: "demo".into() });
+    assert!(matches!(again, Err(ApiError::NotFound(_))), "{again:?}");
+}
+
+#[test]
+fn an_app_with_a_site_online_is_not_removed() {
+    let (h, packages) = installed();
+    h.sys.put("/s/exposure.toml", b"[demo]\nweb = { local = true, onion = false, public = false }\n");
+    let refused = call(&h, Request::RemovePackage { package: "demo".into() });
+    assert!(matches!(&refused, Err(ApiError::Failed(m)) if m.contains("site online")), "{refused:?}");
+    assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+}
+
+#[test]
+fn base_system_packages_are_never_removed_this_way() {
+    let (h, _) = installed();
+    let refused = call(&h, Request::RemovePackage { package: "../etc".into() });
+    assert!(matches!(refused, Err(ApiError::NotFound(_))), "{refused:?}");
+    let refused = call(&h, Request::RemovePackage { package: "never-installed".into() });
+    assert!(matches!(refused, Err(ApiError::NotFound(_))), "{refused:?}");
+}
+
+#[test]
 fn installs_wait_while_the_disk_is_low() {
     let (h, _) = setup();
     add_feed(&h);

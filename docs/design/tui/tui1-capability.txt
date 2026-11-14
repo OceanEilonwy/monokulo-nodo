@@ -1,0 +1,36 @@
+Install zmq-indexer 0.8.0                                                                         ▲ Needs a change first
+┌ Your node cannot serve this package ─────────────────────────────────────────────────────────────────────────────────┐
+│ zmq-indexer needs ZMQ. Your current node, cuprated, does not provide it.                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ What each node provides ─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                         cuprated   monerod                                                                           │
+│ daemon-rpc              ✓          ✓                                                                                 │
+│ zmq                     ✕          ✓                                                                                 │
+│ i2p                     ✕          ✓                                                                                 │
+│ Synced on this device   ✓          ✕                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Your options ────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸Cancel and keep cuprated                                                                                            │
+│  Check for a compatible version  none found in your feeds                                                            │
+│  Install monerod and switch  about 300 GB more and a full sync                                                       │
+│                                                                                                                      │
+│ Switching stops services that need a node until it finishes syncing.                                                 │
+│ Both chains are kept, so you can switch back without syncing again.                                                  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ choose  ↵ confirm  Esc cancel

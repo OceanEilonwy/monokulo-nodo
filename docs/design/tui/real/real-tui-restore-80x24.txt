@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Home  ›  Set up this device  ›  Restore from a USB backup  ›  Drive
+
+
+       USB drives
+
+       ▸ sda1    SanDisk Ultra Fit, BACKUP  32.0 GB
+        sdb     Generic Flash Disk  ▲ it has no filesystem
+
+
+
+       Steps
+
+       ▸ Choose the drive
+       ○ Choose the backup
+       ○ Open it with the backup passphrase
+       ○ Confirm and restore
+
+    ↓ 1 more — scroll
+
+    Keys: ↑↓ move  ↵ choose  g look again  Esc back to setup

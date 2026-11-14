@@ -1,0 +1,32 @@
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  moneropay                                  Restart         Stop          Remove…
+
+
+       moneropay   Payment gateway for Monero
+       ●  Running   ·   open at https://moneropay.example.com
+
+       Version 2.7.1 is ready   from 2.7.0                                         Update
+
+
+
+       ▸ Hosting     Home network                            ›
+
+         Settings    Change how it works                     ›
+
+         Logs        What it has been doing                  ›
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back

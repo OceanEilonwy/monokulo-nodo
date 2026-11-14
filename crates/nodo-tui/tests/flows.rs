@@ -77,7 +77,7 @@ fn review_starts_on_cancel_and_enter_installs_nothing() {
     let (mut app, _) = fixture(ScreenId::Review);
     let Screen::Review(state) = &app.screen else { panic!("expected review") };
     assert!(!state.confirm_focused);
-    assert!(screen_text(&app).contains("▸Cancel"));
+    assert!(screen_text(&app).contains("▸ Cancel"));
     let effects = update(&mut app, press(ENTER));
     assert!(effects.is_empty(), "{effects:?}");
     assert_ne!(app.screen.id(), ScreenId::Review);
@@ -87,7 +87,7 @@ fn review_starts_on_cancel_and_enter_installs_nothing() {
 fn review_installs_only_after_moving_to_the_install_button() {
     let (mut app, _) = fixture(ScreenId::Review);
     assert!(update(&mut app, press(RIGHT)).is_empty());
-    assert!(screen_text(&app).contains("▸Install and configure"));
+    assert!(screen_text(&app).contains("▸ Install"));
     let effects = update(&mut app, press(ENTER));
     assert!(matches!(effects.as_slice(), [Effect::StartInstall { id, .. }] if id.name == "wallet-relay"));
 }
@@ -97,7 +97,7 @@ fn feed_key_starts_on_keeping_the_old_key() {
     let (mut app, mut mock) = fixture(ScreenId::FeedKey);
     let Screen::FeedKey(state) = &app.screen else { panic!("expected feed key") };
     assert_eq!(state.choice, 0);
-    assert!(screen_text(&app).contains("▸Keep the old key and stay blocked (safe default)"));
+    assert!(screen_text(&app).contains("▸ Keep the old key"));
     key(&mut app, &mut mock, ENTER);
     assert_eq!(feed(&mock, "old-tools").status, FeedStatus::Blocked);
     assert_eq!(feed(&mock, "old-tools").key_state, KeyState::Changed);
@@ -115,7 +115,7 @@ fn trusting_a_new_key_needs_the_exact_feed_name() {
         type_text(&mut app, &mut mock, wrong);
         key(&mut app, &mut mock, ENTER);
         assert_eq!(feed(&mock, "old-tools").status, FeedStatus::Blocked, "accepted {wrong:?}");
-        assert!(screen_text(&app).contains("That is not the feed name."));
+        assert!(screen_text(&app).contains("That isn't the source's name."));
         dispatch(&mut app, &mut mock, ctrl('u'));
     }
 
@@ -217,7 +217,7 @@ fn the_web_tab_lists_only_the_sites_that_are_online() {
     }
     assert!(!screen.contains("wallet-relay"), "an app that is not online is not listed:\n{screen}");
     assert!(screen.contains("Home and internet") && screen.contains("Home network and Tor"), "{screen}");
-    assert!(screen.contains("To put another app online, open it in Packages."), "{screen}");
+    assert!(screen.contains("To put another app online, open it in Apps."), "{screen}");
     assert!(screen.contains("Domain providers ›"), "{screen}");
 }
 
@@ -363,7 +363,7 @@ fn an_app_page_in_packages_opens_its_hosting_even_when_offline() {
     let Screen::Detail(detail) = &mut app.screen else { panic!("expected detail") };
     detail.id.name = "wallet-relay".to_owned();
     detail.installed = true;
-    assert!(screen_text(&app).contains("h hosting"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("Open its page"), "{}", screen_text(&app));
     key(&mut app, &mut mock, KeyCode::Char('h'));
     let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
     assert_eq!(state.site, "wallet-relay");
@@ -540,7 +540,8 @@ fn the_local_ca_screen_shows_the_whole_fingerprint_and_the_trust_page() {
     // On the email field, c is typed rather than taken as a shortcut.
     key(&mut app, &mut mock, KeyCode::Char('c'));
     assert_eq!(app.screen.id(), ScreenId::WebDomain);
-    assert!(screen_text(&app).contains("c trust it on your devices"));
+    let tall = text(&draw(&app, 120, 50).0);
+    assert!(tall.contains("c trust it on your devices"), "{tall}");
     keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('c')]);
     assert_eq!(app.screen.id(), ScreenId::WebTrust);
     let screen = screen_text(&app);
@@ -594,8 +595,8 @@ fn clicks_open_a_site_tick_a_choice_and_switch_tabs() {
     assert!(state.details);
     click(&mut app, &mut mock, "Save");
     assert_eq!(mock.web.sites[1].exposure, Exposure { local: true, onion: false, public: false });
-    click(&mut app, &mut mock, "Feeds");
-    assert_eq!(app.screen.id(), ScreenId::Feeds);
+    click(&mut app, &mut mock, "System");
+    assert_eq!(app.screen.id(), ScreenId::System);
 }
 
 #[test]
@@ -606,8 +607,8 @@ fn the_confirm_buttons_and_breadcrumbs_take_clicks() {
     assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
 
     let (mut app, mut mock) = exposure_with_public_off();
-    click(&mut app, &mut mock, "Packages  ›");
-    assert_eq!(app.screen.id(), ScreenId::Search, "the first crumb opens its tab");
+    click(&mut app, &mut mock, "Apps  ›");
+    assert_eq!(app.screen.id(), ScreenId::Apps, "the first crumb opens its tab");
 }
 
 #[test]
@@ -792,9 +793,9 @@ fn a_failed_unlock_shows_an_error_and_keeps_the_app_usable() {
     // Leaving works, and the rest of the app still responds and is still locked.
     key(&mut app, &mut mock, ESC);
     assert_eq!(app.screen.id(), ScreenId::Main);
-    assert!(screen_text(&app).contains("This device is locked."));
+    assert!(screen_text(&app).contains("Your Nodo is locked"));
     key(&mut app, &mut mock, TAB);
-    assert_eq!(app.screen.id(), ScreenId::Search);
+    assert_eq!(app.screen.id(), ScreenId::Apps);
 }
 
 #[test]
@@ -896,7 +897,7 @@ fn only_changed_settings_are_sent_through_the_real_api() {
     dispatch(&mut app, &mut mock, ctrl('u'));
     type_text(&mut app, &mut mock, "5001");
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("● 1 unsaved change"));
+    assert!(screen_text(&app).contains("1 change, not saved yet"));
     dispatch(&mut app, &mut mock, ctrl('s'));
     assert!(mock.calls.contains(&Request::ApplySettings {
         package: "moneropay".to_owned(),
@@ -920,7 +921,7 @@ fn a_rollback_keeps_the_draft_for_editing_and_can_discard_it() {
     dispatch(&mut app, &mut mock, ctrl('s'));
     assert_eq!(app.screen.id(), ScreenId::ApplyFailed);
     let screen = screen_text(&app);
-    assert!(screen.contains("5000 → 18081") && screen.contains("info → debug"), "{screen}");
+    assert!(screen.contains("5000  →  18081") && screen.contains("info  →  debug"), "{screen}");
 
     key(&mut app, &mut mock, ENTER);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
@@ -969,8 +970,8 @@ fn using_a_reference_writes_a_reference_and_shows_what_it_resolves_to() {
     type_text(&mut app, &mut mock, "restricted");
     key(&mut app, &mut mock, ENTER);
     let screen = screen_text(&app);
-    assert!(screen.contains("$(monero-daemon.restricted_rpc_url)"), "{screen}");
-    assert!(screen.contains("Resolves to http://127.0.0.1:18089"), "{screen}");
+    assert!(screen.contains("monero-daemon · http://127.0.0.1:18089"), "{screen}");
+    assert!(screen.contains("Picked from your apps"), "{screen}");
     dispatch(&mut app, &mut mock, ctrl('s'));
     assert!(mock.calls.iter().any(|call| sent_values(call)
         .contains(&("daemon_rpc".to_owned(), "$(monero-daemon.restricted_rpc_url)".to_owned()))));
@@ -1011,9 +1012,9 @@ fn search(app: &mut App, mock: &mut MockBackend, query: &str) {
 fn search_filters_as_you_type_and_letters_type_until_the_list_has_focus() {
     let (mut app, mut mock) = loaded();
     search(&mut app, &mut mock, "pay");
-    assert!(screen_text(&app).contains("3 of 41 results"));
+    assert!(screen_text(&app).contains("3 of 41 apps match"));
     type_text(&mut app, &mut mock, "i");
-    assert!(screen_text(&app).contains("0 of 41 results"), "i typed into the query");
+    assert!(screen_text(&app).contains("0 of 41 apps match"), "i typed into the query");
     assert_eq!(app.screen.id(), ScreenId::Search);
     key(&mut app, &mut mock, KeyCode::Backspace);
     key(&mut app, &mut mock, DOWN);
@@ -1028,7 +1029,7 @@ fn the_same_name_in_two_feeds_shows_both_and_opens_the_chosen_one() {
     let (mut app, mut mock) = loaded();
     search(&mut app, &mut mock, "node-exporter");
     let screen = screen_text(&app);
-    assert!(screen.contains("2 of 41 results"), "{screen}");
+    assert!(screen.contains("2 of 41 apps match"), "{screen}");
     assert!(screen.contains("monokulo") && screen.contains("community"));
     keys(&mut app, &mut mock, &[DOWN, DOWN, ENTER]);
     let Screen::Detail(detail) = &app.screen else { panic!("expected detail") };
@@ -1040,10 +1041,9 @@ fn search_filter_feed_and_clear() {
     let (mut app, mut mock) = loaded();
     search(&mut app, &mut mock, "");
     keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('f')]);
-    assert!(screen_text(&app).contains("Feed: official"));
-    assert!(screen_text(&app).contains("12 of 41 results"));
+    assert!(screen_text(&app).contains("12 of 41 apps from official match"), "{}", screen_text(&app));
     key(&mut app, &mut mock, ESC);
-    assert!(screen_text(&app).contains("All feeds"));
+    assert!(screen_text(&app).contains("41 of 41 apps match"));
 }
 
 #[test]
@@ -1063,8 +1063,8 @@ fn install_runs_to_completion_then_opens_settings() {
         dispatch(&mut app, &mut mock, Event::Tick);
     }
     let screen = screen_text(&app);
-    assert!(screen.contains("✓ Installed"), "{screen}");
-    assert!(screen.contains("↵ configure"), "{screen}");
+    assert!(screen.contains("is installed"), "{screen}");
+    assert!(screen.contains("↵ set it up"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Settings);
 }
@@ -1075,13 +1075,13 @@ fn a_failed_install_reports_that_it_was_undone() {
     search(&mut app, &mut mock, "paywall");
     keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('i')]);
     let screen = screen_text(&app);
-    assert!(screen.contains("Third-party package"), "{screen}");
+    assert!(screen.contains("a source you added"), "{screen}");
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
     for _ in 0..200 {
         dispatch(&mut app, &mut mock, Event::Tick);
     }
     let screen = screen_text(&app);
-    assert!(screen.contains("✕ Not installed"), "{screen}");
+    assert!(screen.contains("wasn't installed"), "{screen}");
     assert!(screen.contains("removed"), "{screen}");
     key(&mut app, &mut mock, ESC);
     assert_eq!(app.screen.id(), ScreenId::Search);
@@ -1123,17 +1123,18 @@ fn install_gates_route_to_the_right_screen() {
 fn opening_a_feed_from_a_rejected_package_selects_that_feed() {
     let (mut app, mut mock) = fixture(ScreenId::Rejected);
     key(&mut app, &mut mock, KeyCode::Char('f'));
-    assert_eq!(app.screen, Screen::Feeds { selected: 2 });
+    assert_eq!(app.screen, Screen::Feeds { selected: 2, keys: false });
 }
 
 // Home
 
 #[test]
-fn home_starts_and_stops_through_the_real_api() {
+fn an_app_page_starts_and_stops_its_app_through_the_real_api() {
     let (mut app, mut mock) = loaded();
+    app.screen = Screen::AppPage(AppPageState::new("cuprated"));
     key(&mut app, &mut mock, KeyCode::Char('s'));
     assert!(mock.calls.contains(&Request::StopService { id: "cuprated".to_owned() }));
-    assert!(screen_text(&app).contains("stopped"));
+    assert!(screen_text(&app).contains("Stopped"));
     key(&mut app, &mut mock, KeyCode::Char('s'));
     assert!(mock.calls.contains(&Request::StartService { id: "cuprated".to_owned() }));
 }
@@ -1141,7 +1142,8 @@ fn home_starts_and_stops_through_the_real_api() {
 #[test]
 fn a_locked_service_cannot_be_started() {
     let (mut app, mut mock) = loaded();
-    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, KeyCode::Char('s')]);
+    app.screen = Screen::AppPage(AppPageState::new("wallet-relay"));
+    key(&mut app, &mut mock, KeyCode::Char('s'));
     assert!(!mock.calls.iter().any(|call| matches!(call, Request::StartService { .. })));
     assert!(screen_text(&app).contains("Press u to unlock"));
 }
@@ -1152,7 +1154,7 @@ fn home_l_opens_the_failing_service_log_as_the_attention_panel_promises() {
     key(&mut app, &mut mock, KeyCode::Char('l'));
     let screen = screen_text(&app);
     assert_eq!(app.screen.id(), ScreenId::Logs);
-    assert!(screen.contains("▸bell ✕"), "{screen}");
+    assert!(screen.contains("Apps  ›  bell  ›  Logs"), "{screen}");
     assert!(screen.contains("connection refused: wallet-relay is locked"), "{screen}");
 }
 
@@ -1166,20 +1168,15 @@ fn a_backend_error_on_refresh_shows_and_does_not_crash() {
 #[test]
 fn tabs_cycle_both_ways_and_q_quits_from_a_tab_only() {
     let (mut app, mut mock) = loaded();
-    let order = [
-        ScreenId::Search,
-        ScreenId::WebSites,
-        ScreenId::Feeds,
-        ScreenId::Updates,
-        ScreenId::Logs,
-        ScreenId::Main,
-    ];
+    let order = [ScreenId::Apps, ScreenId::WebSites, ScreenId::System, ScreenId::Main];
     for expected in order {
         key(&mut app, &mut mock, TAB);
         assert_eq!(app.screen.id(), expected);
     }
     key(&mut app, &mut mock, KeyCode::BackTab);
-    assert_eq!(app.screen.id(), ScreenId::Logs);
+    assert_eq!(app.screen.id(), ScreenId::System);
+    key(&mut app, &mut mock, KeyCode::Char('2'));
+    assert_eq!(app.screen.id(), ScreenId::Apps, "number keys pick a tab");
 
     let (mut app, mut mock) = fixture(ScreenId::Detail);
     key(&mut app, &mut mock, KeyCode::Char('q'));
@@ -1254,7 +1251,7 @@ fn pasted_text_only_goes_to_a_focused_input_and_never_confirms() {
 fn adding_a_feed_looks_it_up_then_pins_its_key_only_after_trust() {
     let (mut app, mut mock) = fixture(ScreenId::Feeds);
     key(&mut app, &mut mock, KeyCode::Char('a'));
-    assert!(screen_text(&app).contains("Step 1 of 2"));
+    assert!(screen_text(&app).contains("Add a source"));
     type_text(&mut app, &mut mock, "http://insecure.example/feed");
     key(&mut app, &mut mock, ENTER);
     assert!(screen_text(&app).contains("✕ A feed address must start with https://"));
@@ -1262,7 +1259,7 @@ fn adding_a_feed_looks_it_up_then_pins_its_key_only_after_trust() {
     dispatch(&mut app, &mut mock, ctrl('u'));
     type_text(&mut app, &mut mock, "https://github.com/example/monero-tools-feed");
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("Step 2 of 2"));
+    assert!(screen_text(&app).contains("Its key"));
     assert!(!mock.feeds.iter().any(|feed| feed.name == "monero-tools"));
 
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
@@ -1279,8 +1276,7 @@ fn feed_rows_route_blocked_feeds_to_the_key_screen_and_others_to_packages() {
 
     let (mut app, mut mock) = fixture(ScreenId::Feeds);
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("Feed: monokulo"));
-    assert!(screen_text(&app).contains("6 of 41 results"));
+    assert!(screen_text(&app).contains("6 of 41 apps from monokulo match"));
 }
 
 #[test]
@@ -1288,7 +1284,7 @@ fn feeds_can_be_disabled_and_enabled_again() {
     let (mut app, mut mock) = fixture(ScreenId::Feeds);
     key(&mut app, &mut mock, KeyCode::Char('e'));
     assert_eq!(feed(&mock, "monokulo").status, FeedStatus::Disabled);
-    assert!(screen_text(&app).contains("e enable"));
+    assert!(screen_text(&app).contains("[ ] Off"));
     key(&mut app, &mut mock, KeyCode::Char('e'));
     assert_eq!(feed(&mock, "monokulo").status, FeedStatus::Healthy);
 }
@@ -1301,9 +1297,9 @@ fn a_new_permission_is_reviewed_before_anything_updates() {
     keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Review);
     let screen = screen_text(&app);
-    assert!(screen.contains("Update wallet-relay 0.5.0"), "{screen}");
-    assert!(screen.contains("▲ Connect out to any internet address"), "{screen}");
-    assert!(screen.contains("▸Cancel"), "{screen}");
+    assert!(screen.contains("Update wallet-relay to 0.5.0?"), "{screen}");
+    assert!(screen.contains("▲  Connect out to any internet address"), "{screen}");
+    assert!(screen.contains("▸ Cancel"), "{screen}");
 
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Updates);
@@ -1320,9 +1316,9 @@ fn an_update_rollback_defaults_to_keeping_and_holding() {
     let (mut app, mut mock) = fixture(ScreenId::Updates);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
-    assert!(screen_text(&app).contains("1 updated, 1 rolled back"));
+    assert!(screen_text(&app).contains("update didn't start, so"));
     let screen = screen_text(&app);
-    assert!(screen.contains("▸Keep 2.7.0 and hold this version"), "{screen}");
+    assert!(screen.contains("▸ OK"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Updates);
     assert!(mock.updates.iter().find(|item| item.name == "moneropay").unwrap().held);
@@ -1331,10 +1327,10 @@ fn an_update_rollback_defaults_to_keeping_and_holding() {
 #[test]
 fn the_update_count_drops_when_a_version_is_held() {
     let (mut app, mut mock) = fixture(ScreenId::Updates);
-    assert!(screen_text(&app).contains("Updates (3)"));
+    assert!(screen_text(&app).contains("Apps 2"));
     key(&mut app, &mut mock, KeyCode::Char('h'));
-    assert!(screen_text(&app).contains("Updates (2)"));
-    assert!(screen_text(&app).contains("You skipped this version"));
+    assert!(screen_text(&app).contains("Apps 1"));
+    assert!(screen_text(&app).contains("you skipped this version"));
 }
 
 #[test]
@@ -1342,7 +1338,7 @@ fn updating_with_nothing_selected_explains_itself() {
     let (mut app, mut mock) = fixture(ScreenId::Updates);
     keys(&mut app, &mut mock, &[SPACE, DOWN, SPACE, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Updates);
-    assert!(screen_text(&app).contains("Select at least one update first."));
+    assert!(screen_text(&app).contains("Tick at least one app first."));
 }
 
 fn reload(app: &mut App, mock: &mut MockBackend) {
@@ -1364,14 +1360,14 @@ fn an_update_that_grows_encrypted_storage_asks_for_the_device_passphrase_first()
     let (mut app, mut mock) = fixture(ScreenId::Updates);
     mock.updates[0].grows = Some("256 MB to 512 MB of encrypted storage".to_owned());
     reload(&mut app, &mut mock);
-    assert!(screen_text(&app).contains("◆ Needs the device passphrase"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("needs the device passphrase"), "{}", screen_text(&app));
 
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Updates);
     let screen = screen_text(&app);
-    assert!(screen.contains("Encrypted storage grows"), "{screen}");
+    assert!(screen.contains("need more locked storage"), "{screen}");
     assert!(screen.contains("moneropay: 256 MB to 512 MB of encrypted storage"), "{screen}");
-    assert!(screen.contains("Device passphrase"), "{screen}");
+    assert!(screen.contains("device passphrase"), "{screen}");
     assert!(screen.contains("Esc cancel"), "{screen}");
     assert_eq!(mock.updates.len(), 4, "nothing is applied before the passphrase");
 
@@ -1398,7 +1394,7 @@ fn an_update_that_grows_encrypted_storage_asks_for_the_device_passphrase_first()
     type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
-    assert!(screen_text(&app).contains("✓ system base"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("update didn't start"), "{}", screen_text(&app));
     assert_eq!(passphrase_calls(&mock), ["wrong horse", MOCK_PASSPHRASE]);
 }
 
@@ -1426,9 +1422,8 @@ fn a_withdrawn_system_snapshot_is_explained_before_it_is_replaced() {
     mock.updates[1].note = UpdateNote::Withdrawal("2026.11".to_owned());
     reload(&mut app, &mut mock);
     let screen = text(&draw(&app, 120, 40).0);
-    assert!(screen.contains("▲ Replaces a withdrawn snapshot"), "{screen}");
-    assert!(screen.contains("system base replaces a withdrawn snapshot"), "{screen}");
-    assert!(screen.contains("The publisher withdrew snapshot 2026.11"), "{screen}");
+    assert!(screen.contains("Replaces 2026.11, which its publisher withdrew."), "{screen}");
+    assert!(screen.contains("Update the Nodo"), "{screen}");
 }
 
 // Auto-update
@@ -1444,8 +1439,8 @@ fn at_auto_update() -> (App, MockBackend) {
 fn the_updates_screen_offers_auto_update_and_counts_saved_packages() {
     let (app, _) = fixture(ScreenId::Updates);
     let screen = screen_text(&app);
-    assert!(screen.lines().next().unwrap().ends_with("Auto-update on for 3 packages"), "{screen}");
-    assert!(screen.contains("a auto-update"));
+    assert!(screen.contains("automatic for 3"), "{screen}");
+    assert!(screen.contains("Automatic updates ›"));
 }
 
 #[test]
@@ -1501,13 +1496,13 @@ fn auto_update_choices_save_and_change_the_updates_header() {
     assert_eq!(app.screen.id(), ScreenId::Updates);
     assert_eq!(mock.auto_update.enabled_count(), 2);
     let screen = screen_text(&app);
-    assert!(screen.contains("Auto-update on for 2 packages"), "{screen}");
+    assert!(screen.contains("automatic for 2"), "{screen}");
     assert!(screen.contains("✓ Auto-update choices saved."), "{screen}");
 
     key(&mut app, &mut mock, KeyCode::Char('a'));
     keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE, DOWN, SPACE, ENTER]);
     assert_eq!(mock.auto_update.enabled_count(), 0);
-    assert!(screen_text(&app).contains("Auto-update off"));
+    assert!(screen_text(&app).contains("automatic updates are off"));
 }
 
 #[test]
@@ -1522,7 +1517,7 @@ fn the_header_counts_saved_choices_not_the_draft() {
     key(&mut app, &mut mock, ESC);
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Updates);
-    assert!(screen_text(&app).contains("Auto-update on for 3 packages"));
+    assert!(screen_text(&app).contains("automatic for 3"));
     assert_eq!(mock.auto_update.enabled_count(), 3);
 }
 
@@ -1547,7 +1542,7 @@ fn the_install_window_is_validated_and_moves_the_next_run() {
     dispatch(&mut app, &mut mock, ctrl('u'));
     type_text(&mut app, &mut mock, "01:30 to 02:30");
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("01:30 to 02:30 device time"));
+    assert!(screen_text(&app).contains("01:30 and 02:30"));
     assert_eq!(mock.auto_update.window_start, "03:00", "not saved until the screen is saved");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(mock.auto_update.window_start, "01:30");
@@ -1558,7 +1553,7 @@ fn the_install_window_is_validated_and_moves_the_next_run() {
 fn frequency_cycles_and_history_opens() {
     let (mut app, mut mock) = at_auto_update();
     key(&mut app, &mut mock, SPACE);
-    assert!(screen_text(&app).contains("‹ Weekly ›"));
+    assert!(screen_text(&app).contains("Weekly"));
     key(&mut app, &mut mock, KeyCode::Char('h'));
     assert!(screen_text(&app).contains("Auto-update history"));
 }
@@ -1633,7 +1628,7 @@ fn the_missing_drive_replaces_home_on_startup() {
         dispatch(&mut app, &mut mock, event);
     }
     assert_eq!(app.screen.id(), ScreenId::NoDrive);
-    assert!(screen_text(&app).contains("✕ Node stopped"));
+    assert!(screen_text(&app).contains("The data drive isn't connected"));
 }
 
 #[test]
@@ -1714,7 +1709,7 @@ fn a_package_with_new_encrypted_storage_asks_for_the_device_passphrase_before_in
     app.screen = Screen::Review(ReviewState::new(data, ReviewPurpose::Install));
     update(&mut app, press(RIGHT));
     assert!(update(&mut app, press(ENTER)).is_empty());
-    assert!(screen_text(&app).contains("Device passphrase"));
+    assert!(screen_text(&app).contains("device passphrase"));
     for c in "correct horse".chars() {
         update(&mut app, press(KeyCode::Char(c)));
     }
@@ -1785,7 +1780,7 @@ fn the_backup_screen_shows_its_copy() {
     let (app, _) = fixture(ScreenId::Backup);
     let screen = screen_text(&app);
     for needle in [
-        "Home › Backups",
+        "System  ›  Backups",
         "Backups on this device",
         "nodo-1762560000.nodobak",
         "4.8 MB",
@@ -1803,7 +1798,7 @@ fn the_backup_screen_shows_its_copy() {
 fn open_onion() -> (App, MockBackend) {
     let (mut app, mut mock) = loaded();
     dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
-    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE)));
     assert_eq!(app.screen.id(), ScreenId::WebSites);
     key(&mut app, &mut mock, KeyCode::Char('n'));
     assert_eq!(app.screen.id(), ScreenId::Onion);
@@ -1814,7 +1809,7 @@ fn open_onion() -> (App, MockBackend) {
 fn n_on_web_opens_the_onion_screen_with_the_node_and_sites() {
     let (app, mock) = open_onion();
     let screen = screen_text(&app);
-    assert!(screen.contains("Web › Onion addresses"), "{screen}");
+    assert!(screen.contains("Web  ›  Onion addresses"), "{screen}");
     assert!(screen.contains("nod…xyz.onion:18081"), "{screen}");
     assert!(screen.contains("http://abc…xyz.onion"), "{screen}");
     assert!(mock.calls.iter().any(|c| matches!(c, Request::OnionStatus)));
@@ -1959,7 +1954,7 @@ fn wifi_calls(mock: &MockBackend) -> Vec<&Request> {
 fn w_on_home_opens_the_network_screen_from_the_helper() {
     let (mut app, mut mock) = open_network();
     let screen = screen_text(&app);
-    assert!(screen.contains("Home › Network"), "{screen}");
+    assert!(screen.contains("System  ›  Network"), "{screen}");
     assert!(screen.contains("● Joined home-5G"), "{screen}");
     assert!(screen.contains("travel-hotspot"), "{screen}");
     assert!(screen.contains("K380 Keyboard"), "{screen}");

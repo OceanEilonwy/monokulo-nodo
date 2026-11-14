@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+    Web  ›  Domain providers  ›  Add
+
+    Where did you buy your web address?
+
+
+       ▸ Porkbun
+         Cloudflare
+         GoDaddy
+         Namecheap
+         IONOS
+         Gandi
+         Name.com
+         Alibaba Cloud
+         Hostinger
+         Hover         Can't be connected: no way to change records
+         Squarespace   Can't be connected: no way to change records
+
+
+    Somewhere else? It can't be connected yet, but Tor works without a web address.
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Click the company.   Keys: ↑↓ choose  ↵ next  Esc back

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Sites online                                                                                  Domain providers ›
+
+
+       ▸ shop           https://shop.example.com            Home and internet     ›
+
+         monokulo-pay   https://monokulo-pay.local          Home network and Tor  ›
+
+         moneropay      https://moneropay.local             Home network          ›
+
+
+    To put another app online, open it in Apps.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ open  p providers  n Tor links  d certificates

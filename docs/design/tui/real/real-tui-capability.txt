@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  zmq-indexer
+
+
+       ▲  zmq-indexer needs a different Monero node first
+
+       It needs something cuprated doesn't provide. monerod does; it syncs the chain, then zmq-indexer can be
+       installed.
+
+       zmq-indexer needs ZMQ. Your current node, cuprated, does not provide it.
+       about 300 GB more and a full sync
+
+                                                                       Cancel              Install monerod   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ install monerod  Esc cancel

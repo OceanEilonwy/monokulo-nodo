@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  Get apps  ›  fast-sync-helper
+
+
+       ▲  fast-sync-helper can't be installed
+
+       Its source signed it, but it breaks the Nodo's rules, and there's no
+       override. Nothing was installed. Tell the publisher of community if
+       you think this is a mistake.
+
+       ✕ Runs a setup script as root — ./INSTALL
+       ✕ Writes outside its own folder — /etc/cron.d/fast-sync-helper
+       ✕ Tries to replace a system package — glibc 2.42
+
+                                   Copy report             OK        
+
+
+
+
+
+    Keys: Esc OK  y copy report  f open its source

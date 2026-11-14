@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay
+
+
+       Installing moneropay   Step 5 of 8
+
+                                                            50%
+
+       ✓  Download package
+       ✓  Verify feed signature
+       ✓  Check package contents
+       ✓  Install files
+       ›  Create sandbox and firewall rules
+       ○  Set up encrypted storage
+       ○  Configure settings
+       ○  Start and run health check
+
+       You can leave this page; it carries on. A failed step removes what
+       this install added.
+
+    Keys: Esc cancel  v full log

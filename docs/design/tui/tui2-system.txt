@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    This Nodo
+
+
+       A Nodo update is ready   2026.11.14 · needs a restart, about 2 minutes
+       Faster syncing for cuprated, and the fan curve no longer chatters.
+
+                                                                                                      Review   
+
+
+
+       Updates           2 for apps, 1 for the Nodo · automatic for apps, overnight                            ›
+
+       Backups           Last backup 2 days ago, to the USB drive                                              ›
+
+       Network           Wired · 192.168.1.155 · Wi-Fi off                                                     ›
+
+       Device logs       Last problem: none today                                                              ›
+
+       About this Nodo   monokulo-nodo · NanoPC-T6 · 2026.11.13                                                ›
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ open  1-4 tabs

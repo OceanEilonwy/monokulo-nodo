@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources
+
+    Sources                                                                                        Add a source   
+    Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed.
+
+
+
+       official   built in                         [x] On                                             Remove   
+       feeds.monokulo.example/official   ·   12 apps
+
+
+
+       ▸ monokulo                                  [x] On                                             Remove   
+       github.com/example/monokulo-feed   ·   6 apps
+
+
+
+       community                                   [x] On                                             Remove   
+       github.com/example/community-feed   ·   23 apps
+
+
+
+       old-tools                                   [x] On                                             Remove   
+       github.com/example/old-tools-feed   ·   4 apps
+
+       ▲  Its key changed. Nothing new installs from it until you decide.   Decide ›
+
+
+
+    ↓ more below — scroll
+
+    Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  ↵ its apps  Esc back

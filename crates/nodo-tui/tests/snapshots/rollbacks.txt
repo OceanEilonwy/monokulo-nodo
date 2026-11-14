@@ -1,32 +1,32 @@
-Home › Rollbacks
-┌ Roll back a package ─────────────────────────────────────────────────────────────────────────────┐
-│ ▸moneropay       2.7.0_1      → 2.6.1_1                                           can roll back  │
-│  wallet-relay    0.4.0_1      → 0.3.2_1                               ▲ its data is in layout 2  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Updates that were rolled back ───────────────────────────────────────────────────────────────────┐
-│ ▲ bell 1.2.0_1 → 1.3.0_1 stayed on 1.2.0_1: bell did not pass its health check       2026-11-07  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ System ──────────────────────────────────────────────────────────────────────────────────────────┐
-│  The system runs the version it was updated to. No fallback happened.                            │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ move  ↵ roll back  l log  g look again  Esc back
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    System  ›  Updates  ›  Undo an update
+
+
+       Undo an update
+
+       ▸ moneropay       2.7.0_1      → 2.6.1_1  can roll back
+        wallet-relay    0.4.0_1      → 0.3.2_1  ▲ its data is in layout 2
+
+
+
+       Updates that were rolled back
+
+       ▲ bell 1.2.0_1 → 1.3.0_1 stayed on 1.2.0_1: bell did not pass its health check
+       2026-11-07
+
+
+
+       System
+
+        The system runs the version it was updated to. No fallback happened.
+
+
+
+
+
+
+
+    Keys: ↑↓ move  ↵ roll back  l log  g look again  Esc back

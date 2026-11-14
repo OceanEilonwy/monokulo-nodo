@@ -114,6 +114,7 @@ fn logs_state(selected: usize) -> LogsState {
         follow: true,
         find: Input::plain(""),
         finding: false,
+        app: None,
     }
 }
 
@@ -125,25 +126,58 @@ fn switch_tab(app: &mut App, tab: Tab) -> Vec<Effect> {
     app.stack.clear();
     app.screen = match tab {
         Tab::Home => home_screen(app),
-        Tab::Packages => Screen::Search(search_state(true)),
+        Tab::Apps => Screen::Apps { selected: 0 },
         Tab::Web => Screen::Web { selected: 0 },
-        Tab::Feeds => Screen::Feeds { selected: 0 },
-        Tab::Updates => updates_screen(app),
-        Tab::Logs => Screen::Logs(logs_state(0)),
+        Tab::System => Screen::System { selected: 0 },
     };
-    if tab == Tab::Logs {
-        if let Some(source) = app.data.log_sources.first() {
-            return vec![Effect::LoadLogs(source.clone())];
-        }
-    }
     Vec::new()
 }
 
+/// One source's log: an app's from its page (under Apps), or a device part's (under System).
 fn open_logs(app: &mut App, source: &str) -> Vec<Effect> {
     let selected = app.data.log_sources.iter().position(|name| name == source).unwrap_or(0);
-    app.stack.clear();
-    app.screen = Screen::Logs(logs_state(selected));
+    let is_app = app.data.services.iter().any(|svc| svc.id == source);
+    let mut state = logs_state(selected);
+    state.app = is_app.then(|| source.to_owned());
+    push(app, Screen::Logs(state));
     app.data.log_sources.get(selected).map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+}
+
+/// The device logs under System: every source, problems first.
+fn open_device_logs(app: &mut App) -> Vec<Effect> {
+    let mut state = logs_state(0);
+    state.errors_only = true;
+    push(app, Screen::Logs(state));
+    app.data.log_sources.first().map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+}
+
+/// Apps › Get apps: searching what the sources offer.
+fn open_get_apps(app: &mut App, feed_filter: Option<String>) -> Vec<Effect> {
+    switch_tab(app, Tab::Apps);
+    let mut state = search_state(feed_filter.is_none());
+    state.list_focused = feed_filter.is_some();
+    state.feed_filter = feed_filter;
+    push(app, Screen::Search(state));
+    Vec::new()
+}
+
+/// Apps › Get apps › Sources.
+fn open_sources(app: &mut App, selected: usize) -> Vec<Effect> {
+    if !matches!(app.screen, Screen::Search(_)) {
+        open_get_apps(app, None);
+    }
+    push(app, Screen::Feeds { selected, keys: false });
+    Vec::new()
+}
+
+/// System › Updates.
+fn open_updates(app: &mut App) -> Vec<Effect> {
+    if !matches!(app.screen, Screen::System { .. }) {
+        switch_tab(app, Tab::System);
+    }
+    let screen = updates_screen(app);
+    push(app, screen);
+    Vec::new()
 }
 
 fn cycle_tab(app: &mut App, forward: bool) -> Vec<Effect> {
@@ -160,18 +194,21 @@ fn help_document() -> Document {
     Document {
         title: "Help".to_owned(),
         lines: [
+            "1 2 3 4          Home, Apps, Web, System",
             "Tab / Shift-Tab  next or previous tab",
             "↑↓               move",
             "↵                open or confirm",
             "Esc              back or cancel",
-            "/                search packages",
+            "/                get apps",
             "u                unlock this device",
             "k                SSH keys that may log in",
-            "b                backups and restore, from Home",
-            "r                rollbacks, from Home",
+            "b                backups, from Home",
+            "r                undo an update, from Home",
             "w                Wi-Fi and Bluetooth, from Home",
             "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
+            "",
+            "The mouse works too: click, scroll, and hover to see what can be clicked.",
             "Ctrl-C           quit, from anywhere",
             "",
             "Choices that could harm the device start on the safe answer.",
@@ -186,6 +223,7 @@ fn tab_key(app: &mut App, key: KeyEvent) -> Option<Vec<Effect>> {
     match key.code {
         KeyCode::Tab => Some(cycle_tab(app, true)),
         KeyCode::BackTab => Some(cycle_tab(app, false)),
+        KeyCode::Char(c @ '1'..='4') => Some(switch_tab(app, Tab::ALL[usize::from(c as u8 - b'1')])),
         KeyCode::Char('q') => {
             app.should_quit = true;
             Some(Vec::new())
@@ -257,7 +295,168 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::Restore => more::restore_key(app, key),
         ScreenId::Rollbacks => more::rollbacks_key(app, key),
         ScreenId::Network => net::network_key(app, key),
+        ScreenId::Apps => apps_key(app, key),
+        ScreenId::AppPage => app_page_key(app, key),
+        ScreenId::AppRemove => app_remove_key(app, key),
+        ScreenId::System => system_key(app, key),
     }
+}
+
+/// The installed apps: every service except the device's own parts.
+pub fn installed_apps(app: &App) -> Vec<String> {
+    app.data.services.iter().map(|svc| svc.id.clone()).collect()
+}
+
+fn apps_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if let Some(effects) = tab_key(app, key) {
+        return effects;
+    }
+    let names = installed_apps(app);
+    let Screen::Apps { selected } = &mut app.screen else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Down | KeyCode::Up => step(selected, names.len(), key.code == KeyCode::Down),
+        KeyCode::Enter => {
+            if let Some(name) = names.get(*selected) {
+                push(app, Screen::AppPage(AppPageState::new(name)));
+            }
+        }
+        KeyCode::Char('g' | '/') => return open_get_apps(app, None),
+        KeyCode::Char('u') => return open_unlock(app),
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::AppPage(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    let name = state.name.clone();
+    if state.more_open {
+        // The folded page actions, opened from "⋯ More" at 80 columns.
+        state.more_open = false;
+        return match key.code {
+            KeyCode::Char('r') => vec![Effect::Restart(name)],
+            KeyCode::Char('s') => vec![Effect::Stop(name)],
+            KeyCode::Char('x') => {
+                push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false }));
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+    }
+    let has_update = app.data.updates.iter().any(|item| item.name == name && !item.held);
+    match key.code {
+        KeyCode::Char('?') => app.overlay = Some(Overlay { doc: help_document(), scroll: 0 }),
+        KeyCode::Esc => pop(app),
+        KeyCode::Down | KeyCode::Up => step(&mut state.selected, APP_SECTIONS.len(), key.code == KeyCode::Down),
+        KeyCode::Char('m') => state.more_open = true,
+        KeyCode::Enter => match APP_SECTIONS[state.selected.min(APP_SECTIONS.len() - 1)] {
+            "Hosting" => return web::hosting_from_detail(app, &name),
+            "Settings" => return vec![Effect::OpenSettings(name)],
+            _ => return open_logs(app, &name),
+        },
+        KeyCode::Char('h') => return web::hosting_from_detail(app, &name),
+        KeyCode::Char('l') => return open_logs(app, &name),
+        KeyCode::Char('u') if has_update => {
+            let screen = updates_screen(app);
+            push(app, screen);
+            if let Screen::Updates(updates) = &mut app.screen {
+                updates.checked = vec![name];
+            }
+        }
+        KeyCode::Char('u') if app.is_locked() => return open_unlock(app),
+        KeyCode::Char('u') => notice(app, NoticeKind::Info, format!("{name} is up to date.")),
+        KeyCode::Char('r') => return vec![Effect::Restart(name)],
+        KeyCode::Char('s') => {
+            let state = app.data.services.iter().find(|svc| svc.id == name).map(|svc| svc.state);
+            return match state {
+                Some(ServiceState::Running) => vec![Effect::Stop(name)],
+                Some(ServiceState::Locked) => {
+                    fail(app, format!("{name} is locked. Press u to unlock this device."));
+                    Vec::new()
+                }
+                Some(ServiceState::Waiting) => {
+                    fail(app, format!("{name} is waiting for another app it depends on."));
+                    Vec::new()
+                }
+                _ => vec![Effect::Start(name)],
+            };
+        }
+
+        KeyCode::Char('x') => push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false })),
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn app_remove_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::AppRemove(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => pop(app),
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => state.confirm_focused = !state.confirm_focused,
+        // Enter only removes once the user moved to the Remove button (or clicked it).
+        KeyCode::Enter if state.confirm_focused => {
+            let name = state.name.clone();
+            pop(app);
+            pop(app);
+            return vec![Effect::RemovePackage(name)];
+        }
+        KeyCode::Enter => pop(app),
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if let Some(effects) = tab_key(app, key) {
+        return effects;
+    }
+    let nodo_update = app.data.updates.iter().any(|item| item.name == crate::model::SYSTEM_BASE && !item.held);
+    let Screen::System { selected } = &mut app.screen else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Down | KeyCode::Up => step(selected, SYSTEM_ROWS.len(), key.code == KeyCode::Down),
+        KeyCode::Char('v') if nodo_update => return open_updates(app),
+        KeyCode::Enter => match SYSTEM_ROWS[(*selected).min(SYSTEM_ROWS.len() - 1)] {
+            "Updates" => return open_updates(app),
+            "Backups" => return open_backups(app),
+            "Network" => return net::open_network(app),
+            "Device logs" => return open_device_logs(app),
+            _ => {
+                app.overlay = Some(Overlay { doc: about_document(app), scroll: 0 });
+            }
+        },
+        KeyCode::Char('u') => return open_unlock(app),
+        KeyCode::Char('k') => {
+            push(app, Screen::Setup(SetupState::keys()));
+            return vec![Effect::LoadSshKeys];
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// System › Backups.
+fn open_backups(app: &mut App) -> Vec<Effect> {
+    let device_set_up = !app.data.overview.setup_needed;
+    push(app, Screen::Backup(BackupState::new(device_set_up)));
+    vec![Effect::LoadBackups]
+}
+
+/// System › About this Nodo: what the device reports about itself.
+fn about_document(app: &App) -> Document {
+    let mut lines: Vec<String> = app.data.overview.device.iter().map(|(k, v)| format!("{k:<16} {v}")).collect();
+    if let Some(note) = &app.data.system_note {
+        lines.push(String::new());
+        lines.push(note.clone());
+    }
+    Document { title: "About this Nodo".to_owned(), lines }
 }
 
 /// The input that currently has keyboard focus. Pasted text only ever goes here, because pasted
@@ -419,58 +618,36 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let services = app.data.services.clone();
+    let items = app.home_items();
     let Screen::Home { selected } = &mut app.screen else {
         return Vec::new();
     };
     match key.code {
-        KeyCode::Down | KeyCode::Up => step(selected, services.len(), key.code == KeyCode::Down),
-        KeyCode::Enter => {
-            if let Some(service) = services.get(*selected) {
-                return vec![Effect::OpenService(service.id.clone())];
+        KeyCode::Down | KeyCode::Up => step(selected, items.len(), key.code == KeyCode::Down),
+        KeyCode::Enter => match items.get(*selected).cloned() {
+            Some(HomeItem::Unlock) => return open_unlock(app),
+            Some(HomeItem::Failing(id)) => return open_logs(app, &id),
+            Some(HomeItem::Updates) => return open_updates(app),
+            Some(HomeItem::App(id)) => {
+                switch_tab(app, Tab::Apps);
+                push(app, Screen::AppPage(AppPageState::new(&id)));
             }
-        }
-        KeyCode::Char('s') => {
-            if let Some(service) = services.get(*selected) {
-                return match service.state {
-                    ServiceState::Running => vec![Effect::Stop(service.id.clone())],
-                    ServiceState::Stopped | ServiceState::Failed => vec![Effect::Start(service.id.clone())],
-                    ServiceState::Locked => {
-                        fail(app, "That service is locked. Press u to unlock this device.");
-                        Vec::new()
-                    }
-                    ServiceState::Waiting => {
-                        fail(app, "That service is waiting for something it depends on.");
-                        Vec::new()
-                    }
-                };
-            }
-        }
+            None => {}
+        },
+        KeyCode::Char('/' | 'g') => return open_get_apps(app, None),
+        KeyCode::Char('u') => return open_unlock(app),
+        // The failing app's log, wherever the selection is.
         KeyCode::Char('l') => {
-            // "Needs attention" promises that l opens the failing service, wherever the selection is.
-            let chosen = services
-                .get(*selected)
-                .filter(|service| service.state == ServiceState::Failed)
-                .or_else(|| services.iter().find(|service| service.state == ServiceState::Failed))
-                .or_else(|| services.get(*selected))
-                .map(|service| service.id.clone());
-            if let Some(id) = chosen {
+            let failing = app.data.services.iter().find(|svc| svc.state == ServiceState::Failed).map(|svc| svc.id.clone());
+            if let Some(id) = failing {
                 return open_logs(app, &id);
             }
         }
-        KeyCode::Char('/') => {
-            return switch_tab(app, Tab::Packages);
-        }
-        KeyCode::Char('u') => return open_unlock(app),
         KeyCode::Char('k') => {
             push(app, Screen::Setup(SetupState::keys()));
             return vec![Effect::LoadSshKeys];
         }
-        KeyCode::Char('b') => {
-            let device_set_up = !app.data.overview.setup_needed;
-            push(app, Screen::Backup(BackupState::new(device_set_up)));
-            return vec![Effect::LoadBackups];
-        }
+        KeyCode::Char('b') => return open_backups(app),
         KeyCode::Char('r') => return more::open_rollbacks(app),
         KeyCode::Char('w') => return net::open_network(app),
         _ => {}
@@ -478,8 +655,6 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// First boot asks for the device passphrase twice, then offers SSH keys. There is no default
-/// passphrase and no way to skip the first step, because encrypted storage needs it.
 fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Setup(SetupState { step: stage, error, busy }) = &mut app.screen else {
         return Vec::new();
@@ -625,9 +800,6 @@ fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
-        return cycle_tab(app, key.code == KeyCode::Tab);
-    }
     let Screen::Search(state) = &app.screen else {
         return Vec::new();
     };
@@ -639,12 +811,15 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     match key.code {
+        // The first Esc clears a search or a source filter, the next goes back to Apps.
+        KeyCode::Esc if state.query.is_empty() && state.feed_filter.is_none() => pop(app),
         KeyCode::Esc => {
             state.query.clear();
             state.feed_filter = None;
             state.list_focused = false;
             state.selected = 0;
         }
+        KeyCode::Char('s') if state.list_focused => return open_sources(app, 0),
         KeyCode::Enter => {
             if let Some(id) = results.get(state.selected) {
                 return vec![Effect::LoadDetail(id.clone())];
@@ -704,6 +879,12 @@ fn detail_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     match key.code {
         KeyCode::Char('i') if !detail.installed => vec![Effect::CheckInstall(detail.id.clone())],
+        KeyCode::Char('o') if detail.installed => {
+            let name = detail.id.name.clone();
+            switch_tab(app, Tab::Apps);
+            push(app, Screen::AppPage(AppPageState::new(&name)));
+            Vec::new()
+        }
         KeyCode::Char('s') if detail.installed => vec![Effect::OpenSettings(detail.id.name.clone())],
         KeyCode::Char('v') => vec![Effect::ShowDocument(DocKind::Versions(detail.id.name.clone()))],
         KeyCode::Char('c') => vec![Effect::ShowDocument(DocKind::Changelog(detail.id.name.clone()))],
@@ -821,11 +1002,15 @@ fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if key.code == KeyCode::Esc {
+        pop(app);
+        return Vec::new();
+    }
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
     let feeds = app.data.feeds.clone();
-    let Screen::Feeds { selected } = &mut app.screen else {
+    let Screen::Feeds { selected, keys } = &mut app.screen else {
         return Vec::new();
     };
     let current = feeds.get(*selected);
@@ -835,7 +1020,8 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             push(app, Screen::AddFeed(AddFeedState::Address { input: Input::plain(""), error: None }));
         }
         KeyCode::Char('r') => return vec![Effect::RefreshFeeds],
-        KeyCode::Char('e') => {
+        KeyCode::Char('d') => *keys = !*keys,
+        KeyCode::Char('e' | ' ') => {
             if let Some(feed) = current {
                 return vec![Effect::ToggleFeed(feed.name.clone())];
             }
@@ -851,12 +1037,7 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     return vec![Effect::LoadKeyChange(feed.name.clone())];
                 }
                 let filter = feed.name.clone();
-                let effects = switch_tab(app, Tab::Packages);
-                if let Screen::Search(state) = &mut app.screen {
-                    state.feed_filter = Some(filter);
-                    state.list_focused = true;
-                }
-                return effects;
+                return open_get_apps(app, Some(filter));
             }
         }
         _ => {}
@@ -867,7 +1048,9 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn remove_feed_modal(name: &str) -> Modal {
     Modal {
         title: format!("Remove {name}?"),
-        body: vec!["Removing a feed keeps installed packages, without updates.".to_owned()],
+        body: vec![
+            "Apps you installed from it keep running; they just won't get updates until you add it back.".to_owned(),
+        ],
         confirm_label: "Remove".to_owned(),
         confirm_focused: false,
         action: ModalAction::RemoveFeed(name.to_owned()),
@@ -925,7 +1108,7 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     let typed = input.text().to_owned();
                     return vec![Effect::TrustNewKey { change: state.change.clone(), typed }];
                 }
-                state.error = Some(format!("That is not the feed name. Type {} exactly.", state.change.feed));
+                state.error = Some(format!("That isn't the source's name. Type {} exactly.", state.change.feed));
             }
             _ => {
                 edit_input(input, key);
@@ -1166,6 +1349,10 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if matches!(&app.screen, Screen::Updates(UpdatesState { passphrase: Some(_), .. })) {
         return update_passphrase_key(app, key);
     }
+    if key.code == KeyCode::Esc {
+        pop(app);
+        return Vec::new();
+    }
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
@@ -1189,15 +1376,24 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 }
             }
         }
+        // The Nodo's own update has its own button, apart from the apps.
+        KeyCode::Char('n') => {
+            if rows.iter().any(|item| item.name == SYSTEM_BASE && !item.held) {
+                return apply_batch(app, vec![SYSTEM_BASE.to_owned()], Vec::new());
+            }
+            notice(app, NoticeKind::Info, "The Nodo is up to date.");
+        }
+        KeyCode::Char('z') => return more::open_rollbacks(app),
         KeyCode::Enter => {
-            // Keep the on-screen order, not the order the boxes were ticked in.
+            // Keep the on-screen order, not the order the boxes were ticked in. The Nodo's own
+            // update is never part of the apps' batch: it has its own button.
             let batch: Vec<String> = rows
                 .iter()
-                .filter(|item| state.checked.contains(&item.name))
+                .filter(|item| item.name != SYSTEM_BASE && state.checked.contains(&item.name))
                 .map(|item| item.name.clone())
                 .collect();
             if batch.is_empty() {
-                notice(app, NoticeKind::Info, "Select at least one update first.");
+                notice(app, NoticeKind::Info, "Tick at least one app first.");
                 return Vec::new();
             }
             // A new permission is always approved first, even when the box is ticked.
@@ -1361,6 +1557,10 @@ fn logs_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         return Vec::new();
     }
+    if key.code == KeyCode::Esc {
+        pop(app);
+        return Vec::new();
+    }
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
@@ -1371,6 +1571,11 @@ fn logs_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Up => {
             step(&mut state.selected, sources.len(), key.code == KeyCode::Down);
+            if let Some(source) = sources.get(state.selected) {
+                return vec![Effect::LoadLogs(source.clone())];
+            }
+        }
+        KeyCode::F(5) => {
             if let Some(source) = sources.get(state.selected) {
                 return vec![Effect::LoadLogs(source.clone())];
             }
@@ -1399,9 +1604,7 @@ fn rejected_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('f') => {
             let feed = data.id.feed.clone();
             let selected = app.data.feeds.iter().position(|entry| entry.name == feed).unwrap_or(0);
-            let effects = switch_tab(app, Tab::Feeds);
-            app.screen = Screen::Feeds { selected };
-            effects
+            open_sources(app, selected)
         }
         KeyCode::Esc => {
             pop(app);
@@ -1531,7 +1734,7 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         Screen::Home { .. } if drive_missing => app.screen = Screen::NoDrive { choice: 0 },
         Screen::NoDrive { .. } if !drive_missing => app.screen = Screen::Home { selected: 0 },
         Screen::Home { selected } => clamp(selected, services),
-        Screen::Feeds { selected } => clamp(selected, feeds),
+        Screen::Feeds { selected, .. } => clamp(selected, feeds),
         Screen::Web { selected } => clamp(selected, sites),
         Screen::Updates(state) => clamp(&mut state.selected, rows),
         Screen::Logs(state) => clamp(&mut state.selected, sources),
@@ -2133,6 +2336,40 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
     }
 }
 
+/// A click that picks a row, a field or a choice: moves the selection there, as the arrow keys
+/// would, so whatever key the click then presses acts on what was clicked.
+fn pick(app: &mut App, index: usize) {
+    let counts = (app.home_items().len(), installed_apps(app).len(), app.data.feeds.len(), app.update_rows().len(), app.data.log_sources.len());
+    match &mut app.screen {
+        Screen::Home { selected } => *selected = index.min(counts.0.saturating_sub(1)),
+        Screen::NoDrive { choice } => *choice = index.min(3),
+        Screen::Apps { selected } => *selected = index.min(counts.1.saturating_sub(1)),
+        Screen::AppPage(state) => state.selected = index.min(APP_SECTIONS.len() - 1),
+        Screen::AppRemove(state) => state.confirm_focused = index == 1,
+        Screen::System { selected } => *selected = index.min(SYSTEM_ROWS.len() - 1),
+        Screen::Search(state) => {
+            state.list_focused = true;
+            state.selected = index;
+        }
+        Screen::Feeds { selected, .. } => *selected = index.min(counts.2.saturating_sub(1)),
+        Screen::AddFeed(AddFeedState::Confirm { trust_focused, .. }) => *trust_focused = index == 1,
+        Screen::FeedKey(state) => state.choice = index.min(2),
+        Screen::Review(state) => state.confirm_focused = index == 1,
+        Screen::Capability(state) => state.choice = index.min(2),
+        Screen::Settings(state) if state.editing.is_none() => state.selected = index.min(state.form.fields.len().saturating_sub(1)),
+        Screen::Reference(state) => {
+            state.list_focused = true;
+            state.selected = index;
+        }
+        Screen::Updates(state) => state.selected = index.min(counts.3.saturating_sub(1)),
+        Screen::AutoUpdate(state) => state.selected = index,
+        Screen::UpdateResults(state) => state.choice = index.min(3),
+        Screen::Logs(state) => state.selected = index.min(counts.4.saturating_sub(1)),
+        Screen::Rollbacks(state) => state.selected = index,
+        _ => web::pick(app, index),
+    }
+}
+
 fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
     use crate::hit::Click;
     match click {
@@ -2144,11 +2381,12 @@ fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
             switch_tab(app, tab)
         }
         Click::Key(code) => on_key(app, KeyEvent::from(code)),
+        Click::Ctrl(c) => on_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)),
         Click::Pick { index, then } => {
             app.notice = None;
             match &mut app.modal {
                 Some(modal) => modal.confirm_focused = index == 1,
-                None => web::pick(app, index),
+                None => pick(app, index),
             }
             match then {
                 Some(code) => on_key(app, KeyEvent::from(code)),

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Settings
+
+
+       ▲  moneropay didn't start with the new settings, so they were undone
+
+       It's running again with the settings it had before. What you changed:
+         API port                5000  →  18081
+         Log level               info  →  debug
+
+       moneropay said: "listen tcp :18081: bind: address already in use"
+       API port 18081 is used by monero-daemon. Pick a different port.
+
+       Show log ›
+
+                                                                       Keep as it is          Edit again     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ edit again  l log  x keep as it is  Esc back

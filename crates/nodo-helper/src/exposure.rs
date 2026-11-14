@@ -177,7 +177,7 @@ fn find_site<'a>(package: &'a Package, site: &str) -> Result<&'a WebService, Api
 }
 
 impl<S: System> Helper<S> {
-    fn load_toml<T: DeserializeOwned + Default>(
+    pub(crate) fn load_toml<T: DeserializeOwned + Default>(
         &self,
         path: &Path,
     ) -> Result<(T, Option<Vec<u8>>), ApiError> {

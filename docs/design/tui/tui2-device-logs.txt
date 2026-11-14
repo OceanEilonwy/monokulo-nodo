@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Device logs
+
+    Search                                                                                          Save to a file ›
+
+      All      Problems      The Nodo      cuprated      mk-pay
+
+
+       14:02      mk-bell    couldn't reach the push relay; trying again in 1 minute
+       13:41      The Nodo   the SSD reached 61 °C; slowed down for 4 minutes
+       09:15      cuprated   lost 3 peers; found 5 new ones
+       03:12      mk-pay     update to 0.2 failed to start; put back 0.1
+       yesterday  The Nodo   update 2026.11.13 installed after restart
+
+       Show older ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Click a line for its full text.   Keys: / search  1-5 filter  ↑↓ scroll

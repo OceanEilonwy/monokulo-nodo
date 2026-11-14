@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  feather-ws
+
+
+       Installing feather-ws
+
+                                                            60%
+
+       ✓  Downloaded and checked
+       ✓  Space made on the drive
+       ›  Starting it
+       ○  Making sure it answers
+
+       You can leave this page; it carries on.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Esc back (installing continues)

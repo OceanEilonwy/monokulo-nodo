@@ -142,7 +142,9 @@ fn board_from(buffer: &Buffer, title: &str, slug: &str, clickable: &str, width: 
     let grid_w = (f32::from(width) * FONT_PX * 0.6).ceil() as u32;
     let grid_h = (f32::from(height) * ROW_PX).ceil() as u32;
     let w = grid_w + 2 * PAD_PX;
-    let h = grid_h + 2 * PAD_PX + CAPTION_PX;
+    // Narrow boards wrap their caption onto more lines.
+    let caption = if width < 100 { CAPTION_PX + 48 } else { CAPTION_PX };
+    let h = grid_h + 2 * PAD_PX + caption;
     let size = format!("{width}×{height}");
     let html = format!(
         r#"<!doctype html>
@@ -201,7 +203,62 @@ renderVals() {{ return {{}}; }}
     (html, w, h)
 }
 
+/// Every real screen, from its fixture, at 120×36 and 80×24: `real-tui-<slug>` boards and text.
+pub fn real_all(out: &std::path::Path) {
+    use nodo_tui::app::{Screen, ScreenId};
+    use nodo_tui::fixtures::fixture;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let theme = Theme::truecolor().with_rounded(true);
+    let mut scenes: Vec<(String, String, nodo_tui::app::App)> = Vec::new();
+    for id in ScreenId::ALL.into_iter().chain([ScreenId::Setup]) {
+        let (app, _) = fixture(id);
+        scenes.push((format!("real-tui-{}", id.slug()), format!("{} (real)", id.slug()), app));
+    }
+    let (mut app, _) = fixture(ScreenId::Feeds);
+    app.screen = Screen::Feeds { selected: 0, keys: true };
+    scenes.push(("real-tui-feeds-keys".into(), "Sources with keys shown (real)".into(), app));
+    let mut index = Vec::new();
+    for (slug, title, app) in &scenes {
+        for (width, height, suffix) in [(120u16, 36u16, ""), (80, 24, "-80x24")] {
+            let mut app = app.clone();
+            app.size = (width, height);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+            terminal.draw(|frame| {
+                nodo_tui::view::render(frame, &app, &theme);
+            })
+            .expect("draw");
+            let buffer = terminal.backend().buffer().clone();
+            let (html, w, h) = board_from(&buffer, title, slug, "", width, height, &theme);
+            let name = format!("{slug}{suffix}.dc.html");
+            std::fs::write(out.join(&name), html).expect("write board");
+            let text: String = (0..height)
+                .map(|y| {
+                    let mut line = String::new();
+                    let mut x = 0;
+                    while x < width {
+                        let symbol = buffer[(x, y)].symbol();
+                        line.push_str(symbol);
+                        x += UnicodeWidthStr::width(symbol).max(1) as u16;
+                    }
+                    line.trim_end().to_owned() + "\n"
+                })
+                .collect();
+            std::fs::write(out.join(format!("{slug}{suffix}.txt")), text).expect("write text");
+            index.push(format!("{name} {w} {h}"));
+        }
+    }
+    std::fs::write(out.join("real-tui-boards.txt"), index.join("\n") + "\n").expect("write index");
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--real-all") {
+        let out: PathBuf = std::env::args().nth(2).unwrap_or_else(|| "docs/design/tui".into()).into();
+        std::fs::create_dir_all(&out).expect("create the output directory");
+        real_all(&out);
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--real") {
         let out: PathBuf = std::env::args().nth(2).unwrap_or_else(|| "docs/design/tui".into()).into();
         std::fs::create_dir_all(&out).expect("create the output directory");
@@ -239,7 +296,7 @@ fn main() {
     for scene in Scene::ALL {
         emit(scene, 120, 36, "");
     }
-    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet] {
+    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps, Scene::T2SourceKeyChanged, Scene::T2Sources, Scene::T2AppPage, Scene::T2System, Scene::T2Updates, Scene::T2Backups, Scene::T2NetworkWifi] {
         emit(scene, 80, 24, "-80x24");
     }
     // Board names and sizes, one per line, for laying them out on the canvas.

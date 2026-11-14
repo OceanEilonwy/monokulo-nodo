@@ -1,32 +1,32 @@
-Home   Packages   Web   Feeds     Updates (3)     Logs                 Auto-update on for 3 packages
-┌ Available ───────────────────────────────────────────────────────────────────────────────────────┐
-│ ▸[x] moneropay     2.7.0 → 2.7.1       official                                            Ready │
-│  [x] system base   2026.11 → 2026.12   tested snapshot                            Restart needed │
-│  [ ] wallet-relay  0.4.2 → 0.5.0       community                       ▲ Asks for new permission │
-│                                                                                                  │
-│  Held back                                                                                       │
-│  [ ] cuprated      0.1.0 → 0.2.0       official                         You skipped this version │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ wallet-relay asks for more ──────────────────────────────────────────────────────────────────────┐
-│ ▲ New permission: connect out to any internet address.                                           │
-│ Selecting this update will ask you to review and approve that change first.                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ How updates apply ───────────────────────────────────────────────────────────────────────────────┐
-│ Each package restarts, then runs its health check. If that fails, its previous version returns.  │
-│ The node restarts last. Encrypted packages stay unlocked unless the system restarts.             │
-│ Last checked 2 hours ago                                                                         │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-Space select  ↵ update selected  c changelog  r check now  h hold version  a auto-update
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    System  ›  Updates
+
+
+       The Nodo   2026.11  →  2026.12
+
+       Needs a restart. Apps stop safely first.                        Update and restart
+
+
+
+       Apps
+       ▸ [x]  moneropay     2.7.0  →  2.7.1
+         [ ]  wallet-relay  0.4.2  →  0.5.0       ▲ asks for something new; you'll review it
+         first
+         [ ]  cuprated      0.1.0  →  0.2.0       you skipped this version
+
+       Each app keeps its settings and can be undone.                        Update 1 app
+
+
+    Automatic updates ›  automatic for 3     Undo an update ›     Check now ›
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  Space tick  ↵ update ticked  c changes  h hold  Esc back

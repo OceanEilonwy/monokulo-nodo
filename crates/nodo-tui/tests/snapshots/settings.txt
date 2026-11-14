@@ -1,32 +1,32 @@
-moneropay › Settings                                                             ● 2 unsaved changes
-┌ Connection ──────────────────────────────────────────────┐┌ Payment address ─────────────────────┐
-│  Daemon RPC        $(monero-daemon.public_rpc_url)       ││ Where received funds are sent.       │
-│                    Resolves to http://127.0.0.1:18081    ││ Required. Provided by the package.   │
-│                                                          ││                                      │
-│  API port          5000                                  ││ Saving will                          │
-│                                                          ││ Restart moneropay                    │
-│  Log level         ‹ info ›                              ││ Run its health check                 │
-│                                                          ││ Restore these values if it fails     │
-│ ▸Payment address   48edfHu7V9Z84Y                        ││                                      │
-│                    ✕ Address is too short. A Monero      ││ Others can read                      │
-│                    address has 95 characters.            ││ moneropay.api_url                    │
-│                                                          ││                                      │
-│  Webhook secret    ••••••••••••                          ││                                      │
-│                    secret, private to this package       ││                                      │
-│                                                          ││                                      │
-│  Allow LAN access  [x] on                                ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-│                                                          ││                                      │
-└──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
-↑↓ field  ↵ edit  $ use a reference  ctrl-s save  z undo  Esc back
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Settings
+
+    Settings                                                            2 changes, not saved yet
+    moneropay restarts with the new settings. If it doesn't start, they're undone by themselves.
+
+
+
+         Daemon RPC             monero-daemon · http://127.0.0.1:18081 ▾
+                               Picked from your apps, so it follows daemon rpc if it changes.
+
+         API port                5000     −   +
+                               Port for the local payment API.
+
+         Log level              info                         ▾
+                               How much the service writes to its log.
+
+       ▸ Payment address        48edfHu7V9Z84Y
+                               ✕ Address is too short. A Monero address has 95 characters.
+
+         Webhook secret         ••••••••••••                      Change
+                               Signs the webhooks this package sends.
+
+         Allow LAN access      [x] On
+                               Lets other devices on your network reach the API.
+
+                                                                  Cancel            Save
+
+    Keys: ↑↓ choose  ↵ edit  $ pick from an app  ctrl-s save  z undo  Esc back

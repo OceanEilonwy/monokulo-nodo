@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  Get apps  ›  Sources
+
+    Sources                                                Add a source   
+    Where the Nodo finds apps. Each source signs its apps; the Nodo only
+    installs what its key signed.
+
+
+
+       official   built in                         [x] On
+                                                              Remove   
+       feeds.monokulo.example/official   ·   12 apps
+
+
+
+       ▸ monokulo                                  [x] On
+                                                              Remove   
+
+    ↓ 3 more — scroll
+
+    Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  ↵ its apps  Esc back

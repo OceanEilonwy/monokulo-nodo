@@ -137,21 +137,47 @@ impl Card {
         }
         self.buttons_at = Some(self.rows.len());
         let room = self.width.saturating_sub(6);
-        let width = list.iter().map(|(label, _, _)| label.chars().count()).max().unwrap_or(0) + 6;
-        let mut spans = Vec::new();
+        let label_len = |label: &str| label.trim_start_matches('!').chars().count();
         let mut ordered: Vec<&(&str, bool, Click)> = list.iter().filter(|(_, p, _)| !p).collect();
         ordered.extend(list.iter().filter(|(_, p, _)| *p));
-        for (index, (label, primary, click)) in ordered.into_iter().enumerate() {
-            if index > 0 {
-                spans.push(t.n("   "));
+        // One width for all, the longest label's; narrower, each its own; and when even that does
+        // not fit (three buttons at 80 columns), one button per row, the primary last. A button
+        // is never cut by the card's wrapping.
+        let equal = ordered.iter().map(|(label, _, _)| label_len(label)).max().unwrap_or(0) + 6;
+        let gaps = 3 * (ordered.len() - 1);
+        let total_equal = ordered.len() * (equal + 2) + gaps;
+        let total_own: usize = ordered.iter().map(|(label, _, _)| label_len(label) + 6 + 2).sum::<usize>() + gaps;
+        let widths: Vec<usize> = if total_equal <= room {
+            vec![equal; ordered.len()]
+        } else {
+            ordered.iter().map(|(label, _, _)| label_len(label) + 6).collect()
+        };
+        if total_equal <= room || total_own <= room {
+            let mut spans = Vec::new();
+            for (index, ((label, primary, click), width)) in ordered.iter().zip(&widths).enumerate() {
+                if index > 0 {
+                    spans.push(t.n("   "));
+                }
+                spans.extend(button(t, label, *primary, *width, self.surface));
+                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
             }
-            spans.extend(button(t, label, *primary, width, self.surface));
-            targets.push(Target::button(*label, click.clone()));
+            let used = width_of(&spans);
+            let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
+            out.extend(spans);
+            self.row(t, out);
+        } else {
+            for (index, (label, primary, click)) in ordered.iter().enumerate() {
+                if index > 0 {
+                    self.blank(t);
+                }
+                let spans = button(t, label, *primary, equal.min(room.saturating_sub(2)), self.surface);
+                let used = width_of(&spans);
+                let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
+                out.extend(spans);
+                self.row(t, out);
+                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+            }
         }
-        let used = width_of(&spans);
-        let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
-        out.extend(spans);
-        self.row(t, out);
         self.blank(t);
     }
 
@@ -166,6 +192,32 @@ impl Card {
         if self.buttons_at.is_none() {
             self.buttons_at = Some(self.rows.len() - 1);
         }
+    }
+
+    /// A row with one button at its right end, on the card's inner padding. When both do not fit
+    /// (80 columns), the text keeps its row and the button gets its own, still right-aligned.
+    pub fn row_with_button(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, label: &str, primary: bool, click: Click, targets: &mut Vec<Target>) {
+        let width = label.trim_start_matches('!').chars().count() + 6;
+        let button = button(t, label, primary, width, self.surface);
+        let room = self.width.saturating_sub(6);
+        let used = width_of(&spans) + width_of(&button);
+        targets.push(Target::button(label.trim_start_matches('!'), click));
+        if used + 2 > room {
+            self.row(t, spans);
+            let mut own = vec![t.n(" ".repeat(room.saturating_sub(width_of(&button))))];
+            own.extend(button);
+            self.row(t, own);
+            return;
+        }
+        spans.push(t.n(" ".repeat(room.saturating_sub(used))));
+        spans.extend(button);
+        self.row(t, spans);
+    }
+
+    /// A clickable row: the row, and a target over the card's width on it, found by `find`.
+    pub fn link_row(&mut self, t: &Theme, spans: Vec<Span<'static>>, find: &str, click: Click, targets: &mut Vec<Target>) {
+        self.row(t, spans);
+        targets.push(Target::card_row(find, click));
     }
 
     /// Marks the next row as the one the keyboard focus is on, so fitting keeps it in view.
@@ -201,6 +253,11 @@ impl Card {
     pub fn items(self) -> Vec<Item> {
         self.rows
     }
+
+    /// The row the keyboard focus is on, if any.
+    pub fn focus_row(&self) -> Option<usize> {
+        self.focus_at
+    }
 }
 
 /// An inset box for typing or picking, on a card. A focused box is raised and shows the cursor.
@@ -231,13 +288,20 @@ fn centred(label: &str, width: usize) -> String {
 /// A flat filled button, one row tall, `width + 2` cells wide. With `rounded`, its ends are the
 /// Powerline caps in the button's colour on the surface below; otherwise plain padding.
 pub fn button(t: &Theme, label: &str, primary: bool, width: usize, under: Color) -> Vec<Span<'static>> {
+    let danger = label.starts_with('!');
+    let label = label.trim_start_matches('!');
     if t.is_mono() {
         let text = format!("[{}]", centred(label, width));
         let style = if primary { Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD) } else { Style::new() };
         return vec![Span::styled(text, style)];
     }
-    let colour = if primary { t.accent } else { t.raised };
-    let ink = if primary { t.ground } else { t.fg };
+    let (colour, ink) = if danger {
+        (t.danger, t.err)
+    } else if primary {
+        (t.accent, t.ground)
+    } else {
+        (t.raised, t.fg)
+    };
     let weight = if primary { Modifier::BOLD } else { Modifier::empty() };
     let fill = Style::new().fg(ink).bg(colour).add_modifier(weight);
     if t.rounded {
@@ -245,6 +309,18 @@ pub fn button(t: &Theme, label: &str, primary: bool, width: usize, under: Color)
         vec![Span::styled(CAP_LEFT, cap), Span::styled(centred(label, width), fill), Span::styled(CAP_RIGHT, cap)]
     } else {
         vec![Span::styled(centred(label, width + 2), fill)]
+    }
+}
+
+/// A button's label with the keyboard focus shown as a ▸ before it, so which button Enter presses
+/// is visible in every theme, without colour too.
+pub fn focused(label: &str, focus: bool) -> String {
+    let danger = label.starts_with('!');
+    let bare = label.trim_start_matches('!');
+    match (focus, danger) {
+        (true, true) => format!("!▸ {bare}"),
+        (true, false) => format!("▸ {bare}"),
+        (false, _) => label.to_owned(),
     }
 }
 
@@ -309,9 +385,15 @@ impl Screen3 {
 /// target.
 pub fn top(app: &App, t: &Theme, tab: Tab, w: u16, targets: &mut Vec<Target>) -> Page {
     let mut tabs = vec![t.n("  ")];
-    let pending = app.pending_updates();
+    let apps = app.data.updates.iter().filter(|u| !u.held && u.name != crate::model::SYSTEM_BASE).count();
+    let nodo = app.data.updates.iter().filter(|u| !u.held && u.name == crate::model::SYSTEM_BASE).count();
     for each in Tab::ALL {
-        let extra = if each == Tab::Updates && pending > 0 { format!(" {pending}") } else { String::new() };
+        let count = match each {
+            Tab::Apps => apps,
+            Tab::System => nodo,
+            _ => 0,
+        };
+        let extra = if count > 0 { format!(" {count}") } else { String::new() };
         if each == tab {
             let style = if t.is_mono() {
                 Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
@@ -360,4 +442,278 @@ pub fn tick(t: &Theme, on_: bool) -> Span<'static> {
     } else {
         t.d("[ ]")
     }
+}
+
+
+/// The breadcrumb row with the page's own actions at its right end, on the content margin. When
+/// they do not fit beside the breadcrumb (under 100 columns), they fold into one "⋯ More"
+/// button that opens them as a list.
+pub fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, Click)], more: Click, w: u16, targets: &mut Vec<Target>) -> Item {
+    let Item::Text(left) = trail(t, parts, targets) else { unreachable!("trail is one line") };
+    let folded = [("⋯ More", more)];
+    let shown: &[(&str, Click)] = if w >= 100 { actions } else { &folded };
+    let width = shown.iter().map(|(l, _)| l.trim_start_matches('!').chars().count()).max().unwrap_or(0) + 4;
+    let mut right = Vec::new();
+    for (index, (label, click)) in shown.iter().enumerate() {
+        if index > 0 {
+            right.push(t.n("  "));
+        }
+        right.extend(button(t, label, false, width, t.ground));
+        targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+    }
+    right.push(t.n(MARGIN));
+    Item::Row(left, Line::from(right))
+}
+
+/// A heading with one button at the right end of its row, on the content margin.
+pub fn heading_button(t: &Theme, text: &str, label: &str, click: Click, targets: &mut Vec<Target>) -> Item {
+    let width = label.chars().count() + 6;
+    let mut right = button(t, label, true, width, t.ground);
+    right.push(t.n(MARGIN));
+    targets.push(Target::button(label, click));
+    Item::Row(Line::from(vec![margin(t), t.b(text.to_owned())]), Line::from(right))
+}
+
+/// A heading or quiet line with a link at the right end of its row, on the content margin.
+pub fn heading_link(t: &Theme, left: Span<'static>, link: &str, click: Click, targets: &mut Vec<Target>) -> Item {
+    targets.push(Target::text(link, click));
+    Item::Row(Line::from(vec![margin(t), left]), Line::from(vec![t.a(link.to_owned()), t.n(MARGIN)]))
+}
+
+/// A link on its own line on the content margin.
+pub fn link(t: &Theme, text: &str, click: Click, targets: &mut Vec<Target>) -> Item {
+    targets.push(Target::text(text, click));
+    line(vec![margin(t), t.a(text.to_owned())])
+}
+
+/// An on/off box that reads without colour.
+pub fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
+    if on_ {
+        vec![t.a("[x]"), t.n(" On ")]
+    } else {
+        vec![t.d("[ ]"), t.d(" Off")]
+    }
+}
+
+/// A key fingerprint as groups of four, to compare by eye.
+pub fn fingerprint_groups(fp: &str) -> String {
+    // A "SHA256:" or similar label is not part of the key; its digits must not join the groups.
+    let body = fp.rsplit_once(": ").map_or(fp, |(_, rest)| rest);
+    let body = body.split_once("256:").map_or(body, |(_, rest)| rest);
+    let hex: String = body.chars().filter(char::is_ascii_hexdigit).collect();
+    let pieces: Vec<String> = hex.as_bytes().chunks(8).map(|c| String::from_utf8_lossy(c).into_owned()).collect();
+    pieces.join("  ")
+}
+
+/// A key with its label on one row, the value as groups (highlighted when it is the one to
+/// check). When both do not fit, the value goes on the next row under the label, kept whole.
+pub fn key_row(card: &mut Card, t: &Theme, label: &str, fp: &str, highlight: bool) {
+    let style = if highlight { Style::new().fg(t.accent).bg(t.field).add_modifier(Modifier::BOLD) } else { Style::new().fg(t.fg) };
+    let value = Span::styled(format!(" {} ", fingerprint_groups(fp)), style);
+    let label = t.d(pad(label, 15));
+    if 15 + width_of(std::slice::from_ref(&value)) + 4 <= card.width.saturating_sub(4) {
+        card.row(t, vec![label, value]);
+    } else {
+        card.row(t, vec![label]);
+        card.row(t, vec![t.n("  "), value]);
+    }
+}
+
+/// A progress bar of whole cells: done cells filled with the accent, the rest inset.
+pub fn progress(t: &Theme, fraction: f32, width: usize) -> Vec<Span<'static>> {
+    let done = ((fraction.clamp(0.0, 1.0)) * width as f32).round() as usize;
+    if t.is_mono() {
+        return vec![t.n(format!("[{}{}]", "#".repeat(done), "-".repeat(width - done)))];
+    }
+    vec![Span::styled(" ".repeat(done), Style::new().bg(t.accent)), Span::styled(" ".repeat(width - done), Style::new().bg(t.field))]
+}
+
+/// Wi-Fi signal as four bars.
+pub fn signal(t: &Theme, bars: usize) -> Vec<Span<'static>> {
+    ["▂", "▄", "▆", "█"].iter().enumerate().map(|(i, g)| if i < bars { t.n(*g) } else { t.d("·") }).collect()
+}
+
+/// A settings field: the label column, then the control, and a quiet hint or an error under it.
+pub fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, hint: Option<Span<'static>>) {
+    let mut spans = vec![t.n(pad(label, 24))];
+    spans.extend(control);
+    card.row(t, spans);
+    if let Some(hint) = hint {
+        card.row(t, vec![t.n(" ".repeat(24)), hint]);
+    }
+    card.blank(t);
+}
+
+impl Screen3 {
+    /// Several cards stacked with a blank row between them. When they do not all fit, the cards
+    /// that would fall off the bottom are left out and a dim "↓ N more — scroll" row takes their
+    /// place inside the list, a row clear of the keys. Targets are in drawing order: what comes
+    /// before, the cards, what comes after; the caller pushes them that way.
+    pub fn stack(self, t: &Theme, cards: Vec<Card>, keys: &str, w: u16, h: u16) -> Page {
+        let avail = usize::from(h).saturating_sub(usize::from(STRIP_ROWS) + 1 + rows_of(&self.before, w));
+        let total = cards.len();
+        let mut rows: Vec<(usize, Item)> = Vec::new();
+        let mut focus: Option<usize> = None;
+        for (index, card) in cards.into_iter().enumerate() {
+            if index > 0 {
+                rows.push((index, Item::Blank));
+            }
+            if let Some(at) = card.focus_row() {
+                focus = Some(rows.len() + at);
+            }
+            rows.extend(card.items().into_iter().map(|item| (index, item)));
+        }
+        let mut items = self.before;
+        if rows.len() + rows_of(&self.after, w) <= avail {
+            items.extend(rows.into_iter().map(|(_, item)| item));
+            items.extend(self.after);
+        } else {
+            let visible = avail.saturating_sub(3).max(1);
+            // The window scrolls with the keyboard focus, keeping a row of context under it.
+            let start = focus.map_or(0, |f| (f + 2).saturating_sub(visible)).min(rows.len().saturating_sub(visible));
+            let shown: Vec<(usize, Item)> = rows.into_iter().skip(start).collect();
+            let seen = shown.iter().take(visible).map(|(card, _)| *card).max().map_or(0, |c| c + 1);
+            let more_below = shown.len() > visible;
+            items.extend(shown.into_iter().take(visible).map(|(_, item)| item));
+            items.push(Item::Blank);
+            let arrow = if start > 0 && more_below { "↕" } else if start > 0 { "↑" } else { "↓" };
+            let hint = if more_below && total > seen {
+                format!("{arrow} {} more — scroll", total - seen)
+            } else if more_below {
+                format!("{arrow} more below — scroll")
+            } else {
+                format!("{arrow} more above — scroll")
+            };
+            items.push(line(vec![margin(t), t.d(hint)]));
+            items.push(Item::Blank);
+        }
+        let mut page = self.page.plain(items).footer(keys_line(t, keys));
+        page.targets = self.targets;
+        page
+    }
+
+    /// One card, fitted: like `finish`, with the targets already in `self.targets` in order.
+    pub fn card(self, t: &Theme, mut card: Card, keys: &str, w: u16, h: u16) -> Page {
+        let used = usize::from(STRIP_ROWS) + 1 + rows_of(&self.before, w) + rows_of(&self.after, w);
+        card.fit(t, usize::from(h).saturating_sub(used));
+        let mut items = self.before;
+        items.extend(card.items());
+        items.extend(self.after);
+        let mut page = self.page.plain(items).footer(keys_line(t, keys));
+        page.targets = self.targets;
+        page
+    }
+}
+
+/// Puts a page written with bordered panels into the v3 look: the tab strip, the breadcrumb (the
+/// page's header, under its tab) with its status at the right, every panel as a card titled in
+/// bold, rows kept as two columns, the selected row marked with ▸, and the footer's hints as the
+/// one dim line of keys. Click targets are kept, since they are found by text.
+pub fn modern(app: &App, t: &Theme, page: Page) -> Page {
+    use super::layout::{Section, Tone};
+    let (w, h) = super::frame_size();
+    let tab = app.screen.area();
+    let mut screen = Screen3::new(app, t, tab, w);
+    let header: String = page.left.spans.iter().map(|s| s.content.as_ref()).collect();
+    let mut parts: Vec<String> = header.split('›').map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()).collect();
+    if parts.first().map(String::as_str) == Some("Home") && tab != Tab::Home {
+        parts[0] = tab.label().to_owned();
+    }
+    if parts.first().map(String::as_str) != Some(tab.label()) {
+        parts.insert(0, tab.label().to_owned());
+    }
+    let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+    let mut before_targets = Vec::new();
+    let Item::Text(trail_line) = trail(t, &refs, &mut before_targets) else { unreachable!("trail is one line") };
+    let mut right = page.right.clone();
+    right.spans.push(t.n(MARGIN));
+    screen.before = vec![Item::Blank, Item::Row(trail_line, right), Item::Blank];
+    screen.targets.extend(before_targets);
+
+    let label_width = 30usize.min(usize::from(w) / 3);
+    let mut cards = Vec::new();
+    let mut add = |title: Option<(&str, Tone)>, items: &[Item]| {
+        let mut card = Card::new(t, w);
+        card.blank(t);
+        if let Some((title, tone)) = title {
+            if !title.is_empty() {
+                let lead = match tone {
+                    Tone::Error => t.e("▲  "),
+                    Tone::Accent => t.a(""),
+                    Tone::Normal => t.n(""),
+                };
+                card.row(t, vec![lead, t.b(title.to_owned())]);
+                card.blank(t);
+            }
+        }
+        for item in items {
+            match item {
+                Item::Blank => card.blank(t),
+                Item::Text(line) => card.row(t, line.spans.clone()),
+                Item::Row(left, right) | Item::Selected(left, right) => {
+                    let selected = matches!(item, Item::Selected(..));
+                    let mut spans: Vec<Span<'static>> = left.spans.clone();
+                    if selected {
+                        card.focus_here();
+                        // The ▸ marker the old pages put in place of a leading space, in the accent.
+                        if let Some(first) = spans.first_mut() {
+                            if let Some(rest) = first.content.strip_prefix('▸') {
+                                *first = Span::styled(rest.to_owned(), first.style);
+                            }
+                        }
+                        spans.insert(0, t.a("▸ "));
+                    }
+                    let used = width_of(&spans);
+                    if !right.spans.is_empty() {
+                        spans.push(t.n(" ".repeat(label_width.saturating_sub(used).max(2))));
+                        spans.extend(right.spans.iter().cloned().map(|s| {
+                            let style = s.style;
+                            if style.bg.is_some() && !t.is_mono() { s.style(style.bg(t.card)) } else { s }
+                        }));
+                    }
+                    card.row(t, spans);
+                }
+            }
+        }
+        card.blank(t);
+        cards.push(card);
+    };
+    for section in &page.sections {
+        match section {
+            Section::Panel(panel) => add(Some((panel.title.as_str(), panel.tone)), &panel.items),
+            Section::Columns(columns) => {
+                for (_, panels) in columns {
+                    for panel in panels {
+                        add(Some((panel.title.as_str(), panel.tone)), &panel.items);
+                    }
+                }
+            }
+            Section::Plain(items) => add(None, items),
+        }
+    }
+    let keys: Vec<String> = page
+        .footer
+        .iter()
+        .map(|item| match item {
+            Item::Text(line) => line.spans.iter().map(|s| s.content.as_ref()).collect::<String>(),
+            Item::Row(left, right) | Item::Selected(left, right) => {
+                let l: String = left.spans.iter().map(|s| s.content.as_ref()).collect();
+                let r: String = right.spans.iter().map(|s| s.content.as_ref()).collect();
+                if l.trim().is_empty() { r } else { format!("{}   {}", l.trim(), r) }
+            }
+            Item::Blank => String::new(),
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    // Only the last footer line is keys; earlier ones are notes, which go above the keys.
+    let (notes, last) = match keys.split_last() {
+        Some((last, notes)) => (notes.to_vec(), format!("Keys: {}", last.trim())),
+        None => (Vec::new(), String::new()),
+    };
+    if !notes.is_empty() {
+        screen.after = std::iter::once(Item::Blank).chain(notes.iter().map(|n| quiet(t, n.trim()))).collect();
+    }
+    let mut out = screen.stack(t, cards, &last, w, h);
+    out.targets.extend(page.targets);
+    out
 }

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Backups
+
+
+       ✓  Backed up 2 days ago   to SANDISK 64GB (USB) · 1.2 GB
+
+       Next one tonight at 3 am.                                                                 Back up now   
+
+
+
+       Back up by itself             [x] On
+
+       How often                      Every night, keep 7      ▾
+
+       Where                          SANDISK 64GB (USB)       ▾
+
+
+
+       A backup holds your apps' data and settings, your sources and domain providers, locked
+       with your device passphrase. It leaves out the Monero chain, which syncs again by itself.
+
+
+    Restore from a backup ›
+
+
+
+
+
+
+
+
+
+    Keys: ↵ back up now  Tab move  Esc back

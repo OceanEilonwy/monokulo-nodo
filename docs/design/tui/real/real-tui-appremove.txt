@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Remove
+
+
+       ▲  Remove moneropay?
+
+       moneropay stops and its program is removed. Anything that relies on it stops working.
+       Its data stays on the drive, so installing it again brings everything back. A site still online has to be
+       taken offline first, in Hosting.
+
+                                                                     ▸ Cancel             Remove moneropay   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ←→ choose  Esc cancel  (Enter cancels until you move to Remove)

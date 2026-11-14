@@ -810,6 +810,12 @@ pub enum Request {
         approval: PermissionApproval,
         passphrase: Option<Secret>,
     },
+    /// Removes an app installed from a feed: stops it and removes its files, manifest and the
+    /// record that it is installed. Its data volumes stay on the drive, so installing it again
+    /// brings them back. Refused while any of its sites is online.
+    RemovePackage {
+        package: String,
+    },
     UpdateStatus,
     /// Refreshes the feeds and inspects every newer version, so permission changes are known.
     CheckUpdates,
@@ -1178,6 +1184,7 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::Catalog => "catalog",
         Request::ReviewInstall { .. } => "review-install",
         Request::InstallPackage { .. } => "install-package",
+        Request::RemovePackage { .. } => "remove-package",
         Request::UpdateStatus => "update-status",
         Request::CheckUpdates => "check-updates",
         Request::ReviewUpdate { .. } => "review-update",

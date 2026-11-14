@@ -1,218 +1,198 @@
-//! The settings form, the reference picker and the rollback report.
+//! An app's settings (Apps › app › Settings), picking a value from another app, and what
+//! happens when new settings did not work.
 
-use ratatui::text::{Line, Span};
+use crossterm::event::KeyCode;
+use ratatui::style::Style;
+use ratatui::text::Span;
 
-use super::layout::{Item, Page, Panel};
-use super::{checkbox, hints, mark, pad};
-use crate::app::{ApplyFailedState, ReferenceState, SettingsState};
+use super::layout::{Item, Page};
+use super::pad;
+use super::v3::{heading, inset, quiet, setting, toggle, trail, Card, Screen3};
+use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState, Tab};
+use crate::hit::{Click, Target};
 use crate::model::*;
 use crate::secret::STORED_MASK;
 use crate::theme::Theme;
 
-const LABEL_WIDTH: usize = 18;
 /// Long values such as addresses are cut in the form, so the column stays readable.
-const VALUE_PREVIEW: usize = 14;
-const VALUE_MAX: usize = 36;
+const VALUE_MAX: usize = 34;
 
-fn value_spans(t: &Theme, field: &Field, value: &FieldValue) -> Vec<Span<'static>> {
-    match value {
-        FieldValue::Text(text) => {
-            if matches!(field.kind, FieldKind::Choice(_)) {
-                return vec![t.n(format!("‹ {text} ›"))];
-            }
-            if text.chars().count() > VALUE_MAX {
-                let cut: String = text.chars().take(VALUE_PREVIEW).collect();
-                return vec![t.n(format!("{cut}…"))];
-            }
-            vec![t.n(text.clone())]
-        }
-        FieldValue::Reference { path, .. } => vec![t.i(format!("$({path})"))],
-        FieldValue::Bool(on) => vec![t.n(format!("{} {}", checkbox(*on), if *on { "on" } else { "off" }))],
-        FieldValue::SecretUnset => vec![t.d("not set")],
-        // A new secret's value is not read here at all, only the fact that there is one.
-        FieldValue::SecretSet | FieldValue::NewSecret(_) => vec![t.n(STORED_MASK)],
-    }
-}
-
-pub fn settings(t: &Theme, state: &SettingsState) -> Page {
-    // Labels come from each package's schema, so the column fits the longest one with a gap.
-    let label_width = state
-        .form
-        .fields
-        .iter()
-        .map(|field| unicode_width::UnicodeWidthStr::width(field.label.as_str()) + 2)
-        .fold(LABEL_WIDTH, usize::max);
-    let mut items = Vec::new();
-    for (index, field) in state.form.fields.iter().enumerate() {
-        let selected = index == state.selected;
-        let label = pad(&field.label, label_width);
-        let label_span = if selected { t.b(mark(true, &format!(" {label}"))) } else { t.d(format!(" {label}")) };
-        let mut spans = vec![label_span];
-        match (selected, &state.editing) {
-            (true, Some(input)) => {
-                spans.push(t.n(input.display()));
-                spans.push(t.s(" "));
-            }
-            _ => spans.extend(value_spans(t, field, &state.draft[index])),
-        }
-        items.push(Item::Text(Line::from(spans)));
-        let indent = " ".repeat(label_width + 1);
-        if let FieldValue::Reference { resolved, .. } = &state.draft[index] {
-            items.push(Item::Text(Line::from(t.d(format!("{indent}Resolves to {resolved}")))));
-        }
-        match &state.draft[index] {
-            FieldValue::SecretSet => {
-                items.push(Item::Text(Line::from(t.d(format!("{indent}secret, private to this package")))));
-            }
-            FieldValue::NewSecret(_) => {
-                items.push(Item::Text(Line::from(t.a(format!("{indent}new secret, not saved yet")))));
-            }
-            _ => {}
-        }
-        if let Some(error) = state.error_for(index) {
-            items.push(Item::Text(Line::from(t.e(format!("{indent}✕ {error}")))));
-        }
-        if index + 1 < state.form.fields.len() {
-            items.push(Item::Blank);
-        }
-    }
-
-    let focused = &state.form.fields[state.selected];
-    let mut help = vec![
-        Item::Text(Line::from(t.n(focused.help.clone()))),
-        Item::Text(Line::from(t.d(focused.requirement.clone()))),
-        Item::Blank,
-        Item::Text(Line::from(t.b("Saving will"))),
-        Item::Text(Line::from(t.d(format!("Restart {}", state.form.package)))),
-        Item::Text(Line::from(t.d("Run its health check"))),
-        Item::Text(Line::from(t.d("Restore these values if it fails"))),
-    ];
-    if !state.form.public_settings.is_empty() {
-        help.push(Item::Blank);
-        help.push(Item::Text(Line::from(t.b("Others can read"))));
-        help.extend(state.form.public_settings.iter().map(|path| Item::Text(Line::from(t.d(path.clone())))));
-    }
-
-    let changed = state.changed_indices().len();
-    let right = match changed {
-        0 => t.d("No unsaved changes"),
-        1 => t.a("● 1 unsaved change"),
-        n => t.a(format!("● {n} unsaved changes")),
-    };
-    let keys: &[(&str, &str)] = if state.editing.is_some() {
-        &[("type", "a value"), ("↵", "done"), ("Esc", "cancel")]
+fn shown(text: &str) -> String {
+    if text.chars().count() > VALUE_MAX {
+        let start: String = text.chars().take(8).collect();
+        let end: String = text.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+        format!("{start}…{end}")
     } else {
-        &[("↑↓", "field"), ("↵", "edit"), ("$", "use a reference"), ("ctrl-s", "save"), ("z", "undo"), ("Esc", "back")]
-    };
-    Page::new(
-        Line::from(vec![t.n(format!("{} ", state.form.package)), t.d("› "), t.b("Settings")]),
-        Line::from(right),
-    )
-    .columns(vec![
-        (60, vec![Panel::new("Connection", items).grow()]),
-        (40, vec![Panel::new(focused.label.clone(), help).grow()]),
-    ])
-    .footer(Item::Text(hints(t, keys)))
+        text.to_owned()
+    }
 }
 
-pub fn reference(t: &Theme, state: &ReferenceState) -> Page {
-    let visible = state.visible();
-    let mut query = vec![t.a("$"), t.n(format!(" {}", state.query.display()))];
-    if !state.list_focused {
-        query.push(t.s(" "));
+fn control(t: &Theme, field: &Field, value: &FieldValue, editing: Option<&str>) -> Vec<Span<'static>> {
+    if let Some(typed) = editing {
+        return inset(t, typed, 30, None, true);
     }
-    let mut rows = Vec::new();
-    for (index, option) in visible.iter().enumerate() {
-        let selected = index == state.selected;
-        let left = Line::from(t.n(mark(selected, &format!(" {}", option.path))));
-        if selected {
-            rows.push(Item::Selected(left, Line::from(t.n(option.value.clone()))));
-        } else {
-            rows.push(Item::Row(left, Line::from(t.d(option.value.clone()))));
+    match (&field.kind, value) {
+        (FieldKind::Toggle, FieldValue::Bool(on)) => toggle(t, *on),
+        (FieldKind::Choice(_), FieldValue::Text(text)) => inset(t, text, 28, Some("▾"), false),
+        (FieldKind::Number { .. } | FieldKind::Port, FieldValue::Text(text)) => {
+            let mut spans = vec![Span::styled(format!("  {text}  "), Style::new().fg(t.fg).bg(t.field))];
+            spans.extend([t.n("   "), t.a("−"), t.n("   "), t.a("+")]);
+            spans
         }
+        (_, FieldValue::Text(text)) => inset(t, &shown(text), 30, None, false),
+        (_, FieldValue::Reference { path, resolved }) => {
+            let label = format!("{} · {}", path.split('.').next().unwrap_or(path), shown(resolved));
+            inset(t, &label, 36, Some("▾"), false)
+        }
+        (_, FieldValue::Bool(on)) => toggle(t, *on),
+        (_, FieldValue::SecretUnset) => {
+            let mut spans = inset(t, "", 30, None, false);
+            spans.push(t.d("   not set"));
+            spans
+        }
+        (_, FieldValue::SecretSet | FieldValue::NewSecret(_)) => {
+            let mut spans = vec![Span::styled(format!(" {} ", pad(STORED_MASK, 30)), Style::new().fg(t.fg).bg(t.field))];
+            spans.push(t.a("   Change"));
+            spans
+        }
+    }
+}
+
+fn hint(t: &Theme, state: &SettingsState, index: usize) -> Option<Span<'static>> {
+    if let Some(error) = state.error_for(index) {
+        return Some(t.e(format!("✕ {error}")));
+    }
+    let field = &state.form.fields[index];
+    match &state.draft[index] {
+        FieldValue::Reference { .. } => {
+            return Some(t.d(format!("Picked from your apps, so it follows {} if it changes.", field.label.to_lowercase())));
+        }
+        FieldValue::NewSecret(_) => return Some(t.a("A new secret, not saved yet")),
+        _ => {}
+    }
+    let text = if field.help.is_empty() { field.requirement.clone() } else { field.help.clone() };
+    (!text.is_empty()).then(|| t.d(text))
+}
+
+pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::Apps, w);
+    let package = state.form.package.as_str();
+    let mut before_targets = Vec::new();
+    let changed = state.changed_indices().len();
+    let note = match changed {
+        0 => t.d("No changes yet"),
+        1 => t.a("1 change, not saved yet"),
+        n => t.a(format!("{n} changes, not saved yet")),
+    };
+    screen.before = vec![
+        Item::Blank,
+        trail(t, &["Apps", package, "Settings"], &mut before_targets),
+        Item::Blank,
+        Item::Row(ratatui::text::Line::from(vec![super::v3::margin(t), t.b("Settings")]), ratatui::text::Line::from(vec![note, t.n(super::v3::MARGIN)])),
+        quiet(t, &format!("{package} restarts with the new settings. If it doesn't start, they're undone by themselves.")),
+        Item::Blank,
+        Item::Blank,
+    ];
+    screen.targets.extend(before_targets);
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    // What the box shows while typing: an input's display, which masks a secret as it is typed.
+    let editing = state.editing.as_ref().map(crate::secret::Input::display);
+    for (index, field) in state.form.fields.iter().enumerate() {
+        if index == state.selected {
+            card.focus_here();
+        }
+        let typing = (index == state.selected).then_some(editing.as_deref()).flatten();
+        let label = if index == state.selected { format!("▸ {}", field.label) } else { format!("  {}", field.label) };
+        setting(&mut card, t, &label, control(t, field, &state.draft[index], typing), hint(t, state, index));
+        screen.targets.push(Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+    }
+    let mut targets = Vec::new();
+    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Ctrl('s'))], &mut targets);
+    screen.targets.extend(targets);
+    let keys = if state.editing.is_some() { "Keys: type a value  ↵ done  Esc cancel" } else { "Keys: ↑↓ choose  ↵ edit  $ pick from an app  ctrl-s save  z undo  Esc back" };
+    screen.card(t, card, keys, w, h)
+}
+
+/// Picking a value from another app, such as the Monero node's address.
+pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::Apps, w);
+    let mut before_targets = Vec::new();
+    screen.before = vec![
+        Item::Blank,
+        trail(t, &["Apps", state.package.as_str(), "Settings", state.field_label.as_str()], &mut before_targets),
+        Item::Blank,
+        heading(t, &format!("Pick {} from your apps", state.field_label.to_lowercase())),
+        quiet(t, &format!("It follows the app you pick if its value changes. Expects {}.", state.list.expects)),
+        Item::Blank,
+    ];
+    screen.targets.extend(before_targets);
+    let visible = state.visible();
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    let mut search = vec![t.d(pad("Search", 9))];
+    search.extend(inset(t, state.query.text(), 30, None, !state.list_focused));
+    card.row(t, search);
+    card.blank(t);
+    let path_width = visible.iter().map(|o| o.path.chars().count()).max().unwrap_or(0).clamp(16, 40) + 2;
+    for (index, option) in visible.iter().enumerate() {
+        let selected = state.list_focused && index == state.selected;
+        if selected {
+            card.focus_here();
+        }
+        let lead = if selected { t.a("✓ ") } else { t.n("  ") };
+        card.row(t, vec![lead, t.n(pad(&option.path, path_width)), t.d(shown(&option.value))]);
+        screen.targets.push(Target::card_row(option.path.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
     }
     if visible.is_empty() {
-        rows.push(Item::Text(Line::from(t.d(" No compatible settings match."))));
+        card.row(t, vec![t.d("No app offers a matching value.")]);
     }
-    rows.push(Item::Blank);
-    rows.push(Item::Text(Line::from(t.d(format!(
-        " Not shown: {} settings of the wrong type. {} secrets, which need a grant.",
-        state.list.hidden_wrong_type, state.list.hidden_secrets
-    )))));
-    let chosen = visible.get(state.selected);
-    if let Some((first, second)) = chosen.and_then(|option| option.role_note.as_ref()) {
-        rows.push(Item::Blank);
-        rows.push(Item::Text(Line::from(t.i(format!(" {first}")))));
-        rows.push(Item::Text(Line::from(t.d(format!(" {second}")))));
+    card.blank(t);
+    if let Some(option) = visible.get(state.selected) {
+        if let Some((first, second)) = &option.role_note {
+            card.row(t, vec![t.i(first.clone())]);
+            card.row(t, vec![t.d(second.clone())]);
+            card.blank(t);
+        }
     }
-    let consequences = chosen.map_or_else(Vec::new, |option| {
-        option
-            .consequences
-            .iter()
-            .map(|line| Item::Text(Line::from(vec![t.i("●"), t.n(format!(" {line}"))])))
-            .collect()
-    });
-    let keys = if state.list_focused {
-        hints(t, &[("↑↓", "move"), ("↵", "use reference"), ("t", "type a value instead"), ("Esc", "cancel")])
-    } else {
-        hints(t, &[("type", "to search"), ("↓", "list, then t types a value"), ("↵", "use reference"), ("Esc", "cancel")])
-    };
-    Page::new(
-        Line::from(vec![
-            t.n(format!("{} ", state.package)),
-            t.d("› "),
-            t.n("Settings "),
-            t.d("› "),
-            t.b(state.field_label.clone()),
-        ]),
-        Line::from(t.d(format!("Expects {}", state.list.expects))),
-    )
-    .panel(Panel::new("Search public settings", vec![Item::Text(Line::from(query))]))
-    .panel(Panel::new("Compatible settings", rows).grow())
-    .panel(Panel::new("Using this reference will", consequences))
-    .footer(Item::Text(keys))
+    let mut targets = Vec::new();
+    card.buttons(t, &[("Type a value instead", false, Click::Key(KeyCode::Char('t'))), ("Use it", true, Click::Key(KeyCode::Enter))], &mut targets);
+    screen.targets.extend(targets);
+    let keys = if state.list_focused { "Keys: ↑↓ choose  ↵ use it  t type a value  Esc close" } else { "Type to search.   Keys: ↓ list  ↵ use it  Esc close" };
+    screen.card(t, card, keys, w, h)
 }
 
-pub fn apply_failed(t: &Theme, state: &ApplyFailedState) -> Page {
-    let explanation = &state.explanation;
-    let steps = explanation
-        .steps
-        .iter()
-        .map(|(passed, text)| {
-            let symbol = if *passed { t.o("✓") } else { t.e("✕") };
-            Item::Text(Line::from(vec![symbol, t.n(format!(" {text}"))]))
-        })
-        .collect();
-    let rows = state
-        .rows
-        .iter()
-        .map(|row| {
-            let to = if row.blamed { t.e(row.to.clone()) } else { t.n(row.to.clone()) };
-            Item::Row(
-                Line::from(t.d(row.label.clone())),
-                Line::from(vec![t.n(format!("{} ", row.from)), t.d("→ "), to]),
-            )
-        })
-        .collect();
-    Page::new(
-        Line::from(vec![t.n(format!("{} ", state.package)), t.d("› "), t.b("Settings")]),
-        Line::from(t.o("● Running on previous settings")),
-    )
-    .panel(Panel::error(
-        "Your changes were not kept",
-        vec![Item::Text(Line::from(t.n(format!(
-            "{} failed its health check with the new settings, so its previous settings were restored.",
-            state.package
-        ))))],
-    ))
-    .panel(Panel::new("What happened", steps))
-    .panel(Panel::new(
-        "Likely cause",
-        vec![
-            Item::Text(Line::from(t.e(explanation.headline.clone()))),
-            Item::Text(Line::from(t.d(explanation.hint.clone()))),
-        ],
-    ))
-    .panel(Panel::new("Your draft, not applied", rows).grow())
-    .footer(Item::Text(hints(t, &[("↵", "edit draft"), ("l", "full log"), ("x", "discard draft"), ("Esc", "back")])))
+/// New settings did not work, so the previous ones came back.
+pub fn apply_failed(app: &App, t: &Theme, state: &ApplyFailedState) -> Page {
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::Apps, w);
+    let package = state.package.as_str();
+    let mut before_targets = Vec::new();
+    screen.before = vec![Item::Blank, trail(t, &["Apps", package, "Settings"], &mut before_targets), Item::Blank];
+    screen.targets.extend(before_targets);
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b(format!("{package} didn't start with the new settings, so they were undone"))]);
+    card.blank(t);
+    card.row(t, vec![t.n("It's running again with the settings it had before. What you changed:")]);
+    for row in &state.rows {
+        let to = if row.blamed { t.e(row.to.clone()) } else { t.n(row.to.clone()) };
+        card.row(t, vec![t.d(pad(&format!("  {}", row.label), 26)), t.n(format!("{}  →  ", row.from)), to]);
+    }
+    card.blank(t);
+    if !state.explanation.headline.is_empty() {
+        card.row(t, vec![t.d(format!("{package} said: \"{}\"", state.explanation.headline))]);
+    }
+    if !state.explanation.hint.is_empty() {
+        card.row(t, vec![t.d(state.explanation.hint.clone())]);
+    }
+    card.blank(t);
+    let mut targets = Vec::new();
+    card.link_row(t, vec![t.a("Show log ›")], "Show log ›", Click::Key(KeyCode::Char('l')), &mut targets);
+    card.blank(t);
+    card.buttons(t, &[("Keep as it is", false, Click::Key(KeyCode::Char('x'))), ("Edit again", true, Click::Key(KeyCode::Enter))], &mut targets);
+    screen.targets.extend(targets);
+    screen.card(t, card, "Keys: ↵ edit again  l log  x keep as it is  Esc back", w, h)
 }

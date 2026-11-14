@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    System  ›  Updates  ›  Automatic
+
+    Automatic updates
+    Only versions that ask for nothing new. Anything else waits for you. Next
+    run tonight at 03:00.
+
+
+
+         How often                          Daily        ◂▸
+         Between                            03:00 and 05:00
+
+       Update these apps by themselves
+         moneropay                         [x] On
+         cuprated                          [x] On
+         monokulo-pay                      [x] On
+       ▸ wallet-relay                      [ ] Off   ▲ Runs new code
+       ↓ 6 more — scroll or make the window taller
+                                             Cancel          Save    
+
+    Keys: ↑↓ choose  Space on/off  ←→ how often  w between  ↵ save  Esc cancel

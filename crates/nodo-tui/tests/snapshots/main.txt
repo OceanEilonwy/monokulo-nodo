@@ -1,32 +1,32 @@
-  Home     Packages   Web   Feeds   Updates (3)   Logs                                 monokulo-nodo
-┌ Node ────────────────────────────────────────────────────┐┌ Device ──────────────────────────────┐
-│ Role                                       monero-daemon ││ SSD                 412 GB of 1.9 TB │
-│ Provider                          cuprated 0.1.0-preview ││ System              0.4 GB of 7.6 GB │
-│ State                                      ▲ syncing 61% ││ Memory               6.1 GB of 31 GB │
-│ Height                            2,121,400 of 3,478,000 ││ Temp                           52 °C │
-│ Peers                                       32 out, 9 in ││ Uptime                        3 days │
-└──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
-┌ Services ────────────────────────────────────────────────────────────────────────────────────────┐
-│ ▸● cuprated         running   monero-daemon                                        Enter to open │
-│  ● tor              running   system                                                             │
-│  ● moneropay        running   official                                                           │
-│  ◆ wallet-relay     locked    community      storage needs unlocking                             │
-│  ✕ bell             failed    community      restarted 3 times, press l for logs                 │
-│  ○ monerod          stopped   official       alternative node                                    │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Needs attention ─────────────────────────────────────────────────────────────────────────────────┐
-│ ◆ This device is locked. Press u to unlock all waiting services.                                 │
-│ ✕ bell keeps failing. Press l to read its log.                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ move  ↵ open  s start/stop  / search  Tab next tab  ? help         w network  r rollbacks  q quit
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Your Nodo
+
+
+       ▸ Your Nodo is locked
+       Apps' data waits for the device passphrase. They start once you unlock.
+
+                                                                                   Unlock
+
+
+
+       ▲  bell keeps stopping
+       Its log usually says why. Settings or an update can be undone from its page.
+
+                                                                                 Show log
+
+
+
+       3 updates are ready
+       moneropay, the Nodo, wallet-relay. Each keeps its settings and can be undone.
+
+                                                                           Review updates
+
+
+
+
+    ↓ more below — scroll
+
+    Keys: ↑↓ choose  ↵ act on it  / get apps  1-4 tabs

@@ -313,7 +313,10 @@ impl System for FakeSystem {
 
     fn remove_file(&self, path: &Path) -> SysResult<()> {
         self.record(format!("remove {}", text(path)))?;
-        self.state().files.remove(&text(path));
+        let mut state = self.state();
+        state.files.remove(&text(path));
+        // Like unlink(2): removing a symlink removes the link, not its target.
+        state.links.remove(&text(path));
         Ok(())
     }
 

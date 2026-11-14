@@ -1,5 +1,5 @@
 
-    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
 
 
     Sites online                                                              Domain providers ›
@@ -12,7 +12,7 @@
          moneropay      https://moneropay.local             Home network          ›
 
 
-    To put another app online, open it in Packages.
+    To put another app online, open it in Apps.
 
 
 

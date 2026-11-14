@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Network
+
+
+       Cable         ●  Connected · 192.168.1.155
+
+
+
+       Wi-Fi         [x] On    a cable is steadier
+
+                     ▂▄▆█   Home-5G         password
+                            Password                          Join   
+                     ▂▄▆·   Home-2.4        password
+                     ▂···   Cafe Guest      open
+
+
+
+       Bluetooth     [ ] Off   lets a phone set the Nodo up without a cable
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  Space on/off  ↵ join  Esc back

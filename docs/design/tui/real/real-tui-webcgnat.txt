@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+    Apps  ›  shop  ›  Hosting
+
+    The internet can't reach your Nodo
+
+
+       Your internet provider shares one address between many homes, so visitors stop at the provider and never
+       reach you. Router settings can't change this.
+
+       A private Tor link still works on this connection.
+
+       Show details ›
+
+                                                                     Check again           Use Tor instead   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: o use Tor  r check again  d details  Esc back

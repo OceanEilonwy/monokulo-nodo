@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  Get apps  ›  Sources  ›  old-tools
+
+    Check before you trust
+
+
+       ▲  old-tools is now signed with a different key
+
+       This happens when a publisher replaces a lost key, and also when
+       someone else takes over their address. Until you decide, the Nodo
+       installs nothing new from old-tools.
+
+       Key you trust   08bd42f1  a7c391de  66e0d214  f8a903c7
+       ↓ 7 more — scroll or make the window taller
+                                                    Remove source      
+
+                                                  Trust the new key    
+
+                                                  ▸ Keep the old key   
+
+    Keys: ↑↓ choose  ↵ confirm  Esc decide later

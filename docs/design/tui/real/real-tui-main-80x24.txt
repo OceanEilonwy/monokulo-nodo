@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Your Nodo
+
+
+       ▸ Your Nodo is locked
+       Apps' data waits for the device passphrase. They start once you
+       unlock.
+
+                                                              Unlock   
+
+
+
+       ▲  bell keeps stopping
+       Its log usually says why. Settings or an update can be undone from
+       its page.
+
+                                                            Show log   
+
+    ↓ 2 more — scroll
+
+    Keys: ↑↓ choose  ↵ act on it  / get apps  1-4 tabs

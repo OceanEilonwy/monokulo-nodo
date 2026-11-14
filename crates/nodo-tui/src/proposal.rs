@@ -24,7 +24,7 @@ use crate::app::{App, ScreenId, Tab};
 use crate::fixtures::fixture;
 use crate::theme::Theme;
 use crate::view::layout::{draw_page, Item, Page, Panel};
-use crate::view::{self, button_line, checkbox, hints, mark, pad, tab_bar};
+use crate::view::{self, button_line, checkbox, hints, mark, pad};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
@@ -59,10 +59,66 @@ pub enum Scene {
     V3ProviderKey,
     V3ProviderDone,
     V3Buttons,
+    B1Home,
+    B1Search,
+    B1Detail,
+    B1Review,
+    B1Installing,
+    B1Unlock,
+    T2Nav,
+    T2Home,
+    T2Apps,
+    T2GetApps,
+    T2AppAbout,
+    T2Review,
+    T2Installing,
+    T2AppPage,
+    T2Unlock,
+    B1Feeds,
+    B1AddFeed,
+    B1FeedKey,
+    T2Sources,
+    T2SourcesDetails,
+    T2SourceAdd,
+    T2SourceCheck,
+    T2SourceErrors,
+    T2SourceKeyChanged,
+    T2SourceRemoveBuiltin,
+    B1Settings,
+    B1Reference,
+    B1ApplyFailed,
+    T2AppRemove,
+    T2Settings,
+    T2SettingsPick,
+    T2SettingsRolledBack,
+    B1Updates,
+    B1AutoUpdate,
+    B1UpdateFailed,
+    B1Rollbacks,
+    B1Logs,
+    T2System,
+    T2Updates,
+    T2AutoUpdates,
+    T2UpdateRolledBack,
+    T2UndoUpdates,
+    T2DeviceLogs,
+    B1Backup,
+    B1Restore,
+    B1Network,
+    B1Rejected,
+    B1Capability,
+    B1NoDrive,
+    T2Backups,
+    T2Restore,
+    T2Network,
+    T2NetworkWifi,
+    T2Rejected,
+    T2Capability,
+    T2NoDrive,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 29] = [
+    pub const ALL: [Scene; 85] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -92,6 +148,62 @@ impl Scene {
         Scene::V3ProviderKey,
         Scene::V3ProviderDone,
         Scene::V3Buttons,
+        Scene::B1Home,
+        Scene::B1Search,
+        Scene::B1Detail,
+        Scene::B1Review,
+        Scene::B1Installing,
+        Scene::B1Unlock,
+        Scene::T2Nav,
+        Scene::T2Home,
+        Scene::T2Apps,
+        Scene::T2GetApps,
+        Scene::T2AppAbout,
+        Scene::T2Review,
+        Scene::T2Installing,
+        Scene::T2AppPage,
+        Scene::T2Unlock,
+        Scene::B1Feeds,
+        Scene::B1AddFeed,
+        Scene::B1FeedKey,
+        Scene::T2Sources,
+        Scene::T2SourcesDetails,
+        Scene::T2SourceAdd,
+        Scene::T2SourceCheck,
+        Scene::T2SourceErrors,
+        Scene::T2SourceKeyChanged,
+        Scene::T2SourceRemoveBuiltin,
+        Scene::B1Settings,
+        Scene::B1Reference,
+        Scene::B1ApplyFailed,
+        Scene::T2AppRemove,
+        Scene::T2Settings,
+        Scene::T2SettingsPick,
+        Scene::T2SettingsRolledBack,
+        Scene::B1Updates,
+        Scene::B1AutoUpdate,
+        Scene::B1UpdateFailed,
+        Scene::B1Rollbacks,
+        Scene::B1Logs,
+        Scene::T2System,
+        Scene::T2Updates,
+        Scene::T2AutoUpdates,
+        Scene::T2UpdateRolledBack,
+        Scene::T2UndoUpdates,
+        Scene::T2DeviceLogs,
+        Scene::B1Backup,
+        Scene::B1Restore,
+        Scene::B1Network,
+        Scene::B1Rejected,
+        Scene::B1Capability,
+        Scene::B1NoDrive,
+        Scene::T2Backups,
+        Scene::T2Restore,
+        Scene::T2Network,
+        Scene::T2NetworkWifi,
+        Scene::T2Rejected,
+        Scene::T2Capability,
+        Scene::T2NoDrive,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -125,6 +237,62 @@ impl Scene {
             Scene::V3ProviderKey => "web3-provider-key",
             Scene::V3ProviderDone => "web3-provider-done",
             Scene::V3Buttons => "web3-buttons",
+            Scene::B1Home => "tui1-home",
+            Scene::B1Search => "tui1-search",
+            Scene::B1Detail => "tui1-detail",
+            Scene::B1Review => "tui1-review",
+            Scene::B1Installing => "tui1-installing",
+            Scene::B1Unlock => "tui1-unlock",
+            Scene::T2Nav => "tui2-nav",
+            Scene::T2Home => "tui2-home",
+            Scene::T2Apps => "tui2-apps",
+            Scene::T2GetApps => "tui2-get-apps",
+            Scene::T2AppAbout => "tui2-app-about",
+            Scene::T2Review => "tui2-review",
+            Scene::T2Installing => "tui2-installing",
+            Scene::T2AppPage => "tui2-app-page",
+            Scene::T2Unlock => "tui2-unlock",
+            Scene::B1Feeds => "tui1-feeds",
+            Scene::B1AddFeed => "tui1-add-feed",
+            Scene::B1FeedKey => "tui1-feed-key",
+            Scene::T2Sources => "tui2-sources",
+            Scene::T2SourcesDetails => "tui2-sources-details",
+            Scene::T2SourceAdd => "tui2-source-add",
+            Scene::T2SourceCheck => "tui2-source-check",
+            Scene::T2SourceErrors => "tui2-source-errors",
+            Scene::T2SourceKeyChanged => "tui2-source-key-changed",
+            Scene::T2SourceRemoveBuiltin => "tui2-source-remove-builtin",
+            Scene::B1Settings => "tui1-settings",
+            Scene::B1Reference => "tui1-reference",
+            Scene::B1ApplyFailed => "tui1-apply-failed",
+            Scene::T2AppRemove => "tui2-app-remove",
+            Scene::T2Settings => "tui2-settings",
+            Scene::T2SettingsPick => "tui2-settings-pick",
+            Scene::T2SettingsRolledBack => "tui2-settings-rolled-back",
+            Scene::B1Updates => "tui1-updates",
+            Scene::B1AutoUpdate => "tui1-auto-update",
+            Scene::B1UpdateFailed => "tui1-update-failed",
+            Scene::B1Rollbacks => "tui1-rollbacks",
+            Scene::B1Logs => "tui1-logs",
+            Scene::T2System => "tui2-system",
+            Scene::T2Updates => "tui2-updates",
+            Scene::T2AutoUpdates => "tui2-auto-updates",
+            Scene::T2UpdateRolledBack => "tui2-update-rolled-back",
+            Scene::T2UndoUpdates => "tui2-undo-updates",
+            Scene::T2DeviceLogs => "tui2-device-logs",
+            Scene::B1Backup => "tui1-backup",
+            Scene::B1Restore => "tui1-restore",
+            Scene::B1Network => "tui1-network",
+            Scene::B1Rejected => "tui1-rejected",
+            Scene::B1Capability => "tui1-capability",
+            Scene::B1NoDrive => "tui1-no-drive",
+            Scene::T2Backups => "tui2-backups",
+            Scene::T2Restore => "tui2-restore",
+            Scene::T2Network => "tui2-network",
+            Scene::T2NetworkWifi => "tui2-network-wifi",
+            Scene::T2Rejected => "tui2-rejected",
+            Scene::T2Capability => "tui2-capability",
+            Scene::T2NoDrive => "tui2-no-drive",
         }
     }
 
@@ -164,12 +332,104 @@ impl Scene {
             Scene::V3ProviderKey => "9 · Add a provider: paste the key",
             Scene::V3ProviderDone => "10 · Added: the domains this key controls",
             Scene::V3Buttons => "Buttons: rounded flat fill, and the fallback",
+            Scene::B1Home => "Before: Home today",
+            Scene::B1Search => "Before: Search packages",
+            Scene::B1Detail => "Before: Package detail",
+            Scene::B1Review => "Before: Review permissions",
+            Scene::B1Installing => "Before: Install progress",
+            Scene::B1Unlock => "Before: Unlock after reboot",
+            Scene::T2Nav => "Navigation: four tabs instead of six",
+            Scene::T2Home => "Home: what needs you, then that the rest is fine",
+            Scene::T2Apps => "Apps: installed apps",
+            Scene::T2GetApps => "Get apps: search what you can install",
+            Scene::T2AppAbout => "An app before installing: what it does, what it needs",
+            Scene::T2Review => "Install review: permissions in plain words",
+            Scene::T2Installing => "Installing: progress in plain steps",
+            Scene::T2AppPage => "An app's page: status, its one action, then Hosting, Settings, Logs",
+            Scene::T2Unlock => "Unlock after a restart",
+            Scene::B1Feeds => "Before: Feeds",
+            Scene::B1AddFeed => "Before: Add a feed",
+            Scene::B1FeedKey => "Before: Feed key changed",
+            Scene::T2Sources => "Sources: where the Nodo finds apps",
+            Scene::T2SourcesDetails => "Sources with details open: each key, comparable",
+            Scene::T2SourceAdd => "Add a source: paste the address",
+            Scene::T2SourceCheck => "Add a source: what it offers, and its key to compare",
+            Scene::T2SourceErrors => "Add a source: when it can't be added",
+            Scene::T2SourceKeyChanged => "A source's key changed: check before you trust",
+            Scene::T2SourceRemoveBuiltin => "The built-in monokulo source can be removed",
+            Scene::B1Settings => "Before: Package settings",
+            Scene::B1Reference => "Before: Reference picker",
+            Scene::B1ApplyFailed => "Before: Settings rolled back",
+            Scene::T2AppRemove => "Removing an app asks first, in plain words",
+            Scene::T2Settings => "An app's Settings: every kind of field, an error shown in place",
+            Scene::T2SettingsPick => "Settings: picking a value from another app (cuprated)",
+            Scene::T2SettingsRolledBack => "Settings undone because the app didn't start",
+            Scene::B1Updates => "Before: Updates",
+            Scene::B1AutoUpdate => "Before: Auto-update",
+            Scene::B1UpdateFailed => "Before: Update rolled back",
+            Scene::B1Rollbacks => "Before: Rollbacks",
+            Scene::B1Logs => "Before: Service logs",
+            Scene::T2System => "System: the Nodo itself, one page",
+            Scene::T2Updates => "Updates: the Nodo and the apps on one page",
+            Scene::T2AutoUpdates => "Automatic updates: two switches and a time",
+            Scene::T2UpdateRolledBack => "An update that didn't start was undone by itself",
+            Scene::T2UndoUpdates => "Undo an update (the old Rollbacks)",
+            Scene::T2DeviceLogs => "Device logs: problems first, plain sentences",
+            Scene::B1Backup => "Before: Backups",
+            Scene::B1Restore => "Before: Restore on a new device",
+            Scene::B1Network => "Before: Wi-Fi and Bluetooth",
+            Scene::B1Rejected => "Before: Package rejected",
+            Scene::B1Capability => "Before: Missing capability",
+            Scene::B1NoDrive => "Before: Data drive missing",
+            Scene::T2Backups => "Backups: when it last ran, one button, three settings",
+            Scene::T2Restore => "A new Nodo: restore from the old one's backup",
+            Scene::T2Network => "Network: cable, Wi-Fi, Bluetooth",
+            Scene::T2NetworkWifi => "Network with Wi-Fi on: pick a network, type its password, Join",
+            Scene::T2Rejected => "An app that can't be installed, and why",
+            Scene::T2Capability => "An app that needs another app first",
+            Scene::T2NoDrive => "The data drive isn't connected",
         }
     }
 
     /// Version 3 screens, for grouping on the canvas.
     pub fn is_v3(self) -> bool {
         self.slug().starts_with("web3")
+    }
+
+    /// Screens drawn with the surface palette: web flow v3 and the simplified TUI.
+    pub fn is_surface(self) -> bool {
+        self.is_v3() || self.slug().starts_with("tui2")
+    }
+
+    /// Today's screen a "before" board shows, rendered by the real nodo-tui.
+    pub fn before(self) -> Option<ScreenId> {
+        Some(match self {
+            Scene::V1Overview => ScreenId::WebSites,
+            Scene::B1Home => ScreenId::Main,
+            Scene::B1Search => ScreenId::Search,
+            Scene::B1Detail => ScreenId::Detail,
+            Scene::B1Review => ScreenId::Review,
+            Scene::B1Installing => ScreenId::Installing,
+            Scene::B1Unlock => ScreenId::Unlock,
+            Scene::B1Feeds => ScreenId::Feeds,
+            Scene::B1AddFeed => ScreenId::AddFeed,
+            Scene::B1FeedKey => ScreenId::FeedKey,
+            Scene::B1Settings => ScreenId::Settings,
+            Scene::B1Reference => ScreenId::Reference,
+            Scene::B1ApplyFailed => ScreenId::ApplyFailed,
+            Scene::B1Updates => ScreenId::Updates,
+            Scene::B1AutoUpdate => ScreenId::AutoUpdate,
+            Scene::B1UpdateFailed => ScreenId::UpdateFailed,
+            Scene::B1Rollbacks => ScreenId::Rollbacks,
+            Scene::B1Logs => ScreenId::Logs,
+            Scene::B1Backup => ScreenId::Backup,
+            Scene::B1Restore => ScreenId::Restore,
+            Scene::B1Network => ScreenId::Network,
+            Scene::B1Rejected => ScreenId::Rejected,
+            Scene::B1Capability => ScreenId::Capability,
+            Scene::B1NoDrive => ScreenId::NoDrive,
+            _ => return None,
+        })
     }
 
     /// What a click does on this screen, printed on the board.
@@ -188,6 +448,39 @@ impl Scene {
             Scene::V3ProviderKey => "Clickable: the two key boxes (focus to type or paste), Connect.",
             Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
             Scene::V3Buttons => "The chosen rounded buttons, the no-Nerd-Font fallback, and the first v3 blocks for comparison.",
+            Scene::T2Nav => "Clickable: the four tabs; each section line opens it.",
+            Scene::T2Home => "Clickable: Review updates (the one primary), each app row (opens its page), the tabs. Hover shown on mk-pay's row.",
+            Scene::T2Apps => "Clickable: each app row (opens its page), \"Get apps\", the tabs. Scroll wheel scrolls. Hover shown on mk-pay's row.",
+            Scene::T2GetApps => "Clickable: the search box (focus to type), each result (opens it), \"Sources\" (the old Feeds). Hover shown on feather-ws.",
+            Scene::T2AppAbout => "Clickable: Install (primary), \"Show details\" (permissions in full), the breadcrumb.",
+            Scene::T2Review => "Clickable: the passphrase box, Install (primary), Cancel, \"Show details\".",
+            Scene::T2Installing => "Clickable: the breadcrumb and tabs; installing carries on if you leave.",
+            Scene::T2AppPage => "Clickable: Restart, Stop, Remove (destructive, asks first) on the breadcrumb row; at 80 columns they fold into \"⋯ More\". Update (primary), each section row. Hover shown on the Settings row.",
+            Scene::T2Unlock => "Clickable: the passphrase box and Unlock.",
+            Scene::T2Sources => "Clickable: Add a source (primary, top right of the list, so it stays in view however many sources there are), each card's On/Off box and Remove, Try again, \"Show keys\". Hover shown on Alice's apps' card.",
+            Scene::T2SourcesDetails => "Clickable: the same, and \"Hide keys\".",
+            Scene::T2SourceAdd => "Clickable: the address box (focus to paste), Check (primary), Cancel.",
+            Scene::T2SourceCheck => "Clickable: Add source (primary), Cancel.",
+            Scene::T2SourceErrors => "Clickable: in the Add card, the address box and Check again.",
+            Scene::T2SourceKeyChanged => "Clickable: Keep the old key (primary), the name box, Trust the new key (only once the name is typed).",
+            Scene::T2SourceRemoveBuiltin => "Clickable: Remove (primary), Cancel.",
+            Scene::T2AppRemove => "Clickable: Remove mk-pay (destructive), Cancel.",
+            Scene::T2Settings => "Clickable: each box (focus to type), Currency and Monero node (open a list), Show, − and +, the On box, Save (primary), Cancel.",
+            Scene::T2SettingsPick => "Clickable: each choice in the list; clicking outside closes it.",
+            Scene::T2SettingsRolledBack => "Clickable: Edit again (primary), Keep as it is, \"Show log\".",
+            Scene::T2System => "Clickable: Review (primary), each row (Updates, Backups, Network, Device logs, About). Hover shown on Backups.",
+            Scene::T2Updates => "Clickable: Update and restart (primary), each app's box, Update 2 apps, \"Automatic updates\", \"Undo an update\".",
+            Scene::T2AutoUpdates => "Clickable: each On/Off box, the When list, Save (primary), Cancel.",
+            Scene::T2UpdateRolledBack => "Clickable: OK (primary), Try again, \"Show log\".",
+            Scene::T2UndoUpdates => "Clickable: Undo on each card that can still be undone. Hover shown on mk-pay's card.",
+            Scene::T2DeviceLogs => "Clickable: the search box, each filter, each line (its full text), \"Show older\", \"Save to a file\". Hover shown on the 13:41 line.",
+            Scene::T2Backups => "Clickable: Back up now (primary), the On/Off box, How often and Where (lists), \"Restore from a backup\".",
+            Scene::T2Restore => "Clickable: the passphrase box, Restore (primary), \"Start fresh instead\".",
+            Scene::T2Network => "Clickable: the Wi-Fi and Bluetooth On/Off boxes.",
+            Scene::T2NetworkWifi => "Clickable: each network (opens its password row), the password box, Join (primary), the On/Off boxes. Hover shown on Home-5G.",
+            Scene::T2Rejected => "Clickable: OK (primary), \"Show details\".",
+            Scene::T2Capability => "Clickable: Install cuprated (primary), Cancel, \"Show details\".",
+            Scene::T2NoDrive => "Clickable: Check again (primary), \"Use a new drive instead\".",
             _ => "",
         }
     }
@@ -199,12 +492,14 @@ pub fn render(scene: Scene, width: u16, height: u16, theme: &Theme) -> Buffer {
     let (app, _) = fixture(ScreenId::WebSites);
     terminal
         .draw(|frame| {
-            if scene == Scene::V1Overview {
-                view::render(frame, &app, theme);
-            } else if scene.is_v3() {
+            if let Some(id) = scene.before() {
+                let (before, _) = fixture(id);
+                view::render(frame, &before, theme);
+            } else if scene.is_surface() {
                 let w = frame.area().width;
                 let h = frame.area().height;
-                draw_v3(frame, theme, v3_page(&app, theme, scene, w, h));
+                let page = if scene.is_v3() { v3_page(&app, theme, scene, w, h) } else { tui2_page(theme, scene, w, h) };
+                draw_v3(frame, theme, page);
             } else {
                 let area = frame.area();
                 frame.buffer_mut().set_style(area, theme.base());
@@ -230,12 +525,14 @@ pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
     let result = (|| -> io::Result<()> {
         loop {
             terminal.draw(|frame| {
-                if scene == Scene::V1Overview {
-                    view::render(frame, &app, &theme);
-                } else if scene.is_v3() {
+                if let Some(id) = scene.before() {
+                    let (before, _) = fixture(id);
+                    view::render(frame, &before, &theme);
+                } else if scene.is_surface() {
                     let w = frame.area().width;
                     let h = frame.area().height;
-                    draw_v3(frame, &theme, v3_page(&app, &theme, scene, w, h));
+                    let page = if scene.is_v3() { v3_page(&app, &theme, scene, w, h) } else { tui2_page(&theme, scene, w, h) };
+                    draw_v3(frame, &theme, page);
                 } else {
                     let area = frame.area();
                     frame.buffer_mut().set_style(area, theme.base());
@@ -316,8 +613,8 @@ fn field(t: &Theme, label: &str, value: &str, focused: bool) -> Item {
     ]))
 }
 
-fn header(app: &App, t: &Theme) -> Page {
-    Page::new(tab_bar(app, t, Tab::Web), Line::from(t.d("monokulo-nodo")))
+fn header(_app: &App, t: &Theme) -> Page {
+    Page::new(Line::from(t.b(Tab::Web.label())), Line::from(t.d("monokulo-nodo")))
 }
 
 pub fn page(app: &App, t: &Theme, scene: Scene) -> Page {
@@ -949,7 +1246,13 @@ pub struct Surfaces {
     pub field: Color,
     pub bar: Color,
     pub card: Color,
+    /// A row or button under the mouse pointer: one step lighter than what it sits on.
+    pub hover: Color,
     pub raised: Color,
+    /// A secondary button under the pointer.
+    pub raised_hover: Color,
+    /// The fill of a destructive button (Remove): red-tinted, its label in the error colour.
+    pub danger: Color,
 }
 
 impl Surfaces {
@@ -958,13 +1261,24 @@ impl Surfaces {
             field: Color::Rgb(0x0B, 0x0D, 0x0F),
             bar: Color::Rgb(0x17, 0x1A, 0x1D),
             card: Color::Rgb(0x1D, 0x21, 0x25),
+            hover: Color::Rgb(0x26, 0x2B, 0x30),
             raised: Color::Rgb(0x2C, 0x32, 0x38),
+            raised_hover: Color::Rgb(0x3A, 0x41, 0x48),
+            danger: Color::Rgb(0x3D, 0x22, 0x24),
         }
     }
 
     /// For terminals without RGB: the nearest grays of the 256-colour cube.
     pub const fn ansi256() -> Self {
-        Self { field: Color::Indexed(232), bar: Color::Indexed(234), card: Color::Indexed(235), raised: Color::Indexed(237) }
+        Self {
+            field: Color::Indexed(232),
+            bar: Color::Indexed(234),
+            card: Color::Indexed(235),
+            hover: Color::Indexed(236),
+            raised: Color::Indexed(237),
+            raised_hover: Color::Indexed(239),
+            danger: Color::Indexed(52),
+        }
     }
 }
 
@@ -1026,17 +1340,55 @@ struct Card {
     rows: Vec<Item>,
     /// Where the card's own button row starts, so fitting a short terminal keeps it.
     buttons_at: Option<usize>,
+    /// The card's fill: the card surface, or the hover surface while the pointer is over it.
+    bg: Color,
 }
 
 impl Card {
     fn new(page_width: u16) -> Self {
         let width = usize::from(page_width).saturating_sub(2 * MARGIN.len());
-        Card { width, rows: Vec::new(), buttons_at: None }
+        Card { width, rows: Vec::new(), buttons_at: None, bg: S.card }
     }
 
     /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
     /// keeping its indent, so the fill always stays a rectangle.
     fn row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
+        self.row_on(t, spans, self.bg);
+    }
+
+    /// The whole card as it looks under the mouse pointer.
+    fn hovered(mut self) -> Self {
+        self.bg = S.hover;
+        self
+    }
+
+    /// A row as it looks under the mouse pointer: the whole row one step lighter. The keyboard's
+    /// selection is shown differently (the name in the accent with a ▸), so the two never mix up.
+    fn hover_row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
+        self.row_on(t, spans, S.hover);
+    }
+
+    /// A row with one button at its right end, on the card's inner padding.
+    fn row_with_button(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, label: &str, is_primary: bool) {
+        let width = label.trim_start_matches(['!', '~']).chars().count() + 6;
+        let [_, button, _] = button_rows(t, label, is_primary, ButtonStyle::Rounded, width, self.bg);
+        let room = self.width.saturating_sub(6);
+        let used = width_of(&spans) + width_of(&button);
+        if used + 2 > room {
+            // Too narrow for both: the text keeps its row and the button gets its own, still
+            // right-aligned.
+            self.row(t, spans);
+            let mut own = vec![t.n(" ".repeat(room.saturating_sub(width_of(&button))))];
+            own.extend(button);
+            self.row(t, own);
+            return;
+        }
+        spans.push(t.n(" ".repeat(room.saturating_sub(used))));
+        spans.extend(button);
+        self.row(t, spans);
+    }
+
+    fn row_on(&mut self, t: &Theme, spans: Vec<Span<'static>>, bg: Color) {
         let room = self.width.saturating_sub(4);
         let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
         if width_of(&spans) <= room {
@@ -1063,10 +1415,10 @@ impl Card {
             }
         }
         for spans in lines {
-            let mut out = vec![margin(t), on(t.n("   "), S.card)];
+            let mut out = vec![margin(t), on(t.n("   "), bg)];
             let used = 3 + width_of(&spans);
-            out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, S.card) } else { s }));
-            out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), S.card));
+            out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, bg) } else { s }));
+            out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), bg));
             self.rows.push(line(out));
         }
     }
@@ -1083,7 +1435,7 @@ impl Card {
         }
         self.buttons_at = Some(self.rows.len());
         let room = self.width.saturating_sub(6);
-        let bar = button_bar(t, list, ButtonStyle::Rounded, S.card);
+        let bar = button_bar(t, list, ButtonStyle::Rounded, self.bg);
         // `button_bar` gives three rows (padding, buttons, padding); the card already has its own
         // padding rows, so only the middle one is used, without the bar's right margin.
         if let Some(Item::Row(_, right)) = bar.into_iter().nth(1) {
@@ -1101,7 +1453,7 @@ impl Card {
     /// card rather than to the whole of it.
     fn inline_button(&mut self, t: &Theme, label: &str, indent: usize) {
         let width = label.chars().count() + 6;
-        let [_, middle, _] = button_rows(t, label, true, ButtonStyle::Rounded, width, S.card);
+        let [_, middle, _] = button_rows(t, label, true, ButtonStyle::Rounded, width, self.bg);
         let mut out = vec![t.n(" ".repeat(indent))];
         out.extend(middle);
         self.row(t, out);
@@ -1157,7 +1509,7 @@ pub enum ButtonStyle {
 
 /// Every button in a bar has the same width: the longest label plus padding.
 fn button_width(list: &[(&str, bool)]) -> usize {
-    list.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0) + 6
+    list.iter().map(|(label, _)| label.trim_start_matches(['!', '~']).chars().count()).max().unwrap_or(0) + 6
 }
 
 fn centred(label: &str, width: usize) -> String {
@@ -1171,9 +1523,19 @@ const CAP_RIGHT: &str = "\u{E0B4}";
 
 /// One button's three rows, drawn on the surface `under`. Rounded and plain buttons are one row
 /// tall with the rows above and below left empty: those still count for a click.
+/// A label starting with `!` is destructive (red-tinted fill, label in the error colour); one
+/// starting with `~` is drawn as under the mouse pointer.
 fn button_rows(t: &Theme, label: &str, is_primary: bool, style: ButtonStyle, width: usize, under: Color) -> [Vec<Span<'static>>; 3] {
-    let colour = if is_primary { t.accent } else { S.raised };
-    let ink = if is_primary { t.ground } else { t.fg };
+    let danger = label.starts_with('!');
+    let hovered = label.contains('~');
+    let label = label.trim_start_matches(['!', '~']);
+    let (colour, ink) = if danger {
+        (S.danger, t.err)
+    } else if is_primary {
+        (if hovered { Color::Rgb(0xF7, 0xB8, 0x5E) } else { t.accent }, t.ground)
+    } else {
+        (if hovered { S.raised_hover } else { S.raised }, t.fg)
+    };
     let weight = if is_primary { Modifier::BOLD } else { Modifier::empty() };
     let fill = Style::new().fg(ink).bg(colour).add_modifier(weight);
     let cap = Style::new().fg(colour).bg(under);
@@ -1245,7 +1607,7 @@ fn rows_of(items: &[Item], w: u16) -> usize {
 /// comes after, and the one line of keys at the bottom.
 #[allow(clippy::too_many_arguments)]
 fn fit_page(t: &Theme, page: Page, before: Vec<Item>, mut card: Card, after: Vec<Item>, keys: &str, w: u16, h: u16) -> Page {
-    let used = usize::from(STRIP_ROWS) + 1 + rows_of(&before, w) + rows_of(&after, w);
+    let used = usize::from(STRIP_ROWS) + rows_of(&action_bar(t, keys), w) + rows_of(&before, w) + rows_of(&after, w);
     card.fit(t, usize::from(h).saturating_sub(used));
     let mut items = before;
     items.extend(card.items(t));
@@ -1260,7 +1622,7 @@ fn top(app: &App, t: &Theme, tab: Tab, w: u16) -> Page {
     let mut tabs = vec![t.n("  ")];
     for each in Tab::ALL {
         let pending = app.pending_updates();
-        let extra = if each == Tab::Updates && pending > 0 { format!(" {pending}") } else { String::new() };
+        let extra = if each == Tab::Apps && pending > 0 { format!(" {pending}") } else { String::new() };
         if each == tab {
             tabs.push(Span::styled(format!("  {}{extra}  ", each.label()), Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
         } else {
@@ -1436,7 +1798,7 @@ fn v3_hosting(app: &App, t: &Theme, w: u16, h: u16, internet: Internet) -> Page 
         quiet(t, &format!("Choose who can open {name}. Any combination works.")),
         Item::Blank,
     ];
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, Vec::new(), keys, w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, Vec::new(), keys, w, h)
 }
 
 fn v3_confirm(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1456,7 +1818,7 @@ fn v3_confirm(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     items.push(Item::Blank);
     card.buttons(t, &[("Cancel", false), ("Put mk-pay online", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ put online  Esc cancel", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ put online  Esc cancel", w, h)
 }
 
 fn v3_online(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1472,7 +1834,7 @@ fn v3_online(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank, Item::Blank];
     card.buttons(t, &[("Done", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ done", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ done", w, h)
 }
 
 fn v3_blocked(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1490,7 +1852,7 @@ fn v3_blocked(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     items.push(Item::Blank);
     card.buttons(t, &[("Check again", false), ("Use Tor instead", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ use Tor  c check again  Esc back", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ use Tor  c check again  Esc back", w, h)
 }
 
 fn v3_providers(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1599,7 +1961,1026 @@ fn v3_buttons(app: &App, t: &Theme, w: u16, h: u16) -> Page {
         items.extend(card.items(t));
     }
     let _ = h;
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
+    top(app, t, Tab::Apps, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Simplified TUI (batch 1: navigation, Home, Apps). Four tabs instead of six:
+//   Home    what needs you, and that everything else is fine
+//   Apps    installed apps; each app's page holds its Hosting, Settings, Logs and updates;
+//           "Get apps" finds new ones, and its Sources replace the Feeds tab
+//   Web     as in web flow v3: sites online, Domain providers
+//   System  updates for the Nodo itself, backups, network, device logs
+// The Logs and Feeds tabs disappear (logs live on each app and under System; feeds are an app
+// source). Updates leave their tab: app updates show on the app and on Home, system ones under
+// System. Same visual system as v3.
+
+const TABS2: [&str; 4] = ["Home", "Apps", "Web", "System"];
+
+/// The four-tab strip, same look as v3's.
+fn top2(t: &Theme, tab: &str, badge: Option<(&str, usize)>, w: u16) -> Page {
+    let mut tabs = vec![t.n("  ")];
+    for each in TABS2 {
+        let extra = match badge {
+            Some((name, n)) if name == each && n > 0 => format!(" {n}"),
+            _ => String::new(),
+        };
+        if each == tab {
+            tabs.push(Span::styled(format!("  {each}{extra}  "), Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
+        } else {
+            tabs.push(t.n(format!("  {each}")));
+            if !extra.is_empty() {
+                tabs.push(t.a(extra));
+            }
+            tabs.push(t.n("  "));
+        }
+        tabs.push(t.n(" "));
+    }
+    let row = if w >= 100 {
+        Item::Row(Line::from(tabs), Line::from(vec![t.d("monokulo-nodo"), t.n(MARGIN)]))
+    } else {
+        Item::Text(Line::from(tabs))
+    };
+    Page::new(Line::default(), Line::default()).plain(vec![row, Item::Blank])
+}
+
+/// The breadcrumb row with the page's own actions at its right end, on the content margin. When
+/// they don't fit beside the breadcrumb (80 columns), they fold into one "⋯ More" button that
+/// opens them as a list.
+fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, bool)], w: u16) -> Item {
+    let Item::Text(left) = trail(t, parts) else { unreachable!() };
+    let actions: Vec<(&str, bool)> = if w >= 100 { actions.to_vec() } else { vec![("⋯ More", false)] };
+    let width = actions.iter().map(|(l, _)| l.trim_start_matches(['!', '~']).chars().count()).max().unwrap_or(0) + 4;
+    let mut right = Vec::new();
+    for (index, (label, primary)) in actions.iter().enumerate() {
+        if index > 0 {
+            right.push(t.n("  "));
+        }
+        let [_, middle, _] = button_rows(t, label, *primary, ButtonStyle::Rounded, width, t.ground);
+        right.extend(middle);
+    }
+    right.push(t.n(MARGIN));
+    Item::Row(left, Line::from(right))
+}
+
+/// A page of several cards stacked with a blank row between them. When they don't all fit, the
+/// cards that would fall off the bottom are left out and a dim "↓ N more — scroll" row takes
+/// their place inside the scroll area, a row clear of the keys; the wheel or a click on it
+/// scrolls.
+#[allow(clippy::too_many_arguments)]
+fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<Item>, keys: &str, w: u16, h: u16) -> Page {
+    let avail = usize::from(h).saturating_sub(usize::from(STRIP_ROWS) + rows_of(&action_bar(t, keys), w) + rows_of(&before, w));
+    // The list as rows, each tagged with its card, so a scrolled list can cut a card part-way.
+    let total = cards.len();
+    let mut rows: Vec<(usize, Item)> = Vec::new();
+    for (index, card) in cards.into_iter().enumerate() {
+        if index > 0 {
+            rows.push((index, Item::Blank));
+        }
+        rows.extend(card.items(t).into_iter().map(|item| (index, item)));
+    }
+    let mut items = before;
+    if rows.len() + rows_of(&after, w) <= avail {
+        items.extend(rows.into_iter().map(|(_, item)| item));
+        items.extend(after);
+    } else {
+        // Leave room for a gap, the hint and a gap above the keys.
+        let visible = avail.saturating_sub(3);
+        // Sources not on screen at all; one cut part-way is visible, and scrolls into view.
+        let seen = rows.iter().take(visible).map(|(card, _)| *card).max().map_or(0, |c| c + 1);
+        items.extend(rows.into_iter().take(visible).map(|(_, item)| item));
+        items.push(Item::Blank);
+        // Every card has at least begun; only the end of the last one is hidden.
+        let hint = if total > seen { format!("↓ {} more — scroll", total - seen) } else { "↓ more below — scroll".to_owned() };
+        items.push(line(vec![margin(t), t.d(hint)]));
+        items.push(Item::Blank);
+    }
+    page.plain(items).footers(action_bar(t, keys))
+}
+
+/// A progress bar of whole cells: done cells filled with the accent, the rest inset.
+fn bar(t: &Theme, fraction: f32, width: usize) -> Vec<Span<'static>> {
+    let done = ((fraction.clamp(0.0, 1.0)) * width as f32).round() as usize;
+    vec![
+        Span::styled(" ".repeat(done), Style::new().bg(t.accent)),
+        Span::styled(" ".repeat(width - done), Style::new().bg(S.field)),
+    ]
+}
+
+fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
+    match scene {
+        Scene::T2Nav => t2_nav(t, w, h),
+        Scene::T2Home => t2_home(t, w, h),
+        Scene::T2Apps => t2_apps(t, w, h),
+        Scene::T2GetApps => t2_get_apps(t, w, h),
+        Scene::T2AppAbout => t2_app_about(t, w, h),
+        Scene::T2Review => t2_review(t, w, h),
+        Scene::T2Installing => t2_installing(t, w, h),
+        Scene::T2AppPage => t2_app_page(t, w, h),
+        Scene::T2Unlock => t2_unlock(t, w, h),
+        Scene::T2Sources => t2_sources(t, w, h, false),
+        Scene::T2SourcesDetails => t2_sources(t, w, h, true),
+        Scene::T2SourceAdd => t2_source_add(t, w, h),
+        Scene::T2SourceCheck => t2_source_check(t, w, h),
+        Scene::T2SourceErrors => t2_source_errors(t, w, h),
+        Scene::T2SourceKeyChanged => t2_source_key_changed(t, w, h),
+        Scene::T2SourceRemoveBuiltin => t2_source_remove_builtin(t, w, h),
+        Scene::T2AppRemove => t2_app_remove(t, w, h),
+        Scene::T2Settings => t2_settings(t, w, h, false),
+        Scene::T2SettingsPick => t2_settings(t, w, h, true),
+        Scene::T2SettingsRolledBack => t2_settings_rolled_back(t, w, h),
+        Scene::T2System => t2_system(t, w, h),
+        Scene::T2Updates => t2_updates(t, w, h),
+        Scene::T2AutoUpdates => t2_auto_updates(t, w, h),
+        Scene::T2UpdateRolledBack => t2_update_rolled_back(t, w, h),
+        Scene::T2UndoUpdates => t2_undo_updates(t, w, h),
+        Scene::T2DeviceLogs => t2_device_logs(t, w, h),
+        Scene::T2Backups => t2_backups(t, w, h),
+        Scene::T2Restore => t2_restore(t, w, h),
+        Scene::T2Network => t2_network(t, w, h, false),
+        Scene::T2NetworkWifi => t2_network(t, w, h, true),
+        Scene::T2Rejected => t2_rejected(t, w, h),
+        Scene::T2Capability => t2_capability(t, w, h),
+        Scene::T2NoDrive => t2_no_drive(t, w, h),
+        _ => Page::new(Line::default(), Line::default()),
+    }
+}
+
+fn t2_nav(t: &Theme, w: u16, h: u16) -> Page {
+    let section = |title: &str, now: &str, holds: &[&str], from: &str| {
+        let mut card = Card::new(w);
+        card.blank(t);
+        card.row(t, vec![t.b(pad(title, 9)), t.n(now.to_owned())]);
+        for item in holds {
+            card.row(t, vec![t.n(" ".repeat(9)), t.d(format!("· {item}"))]);
+        }
+        if !from.is_empty() {
+            card.row(t, vec![t.n(" ".repeat(9)), t.a(from.to_owned())]);
+        }
+        card.blank(t);
+        card
+    };
+    let cards = vec![
+        section("Home", "What needs you, and that everything else is fine.", &[], "was Home: same tab, much less on it"),
+        section(
+            "Apps",
+            "Your installed apps. Click one for its own page:",
+            &["Hosting (who can open it)  ·  Settings  ·  Logs  ·  Update", "Get apps: search what you can install; Sources (the old Feeds)"],
+            "merges Packages, Feeds, per-app Logs and per-app Updates",
+        ),
+        section("Web", "Sites online, and Domain providers. (Web flow v3, approved.)", &[], ""),
+        section(
+            "System",
+            "The Nodo itself:",
+            &["Updates for the Nodo (system base, automatic updates, rollbacks)", "Backups  ·  Network (Wi-Fi, Bluetooth)  ·  Device logs"],
+            "takes the Updates and Logs tabs' Nodo-wide parts",
+        ),
+    ];
+    let before = vec![
+        Item::Blank,
+        heading(t, "Four tabs instead of six"),
+        quiet(t, "Logs and Feeds stop being tabs; an app's settings, hosting, logs and updates live on its own page."),
+        Item::Blank,
+        Item::Blank,
+    ];
+    stack(t, top2(t, "Home", None, w), before, cards, Vec::new(), "Click a tab, or press 1 2 3 4.", w, h)
+}
+
+fn t2_home(t: &Theme, w: u16, h: u16) -> Page {
+    let mut needs = Card::new(w);
+    needs.blank(t);
+    needs.row(t, vec![t.b("2 app updates are ready")]);
+    needs.row(t, vec![t.d("mk-pay and kringle. Each keeps its settings and can be rolled back.")]);
+    needs.blank(t);
+    needs.buttons(t, &[("Review updates", true)]);
+    let mut fine = Card::new(w);
+    fine.blank(t);
+    fine.row(t, vec![t.o("✓  "), t.b("Everything else is running")]);
+    fine.blank(t);
+    for (name, state) in [
+        ("cuprated", "Syncing the Monero chain · 63%"),
+        ("mk-pay", "Running · open at https://pay.example.com"),
+        ("mk-lws", "Running"),
+        ("kringle", "Running"),
+    ] {
+        if name == "mk-pay" {
+            fine.hover_row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+        } else {
+            fine.row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+        }
+    }
+    fine.blank(t);
+    fine.row(t, vec![t.d("Storage 27% used of 2 TB   ·   Temperature 48 °C   ·   Up 3 days")]);
+    fine.blank(t);
+    let before = vec![Item::Blank, heading(t, "Good afternoon"), Item::Blank];
+    stack(t, top2(t, "Home", Some(("Apps", 2)), w), before, vec![needs, fine], Vec::new(), "Keys: ↵ review updates  Tab move  1-4 tabs", w, h)
+}
+
+fn t2_apps(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, what, state)) in [
+        ("cuprated", "Monero node", "Syncing · 63%"),
+        ("mk-pay", "Payments for your shop", "Update ready"),
+        ("mk-lws", "Light wallet server", "Running"),
+        ("mk-bell", "Payment alerts", "Running"),
+        ("kringle", "Tip jar", "Update ready"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            card.blank(t);
+        }
+        let status = if state == "Update ready" { t.a(pad(state, 14)) } else { t.d(pad(state, 14)) };
+        let spans = vec![t.b(pad(name, 12)), t.n(pad(what, 28)), status, t.d("›")];
+        if name == "mk-pay" {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
+    }
+    card.blank(t);
+    let before = vec![
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t), t.b("Installed")]), Line::from(vec![t.a("Get apps ›"), t.n(MARGIN)])),
+        Item::Blank,
+    ];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], Vec::new(), "Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps", w, h)
+}
+
+fn t2_get_apps(t: &Theme, w: u16, h: u16) -> Page {
+    let mut search = vec![t.d(pad("Search", 9))];
+    search.extend(inset(t, "wallet", 40, None));
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, what, tag)) in [
+        ("mk-lws", "Light wallet server for Monero wallets", "Installed"),
+        ("feather-ws", "Server for Feather Wallet", ""),
+        ("mk-pay", "Accept Monero in your shop", "Installed"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            card.blank(t);
+        }
+        let spans = vec![t.b(pad(name, 13)), t.n(pad(what, 42)), t.d(tag.to_owned())];
+        if name == "feather-ws" {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
+    }
+    card.blank(t);
+    let before = vec![
+        Item::Blank,
+        trail(t, &["Apps", "Get apps"]),
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t)].into_iter().chain(search).collect::<Vec<_>>()), Line::from(vec![t.a("Sources ›"), t.n(MARGIN)])),
+        Item::Blank,
+    ];
+    let after = vec![Item::Blank, quiet(t, "3 of 14 apps from your sources match. Click one to see what it does before installing.")];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], after, "Type to search.   Keys: ↑↓ choose  ↵ open  s sources  Esc back", w, h)
+}
+
+fn t2_app_about(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("feather-ws"), t.d("   Server for Feather Wallet · from monokulo · 18 MB")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Lets Feather Wallet on your phone or computer use your own Monero node instead of a")]);
+    card.row(t, vec![t.n("stranger's, so nobody else sees which wallet is yours.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("It will:")]);
+    for item in ["Read from your Monero node", "Use the internet to reach other Monero nodes", "Keep 2 GB of data on the drive"] {
+        card.row(t, vec![t.n(format!("  ·  {item}"))]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Install", true)]);
+    let before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "feather-ws"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↵ install  d details  Esc back", w, h)
+}
+
+fn t2_review(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Install feather-ws?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It will be able to:")]);
+    for (item, note) in [
+        ("Read from your Monero node", ""),
+        ("Use the internet", "to reach other Monero nodes"),
+        ("Keep 2 GB on the drive", "locked with your device passphrase"),
+    ] {
+        card.row(t, vec![t.o("✓  "), t.n(item.to_owned()), t.d(if note.is_empty() { String::new() } else { format!("   {note}") })]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d("It can't see your other apps or their data. You can remove it at any time.")]);
+    card.blank(t);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "••••••••", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Install", true)]);
+    let before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "feather-ws", "Install"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: type the passphrase  ↵ install  Esc cancel", w, h)
+}
+
+fn t2_installing(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Installing feather-ws")]);
+    card.blank(t);
+    let mut progress = bar(t, 0.6, 50);
+    progress.push(t.d("   60%"));
+    card.row(t, progress);
+    card.blank(t);
+    for (mark, text) in [("✓", "Downloaded and checked"), ("✓", "Space made on the drive"), ("›", "Starting it"), ("○", "Making sure it answers")] {
+        let span = match mark {
+            "✓" => t.o(format!("{mark}  ")),
+            "›" => t.a(format!("{mark}  ")),
+            _ => t.d(format!("{mark}  ")),
+        };
+        card.row(t, vec![span, if mark == "○" { t.d(text.to_owned()) } else { t.n(text.to_owned()) }]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d("You can leave this page; it carries on.")]);
+    card.blank(t);
+    let before = vec![Item::Blank, trail(t, &["Apps", "feather-ws"]), Item::Blank];
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Esc back (installing continues)", w, h)
+}
+
+fn t2_app_page(t: &Theme, w: u16, h: u16) -> Page {
+    let mut status = Card::new(w);
+    status.blank(t);
+    status.row(t, vec![t.b("mk-pay"), t.d("   Payments for your shop")]);
+    status.row(t, vec![t.o("●  "), t.n("Running for 3 days   ·   open at https://pay.example.com")]);
+    status.blank(t);
+    status.row_with_button(t, vec![t.a("Version 0.2 is ready"), t.d("   fixes receipts in some currencies")], "Update", true);
+    status.blank(t);
+    let mut sections = Card::new(w);
+    sections.blank(t);
+    for (index, (name, summary)) in [
+        ("Hosting", "Home network and internet"),
+        ("Settings", "Store name, currency, 4 more"),
+        ("Logs", "Last problem: none"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            sections.blank(t);
+        }
+        let spans = vec![t.b(pad(name, 12)), t.d(pad(summary, 40)), t.d("›")];
+        if name == "Settings" {
+            sections.hover_row(t, spans);
+        } else {
+            sections.row(t, spans);
+        }
+    }
+    sections.blank(t);
+    let before = vec![Item::Blank, trail_actions(t, &["Apps", "mk-pay"], &[("Restart", false), ("Stop", false), ("!Remove…", false)], w), Item::Blank];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back", w, h)
+}
+
+fn t2_app_remove(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("Remove mk-pay?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Its data on the drive is deleted: orders, receipts and settings. Your shop stops taking")]);
+    card.row(t, vec![t.n("payments. Make a backup first if you might want it back.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("!Remove mk-pay", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Remove"]), Item::Blank], card, Vec::new(), "Keys: Esc cancel  (Remove asks for a click, not Enter)", w, h)
+}
+
+/// A settings field: label column, then the control, and a quiet hint or an error under it.
+fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, hint: Option<Span<'static>>) {
+    let mut spans = vec![t.n(pad(label, 24))];
+    spans.extend(control);
+    card.row(t, spans);
+    if let Some(hint) = hint {
+        card.row(t, vec![t.n(" ".repeat(24)), hint]);
+    }
+    card.blank(t);
+}
+
+fn t2_settings(t: &Theme, w: u16, h: u16, picking: bool) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    setting(&mut card, t, "Store name", inset(t, "Corner Café", 30, None), None);
+    setting(&mut card, t, "Currency", inset(t, "EUR — euro", 28, Some("▾")), None);
+    setting(
+        &mut card,
+        t,
+        "Payment address",
+        {
+            let mut v = inset(t, "48ZqC7…x3", 30, None);
+            v[0].style = v[0].style.fg(t.err);
+            v
+        },
+        Some(t.e("✕ That isn't a Monero address: it should be 95 characters starting with 4 or 8")),
+    );
+    setting(&mut card, t, "View key", vec![Span::styled(format!(" {} ", pad("••••••••••••••••", 30)), Style::new().fg(t.fg).bg(S.field)), t.a("   Show")], Some(t.d("Lets mk-pay see payments arrive, but not spend them.")));
+    setting(&mut card, t, "Confirmations to wait", vec![Span::styled("  10  ", Style::new().fg(t.fg).bg(S.field)), t.n("   "), t.a("−"), t.n("   "), t.a("+")], Some(t.d("0 to 30. More is safer but slower; 10 takes about 20 minutes.")));
+    setting(&mut card, t, "Email receipts", toggle(t, true), None);
+    let mut node = inset(t, "cuprated  · Monero node on this Nodo", 36, Some(if picking { "▴" } else { "▾" }));
+    if picking {
+        node[0].style = node[0].style.bg(S.field);
+    }
+    card.row(t, {
+        let mut spans = vec![t.n(pad("Monero node", 24))];
+        spans.extend(node);
+        spans
+    });
+    if picking {
+        let list = Style::new().fg(t.fg).bg(S.raised);
+        let pad_left = " ".repeat(24);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!(" ✓ {} ", pad("cuprated  · on this Nodo (recommended)", 36)), list)]);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!("   {} ", pad("monerod   · on this Nodo, stopped", 36)), Style::new().fg(t.dim).bg(S.raised))]);
+        card.row(t, vec![t.n(pad_left), Span::styled(format!("   {} ", pad("Another node… type its address", 36)), Style::new().fg(t.accent).bg(S.raised))]);
+    } else {
+        card.row(t, vec![t.n(" ".repeat(24)), t.d("Picked from your apps, so it follows cuprated if its address changes.")]);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank];
+    before.push(heading(t, "Settings"));
+    before.push(quiet(t, "mk-pay restarts with the new settings. If it doesn't start, they're undone by themselves."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    let keys = if picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  ↵ save  Esc cancel" };
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), keys, w, h)
+}
+
+fn t2_settings_rolled_back(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("mk-pay didn't start with the new settings, so they were undone")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It's running again with the settings it had before. What you changed:")]);
+    card.row(t, vec![t.d(pad("  Confirmations to wait", 26)), t.n("10  →  0")]);
+    card.row(t, vec![t.d(pad("  Email receipts", 26)), t.n("On  →  Off")]);
+    card.blank(t);
+    card.row(t, vec![t.d("mk-pay said: \"confirmations must be at least 1\"")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show log ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Keep as it is", false), ("Edit again", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank], card, Vec::new(), "Keys: ↵ edit again  Esc keep as it is", w, h)
+}
+
+fn t2_unlock(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Unlock your Nodo")]);
+    card.blank(t);
+    card.row(t, vec![t.n("The Nodo restarted. Your apps' data is locked until you type the device passphrase.")]);
+    card.row(t, vec![t.d("cuprated is already running; mk-pay, mk-lws and kringle start after you unlock.")]);
+    card.blank(t);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.buttons(t, &[("Unlock", true)]);
+    let before = vec![Item::Blank, Item::Blank];
+    fit_page(t, top2(t, "Home", None, w), before, card, Vec::new(), "Keys: type the passphrase  ↵ unlock", w, h)
+}
+
+// Sources (the old Feeds), under Apps › Get apps › Sources. Adding your own is a main task, so it
+// is the card's primary action. Keys are shown as four groups of four, to compare by eye.
+
+fn fingerprint_groups(fp: &str) -> String {
+    let parts: Vec<&str> = fp.split(':').collect();
+    parts.chunks(4).map(|c| c.join("")).collect::<Vec<_>>().join("  ")
+}
+
+const MONOKULO_FP: &str = "62:54:a2:57:c2:57:9d:7e:11:8f:4c:30:a9:32:93:07";
+const ALICE_FP: &str = "9f:03:6e:b1:44:d2:7a:10:c8:5b:e3:91:0d:76:2a:ff";
+const ALICE_NEW_FP: &str = "17:c4:90:2e:aa:5f:63:08:b9:d1:4e:77:30:1c:e5:42";
+
+/// A key with its label on one row, the value as four groups (highlighted when it's the one to
+/// check). When both don't fit, the value goes on the next row under the label, kept whole.
+fn key_row(card: &mut Card, t: &Theme, label: &str, fp: &str, highlight: bool) {
+    let value = if highlight {
+        Span::styled(format!(" {} ", fingerprint_groups(fp)), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled(format!(" {} ", fingerprint_groups(fp)), Style::new().fg(t.fg))
+    };
+    let label = t.d(pad(label, 15));
+    if 15 + width_of(std::slice::from_ref(&value)) + 4 <= card.width.saturating_sub(4) {
+        card.row(t, vec![label, value]);
+    } else {
+        card.row(t, vec![label]);
+        card.row(t, vec![t.n("  "), value]);
+    }
+}
+
+fn sources_trail(t: &Theme, last: &[&str]) -> Vec<Item> {
+    let mut parts = vec!["Apps", "Get apps", "Sources"];
+    parts.extend_from_slice(last);
+    vec![Item::Blank, trail(t, &parts), Item::Blank]
+}
+
+fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
+    if on_ {
+        vec![t.a("[x]"), t.n(" On ")]
+    } else {
+        vec![t.d("[ ]"), t.d(" Off")]
+    }
+}
+
+fn t2_sources(t: &Theme, w: u16, h: u16, details: bool) -> Page {
+    // name, address, apps, enabled, problem, key, built in
+    type SourceRow<'a> = (&'a str, &'a str, &'a str, bool, Option<&'a str>, &'a str, bool);
+    let rows: [SourceRow; 3] = [
+        ("monokulo", "nodo.monokulo.com/feed", "5 apps", true, None, MONOKULO_FP, true),
+        ("Alice's apps", "apps.alice.example/feed", "2 apps", true, Some("Couldn't reach it since yesterday"), ALICE_FP, false),
+        ("Test builds", "192.168.1.40:8080/feed", "1 app", false, None, "4a:11:0e:93:5c:28:b7:f0:62:d9:13:8e:a4:07:5b:c1", false),
+    ];
+    let mut cards = Vec::new();
+    for (index, (name, address, count, enabled, problem, fp, built_in)) in rows.into_iter().enumerate() {
+        let mut card = Card::new(w);
+        if index == 1 {
+            card = card.hovered();
+        }
+        card.blank(t);
+        let mut head = vec![t.b(name.to_owned())];
+        if built_in {
+            head.push(t.d("   built in"));
+        }
+        let used = width_of(&head);
+        head.push(t.n(" ".repeat(48usize.saturating_sub(used))));
+        head.extend(toggle(t, enabled));
+        let room = card.width.saturating_sub(6);
+        let remove = Span::styled("  Remove  ", Style::new().fg(t.fg).bg(S.raised));
+        let used = width_of(&head) + 10;
+        head.push(t.n(" ".repeat(room.saturating_sub(used))));
+        head.push(remove);
+        card.row(t, head);
+        card.row(t, vec![t.d(format!("{address}   ·   {count}"))]);
+        if let Some(problem) = problem {
+            card.blank(t);
+            card.row(t, vec![t.e(format!("✕  {problem}")), t.n("   "), t.a("Try again")]);
+        }
+        if details {
+            card.blank(t);
+            key_row(&mut card, t, "Key", fp, false);
+        }
+        card.blank(t);
+        cards.push(card);
+    }
+    let heading_row = {
+        let [_, middle, _] = button_rows(t, "Add a source", true, ButtonStyle::Rounded, 18, t.ground);
+        let mut right = middle;
+        right.push(t.n(MARGIN));
+        Item::Row(Line::from(vec![margin(t), t.b("Sources")]), Line::from(right))
+    };
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "Sources"]), Item::Blank, heading_row];
+    before.push(quiet(t, "Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a(if details { "Hide keys ‹" } else { "Show keys ›" })])];
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, after, "Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  Esc back", w, h)
+}
+
+fn t2_source_add(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Add a source")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Paste the address the publisher gave you.")]);
+    card.blank(t);
+    let mut address = vec![t.d(pad("Address", 10))];
+    address.extend(inset(t, "https://apps.bob.example/feed", 44, None));
+    card.row(t, address);
+    card.blank(t);
+    card.row(t, vec![t.d("Nothing is installed yet: the Nodo first shows you what the source offers and its key.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Check", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["Add"]), card, Vec::new(), "Keys: paste the address  ↵ check  Esc cancel", w, h)
+}
+
+fn t2_source_check(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.b("Bob's apps"), t.d("   apps.bob.example/feed")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It offers 3 apps: "), t.b("bob-notes"), t.n(", "), t.b("bob-photos"), t.n(", "), t.b("bob-backup")]);
+    card.blank(t);
+    key_row(&mut card, t, "Its key", "3c:8e:51:0a:d7:26:f4:9b:e0:12:6d:a8:47:c3:b5:19", true);
+    card.blank(t);
+    card.row(t, vec![t.n("Check this matches what the publisher gave you, by a way you trust (in person, their site,")]);
+    card.row(t, vec![t.n("a message you know is from them). If it doesn't match, don't add it.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Add source", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["Add"]), card, Vec::new(), "Keys: ↵ add source  Esc cancel", w, h)
+}
+
+fn t2_source_errors(t: &Theme, w: u16, h: u16) -> Page {
+    let make = |title: &str, body: &[&str]| {
+        let mut card = Card::new(w);
+        card.blank(t);
+        card.row(t, vec![t.e("✕  "), t.b(title.to_owned())]);
+        for line_ in body {
+            card.row(t, vec![t.n(format!("   {line_}"))]);
+        }
+        card.blank(t);
+        card
+    };
+    let cards = vec![
+        make("That address isn't a source", &["It answered, but with a web page, not a list of apps. Check you copied the whole address."]),
+        make("Couldn't reach it", &["Nothing answered at apps.bob.example. It may be offline, or the address may be wrong.", "Try again later, or check the address with the publisher."]),
+        make("Its signature doesn't check out", &["The list of apps wasn't signed by the key it claims. Someone may have tampered with it,", "so the Nodo won't use it. Tell the publisher."]),
+    ];
+    let mut before = sources_trail(t, &["Add"]);
+    before.push(heading(t, "When a source can't be added (three cases, shown in the Add card)"));
+    before.push(Item::Blank);
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, Vec::new(), "Each case appears in place of the source's details; the address stays filled in to fix and Check again.", w, h)
+}
+
+fn t2_source_key_changed(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("Alice's apps is now signed with a different key")]);
+    card.blank(t);
+    card.row(t, vec![t.n("This happens when a publisher replaces a lost key, and also when someone else takes over their address. Until you decide, the Nodo installs nothing new from Alice's apps.")]);
+    card.blank(t);
+    key_row(&mut card, t, "Key you trust", ALICE_FP, false);
+    key_row(&mut card, t, "New key", ALICE_NEW_FP, true);
+    card.blank(t);
+    card.row(t, vec![t.n("Ask Alice, by a way you trust, whether the new key is hers. To trust it, type the source's name:")]);
+    let mut typed = vec![t.d(pad("Name", 15))];
+    typed.extend(inset(t, "", 30, None));
+    typed.push(t.d("   Alice's apps"));
+    card.row(t, typed);
+    card.blank(t);
+    card.buttons(t, &[("Trust the new key", false), ("Keep the old key", true)]);
+    let mut before = sources_trail(t, &["Alice's apps"]);
+    before.push(heading(t, "Check before you trust"));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↵ keep the old key  Tab move  Esc back", w, h)
+}
+
+fn t2_source_remove_builtin(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Remove monokulo?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It came with the Nodo, but you don't have to keep it. Apps you installed from it keep")]);
+    card.row(t, vec![t.n("running; they just won't get updates until you add it back.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("To add it back later: Sources › Show details › Restore built-in sources.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Remove", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["monokulo"]), card, Vec::new(), "Keys: ↵ remove  Esc cancel", w, h)
+}
+
+// System (batch 2): the Nodo itself. One page lists its parts; updates for the Nodo and the apps
+// share one review page; automatic updates, undoing an update, and device logs.
+
+fn system_trail(t: &Theme, last: &[&str]) -> Vec<Item> {
+    let mut parts = vec!["System"];
+    parts.extend_from_slice(last);
+    vec![Item::Blank, trail(t, &parts), Item::Blank]
+}
+
+fn t2_system(t: &Theme, w: u16, h: u16) -> Page {
+    let mut update = Card::new(w);
+    update.blank(t);
+    update.row(t, vec![t.b("A Nodo update is ready"), t.d("   2026.11.14 · needs a restart, about 2 minutes")]);
+    update.row(t, vec![t.d("Faster syncing for cuprated, and the fan curve no longer chatters.")]);
+    update.blank(t);
+    update.buttons(t, &[("Review", true)]);
+    let mut parts = Card::new(w);
+    parts.blank(t);
+    for (index, (name, summary)) in [
+        ("Updates", "2 for apps, 1 for the Nodo · automatic for apps, overnight"),
+        ("Backups", "Last backup 2 days ago, to the USB drive"),
+        ("Network", "Wired · 192.168.1.155 · Wi-Fi off"),
+        ("Device logs", "Last problem: none today"),
+        ("About this Nodo", "monokulo-nodo · NanoPC-T6 · 2026.11.13"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            parts.blank(t);
+        }
+        // The summary column takes what the card leaves, so the › stays on the row at 80 columns.
+        let room = parts.width.saturating_sub(6 + 18 + 2);
+        let summary: String = if summary.chars().count() > room { format!("{}…", summary.chars().take(room.saturating_sub(1)).collect::<String>()) } else { summary.to_owned() };
+        let spans = vec![t.b(pad(name, 18)), t.d(pad(&summary, room)), t.d("›")];
+        if name == "Backups" {
+            parts.hover_row(t, spans);
+        } else {
+            parts.row(t, spans);
+        }
+    }
+    parts.blank(t);
+    let before = vec![Item::Blank, heading(t, "This Nodo"), Item::Blank];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), before, vec![update, parts], Vec::new(), "Keys: ↑↓ choose  ↵ open  1-4 tabs", w, h)
+}
+
+fn t2_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut nodo = Card::new(w);
+    nodo.blank(t);
+    nodo.row(t, vec![t.b("The Nodo"), t.d("   2026.11.13  →  2026.11.14")]);
+    for item in ["Faster syncing for cuprated", "The fan curve no longer chatters", "Security fixes for the system base"] {
+        nodo.row(t, vec![t.n(format!("  ·  {item}"))]);
+    }
+    nodo.blank(t);
+    nodo.row_with_button(t, vec![t.d("Needs a restart, about 2 minutes. Apps stop safely first.")], "Update and restart", true);
+    nodo.blank(t);
+    let mut apps = Card::new(w);
+    apps.blank(t);
+    apps.row(t, vec![t.b("Apps")]);
+    for (on_, name, change, note) in [
+        (true, "mk-pay", "0.1  →  0.2", "fixes receipts in some currencies"),
+        (true, "kringle", "0.4.1  →  0.4.2", "smaller pages"),
+    ] {
+        apps.row(t, vec![tick(t, on_), t.n("  "), t.n(pad(name, 12)), t.d(pad(change, 18)), t.d(note.to_owned())]);
+    }
+    apps.blank(t);
+    apps.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], "Update 2 apps", false);
+    apps.blank(t);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Automatic updates ›"), t.n("     "), t.a("Undo an update ›")])];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Updates"]), vec![nodo, apps], after, "Keys: Tab move  Space tick  ↵ update  Esc back", w, h)
+}
+
+fn t2_auto_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let mut first = vec![t.b(pad("Update apps by themselves", 36))];
+    first.extend(toggle(t, true));
+    card.row(t, first);
+    card.row(t, vec![t.d("Only apps whose new version asks for nothing new. Anything else waits for you.")]);
+    card.blank(t);
+    let mut when = vec![t.n(pad("When", 36))];
+    when.extend(inset(t, "Overnight, 2–5 am", 22, Some("▾")));
+    card.row(t, when);
+    card.blank(t);
+    let mut nodo = vec![t.b(pad("Update the Nodo by itself", 36))];
+    nodo.extend(toggle(t, false));
+    card.row(t, nodo);
+    card.row(t, vec![t.d("Updates that need a restart always wait for you, whatever this says.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    let mut before = system_trail(t, &["Updates", "Automatic"]);
+    before.push(heading(t, "Automatic updates"));
+    before.push(quiet(t, "The Nodo checks every 6 hours. You can always see and undo what it did."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Tab move  Space on/off  ↵ save  Esc cancel", w, h)
+}
+
+fn t2_update_rolled_back(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("mk-pay 0.2 didn't start, so 0.1 was put back")]);
+    card.blank(t);
+    card.row(t, vec![t.n("mk-pay is running again as before, with its data as it was. Nothing was lost.")]);
+    card.row(t, vec![t.d("mk-pay said: \"database version 7 needs migration\"")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show log ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Try again", false), ("OK", true)]);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Updates"]), card, Vec::new(), "Keys: ↵ OK  t try again  l log", w, h)
+}
+
+fn t2_undo_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut cards = Vec::new();
+    for (index, (what, change, when, can)) in [
+        ("mk-pay", "0.1  →  0.2", "today, 03:12", true),
+        ("The Nodo", "2026.11.12  →  2026.11.13", "yesterday", true),
+        ("kringle", "0.4.0  →  0.4.1", "6 days ago", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut card = Card::new(w);
+        if index == 0 {
+            card = card.hovered();
+        }
+        card.blank(t);
+        let spans = vec![t.b(pad(what, 12)), t.n(pad(change, 30)), t.d(pad(when, 16))];
+        if can {
+            card.row_with_button(t, spans, "Undo", false);
+        } else {
+            let mut spans = spans;
+            spans.push(t.d("kept for 5 days; can't be undone now"));
+            card.row(t, spans);
+        }
+        card.blank(t);
+        cards.push(card);
+    }
+    let mut before = system_trail(t, &["Updates", "Undo"]);
+    before.push(heading(t, "Undo an update"));
+    before.push(quiet(t, "Puts back the version before, with its data as it was then. Changes made since are lost."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), before, cards, Vec::new(), "Keys: ↑↓ choose  ↵ undo  Esc back", w, h)
+}
+
+fn t2_device_logs(t: &Theme, w: u16, h: u16) -> Page {
+    let chips: Vec<Span<'static>> = ["All", "Problems", "The Nodo", "cuprated", "mk-pay"]
+        .iter()
+        .enumerate()
+        .flat_map(|(index, name)| {
+            let style = if index == 1 { Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD) } else { Style::new().fg(t.fg).bg(S.field) };
+            vec![Span::styled(format!("  {name}  "), style), t.n("  ")]
+        })
+        .collect();
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (time, from, text)) in [
+        ("14:02", "mk-bell", "couldn't reach the push relay; trying again in 1 minute"),
+        ("13:41", "The Nodo", "the SSD reached 61 °C; slowed down for 4 minutes"),
+        ("09:15", "cuprated", "lost 3 peers; found 5 new ones"),
+        ("03:12", "mk-pay", "update to 0.2 failed to start; put back 0.1"),
+        ("yesterday", "The Nodo", "update 2026.11.13 installed after restart"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let spans = vec![t.d(pad(time, 11)), t.b(pad(from, 11)), t.n(text.to_owned())];
+        if index == 1 {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show older ›")]);
+    card.blank(t);
+    let mut search = vec![margin(t), t.d(pad("Search", 9))];
+    search.extend(inset(t, "", 30, None));
+    let mut before = system_trail(t, &["Device logs"]);
+    before.push(Item::Row(Line::from(search), Line::from(vec![t.a("Save to a file ›"), t.n(MARGIN)])));
+    before.push(Item::Blank);
+    before.push(line(std::iter::once(margin(t)).chain(chips).collect()));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), before, card, Vec::new(), "Click a line for its full text.   Keys: / search  1-5 filter  ↑↓ scroll", w, h)
+}
+
+// Batch 3: backups and restoring onto a new Nodo, network, and the screens that stop something.
+
+fn t2_backups(t: &Theme, w: u16, h: u16) -> Page {
+    let mut last = Card::new(w);
+    last.blank(t);
+    last.row(t, vec![t.o("✓  "), t.b("Backed up 2 days ago"), t.d("   to SANDISK 64GB (USB) · 1.2 GB")]);
+    last.blank(t);
+    last.row_with_button(t, vec![t.d("Next one tonight at 3 am.")], "Back up now", true);
+    last.blank(t);
+    let mut auto = Card::new(w);
+    auto.blank(t);
+    let mut first = vec![t.b(pad("Back up by itself", 30))];
+    first.extend(toggle(t, true));
+    auto.row(t, first);
+    auto.blank(t);
+    let mut when = vec![t.n(pad("How often", 30))];
+    when.extend(inset(t, "Every night, keep 7", 24, Some("▾")));
+    auto.row(t, when);
+    auto.blank(t);
+    let mut to = vec![t.n(pad("Where", 30))];
+    to.extend(inset(t, "SANDISK 64GB (USB)", 24, Some("▾")));
+    auto.row(t, to);
+    auto.blank(t);
+    let mut what = Card::new(w);
+    what.blank(t);
+    what.row(t, vec![t.n("A backup holds your apps' data and settings, your sources and domain providers, locked")]);
+    what.row(t, vec![t.n("with your device passphrase. It leaves out the Monero chain, which syncs again by itself.")]);
+    what.blank(t);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Restore from a backup ›")])];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Backups"]), vec![last, auto, what], after, "Keys: ↵ back up now  Tab move  Esc back", w, h)
+}
+
+fn t2_restore(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Restore onto this Nodo")]);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.n("Found a backup on SANDISK 64GB"), t.d("   from monokulo-nodo · 12 Nov 2026 · 1.2 GB")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Type the device passphrase of the Nodo it came from:")]);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "••••••••••", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.row(t, vec![t.d("Comes back: mk-pay, mk-lws, kringle and cuprated with their data and settings, 2 sources,")]);
+    card.row(t, vec![t.d("1 domain provider. cuprated then syncs the Monero chain again, which takes a few hours.")]);
+    card.blank(t);
+    card.buttons(t, &[("Restore", true)]);
+    let before = vec![Item::Blank, heading(t, "Welcome to your new Nodo"), quiet(t, "Start fresh, or bring everything over from your old one."), Item::Blank, Item::Blank];
+    fit_page(t, top2(t, "Home", None, w), before, card, vec![Item::Blank, line(vec![margin(t), t.a("Start fresh instead ›")])], "Keys: type the passphrase  ↵ restore", w, h)
+}
+
+fn signal(t: &Theme, bars: usize) -> Vec<Span<'static>> {
+    let glyphs = ["▂", "▄", "▆", "█"];
+    glyphs.iter().enumerate().map(|(i, g)| if i < bars { t.n(*g) } else { t.d("·") }).collect()
+}
+
+fn t2_network(t: &Theme, w: u16, h: u16, wifi_on: bool) -> Page {
+    let mut wired = Card::new(w);
+    wired.blank(t);
+    wired.row(t, vec![t.b(pad("Cable", 14)), t.o("●  "), t.n("Connected · 192.168.1.155")]);
+    wired.blank(t);
+    let mut wifi = Card::new(w);
+    wifi.blank(t);
+    let mut head = vec![t.b(pad("Wi-Fi", 14))];
+    head.extend(toggle(t, wifi_on));
+    head.push(t.d(if wifi_on { "   a cable is steadier" } else { "   not needed while the cable is connected" }));
+    wifi.row(t, head);
+    if wifi_on {
+        wifi.blank(t);
+        for (index, (name, bars, locked)) in [("Home-5G", 4, true), ("Home-2.4", 3, true), ("Cafe Guest", 1, false)].into_iter().enumerate() {
+            let mut spans = vec![t.n(" ".repeat(14))];
+            spans.extend(signal(t, bars));
+            spans.push(t.n("   "));
+            spans.push(t.n(pad(name, 16)));
+            spans.push(t.d(if locked { "password" } else { "open" }));
+            if index == 0 {
+                wifi.hover_row(t, spans);
+                let mut pass = vec![t.n(" ".repeat(21)), t.d(pad("Password", 10))];
+                pass.extend(inset(t, "", 16, None));
+                pass.push(t.n("   "));
+                let width = "Join".len() + 6;
+                let [_, button, _] = button_rows(t, "Join", true, ButtonStyle::Rounded, width, S.card);
+                pass.extend(button);
+                wifi.row(t, pass);
+            } else {
+                wifi.row(t, spans);
+            }
+        }
+    }
+    wifi.blank(t);
+    let mut bt = Card::new(w);
+    bt.blank(t);
+    let mut head = vec![t.b(pad("Bluetooth", 14))];
+    head.extend(toggle(t, false));
+    head.push(t.d("   lets a phone set the Nodo up without a cable"));
+    bt.row(t, head);
+    bt.blank(t);
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Network"]), vec![wired, wifi, bt], Vec::new(), "Keys: Tab move  Space on/off  ↵ join  Esc back", w, h)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blocked(t: &Theme, w: u16, h: u16, trail_parts: &[&str], title: &str, body: &[&str], buttons: &[(&str, bool)], keys: &str) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b(title.to_owned())]);
+    card.blank(t);
+    for line_ in body {
+        card.row(t, vec![t.n(line_.to_string())]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, buttons);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, trail_parts), Item::Blank], card, Vec::new(), keys, w, h)
+}
+
+fn t2_rejected(t: &Theme, w: u16, h: u16) -> Page {
+    blocked(
+        t, w, h,
+        &["Apps", "Get apps", "photo-sync"],
+        "photo-sync can't be installed",
+        &["Its source signed it, but it asks to read every other app's data, and the Nodo never allows", "that. Nothing was installed. Tell the publisher if you think this is a mistake."],
+        &[("OK", true)],
+        "Keys: ↵ OK  d details",
+    )
+}
+
+fn t2_capability(t: &Theme, w: u16, h: u16) -> Page {
+    blocked(
+        t, w, h,
+        &["Apps", "Get apps", "mk-lws"],
+        "mk-lws needs a Monero node first",
+        &["It reads the Monero chain from a node on this Nodo, and there isn't one yet.", "cuprated is the recommended node; it syncs the chain in a few hours, then mk-lws can be installed."],
+        &[("Cancel", false), ("Install cuprated", true)],
+        "Keys: ↵ install cuprated  Esc cancel",
+    )
+}
+
+fn t2_no_drive(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("The data drive isn't connected")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Your apps keep their data on the SSD, so they're stopped until it's back. Nothing on it has")]);
+    card.row(t, vec![t.n("been touched. Check the cable, or plug it back in; the Nodo notices by itself.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("Stopped: cuprated, mk-pay, mk-lws, kringle")]);
+    card.blank(t);
+    card.buttons(t, &[("Check again", true)]);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Use a new drive instead ›")])];
+    fit_page(t, top2(t, "Home", None, w), vec![Item::Blank, Item::Blank], card, after, "Keys: ↵ check again", w, h)
 }
 
 #[cfg(test)]
@@ -1614,8 +2995,9 @@ mod tests {
             for (w, h) in [(120, 36), (80, 24)] {
                 let buffer = render(scene, w, h, &t);
                 let text: String = buffer.content().iter().map(|c| c.symbol()).collect();
+                // Today's screens without a tab bar (package detail, review…) are drawn as they are.
                 assert!(
-                    text.contains("Web"),
+                    scene.before().is_some() || text.contains("Web"),
                     "{} at {w}x{h} lost its header",
                     scene.slug()
                 );
@@ -1637,12 +3019,35 @@ mod tests {
             Scene::V3Blocked => Some("Use Tor instead"),
             Scene::V3ProviderKey => Some("Connect"),
             Scene::V3ProviderDone => Some("Back to mk-pay"),
+            Scene::T2Home => Some("Review updates"),
+            Scene::T2AppAbout | Scene::T2Review => Some("Install"),
+            Scene::T2AppPage => Some("Update"),
+            Scene::T2Unlock => Some("Unlock"),
+            Scene::T2Sources | Scene::T2SourcesDetails => Some("Add a source"),
+            Scene::T2SourceAdd => Some("Check"),
+            Scene::T2SourceCheck => Some("Add source"),
+            Scene::T2SourceKeyChanged => Some("Keep the old key"),
+            Scene::T2SourceRemoveBuiltin => Some("Remove"),
+            Scene::T2AppRemove => Some("Remove mk-pay"),
+            Scene::T2Settings => Some("Save"),
+            Scene::T2SettingsRolledBack => Some("Edit again"),
+            Scene::T2System => Some("Review"),
+            Scene::T2Updates => Some("Update and restart"),
+            Scene::T2AutoUpdates => Some("Save"),
+            Scene::T2UpdateRolledBack => Some("OK"),
+            Scene::T2Backups => Some("Back up now"),
+            Scene::T2Restore => Some("Restore"),
+            Scene::T2NetworkWifi => Some("Join"),
+            Scene::T2Rejected => Some("OK"),
+            Scene::T2Capability => Some("Install cuprated"),
+            Scene::T2NoDrive => Some("Check again"),
             _ => None,
         };
-        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
             assert!(!scene.clickable().is_empty(), "{}", scene.slug());
             let (app, _) = fixture(ScreenId::WebSites);
-            assert_eq!(v3_page(&app, &t, scene, 120, 36).footer.len(), 1, "{}: the footer is only the keys", scene.slug());
+            let page = if scene.is_v3() { v3_page(&app, &t, scene, 120, 36) } else { tui2_page(&t, scene, 120, 36) };
+            assert_eq!(page.footer.len(), 1, "{}: the footer is only the keys", scene.slug());
             if let Some(label) = main(scene) {
                 for (w, h) in [(120u16, 36u16), (80, 24)] {
                     let b = render(scene, w, h, &t);
@@ -1657,7 +3062,7 @@ mod tests {
     fn v3_surfaces_are_rectangles_at_both_sizes() {
         // Every row of a card is filled from the same first to the same last column: no steps.
         let t = Theme::truecolor();
-        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
             for (w, h) in [(120u16, 36u16), (80, 24)] {
                 let b = render(scene, w, h, &t);
                 let mut edges = std::collections::BTreeSet::new();
@@ -1668,6 +3073,43 @@ mod tests {
                     }
                 }
                 assert!(edges.len() <= 1, "{} at {w}x{h}: card rows span different columns {edges:?}", scene.slug());
+            }
+        }
+    }
+
+    #[test]
+    fn buttons_stay_whole_and_inside_their_surface() {
+        // A rounded cap must touch its button's fill on the inner side and sit on the same
+        // surface as the cell on its outer side: a button pushed past a card's edge, or a cap
+        // wrapped onto the next row, breaks one of the two.
+        let t = Theme::truecolor();
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
+            for (w, h) in [(120u16, 36u16), (80, 24)] {
+                let b = render(scene, w, h, &t);
+                for y in 0..h {
+                    for x in 0..w {
+                        let cell = &b[(x, y)];
+                        let (inner, outer) = match cell.symbol() {
+                            "\u{E0B6}" => (x.checked_add(1).filter(|&n| n < w), x.checked_sub(1)),
+                            "\u{E0B4}" => (x.checked_sub(1), x.checked_add(1).filter(|&n| n < w)),
+                            _ => continue,
+                        };
+                        let at = format!("{} at {w}x{h}, cell {x},{y}", scene.slug());
+                        let inner = inner.unwrap_or_else(|| panic!("{at}: cap at the screen's edge"));
+                        assert_eq!(b[(inner, y)].bg, cell.fg, "{at}: cap not joined to its button");
+                        if let Some(outer) = outer {
+                            assert_eq!(b[(outer, y)].bg, cell.bg, "{at}: button sticks out of its surface");
+                        }
+                        // From a left cap, the fill runs to a right cap on the same row.
+                        if cell.symbol() == "\u{E0B6}" {
+                            let mut end = x + 1;
+                            while end < w && b[(end, y)].bg == cell.fg && b[(end, y)].symbol() != "\u{E0B4}" {
+                                end += 1;
+                            }
+                            assert!(end < w && b[(end, y)].symbol() == "\u{E0B4}", "{at}: button split across rows");
+                        }
+                    }
+                }
             }
         }
     }

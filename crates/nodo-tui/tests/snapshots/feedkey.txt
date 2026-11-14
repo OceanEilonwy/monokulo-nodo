@@ -1,32 +1,32 @@
-Feeds › old-tools                                                                  ✕ Updates blocked
-┌ This feed's signing key changed ─────────────────────────────────────────────────────────────────┐
-│ Publishers sometimes rotate keys. It can also mean the feed was taken over. Nothing new from     │
-│ this feed will install until you decide.                                                         │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Keys ────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Trusted                                           SHA256:08bd 42f1 a7c3 91de 66e0 d214 f8a9 03c7 │
-│ Now signing                                       SHA256:e93a 17c0 5bd2 80f4 1a6c 39e7 42db a106 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Affected ────────────────────────────────────────────────────────────────────────────────────────┐
-│ hash-tools 1.3.0                                                      Keeps running. No updates. │
-│ peer-map 0.9.1                                                        Keeps running. No updates. │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
- Check the publisher's announcement through a channel other than this feed.
-┌ Your choice ─────────────────────────────────────────────────────────────────────────────────────┐
-│ ▸Keep the old key and stay blocked (safe default)                                                │
-│  Trust the new key  you must type the feed name to confirm                                       │
-│  Remove this feed                                                                                │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ choose  ↵ confirm  Esc decide later
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  old-tools
+
+    Check before you trust
+
+
+       ▲  old-tools is now signed with a different key
+
+       This happens when a publisher replaces a lost key, and also when someone else takes over
+       their address. Until you decide, the Nodo installs nothing new from old-tools.
+
+       Key you trust   08bd42f1  a7c391de  66e0d214  f8a903c7
+       New key         e93a17c0  5bd280f4  1a6c39e7  42dba106
+
+       Apps from it on this Nodo: hash-tools 1.3.0, peer-map 0.9.1
+
+       To trust the new key you'll type the source's name, so it can't happen by accident.
+
+               Remove source              Trust the new key            ▸ Keep the old key
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ confirm  Esc decide later
