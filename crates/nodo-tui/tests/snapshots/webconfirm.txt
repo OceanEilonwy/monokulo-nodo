@@ -1,32 +1,32 @@
-Web › shop › Go public                                                           ✓ All checks passed
-┌ This puts shop on the public internet ───────────────────────────────────────────────────────────┐
-│ Address                                                                 https://shop.example.com │
-│ DNS record                                                     shop.example.com  A  203.0.113.42 │
-│ Device firewall                                                                 Opens 80 and 443 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Access ──────────────────────────────────────────────────────────────────────────────────────────┐
-│  [ ] Require a password in front of this site                             shop has its own login │
-│ ● Repeated requests are rate-limited                                                      Always │
-│ ● Admin paths are blocked from the public                                                 Always │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Before you confirm ──────────────────────────────────────────────────────────────────────────────┐
-│ ▲ Your home IP will be published, and DNS history can keep it after you stop.                    │
-│ ▲ Anyone can link this domain to your IP, including your Monero node's IP.                       │
-│ ▲ Certificate logs record shop.example.com permanently.                                          │
-│                                                                                                  │
-│ You can take this offline at any time from the Web tab.                                          │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-Type the address to confirm
-shop.example.com
-▸Cancel    Go public                                 Tab fields  Space toggle  ↵ confirm  Esc cancel
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+
+    Packages  ›  shop  ›  Hosting
+
+    Ready to put shop on the internet
+
+
+       ✓  Porkbun accepted the key
+       ✓  shop.example.com points to your home
+       ✓  The internet can reach your Nodo
+
+       Anyone will be able to open https://shop.example.com
+       Your home's internet address becomes public.
+       Records of it can stay online after you stop.
+       Anyone can connect this address to your home, including your Monero node.
+       Public certificate logs list shop.example.com permanently.
+       The Nodo keeps the secure connection up to date. Take it offline at any time.
+
+       Show details ›
+
+                                                    Cancel                Put shop online
+
+       ▸ Cancel is selected for the keyboard.
+
+
+
+
+
+
+
+    Keys: Tab choose  ↵ press  Esc cancel

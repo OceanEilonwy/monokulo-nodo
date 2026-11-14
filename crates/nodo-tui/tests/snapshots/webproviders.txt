@@ -1,32 +1,32 @@
-Web › Domains › Connect a domain                                               Bring your own domain
-┌ Where is your DNS hosted? ─────────────────────────────────┐┌ Porkbun ───────────────────────────┐
-│    Provider        Dynamic DNS   HTTPS without open ports  ││ Create an API key in your Porkbun  │
-│  ▸ Porkbun         ✓             ✓                         ││ account, then enable API access    │
-│    Cloudflare      ✓             ✓                         ││ for this domain.                   │
-│    GoDaddy         ▲ account     ▲ account                 ││                                    │
-│    Namecheap       ▲ account     ▲ account                 ││ Domain                             │
-│    IONOS           ✓             ✓                         ││ example.com                        │
-│    Gandi           ✓             ✓                         ││ API key                            │
-│    Name.com        ✓             ✓                         ││ ••••••••••••••••                   │
-│    Alibaba Cloud   ✓             ✓                         ││ Secret key                         │
-│    Hostinger       ▲ limited     Ports needed              ││ ••••••••••••••••                   │
-│    Hover           ✕ no API      ✕ no API                  ││                                    │
-│    Squarespace     ✕ no API      ✕ no API                  ││ ✓ Test passed: read and wrote a    │
-│                                                            ││ temporary record                   │
-│                                                            ││ Stored as a secret. Packages       │
-│                                                            ││ cannot read it.                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-│                                                            ││                                    │
-└────────────────────────────────────────────────────────────┘└────────────────────────────────────┘
-↑↓ provider  Tab fields  t test  ↵ save  ? where to find keys  Esc back
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+
+    Web  ›  Domain providers  ›  Add
+
+    Where did you buy your web address?
+
+
+       ▸ Porkbun
+         Cloudflare
+         GoDaddy
+         Namecheap
+         IONOS
+         Gandi
+         Name.com
+         Alibaba Cloud
+         Hostinger
+         Hover         Can't be connected: no way to change records
+         Squarespace   Can't be connected: no way to change records
+
+
+    Somewhere else? It can't be connected yet, but Tor works without a web address.
+
+
+
+
+
+
+
+
+
+    Click the company.   Keys: ↑↓ choose  ↵ next  Esc back

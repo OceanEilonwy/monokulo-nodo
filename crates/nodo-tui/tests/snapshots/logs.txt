@@ -1,4 +1,4 @@
-Home  Packages  Web  Feeds  Updates (3)   Logs                                      ● Following live
+Home   Packages   Web   Feeds   Updates (3)     Logs                                ● Following live
 ┌ Service ────────────┐┌ bell ─────────────────────────────────────────────────────────────────────┐
 │  cuprated           ││ 14:02:11 INFO  starting version 1.2.0                                     │
 │ ▸bell ✕             ││ 14:02:11 INFO  reading /etc/bell/config.toml                              │

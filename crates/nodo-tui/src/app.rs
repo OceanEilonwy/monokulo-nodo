@@ -720,8 +720,70 @@ pub struct CapabilityState {
 pub struct ExposureState {
     pub site: String,
     pub draft: Exposure,
+    /// An index into [`ExposureState::order`].
     pub selected: usize,
-    pub editing_host: Option<Input>,
+    /// The part of the public address before the domain, such as `pay` in `pay.example.com`.
+    pub sub: Input,
+    /// The domain list is open.
+    pub picking: bool,
+    /// Index into the open domain list: the domains, then "Add a provider".
+    pub pick: usize,
+    pub details: bool,
+    /// A domain provider is connected, so the internet choice can pick a domain.
+    pub has_provider: bool,
+}
+
+/// What can have focus on the Hosting screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostingFocus {
+    Home,
+    Tor,
+    Internet,
+    Domain,
+    Address,
+    AddProvider,
+    Details,
+    Save,
+}
+
+impl ExposureState {
+    /// `host` is the site's saved public host, `domain` the connected provider's domain.
+    pub fn new(site: &str, draft: Exposure, host: Option<&str>, domain: &str, has_provider: bool) -> Self {
+        let sub = host
+            .and_then(|host| host.strip_suffix(domain))
+            .map(|rest| rest.trim_end_matches('.').to_owned())
+            .unwrap_or_else(|| site.split('-').next_back().unwrap_or(site).to_owned());
+        Self { site: site.to_owned(), draft, selected: 0, sub: Input::plain(sub), picking: false, pick: 0, details: false, has_provider }
+    }
+
+    /// The focus order, which depends on whether the internet is ticked and a provider exists.
+    pub fn order(&self) -> Vec<HostingFocus> {
+        let has_provider = self.has_provider;
+        let mut order = vec![HostingFocus::Home, HostingFocus::Tor, HostingFocus::Internet];
+        if self.draft.public {
+            if has_provider {
+                order.extend([HostingFocus::Domain, HostingFocus::Address]);
+            } else {
+                order.push(HostingFocus::AddProvider);
+            }
+        }
+        order.push(HostingFocus::Details);
+        if !self.draft.public || has_provider {
+            order.push(HostingFocus::Save);
+        }
+        order
+    }
+
+    pub fn focus(&self) -> HostingFocus {
+        let order = self.order();
+        order[self.selected.min(order.len() - 1)]
+    }
+
+    /// The public host the choices make: the address part and the domain.
+    pub fn host(&self, domain: &str) -> String {
+        let sub = self.sub.text().trim().trim_matches('.');
+        if sub.is_empty() { domain.to_owned() } else { format!("{sub}.{domain}") }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -732,26 +794,51 @@ pub enum ProviderFocus {
     SecretKey,
 }
 
+/// Where the domain provider screens are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderStage {
+    /// The providers added, with a button to add one.
+    List,
+    /// Choosing the company.
+    Pick,
+    /// The domain and key for the chosen company.
+    Key,
+    /// Connected. Holds the provider and the domain.
+    Done { provider: String, domain: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvidersState {
+    pub stage: ProviderStage,
+    /// The chosen company, an index into the provider catalog.
     pub selected: usize,
     pub focus: ProviderFocus,
     pub domain: Input,
     pub api_key: Input,
     pub secret_key: Input,
     pub test: Option<Result<String, String>>,
+    /// The site whose Hosting screen opened this, to go back to once a provider is added.
+    pub return_to: Option<String>,
 }
 
 impl ProvidersState {
+    /// The add flow, at choosing the company.
     pub fn new(domain: &str) -> Self {
         Self {
+            stage: ProviderStage::Pick,
             selected: 0,
             focus: ProviderFocus::List,
             domain: Input::plain(domain),
             api_key: Input::secret(),
             secret_key: Input::secret(),
             test: None,
+            return_to: None,
         }
+    }
+
+    /// The list of providers added.
+    pub fn list(domain: &str) -> Self {
+        Self { stage: ProviderStage::List, ..Self::new(domain) }
     }
 }
 
@@ -764,23 +851,13 @@ pub struct WebCheckState {
     /// True when this check is a step towards going public, not just a test from the overview.
     pub going_public: bool,
     pub manual: Vec<String>,
+    pub details: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmFocus {
-    Password,
-    Address,
     Cancel,
     GoPublic,
-}
-
-impl ConfirmFocus {
-    pub const ORDER: [ConfirmFocus; 4] = [
-        ConfirmFocus::Password,
-        ConfirmFocus::Address,
-        ConfirmFocus::Cancel,
-        ConfirmFocus::GoPublic,
-    ];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -789,8 +866,7 @@ pub struct WebConfirmState {
     pub plan: PublicPlan,
     pub access: PublicAccess,
     pub focus: ConfirmFocus,
-    pub typed: Input,
-    pub error: Option<String>,
+    pub details: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -864,6 +940,7 @@ pub struct CgnatState {
     pub internet_address: String,
     pub choice: usize,
     pub going_public: bool,
+    pub details: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1018,6 +1095,10 @@ pub struct App {
     pub ticks: u64,
     /// The backend is busy with a request. Restarts and settings changes can take minutes.
     pub working: bool,
+    /// Where the last drawn screen can be clicked. Set by the view, read by mouse events.
+    pub hits: std::cell::RefCell<Vec<crate::hit::Hit>>,
+    /// The click target under the mouse pointer, drawn with a hover fill.
+    pub hover: Option<ratatui::layout::Rect>,
 }
 
 impl Default for App {
@@ -1027,6 +1108,16 @@ impl Default for App {
 }
 
 impl App {
+    /// The sites that are online somewhere: on the home network, Tor or the internet.
+    pub fn active_sites(&self) -> Vec<&Site> {
+        self.data.web.sites.iter().filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public).collect()
+    }
+
+    /// A domain provider is connected, with its domain.
+    pub fn has_provider(&self) -> bool {
+        !self.data.web.provider.is_empty() && !self.data.web.domain.is_empty()
+    }
+
     pub fn new() -> Self {
         Self {
             screen: Screen::Home { selected: 0 },
@@ -1039,6 +1130,8 @@ impl App {
             should_quit: false,
             ticks: 0,
             working: false,
+            hits: std::cell::RefCell::new(Vec::new()),
+            hover: None,
         }
     }
 
@@ -1177,9 +1270,21 @@ pub enum Effect {
     RemoveBluetooth(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseKind {
+    /// The left button went down.
+    Down,
+    Moved,
+    ScrollUp,
+    ScrollDown,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Key(KeyEvent),
+    /// A mouse event at a cell, as crossterm reports it. There is no hover event of its own: a
+    /// move over a target is one.
+    Mouse { kind: MouseKind, column: u16, row: u16 },
     Paste(String),
     Tick,
     Resize(u16, u16),

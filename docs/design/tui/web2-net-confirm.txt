@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet
+┌ Put mk-pay on the internet? ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 4 of 4   ✓ Address  ›  ✓ Provider  ›  ✓ Checks  ›  Confirm                                                      │
+│                                                                                                                      │
+│ ✓ Everything checked out                                                                                             │
+│                                                                                                                      │
+│ mk-pay will open at https://pay.example.com for anyone.                                                              │
+│                                                                                                                      │
+│ What changes                                                                                                         │
+│   · The Nodo answers visitors from the internet, for mk-pay only.                                                    │
+│   · Visitors can see your home's internet address.                                                                   │
+│   · The Nodo keeps the address and the secure connection up to date itself.                                          │
+│                                                                                                                      │
+│  [ ] Ask for a password before showing mk-pay   (mk-pay already has its own login)                                   │
+│  [x] Slow down anyone making too many requests                                                                       │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+▸Cancel    Put mk-pay online
+Space tick  ←→ choose  d details  ↵ confirm

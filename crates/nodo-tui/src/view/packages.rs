@@ -112,7 +112,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
         .footer(Item::Text(keys))
 }
 
-pub fn detail(t: &Theme, detail: &PackageDetail) -> Page {
+pub fn detail(t: &Theme, detail: &PackageDetail, has_site: bool) -> Page {
     let facts: Vec<String> = [format!("Version {}", detail.version), detail.size.clone(), detail.license.clone()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -154,19 +154,26 @@ pub fn detail(t: &Theme, detail: &PackageDetail) -> Page {
     };
     asks.push(Item::Row(Line::from(t.d("Encrypted storage")), Line::from(storage)));
 
-    let keys: &[(&str, &str)] = if detail.installed {
+    let keys: &[(&str, &str)] = if detail.installed && has_site {
+        &[("s", "settings"), ("h", "hosting"), ("v", "choose version"), ("c", "changelog"), ("Esc", "back")]
+    } else if detail.installed {
         &[("s", "settings"), ("v", "choose version"), ("c", "changelog"), ("Esc", "back")]
     } else {
         &[("i", "install"), ("v", "choose version"), ("c", "changelog"), ("Esc", "back")]
     };
-    Page::new(
+    let page = Page::new(
         Line::from(vec![t.n("Packages "), t.d("› "), t.b(detail.id.name.clone())]),
         Line::from(vec![t.d(format!("{} feed · ", detail.id.feed)), signature]),
     )
     .panel(Panel::new("About", about))
     .columns(vec![(1, vec![Panel::new("Needs", needs)]), (1, vec![Panel::new("Public settings", settings)])])
     .panel(Panel::new("It will ask for", asks).grow())
-    .footer(Item::Text(hints(t, keys)))
+    .footer(Item::Text(hints(t, keys)));
+    if has_site && detail.installed {
+        page.target(crate::hit::Target::text("h hosting", crate::hit::Click::Key(crossterm::event::KeyCode::Char('h'))))
+    } else {
+        page
+    }
 }
 
 pub fn rejected(t: &Theme, data: &RejectionData) -> Page {

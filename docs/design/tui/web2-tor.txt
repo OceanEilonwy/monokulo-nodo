@@ -1,0 +1,36 @@
+Web › kringle › Private link                                                                                        ✓ On
+┌ Private link through Tor ────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ kringle has a private link                                                                                         │
+│                                                                                                                      │
+│ Link                                                                                                                 │
+│   http://kringlqx3v7mgk2hbdu5w6zyntc4lrq3oafj2wxhs7e4ylpd7qd.onion                                                   │
+│                                                                                                                      │
+│ Share it with the people who should use kringle. It opens only in Tor Browser.                                       │
+│ It doesn't reveal your home's internet address, and works even if your provider blocks                               │
+│ visitors from the internet.                                                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+n new link  d details  ↵ done  Esc back

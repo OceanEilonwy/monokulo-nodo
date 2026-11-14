@@ -1,32 +1,32 @@
-Home  Packages   Web   Feeds  Updates (3)  Logs                                        monokulo-nodo
-┌ Sites ───────────────────────────────────────────────────────────────────────────────────────────┐
-│  Package        Local  Onion  Public  Public address                                      Status │
-│ ▸shop           ●      ◉      ▲       shop.example.com                                All online │
-│  monokulo-pay   ●      ◉      ·       Not public                                      All online │
-│  moneropay      ●      ·      ·       Not public                                          Online │
-│  wallet-relay   ·      ·      ·       Off                                        ◆ Device locked │
-│                                                                                                  │
-│  ● Local network   ◉ Tor onion   ▲ Public, reveals your home IP   · off                          │
-│  A site can use any combination. Each address is switched on and off separately.                 │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Domain ────────────────────────────────────────┐┌ Dynamic DNS ───────────────────────────────────┐
-│ Domain                             example.com ││ Public IP                         203.0.113.42 │
-│ Provider                               Porkbun ││ DNS matches                              ✓ Yes │
-│ Certificates                ✓ Renew in 61 days ││ Last changed                        3 days ago │
-└────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
-┌ Ports ───────────────────────────────────────────────────────────────────────────────────────────┐
-│ 80 and 443 are open on this device because shop is public.                           ✓ Reachable │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↵ change exposure  d domains  t test reachability  l proxy log  n onion  o take all sites offline
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+
+
+    Sites online                                                              Domain providers ›
+
+
+       ▸ shop           https://shop.example.com            Home and internet     ›
+
+         monokulo-pay   https://monokulo-pay.local          Home network and Tor  ›
+
+         moneropay      https://moneropay.local             Home network          ›
+
+
+    To put another app online, open it in Packages.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ open  p providers  n Tor links  d certificates

@@ -1,4 +1,4 @@
-Home  Packages  Web   Feeds   Updates (3)  Logs                                        monokulo-nodo
+Home   Packages   Web     Feeds     Updates (3)   Logs                                 monokulo-nodo
 ┌ Your feeds ──────────────────────────────────────────────────────────────────────────────────────┐
 │    Name          Packages   Key       Checked                                                    │
 │  ✓ official            12   built in  2 hours ago                                                │

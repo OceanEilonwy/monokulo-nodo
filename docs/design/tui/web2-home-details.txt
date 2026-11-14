@@ -1,0 +1,36 @@
+Web › mk-pay › Devices at home                                                                                      ✓ On
+┌ Devices at home ─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ mk-pay is open to devices at home                                                                                  │
+│                                                                                                                      │
+│ Address                                                                                         https://mk-pay.local │
+│                                                                                                                      │
+│ One time for each phone or computer: open http://nodo.local and follow "Trust this Nodo".                            │
+│ After that the browser shows a padlock instead of a warning.                                                         │
+│                                                                                                                      │
+│ Details                                                                                                              │
+│   Name          mk-pay.local, announced by mDNS on 192.168.1.155                                                     │
+│   Certificate   from this Nodo's own certificate authority, 7 days, renewed                                          │
+│   Trust page    http://nodo.local serves the root certificate, local network only                                    │
+│   Port          443 on the local network only; closed to the internet                                                │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+d hide details  ↵ done  Esc back

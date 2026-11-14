@@ -1,4 +1,4 @@
- Home   Packages  Web  Feeds  Updates (3)  Logs                                       ✕ Node stopped
+  Home     Packages   Web   Feeds   Updates (3)   Logs                                ✕ Node stopped
 ┌ The data drive is not available ─────────────────────────────────────────────────────────────────┐
 │ The SSD labelled NODO_BLOCKCHAIN is not mounted at /media/monero. cuprated will not start, so    │
 │ chain data cannot fill the system disk.                                                          │

@@ -8,16 +8,19 @@ use nodo_api::{ApiError, Exposure, Response, ServiceState};
 
 use crate::app::*;
 use crate::model::*;
-use crate::secret::{Input, Secret};
+use crate::secret::Input;
 
 #[path = "update_more.rs"]
 mod more;
 #[path = "update_net.rs"]
 mod net;
+#[path = "update_web.rs"]
+mod web;
 
 pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
     match event {
         Event::Key(key) => on_key(app, key),
+        Event::Mouse { kind, column, row } => on_mouse(app, kind, column, row),
         Event::Paste(text) => {
             on_paste(app, &text);
             Vec::new()
@@ -239,12 +242,12 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::Logs => logs_key(app, key),
         ScreenId::Rejected => rejected_key(app, key),
         ScreenId::Capability => capability_key(app, key),
-        ScreenId::WebSites => web_key(app, key),
-        ScreenId::WebExposure => exposure_key(app, key),
-        ScreenId::WebProviders => providers_key(app, key),
-        ScreenId::WebCheck => web_check_key(app, key),
-        ScreenId::WebConfirm => web_confirm_key(app, key),
-        ScreenId::WebCgnat => cgnat_key(app, key),
+        ScreenId::WebSites => web::web_key(app, key),
+        ScreenId::WebExposure => web::hosting_key(app, key),
+        ScreenId::WebProviders => web::providers_key(app, key),
+        ScreenId::WebCheck => web::web_check_key(app, key),
+        ScreenId::WebConfirm => web::web_confirm_key(app, key),
+        ScreenId::WebCgnat => web::cgnat_key(app, key),
         ScreenId::WebDomain => domain_key(app, key),
         ScreenId::WebCertificate => certificate_key(app, key),
         ScreenId::WebTrust => trust_key(app, key),
@@ -270,14 +273,14 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Logs(state) if state.finding => Some(&mut state.find),
         Screen::AutoUpdate(state) => state.editing_window.as_mut(),
         Screen::Updates(state) => state.passphrase.as_mut().map(|prompt| &mut prompt.input),
-        Screen::WebExposure(state) => state.editing_host.as_mut(),
+        Screen::WebExposure(state) if state.focus() == HostingFocus::Address && !state.picking => Some(&mut state.sub),
+        Screen::WebProviders(state) if state.stage != ProviderStage::Key => None,
         Screen::WebProviders(state) => match state.focus {
             ProviderFocus::List => None,
             ProviderFocus::Domain => Some(&mut state.domain),
             ProviderFocus::ApiKey => Some(&mut state.api_key),
             ProviderFocus::SecretKey => Some(&mut state.secret_key),
         },
-        Screen::WebConfirm(state) if state.focus == ConfirmFocus::Address => Some(&mut state.typed),
         Screen::WebDomain(state) => match state.focus {
             DomainFocus::Email => Some(&mut state.email),
             DomainFocus::UnderDomain => Some(&mut state.local_domain),
@@ -703,6 +706,10 @@ fn detail_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('s') if detail.installed => vec![Effect::OpenSettings(detail.id.name.clone())],
         KeyCode::Char('v') => vec![Effect::ShowDocument(DocKind::Versions(detail.id.name.clone()))],
         KeyCode::Char('c') => vec![Effect::ShowDocument(DocKind::Changelog(detail.id.name.clone()))],
+        KeyCode::Char('h') if detail.installed => {
+            let package = detail.id.name.clone();
+            web::hosting_from_detail(app, &package)
+        }
         KeyCode::Esc => {
             pop(app);
             Vec::new()
@@ -1426,134 +1433,8 @@ fn capability_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    if let Some(effects) = tab_key(app, key) {
-        return effects;
-    }
-    let sites = app.data.web.sites.clone();
-    let domain = app.data.web.domain.clone();
-    let Screen::Web { selected } = &mut app.screen else {
-        return Vec::new();
-    };
-    let current = sites.get(*selected);
-    match key.code {
-        KeyCode::Down | KeyCode::Up => step(selected, sites.len(), key.code == KeyCode::Down),
-        KeyCode::Enter => {
-            if let Some(site) = current {
-                push(
-                    app,
-                    Screen::WebExposure(ExposureState {
-                        site: site.package.clone(),
-                        draft: site.exposure,
-                        selected: 0,
-                        editing_host: None,
-                    }),
-                );
-            }
-        }
-        KeyCode::Char('d') => {
-            let state = DomainState::new(&app.data.web.acme, &domain);
-            push(app, Screen::WebDomain(state));
-        }
-        KeyCode::Char('t') => {
-            if let Some(site) = current {
-                return vec![Effect::CheckReachability { site: site.package.clone(), going_public: false }];
-            }
-        }
-        KeyCode::Char('l') => return open_logs(app, "System"),
-        KeyCode::Char('n') => return more::open_onion(app),
-        KeyCode::Char('o') => {
-            app.modal = Some(Modal {
-                title: "Take all sites offline?".to_owned(),
-                body: vec![
-                    "Local, onion and public addresses all stop, for every site.".to_owned(),
-                    "Public DNS history can keep your IP after this.".to_owned(),
-                ],
-                confirm_label: "Take offline".to_owned(),
-                confirm_focused: false,
-                action: ModalAction::AllSitesOffline,
-            });
-        }
-        _ => {}
-    }
-    Vec::new()
-}
 
-fn exposure_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let sites = app.data.web.sites.clone();
-    let Screen::WebExposure(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    let Some(site) = sites.iter().find(|site| site.package == state.site) else {
-        pop(app);
-        return Vec::new();
-    };
-    if let Some(input) = state.editing_host.as_mut() {
-        match key.code {
-            KeyCode::Esc => state.editing_host = None,
-            KeyCode::Enter => {
-                let host = input.text().trim().to_owned();
-                if host.is_empty() {
-                    state.editing_host = None;
-                } else {
-                    return vec![Effect::SetPublicHost { site: state.site.clone(), host }];
-                }
-            }
-            _ => {
-                edit_input(input, key);
-            }
-        }
-        return Vec::new();
-    }
-    match key.code {
-        KeyCode::Down | KeyCode::Up => step(&mut state.selected, 3, key.code == KeyCode::Down),
-        // Each toggle touches one flag only: the exposures are independent.
-        KeyCode::Char(' ') => match state.selected {
-            0 => state.draft.local ^= true,
-            1 => state.draft.onion ^= true,
-            _ => state.draft.public ^= true,
-        },
-        KeyCode::Char('e') => {
-            state.editing_host = Some(Input::plain(site.public_host.clone().unwrap_or_default()));
-        }
-        KeyCode::Esc => pop(app),
-        KeyCode::Enter => {
-            let draft = state.draft;
-            if draft == site.exposure {
-                notice(app, NoticeKind::Info, "There are no changes to save.");
-                return Vec::new();
-            }
-            let site_name = state.site.clone();
-            if draft.public && !site.exposure.public {
-                if site.public_host.is_none() {
-                    state.editing_host = Some(Input::plain(""));
-                    notice(app, NoticeKind::Info, "Choose a public address for this site first.");
-                    return Vec::new();
-                }
-                // Public only flips after typed confirmation. Local and onion apply now, since
-                // they stay online while public is checked.
-                let mut effects = Vec::new();
-                let others = Exposure { public: false, ..draft };
-                if others != site.exposure {
-                    effects.push(Effect::SetExposure {
-                        site: site_name.clone(),
-                        exposure: others,
-                        after: ExposureAfter::Stay, confirmation: None
-                    });
-                }
-                effects.push(Effect::CheckReachability { site: site_name, going_public: true });
-                return effects;
-            }
-            return vec![Effect::SetExposure { site: site_name, exposure: draft, after: ExposureAfter::Back, confirmation: None }];
-        }
-        _ => {}
-    }
-    Vec::new()
-}
 
-fn provider_credentials(state: &ProvidersState) -> (String, Secret, Secret) {
-    (state.domain.text().trim().to_owned(), state.api_key.secret_value(), state.secret_key.secret_value())
-}
 
 fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let acme = app.data.web.acme.clone();
@@ -1626,222 +1507,11 @@ fn certificate_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let providers = app.data.providers.clone();
-    let stored_domain = app.data.web.domain.clone();
-    let stored_provider = app.data.web.provider.clone();
-    let Screen::WebProviders(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    let Some(provider) = providers.get(state.selected).cloned() else {
-        pop(app);
-        return Vec::new();
-    };
-    if state.focus != ProviderFocus::List {
-        match key.code {
-            KeyCode::Tab => {
-                state.focus = match state.focus {
-                    ProviderFocus::Domain => ProviderFocus::ApiKey,
-                    ProviderFocus::ApiKey => ProviderFocus::SecretKey,
-                    _ => ProviderFocus::List,
-                };
-                return Vec::new();
-            }
-            KeyCode::Esc => {
-                state.focus = ProviderFocus::List;
-                return Vec::new();
-            }
-            KeyCode::Enter => {}
-            _ => {
-                if let Some(input) = focused_input(&mut app.screen) {
-                    edit_input(input, key);
-                }
-                return Vec::new();
-            }
-        }
-    }
-    let unsupported = format!("{} has no DNS API, so it is not supported.", provider.name);
-    match key.code {
-        KeyCode::Down | KeyCode::Up => {
-            let before = state.selected;
-            step(&mut state.selected, providers.len(), key.code == KeyCode::Down);
-            if state.selected != before {
-                // Keys typed for one provider must never be sent to another.
-                let domain = providers
-                    .get(state.selected)
-                    .filter(|next| next.name == stored_provider)
-                    .map_or("", |_| stored_domain.as_str());
-                let selected = state.selected;
-                *state = ProvidersState { selected, ..ProvidersState::new(domain) };
-            }
-        }
-        KeyCode::Tab => {
-            if provider.is_supported() {
-                state.focus = ProviderFocus::Domain;
-            } else {
-                fail(app, unsupported);
-            }
-        }
-        KeyCode::Char('t') => {
-            if !provider.is_supported() {
-                fail(app, unsupported);
-                return Vec::new();
-            }
-            let (domain, api_key, secret_key) = provider_credentials(state);
-            return vec![Effect::TestProvider { provider: provider.name, domain, api_key, secret_key }];
-        }
-        KeyCode::Enter => {
-            if !provider.is_supported() {
-                fail(app, unsupported);
-                return Vec::new();
-            }
-            let (domain, api_key, secret_key) = provider_credentials(state);
-            return vec![Effect::SaveProvider { provider: provider.name, domain, api_key, secret_key }];
-        }
-        KeyCode::Char('?') => {
-            if !provider.is_supported() {
-                fail(app, unsupported);
-                return Vec::new();
-            }
-            return vec![Effect::ShowDocument(DocKind::ProviderKeys(provider.name))];
-        }
-        KeyCode::Esc => pop(app),
-        _ => {}
-    }
-    Vec::new()
-}
 
-/// Onion on, every other flag as it is. Tor is the fallback that never reveals the home IP.
-fn with_onion(app: &App, site: &str) -> Option<Effect> {
-    let entry = app.data.web.sites.iter().find(|entry| entry.package == site)?;
-    Some(Effect::SetExposure {
-        site: site.to_owned(),
-        exposure: Exposure { onion: true, ..entry.exposure },
-        after: ExposureAfter::Stay, confirmation: None
-    })
-}
 
-fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let Screen::WebCheck(state) = &app.screen else {
-        return Vec::new();
-    };
-    let site = state.site.clone();
-    let going_public = state.going_public;
-    let continue_with = state.plan.clone().filter(|_| going_public && !state.checks.iter().any(|c| c.state == CheckState::Failed));
-    match key.code {
-        KeyCode::Char('r') => vec![Effect::CheckReachability { site, going_public }],
-        // Nothing failed, but something could not be verified. The user decides, having seen it.
-        KeyCode::Char('c') if continue_with.is_some() => {
-            let plan = continue_with.unwrap_or_else(|| unreachable!());
-            push(
-                app,
-                Screen::WebConfirm(WebConfirmState {
-                    site,
-                    plan,
-                    access: PublicAccess { require_password: false },
-                    focus: ConfirmFocus::Address,
-                    typed: Input::plain(""),
-                    error: None,
-                }),
-            );
-            Vec::new()
-        }
-        KeyCode::Char('?') => vec![Effect::ShowDocument(DocKind::RouterGuides)],
-        KeyCode::Char('o') => with_onion(app, &site).into_iter().collect(),
-        KeyCode::Esc => {
-            pop(app);
-            Vec::new()
-        }
-        _ => Vec::new(),
-    }
-}
 
-fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let sites = app.data.web.sites.clone();
-    let Screen::WebConfirm(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    if key.code == KeyCode::Esc {
-        pop(app);
-        return Vec::new();
-    }
-    if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
-        let order = ConfirmFocus::ORDER;
-        let index = order.iter().position(|focus| *focus == state.focus).unwrap_or(0);
-        let shift = if key.code == KeyCode::Tab { 1 } else { order.len() - 1 };
-        state.focus = order[(index + shift) % order.len()];
-        return Vec::new();
-    }
-    match state.focus {
-        ConfirmFocus::Password if key.code == KeyCode::Char(' ') => state.access.require_password ^= true,
-        ConfirmFocus::Address => {
-            if key.code == KeyCode::Enter {
-                // Enter never publishes from here. It only moves on, once the text is exact.
-                if state.typed.text() == state.plan.host {
-                    state.error = None;
-                    state.focus = ConfirmFocus::GoPublic;
-                } else {
-                    state.error = Some(format!("Type {} exactly to confirm.", state.plan.host));
-                }
-            } else {
-                edit_input(&mut state.typed, key);
-            }
-        }
-        ConfirmFocus::Cancel if key.code == KeyCode::Enter => pop(app),
-        ConfirmFocus::GoPublic if key.code == KeyCode::Enter => {
-            if state.typed.text() != state.plan.host {
-                state.error = Some(format!("Type {} exactly to confirm.", state.plan.host));
-                state.focus = ConfirmFocus::Address;
-                return Vec::new();
-            }
-            let Some(site) = sites.iter().find(|site| site.package == state.site) else {
-                return Vec::new();
-            };
-            // Protections go first, so the site is never public without them.
-            return vec![
-                Effect::SetPublicAccess { site: state.site.clone(), access: state.access.clone() },
-                Effect::SetExposure {
-                    site: state.site.clone(),
-                    exposure: Exposure { public: true, ..site.exposure },
-                    after: ExposureAfter::WentPublic,
-                    confirmation: Some(state.typed.text().to_owned()),
-                },
-            ];
-        }
-        _ => {}
-    }
-    Vec::new()
-}
 
-fn cgnat_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let Screen::WebCgnat(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    let site = state.site.clone();
-    match key.code {
-        KeyCode::Down | KeyCode::Up => step(&mut state.choice, 4, key.code == KeyCode::Down),
-        KeyCode::Char('r') => {
-            let going_public = state.going_public;
-            return vec![Effect::CheckReachability { site, going_public }];
-        }
-        KeyCode::Esc => pop(app),
-        KeyCode::Enter => match state.choice {
-            0 => return with_onion(app, &site).into_iter().collect(),
-            1 => return vec![Effect::ShowDocument(DocKind::PublicIpFromIsp)],
-            2 => return vec![Effect::ShowDocument(DocKind::Ipv6)],
-            _ => return vec![Effect::ShowDocument(DocKind::RelayTunnel)],
-        },
-        _ => {}
-    }
-    Vec::new()
-}
 
-/// Takes the check screen off the stack so that "check again" replaces it instead of piling up.
-fn drop_check_screen(app: &mut App) {
-    if matches!(app.screen, Screen::WebCheck(_) | Screen::WebCgnat(_)) {
-        pop(app);
-    }
-}
 
 fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     app.data = snapshot;
@@ -2035,34 +1705,17 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             Ok(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
             Err(text) => fail(app, text),
         },
-        Event::ExposureSet { after, result } => return on_exposure_set(app, after, result),
+        Event::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
         Event::PublicHostSet(result) => {
-            if let Screen::WebExposure(state) = &mut app.screen {
-                match result {
-                    Ok(()) => state.editing_host = None,
-                    Err(text) => fail(app, text),
-                }
+            if let Err(text) = result {
+                fail(app, text);
             }
         }
         Event::Reachability { site, going_public, result } => {
-            on_reachability(app, site, going_public, result);
+            web::on_reachability(app, site, going_public, result);
         }
-        Event::ProviderTested(result) => {
-            if let Screen::WebProviders(state) = &mut app.screen {
-                state.test = Some(result);
-            }
-        }
-        Event::ProviderSaved(result) => match result {
-            Ok(()) => {
-                pop(app);
-                notice(app, NoticeKind::Ok, "Domain connected. Keys are stored as secrets.");
-            }
-            Err(text) => {
-                if let Screen::WebProviders(state) = &mut app.screen {
-                    state.test = Some(Err(text));
-                }
-            }
-        },
+        Event::ProviderTested(result) => return web::on_provider_tested(app, result),
+        Event::ProviderSaved(result) => return web::on_provider_saved(app, result),
         Event::AcmeSaved(result) => match result {
             Ok(()) => {
                 if let Screen::WebDomain(state) = &mut app.screen {
@@ -2086,7 +1739,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             }
         }
         Event::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-        Event::Key(_) | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
+        Event::Key(_) | Event::Mouse { .. } | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
     }
     Vec::new()
 }
@@ -2193,70 +1846,7 @@ fn on_settings_rolled_back(app: &mut App, package: String, explanation: Rollback
     push(app, Screen::ApplyFailed(ApplyFailedState { package, explanation, rows }));
 }
 
-fn on_exposure_set(app: &mut App, after: ExposureAfter, result: Result<(), ApiError>) -> Vec<Effect> {
-    if let Err(error) = result {
-        fail(app, format!("Not changed: {error}"));
-        return Vec::new();
-    }
-    match after {
-        ExposureAfter::Back => {
-            if matches!(app.screen, Screen::WebExposure(_)) {
-                pop(app);
-            }
-        }
-        ExposureAfter::Stay => notice(app, NoticeKind::Ok, "Exposure updated."),
-        ExposureAfter::WentPublic => {
-            let target = match &app.screen {
-                Screen::WebConfirm(state) => Some(CertificateState { site: state.site.clone(), host: state.plan.host.clone() }),
-                _ => None,
-            };
-            app.stack.clear();
-            app.screen = Screen::Web { selected: 0 };
-            notice(app, NoticeKind::Ok, "The site is now public. Take it offline at any time from here.");
-            // Success is only claimed once a real certificate is in place, which this screen follows.
-            if let Some(target) = target {
-                push(app, Screen::WebCertificate(target));
-            }
-        }
-    }
-    Vec::new()
-}
 
-fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reachability) {
-    drop_check_screen(app);
-    match result {
-        Reachability::Cgnat { wan_address, wan_range, internet_address } => push(
-            app,
-            Screen::WebCgnat(CgnatState {
-                site,
-                wan_address,
-                wan_range,
-                internet_address,
-                choice: 0,
-                going_public,
-            }),
-        ),
-        // Unknown results, such as untested ports, are shown before confirming, never skipped.
-        Reachability::Checked { plan: Some(plan), checks, .. }
-            if going_public && checks.iter().all(|c| c.state == CheckState::Passed) =>
-        {
-            push(
-            app,
-            Screen::WebConfirm(WebConfirmState {
-                site,
-                plan,
-                access: PublicAccess { require_password: false },
-                focus: ConfirmFocus::Address,
-                typed: Input::plain(""),
-                error: None,
-            }),
-            );
-        }
-        Reachability::Checked { checks, router, plan, manual } => {
-            push(app, Screen::WebCheck(WebCheckState { site, checks, router, plan, going_public, manual }));
-        }
-    }
-}
 
 fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
     match step {
@@ -2513,6 +2103,59 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
     Vec::new()
 }
 
+/// A mouse event. A click does what its target says; a move updates the hover; the wheel scrolls
+/// like the arrow keys. While the terminal is too small nothing is clickable.
+fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect> {
+    if app.too_small() {
+        return Vec::new();
+    }
+    let hit = crate::hit::hit_at(&app.hits.borrow(), column, row);
+    match kind {
+        MouseKind::Moved => {
+            app.hover = hit.map(|hit| hit.rect);
+            Vec::new()
+        }
+        MouseKind::ScrollUp | MouseKind::ScrollDown => {
+            app.hover = None;
+            let code = if kind == MouseKind::ScrollUp { KeyCode::Up } else { KeyCode::Down };
+            if app.overlay.is_some() || app.modal.is_some() {
+                return on_key(app, KeyEvent::from(code));
+            }
+            on_key(app, KeyEvent::from(code))
+        }
+        MouseKind::Down => {
+            let Some(hit) = hit else { return Vec::new() };
+            app.hover = None;
+            click(app, hit.click)
+        }
+    }
+}
+
+fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
+    use crate::hit::Click;
+    match click {
+        Click::Tab(tab) => {
+            if app.modal.is_some() || app.overlay.is_some() {
+                return Vec::new();
+            }
+            app.notice = None;
+            switch_tab(app, tab)
+        }
+        Click::Key(code) => on_key(app, KeyEvent::from(code)),
+        Click::Pick { index, then } => {
+            app.notice = None;
+            match &mut app.modal {
+                Some(modal) => modal.confirm_focused = index == 1,
+                None => web::pick(app, index),
+            }
+            match then {
+                Some(code) => on_key(app, KeyEvent::from(code)),
+                None => Vec::new(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2537,3 +2180,4 @@ mod tests {
         assert_eq!(validate(&FieldKind::MoneroAddress, &good), None);
     }
 }
+

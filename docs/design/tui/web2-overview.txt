@@ -1,0 +1,36 @@
+Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+┌ Your apps on the web ────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  App          Who can open it       Address                                                                   Status │
+│ ▸mk-pay      Home and internet     https://pay.example.com                                                 ✓ Working │
+│  mk-lws      Home only             https://mk-lws.local                                                    ✓ Working │
+│  kringle     Private link (Tor)    http://kringl…7qd.onion                                                 ✓ Working │
+│  mk-bell     Not online                                                                                          Off │
+│                                                                                                                      │
+│  Choose an app and press ↵ to change who can open it.                                                                │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Your web address ────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ example.com, managed at Porkbun                                                                             ✓ Set up │
+│ Secure connections                                                                                      ✓ Up to date │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↵ who can open it  a advanced  l web log

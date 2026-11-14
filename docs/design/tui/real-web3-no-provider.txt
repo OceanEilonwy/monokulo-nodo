@@ -1,0 +1,36 @@
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
+    Packages  ›  shop  ›  Hosting
+
+    Hosting
+    Choose who can open shop. Any combination works.
+
+         [x]  Home network
+              Phones and computers on your Wi-Fi.   https://shop.local
+
+         [ ]  Tor
+              A private link that opens in Tor Browser. It doesn't reveal your home.
+
+       ▸ [x]  Internet
+              Anyone, at a web address you own.
+
+              To use a web address you own, first add the company you bought it from.
+              You'll come back here when it's added.
+
+                 Add a provider   
+
+         Show details ›
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  Space tick  ↵ save  Esc back

@@ -213,12 +213,20 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::Capability(CapabilityState { data, choice: 0 })
         }
         ScreenId::WebSites => Screen::Web { selected: 0 },
-        ScreenId::WebExposure => Screen::WebExposure(ExposureState {
-            site: "shop".to_owned(),
-            draft: Exposure { local: true, onion: true, public: true },
-            selected: 2,
-            editing_host: None,
-        }),
+        ScreenId::WebExposure => {
+            let has_provider = app.has_provider();
+            let site = app.data.web.sites.iter().find(|s| s.package == "shop");
+            let host = site.and_then(|s| s.public_host.clone());
+            let mut state = ExposureState::new(
+                "shop",
+                Exposure { local: true, onion: true, public: true },
+                host.as_deref(),
+                &app.data.web.domain,
+                has_provider,
+            );
+            state.selected = 2;
+            Screen::WebExposure(state)
+        }
         ScreenId::WebProviders => {
             let mut state = ProvidersState::new(&app.data.web.domain);
             state.test = Some(Ok("Test passed: read and wrote a temporary record".to_owned()));
@@ -228,7 +236,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let Reachability::Checked { checks, router, plan, manual } = reachability_checks("shop.example.com", false) else {
                 unreachable!("this helper only builds checked results");
             };
-            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true, manual })
+            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true, manual, details: false })
         }
         ScreenId::WebConfirm => {
             let Reachability::Checked { plan: Some(plan), .. } = reachability_checks("shop.example.com", true) else {
@@ -238,9 +246,8 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 site: "shop".to_owned(),
                 plan,
                 access: PublicAccess { require_password: false },
-                focus: ConfirmFocus::Address,
-                typed: typed("shop.example.com"),
-                error: None,
+                focus: ConfirmFocus::Cancel,
+                details: false,
             })
         }
         ScreenId::WebDomain => {
@@ -268,6 +275,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             wan_range: "100.64.0.0/10".to_owned(),
             internet_address: "203.0.113.42".to_owned(),
             choice: 0,
+            details: false,
             going_public: true,
         }),
     }

@@ -1,4 +1,4 @@
-Home   Packages   Web  Feeds  Updates (3)  Logs                                        monokulo-nodo
+Home     Packages     Web   Feeds   Updates (3)   Logs                                 monokulo-nodo
 ┌ Search ──────────────────────────────────────────────────────────────────────────────────────────┐
 │ / pay                                                   All feeds · Any status · 3 of 41 results │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘

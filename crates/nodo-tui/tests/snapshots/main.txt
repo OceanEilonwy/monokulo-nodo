@@ -1,4 +1,4 @@
- Home   Packages  Web  Feeds  Updates (3)  Logs                                        monokulo-nodo
+  Home     Packages   Web   Feeds   Updates (3)   Logs                                 monokulo-nodo
 ┌ Node ────────────────────────────────────────────────────┐┌ Device ──────────────────────────────┐
 │ Role                                       monero-daemon ││ SSD                 412 GB of 1.9 TB │
 │ Provider                          cuprated 0.1.0-preview ││ System              0.4 GB of 7.6 GB │

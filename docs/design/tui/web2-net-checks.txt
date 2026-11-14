@@ -1,0 +1,36 @@
+Web › mk-pay › On the internet                                                                                ◆ Checking
+┌ Anyone on the internet ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Step 3 of 4   ✓ Address  ›  ✓ Provider  ›  Checks  ›  Confirm                                                        │
+│                                                                                                                      │
+│ ✓ Porkbun accepted the key                                                                                           │
+│ ✓ Found your home's internet address                                                                    203.0.113.42 │
+│ ✓ pay.example.com points to your home                                                                                │
+│ ◆ The internet can reach your Nodo                                                                         checking… │
+│ ○ Secure connection                                                                                                  │
+│                                                                                                                      │
+│ This takes about a minute. Nothing is public yet.                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+d details  Esc stop

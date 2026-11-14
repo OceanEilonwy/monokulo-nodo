@@ -1,4 +1,4 @@
-Home  Packages  Web  Feeds   Updates (3)   Logs                        Auto-update on for 3 packages
+Home   Packages   Web   Feeds     Updates (3)     Logs                 Auto-update on for 3 packages
 ┌ Available ───────────────────────────────────────────────────────────────────────────────────────┐
 │ ▸[x] moneropay     2.7.0 → 2.7.1       official                                            Ready │
 │  [x] system base   2026.11 → 2026.12   tested snapshot                            Restart needed │
