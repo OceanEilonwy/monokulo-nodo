@@ -1,0 +1,41 @@
+# Runs the host-side Rust tests of the crates the TUI and the helper are built from, on every pull
+# request and push that changes them. The image and snapshot builds in system.yml only run when
+# packages change, so without this a change to crates/ reached main untested.
+name: crates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/crates.yml
+  pull_request:
+    paths:
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/crates.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Test nodo-api, nodo-helper and nodo-tui
+        run: cargo test --locked -p nodo-api -p nodo-helper -p nodo-tui

@@ -7,7 +7,7 @@ use ratatui::text::Span;
 
 use super::layout::{Item, Page};
 use super::pad;
-use super::v3::{heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
+use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
 use crate::app::{App, AutoUpdateState, LogsState, Tab, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
 use crate::hit::{Click, Target};
 use crate::model::*;
@@ -245,7 +245,7 @@ pub fn auto_update(app: &App, t: &Theme, state: &AutoUpdateState) -> Page {
         None => window.extend(inset(t, &format!("{} and {}", draft.window_start, draft.window_end), 22, None, false)),
     }
     card.row(t, window);
-    screen.targets.push(Target::text("Between", key('w')));
+    screen.targets.push(field_target("Between", 34, 22));
     if let Some(error) = &state.error {
         card.row(t, vec![t.n(" ".repeat(36)), t.e(format!("✕ {error}"))]);
     }
@@ -348,7 +348,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
     };
     let mut search = vec![margin(t), t.d(pad("Search", 9))];
     search.extend(inset(t, state.find.text(), 30, None, state.finding));
-    before_targets.push(Target::text("Search", key('/')));
+    before_targets.push(field_target("Search", 9, 30));
     let follow = if state.follow { t.o("● Following live") } else { t.d("○ Paused") };
     before.push(Item::Row(ratatui::text::Line::from(search), ratatui::text::Line::from(vec![follow, t.n("     "), t.a("Save to a file ›"), t.n(super::v3::MARGIN)])));
     before_targets.push(Target::text("Save to a file ›", key('y')));

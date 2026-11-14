@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyEventKind, MouseButton,
-    MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyEventKind,
+    KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -34,6 +34,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         Response::Services(services) => services,
         other => return Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
     };
+    let (providers, providers_error) = split(backend.providers());
     Ok(Snapshot {
         services,
         overview: backend.overview(),
@@ -41,13 +42,22 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         feeds: backend.feeds(),
         updates: backend.updates(),
         web: backend.web(),
-        providers: backend.providers(),
+        providers,
+        providers_error,
         connected: backend.connected_providers(),
         log_sources: backend.log_sources(),
         auto_update: backend.auto_update(),
         unavailable: backend.unavailable(),
         system_note: backend.system_note(),
     })
+}
+
+/// A list, or no list and why, as the snapshot keeps them.
+fn split<T>(result: Result<Vec<T>, String>) -> (Vec<T>, Option<String>) {
+    match result {
+        Ok(list) => (list, None),
+        Err(e) => (Vec::new(), Some(e)),
+    }
 }
 
 fn refresh<T: Backend + ScreenData>(backend: &mut T) -> Event {
@@ -190,6 +200,7 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let result = backend.add_provider(&provider, domain.as_deref(), &api_key, &secret_key);
             vec![Event::ProviderAdded(result), refresh(backend)]
         }
+        Effect::LoadProviders => vec![Event::ProvidersLoaded(backend.providers())],
         Effect::RemoveProvider(id) => vec![Event::ProviderRemoved(backend.remove_provider(&id)), refresh(backend)],
         Effect::RefreshProvider(id) => vec![Event::ProviderRefreshed(backend.refresh_provider(&id)), refresh(backend)],
         Effect::SaveAcme { settings, dns01 } => {
@@ -540,17 +551,26 @@ pub trait TerminalMode: Send + Sync + 'static {
 }
 
 /// Writes the sequence that puts a terminal back, ignoring errors, because the peer may be gone.
+/// The keyboard flags are popped first, because a terminal keeps them per screen. Popping them is
+/// harmless where none were pushed: terminals without the kitty protocol ignore it.
 pub fn write_restore(out: &mut impl Write) {
-    let _ = execute!(out, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
+    let _ = execute!(out, PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
     let _ = out.flush();
 }
 
 pub struct CrosstermMode;
 
 impl TerminalMode for CrosstermMode {
+    /// Asks for the kitty keyboard protocol's disambiguated keys, so that terminals which speak it
+    /// report Ctrl-. (which opens the settings picker). Only the first level is asked for: keys
+    /// keep arriving as presses, Enter, Tab and Backspace keep their usual codes, and terminals
+    /// without the protocol ignore the request. It is not queried first, because a terminal that
+    /// never answers would hold up the start.
     fn enter(&self) -> io::Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)
+        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)?;
+        let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        Ok(())
     }
 
     fn leave(&self) {

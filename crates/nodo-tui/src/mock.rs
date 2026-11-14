@@ -25,7 +25,12 @@ fn s(text: &str) -> String {
 
 fn service(id: &str, state: ServiceState, detail: &str) -> ServiceStatus {
     let origin = if id == "cuprated" { Origin::System } else { Origin::Feed(Some(s("community"))) };
-    ServiceStatus { id: s(id), state, detail: s(detail), roles: Vec::new(), origin }
+    ServiceStatus { id: s(id), state, detail: s(detail), roles: Vec::new(), origin, uptime_secs: None }
+}
+
+/// A running service that has been up for `secs`.
+fn running(id: &str, secs: u64) -> ServiceStatus {
+    ServiceStatus { uptime_secs: Some(secs), ..service(id, ServiceState::Running, "") }
 }
 
 fn need(name: &str, source: Option<&str>) -> Need {
@@ -73,6 +78,10 @@ pub struct MockBackend {
     pub update_history: Vec<nodo_api::UpdateEvent>,
     /// Makes a USB restore fail with this reason, as a pulled drive would.
     pub restore_failure: Option<String>,
+    /// Makes reading the provider catalog fail with this reason.
+    pub providers_failure: Option<String>,
+    /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
+    pub radios_failure: Option<String>,
     pub wifi: nodo_api::WifiStatus,
     /// Networks in range, with the passphrase each accepts.
     pub access_points: Vec<(nodo_api::WifiNetwork, String)>,
@@ -161,6 +170,8 @@ impl MockBackend {
                 kind: nodo_api::UpdateEventKind::RolledBack { reason: s("bell did not pass its health check") },
             }],
             restore_failure: None,
+            providers_failure: None,
+            radios_failure: None,
             wifi: sample_wifi(),
             access_points: sample_access_points(),
             bluetooth: sample_bluetooth(),
@@ -195,6 +206,7 @@ impl MockBackend {
         for svc in &mut mock.services {
             svc.state = if svc.id == "cuprated" { ServiceState::Stopped } else { ServiceState::Waiting };
             svc.detail = s("waiting for the data drive");
+            svc.uptime_secs = None;
         }
         mock
     }
@@ -204,6 +216,7 @@ impl MockBackend {
             if svc.state == ServiceState::Locked || svc.id == "bell" {
                 svc.state = ServiceState::Running;
                 svc.detail.clear();
+                svc.uptime_secs = Some(0);
             }
         }
         for site in &mut self.web.sites {
@@ -348,6 +361,7 @@ impl Backend for MockBackend {
                 }
                 svc.state = ServiceState::Running;
                 svc.detail.clear();
+                svc.uptime_secs = Some(0);
                 Ok(Response::Ok)
             }
             Request::StopService { id } => {
@@ -358,6 +372,7 @@ impl Backend for MockBackend {
                     .ok_or_else(|| ApiError::NotFound(id.clone()))?;
                 svc.state = ServiceState::Stopped;
                 svc.detail.clear();
+                svc.uptime_secs = None;
                 Ok(Response::Ok)
             }
             Request::Unlock { passphrase } => {
@@ -440,6 +455,9 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),
+            Request::WifiStatus | Request::BluetoothStatus if self.radios_failure.is_some() => {
+                Err(ApiError::Failed(self.radios_failure.clone().unwrap_or_default()))
+            }
             Request::WifiStatus => Ok(Response::Wifi(self.wifi.clone())),
             Request::SetWifiEnabled { enabled } => {
                 self.wifi.enabled = enabled;
@@ -953,6 +971,8 @@ impl ScreenData for MockBackend {
     fn references(&self, package: &str, field: &str) -> ReferenceList {
         if package == "moneropay" && field == "daemon_rpc" {
             sample_references()
+        } else if package == "moneropay" && field == "api_port" {
+            sample_port_references()
         } else {
             ReferenceList { expects: s("a value"), options: Vec::new(), hidden_wrong_type: 0, hidden_secrets: 0 }
         }
@@ -1177,8 +1197,11 @@ impl ScreenData for MockBackend {
         self.web.clone()
     }
 
-    fn providers(&self) -> Vec<Provider> {
-        sample_providers()
+    fn providers(&self) -> Result<Vec<Provider>, String> {
+        match &self.providers_failure {
+            Some(reason) => Err(reason.clone()),
+            None => Ok(sample_providers()),
+        }
     }
 
     fn connected_providers(&self) -> Vec<ConnectedProvider> {
@@ -1442,9 +1465,9 @@ impl ScreenData for MockBackend {
 
 fn sample_services() -> Vec<ServiceStatus> {
     vec![
-        service("cuprated", ServiceState::Running, ""),
-        service("tor", ServiceState::Running, ""),
-        service("moneropay", ServiceState::Running, ""),
+        running("cuprated", 2 * 86400 + 5 * 3600 + 120),
+        running("tor", 3 * 3600 + 12 * 60),
+        running("moneropay", 45 * 60),
         service("wallet-relay", ServiceState::Locked, "storage needs unlocking"),
         service("bell", ServiceState::Failed, "restarted 3 times"),
         service("monerod", ServiceState::Stopped, "alternative node"),
@@ -1757,6 +1780,21 @@ fn sample_forms() -> HashMap<String, SettingsForm> {
         public_settings: Vec::new(),
     };
     HashMap::from([(s("moneropay"), moneropay), (s("wallet-relay"), wallet_relay)])
+}
+
+/// Numbers other apps offer, for a port field.
+pub fn sample_port_references() -> ReferenceList {
+    ReferenceList {
+        expects: s("a number"),
+        options: vec![ReferenceOption {
+            path: s("wallet-rpc.port"),
+            value: s("34512"),
+            role_note: None,
+            consequences: vec![s("Update and restart moneropay whenever the value changes.")],
+        }],
+        hidden_wrong_type: 3,
+        hidden_secrets: 0,
+    }
 }
 
 pub fn sample_references() -> ReferenceList {

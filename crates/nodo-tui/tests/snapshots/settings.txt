@@ -18,7 +18,7 @@
          Log level              info                         ▾
                                How much the service writes to its log.
 
-       ▸ Payment address        48edfHu7V9Z84Y
+       ▸ Payment address        48edfHu7V9Z84Y                    ▾ Pick from an app
                                ✕ Address is too short. A Monero address has 95 characters.
 
          Webhook secret         ••••••••••••                      Change
@@ -29,4 +29,4 @@
 
                                                                   Cancel            Save
 
-    Keys: ↑↓ choose  ↵ edit  $ pick from an app  ctrl-s save  z undo  Esc back
+    Keys: ↑↓ choose  ↵ edit  F4 pick from an app  ctrl-s save  z undo  Esc back

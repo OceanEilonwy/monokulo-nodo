@@ -101,23 +101,27 @@ impl<S: System> Helper<S> {
     /// Locked and waiting come first. The run script is alive during its retry delay, so `sv`
     /// says `run` for a service that has not actually started.
     fn status_of(&self, package: &Package) -> ServiceStatus {
-        let (state, detail) = self.state_of(package);
+        let (state, detail, uptime_secs) = self.state_of(package);
         ServiceStatus {
             id: package.id().to_owned(),
             state,
             detail,
             roles: package.manifest.provides.clone(),
             origin: package.origin(self.feed_of(package.id())),
+            uptime_secs,
         }
     }
 
-    pub(crate) fn state_of(&self, package: &Package) -> (ServiceState, String) {
+    /// The state, a detail in words, and the uptime when the service is running. The uptime stays
+    /// a number so the interface can word it.
+    pub(crate) fn state_of(&self, package: &Package) -> (ServiceState, String, Option<u64>) {
         let id = package.id().to_owned();
         let status = self.sys.sv_status(&id).map(|text| parse_sv_status(&text));
         if matches!(self.is_locked(package), Ok(true)) {
             return (
                 ServiceState::Locked,
                 "waiting for the device passphrase".to_owned(),
+                None,
             );
         }
         let down = matches!(status, Ok(SvStatus::Down));
@@ -125,17 +129,15 @@ impl<S: System> Helper<S> {
             return (
                 ServiceState::Waiting,
                 format!("waiting for {mount} to be mounted"),
+                None,
             );
         }
         match status {
-            Ok(SvStatus::Running {
-                uptime_secs: Some(up),
-            }) => (ServiceState::Running, format!("up for {up}s")),
-            Ok(SvStatus::Running { uptime_secs: None }) => (ServiceState::Running, String::new()),
-            Ok(SvStatus::Down) => (ServiceState::Stopped, String::new()),
-            Ok(SvStatus::Crashed) => (ServiceState::Failed, "not running".to_owned()),
-            Ok(SvStatus::Unknown(line)) => (ServiceState::Failed, line),
-            Err(e) => (ServiceState::Failed, e.0),
+            Ok(SvStatus::Running { uptime_secs }) => (ServiceState::Running, String::new(), uptime_secs),
+            Ok(SvStatus::Down) => (ServiceState::Stopped, String::new(), None),
+            Ok(SvStatus::Crashed) => (ServiceState::Failed, "not running".to_owned(), None),
+            Ok(SvStatus::Unknown(line)) => (ServiceState::Failed, line, None),
+            Err(e) => (ServiceState::Failed, e.0, None),
         }
     }
 
@@ -151,6 +153,7 @@ impl<S: System> Helper<S> {
             detail: b.reason,
             roles: Vec::new(),
             origin: Origin::Feed(None),
+            uptime_secs: None,
         }));
         statuses.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(Response::Services(statuses))
@@ -325,6 +328,22 @@ mod tests {
         h.sys
             .set_status("shop", "down: shop: 1s, normally up, want up\n");
         assert_eq!(states(&h)[1].1, ServiceState::Failed);
+    }
+
+    /// The uptime travels as a number, so the detail stays free for other words.
+    #[test]
+    fn running_service_reports_uptime_as_a_number() {
+        let sys = FakeSystem::default();
+        sys.add_manifest(SHOP);
+        let h = helper(sys);
+        h.sys.set_status("shop", "run: shop: (pid 12) 83166s; run: log: (pid 9) 90s\n");
+        let Response::Services(list) = h.list_services().unwrap() else { panic!("not a service list") };
+        assert_eq!(list[0].state, ServiceState::Running);
+        assert_eq!(list[0].uptime_secs, Some(83166));
+        assert_eq!(list[0].detail, "");
+        h.sys.set_status("shop", "down: shop: 9s, normally up\n");
+        let Response::Services(list) = h.list_services().unwrap() else { panic!("not a service list") };
+        assert_eq!(list[0].uptime_secs, None);
     }
 
     /// The run script sleeps before exiting, so `sv` reports `run` the whole time it waits.
