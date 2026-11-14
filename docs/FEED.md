@@ -96,10 +96,10 @@ helper reads every enabled feed:
 - on the `nodo-autoupdate` timer, whenever a feed was never read or was last read six hours ago or
   more. This does not depend on automatic updates, which stay off until the owner chooses
   packages for them;
-- when the owner refreshes the Feeds screen, and when the TUI finds a feed that was never read.
+- when the owner refreshes Sources (Apps › Get apps › Sources), and when the TUI finds a feed that was never read.
 
-A feed that cannot be read keeps its last package list and records the problem, which the Feeds
-screen and an empty Search show.
+A feed that cannot be read keeps its last package list and records the problem, which Sources
+and an empty Get apps search show.
 
 ## The default feed on devices
 

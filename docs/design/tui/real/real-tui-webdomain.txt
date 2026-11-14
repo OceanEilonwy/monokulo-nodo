@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Web  ›  Domains                                                                          ✓ Certificates in place
+
+       Validation                    DNS-01 through Porkbun
+       No open ports needed.
+
+
+
+       Certificates
+
+       shop.example.com                ✓ Valid, 61 days left
+       shop.local                      ✓ Valid, 6 days left
+       monokulo-pay.local              ✓ Valid, 6 days left
+       moneropay.local                 ✓ Valid, 6 days left
+
+
+
+       Let's Encrypt
+
+        Email for expiry notices      me@example.com
+        [ ] Use the staging server   Untrusted certificates, for testing
+
+
+
+       Local site names
+
+        ( ) site.local, with this device's own CA  Browsers warn until you trust it
+       ▸ (•) Under your domain: site.home.example.com   Real certificates through DNS-01
+          ▲ Each name gets a public DNS record with this device's LAN address, 192.168.1.60.
+
+    ↕ more below — scroll
+
+    Keys: ↑↓ fields  type to edit  ↵ save  Esc back

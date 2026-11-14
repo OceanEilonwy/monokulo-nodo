@@ -275,7 +275,7 @@ installs.
 
 **Rolling back by hand.** A successful update keeps the previous version's verified file one
 generation deep, with the data layout its data was in (`previous` in the feed state). `ListRollbacks`
-offers it, and `RollbackPackage` (the TUI's Home › Rollbacks) puts it back through the same engine:
+offers it, and `RollbackPackage` (the TUI's System › Updates › Undo an update) puts it back through the same engine:
 the data is copied, the kept file reinstalled, the old version health checked, and on failure the
 newer version and its data come back. The version left is then held. It refuses data already in a
 newer layout than the old version's, a kept file asking for permissions no longer approved, a locked

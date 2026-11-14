@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+    Apps  ›  shop  ›  Hosting
+
+    The internet can't reach your Nodo yet
+
+
+       ✓  Domain and API key work
+       ✓  Public IP found
+       ✓  Router has a real public IP
+       ✓  Temporary DNS record works
+       ✕  Port 80 is not reachable from outside
+          Timed out
+       ✕  Port 443 is not reachable from outside
+          Timed out
+
+       Your router needs to send web visitors to the Nodo. In its settings, forward:
+          Port 80   to 192.168.1.50:80
+          Port 443  to 192.168.1.50:443
+          The router's settings page is usually http://192.168.1.1.
+
+       A private Tor link works without any of this.
+
+       Show details ›
+
+                                                                     Check again           Use Tor instead   
+
+
+
+
+
+
+
+
+    Keys: ↵ use Tor  r check again  d details  ? router help  Esc back

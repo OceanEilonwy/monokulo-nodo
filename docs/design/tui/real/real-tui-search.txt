@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  Get apps
+
+    Search    pay                                                                                          Sources ›
+
+    3 of 41 apps match. Click one to see what it does before installing.
+
+
+       ▸ moneropay      Payment gateway for Monero
+
+         monokulo-pay   Accept payments from your node              Installed
+
+         paywall-relay  Pay-to-use relay access
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ open  i install  s sources  Esc back

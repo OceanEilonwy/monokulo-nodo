@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Web  ›  Onion addresses                                                                            ● Tor running
+
+
+       Node
+
+       ▸ [x] cuprated      restricted RPC, port 18081  nod…xyz.onion:18081
+
+
+
+       Sites
+
+        [x] shop                  also local, public  http://abc…xyz.onion
+        [x] monokulo-pay          also local  http://def…uvw.onion
+        [ ] moneropay             also local  single address
+        [ ] wallet-relay             ◆ locked
+
+
+
+       About onion addresses
+
+       ● An onion address is reached through Tor only. It never shows your IP and needs no open port.
+       ● The node's address serves only its restricted RPC, which wallets use. Never the full RPC.
+       ● Admin paths of sites are blocked on onion addresses. Keys are kept in backups.
+
+
+
+
+
+
+
+
+    Keys: ↑↓ move  Space turn on or off  s node settings  g look again  Esc back

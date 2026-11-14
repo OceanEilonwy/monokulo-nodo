@@ -36,6 +36,7 @@ nodo-tui --ctl COMMAND [ARGS]
   feed-enable NAME 0|1 | remove-feed NAME | feed-key NAME | trust-key NAME FROM TO TYPED_NAME
   review FEED PACKAGE
   install-pkg FEED PACKAGE PKGVER [PERMISSION...]   (sends exactly this approval)
+  remove-pkg PACKAGE                                 (its data stays on the drive)
   approve-install FEED PACKAGE                      (reviews, then approves what it showed)
   approve-install-encrypted FEED PACKAGE            (the same, device passphrase on stdin)
   updates | update-status | check-updates | review-update PACKAGE
@@ -246,6 +247,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             },
             passphrase: None,
         },
+        ["remove-pkg", package] => Request::RemovePackage { package: id(package) },
         ["updates"] => Request::ListUpdates,
         ["update-status"] => Request::UpdateStatus,
         ["check-updates"] => Request::CheckUpdates,

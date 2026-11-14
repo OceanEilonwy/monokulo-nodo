@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    System  ›  Device logs
+
+    Search
+  ● Following live     Save to a file ›
+
+      Problems      cuprated      bell      moneropay      tor    ↑↓ more
+
+
+       bell
+
+       14:02:47 INFO  starting version 1.2.0
+       14:02:48 INFO  connecting to wallet-relay
+       14:02:53 ERROR connection refused: wallet-relay is locked
+       14:02:53 INFO  exiting with status 1
+
+       ▸  bell depends on wallet-relay, which is locked.
+       ▸  Press u to unlock the device. bell will start automatically.
+
+
+    Keys: ↑↓ source  / search  e problems  f follow  y save  Esc back

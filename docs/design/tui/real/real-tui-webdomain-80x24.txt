@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Web  ›  Domains                                  ✓ Certificates in place
+
+
+       Let's Encrypt
+
+        Email for expiry notices      me@example.com
+        [ ] Use the staging server  Untrusted certificates, for testing
+
+
+
+       Local site names
+
+        ( ) site.local, with this device's own CA  Browsers warn until you
+        trust it
+       ▸ (•) Under your domain: site.home.example.com   Real certificates
+       through DNS-01
+
+    ↕ more below — scroll
+
+    Keys: ↑↓ fields  type to edit  ↵ save  Esc back

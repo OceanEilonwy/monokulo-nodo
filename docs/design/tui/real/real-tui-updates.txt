@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    System  ›  Updates
+
+
+       The Nodo   2026.11  →  2026.12
+
+       Needs a restart. Apps stop safely first.                                           Update and restart   
+
+
+
+       Apps
+       ▸ [x]  moneropay     2.7.0  →  2.7.1
+         [ ]  wallet-relay  0.4.2  →  0.5.0       ▲ asks for something new; you'll review it first
+         [ ]  cuprated      0.1.0  →  0.2.0       you skipped this version
+
+       Each app keeps its settings and can be undone.                                           Update 1 app   
+
+
+    Automatic updates ›  automatic for 3     Undo an update ›     Check now ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  Space tick  ↵ update ticked  c changes  h hold  Esc back

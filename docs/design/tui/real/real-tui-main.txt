@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Your Nodo
+
+
+       ▸ Your Nodo is locked
+       Apps' data waits for the device passphrase. They start once you unlock.
+
+                                                                                                      Unlock   
+
+
+
+       ▲  bell keeps stopping
+       Its log usually says why. Settings or an update can be undone from its page.
+
+                                                                                                    Show log   
+
+
+
+       3 updates are ready
+       moneropay, the Nodo, wallet-relay. Each keeps its settings and can be undone.
+
+                                                                                              Review updates   
+
+
+
+       The other apps
+
+         cuprated      Running
+         tor           Running
+
+    ↓ more below — scroll
+
+    Keys: ↑↓ choose  ↵ act on it  / get apps  1-4 tabs

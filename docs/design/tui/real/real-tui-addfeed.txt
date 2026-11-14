@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  Add
+
+
+       ✓  monero-tools   https://github.com/example/monero-tools-feed
+
+       It offers 9 apps.
+
+       Its key         c41e8d07  2fa966b3  19e075cd  0b42e8a1
+
+       Check this matches what the publisher gave you, by a way you trust (in person, their site, a message you
+       know is from them). If it doesn't match, don't add it.
+
+                                                                              ▸ Cancel          Add source   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ←→ choose  ↵ confirm  p its apps  Esc cancel

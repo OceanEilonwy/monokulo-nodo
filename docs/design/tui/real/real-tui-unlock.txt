@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+
+
+       Unlock your Nodo
+
+       Restarted 4 minutes ago. Your apps' data is locked until you type the device passphrase.
+       monokulo-pay, wallet-relay start after you unlock.
+
+       Passphrase    ••••••••••••▏
+                    ✕ That passphrase did not unlock this device. Try again.
+
+       A lost passphrase can't be recovered; a backup brings the data back.
+
+                                                                                                      Unlock   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type the passphrase  ↵ unlock  Esc leave locked

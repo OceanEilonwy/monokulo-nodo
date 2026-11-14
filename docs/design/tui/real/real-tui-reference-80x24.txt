@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Daemon RPC
+
+    Pick daemon rpc from your apps
+    It follows the app you pick if its value changes. Expects a URL.
+
+
+       Search    rpc
+
+       ✓ monero-daemon.public_rpc_url      http://127.0.0.1:18081
+         monero-daemon.restricted_rpc_url  http://127.0.0.1:18089
+         wallet-rpc.url                    http://127.0.0.1:34512
+
+       monero-daemon is a role.
+       It stays correct if you switch between cuprated and monerod.
+
+                 Type a value instead                Use it          
+
+
+
+    Keys: ↑↓ choose  ↵ use it  t type a value  Esc close

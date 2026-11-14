@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    System  ›  Updates
+
+
+       ▲  moneropay's update didn't start, so 2.7.0 was put back
+
+       Version 2.7.0 and its data were restored. moneropay is running again
+       as before.
+       moneropay said: "database migration 14: table "invoices" already
+       exists"
+       ✓  The Nodo updated to 2026.12
+
+       Show log ›     Copy a report for the publisher ›
+
+                                       Try again           ▸ OK      
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ confirm  Esc back

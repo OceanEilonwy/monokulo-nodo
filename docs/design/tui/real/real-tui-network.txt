@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    System  ›  Network                                                                             ● Wired connected
+
+
+       Wi-Fi
+
+        [x] on   ● Joined home-5G  -48 dBm  192.168.1.57  wlan0
+       ▸ home-5G                 WPA2/WPA3  ▂▄▆█  -48 dBm  saved · joined
+        Cafe Libre              open       ▂▄▆   -61 dBm
+        neighbour               WPA3       ▂▄    -70 dBm
+        office-staff            enterprise ▂     -79 dBm
+        travel-hotspot          WPA2         saved, not in range
+
+
+
+       Bluetooth
+
+        [x] on   ● Not discoverable, pairs only when you ask  D8:3A:DD:41:07:2C
+        K380 Keyboard           keyboard     -52 dBm  paired · connected
+        WH-1000XM4              headphones   -66 dBm  paired
+        Kitchen Speaker         speaker      -71 dBm  found
+
+
+
+       About wireless
+
+       ● Wired stays the main connection. Wi-Fi carries traffic only while the wired link is down.
+       ● Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept.
+       ● Bluetooth is never discoverable. Only pairings you start here can happen.
+
+
+
+    Keys: ←→ Wi-Fi/Bluetooth  ↑↓ move  ↵ join  s scan  o on/off  f forget  g look again  Esc back

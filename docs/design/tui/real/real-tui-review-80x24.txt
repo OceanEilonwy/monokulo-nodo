@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  Get apps  ›  wallet-relay  ›  Install
+
+
+       Install wallet-relay?
+
+       ▲  It comes from community, a source you added. Nobody has reviewed
+       its code for you.
+
+       It will be able to:
+       ✓  Use its own user and data folder   Standard
+       ✓  Read monero-daemon.public_rpc_url   Public setting
+       ✓  Reach daemon RPC on this device   Local only
+       ▲  Accept connections on port 18120   Reachable from your network
+       ▲  Connect out to any internet address   Broad access
+       ◆  Keep data in encrypted storage   Locks at reboot
+
+       ↓ 3 more — scroll or make the window taller
+                                         ▸ Cancel         Install    
+
+    Keys: ←→ choose  ↵ cancel  d files  Esc cancel

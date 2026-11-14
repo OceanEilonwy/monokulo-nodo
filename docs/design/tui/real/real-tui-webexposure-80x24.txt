@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+    Apps  ›  shop  ›  Hosting
+
+    Hosting
+    Choose who can open shop. Any combination works.
+
+         [x]  Home network
+              Phones and computers on your Wi-Fi.   https://shop.local
+
+         [x]  Tor
+              A private link that opens in Tor Browser. It doesn't reveal
+              your home.
+
+       ▸ [x]  Internet
+              Anyone, at a web address you own.
+
+              Provider    Porkbun
+
+       ↓ 10 more — scroll or make the window taller
+                                                      Check and save   
+
+    Keys: Tab move  Space tick  ↵ save  Esc back

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Web  ›  Domains  ›  Local CA                                                       ✓ Served at http://nodo.local
+
+
+       Trust page
+
+       Open on a phone or computer here  http://nodo.local
+       It offers this device's root certificate and short install steps for Android, iPhone,
+       macOS, Windows, Linux and Firefox. It needs no port and no app.
+       Only the local network can open it, on the local address. It is never public or on Tor.
+
+
+
+       SHA-256 fingerprint
+
+       3F:9A:21:C4:7E:05:B8:D2:61:4A:93:0C:EE:17:5B:28
+       A6:D9:40:7F:12:C3:8B:65:E0:94:2D:71:BC:58:0A:F6
+
+       ▲ The page is plain HTTP. Install the root only if the page shows this same fingerprint.
+
+
+
+       What trusting it does
+
+       Browsers on that device then open this device's .local sites without a warning.
+       The root vouches only for this device's local sites. Remove it from a device to
+       stop trusting them. Names under your own domain get public certificates instead.
+
+
+
+
+
+    Keys: r refresh  Esc back

@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  Get apps  ›  Sources  ›  old-tools
+
+    Check before you trust
+
+
+       ▲  old-tools is now signed with a different key
+
+       This happens when a publisher replaces a lost key, and also when
+       someone else takes over their address. Until you decide, the Nodo
+       installs nothing new from old-tools.
+
+       Key you trust   08bd42f1  a7c391de  66e0d214  f8a903c7
+       New key         e93a17c0  5bd280f4  1a6c39e7  42dba106
+
+       Apps from it on this Nodo: hash-tools 1.3.0, peer-map 0.9.1
+       ↓ 4 more — scroll or make the window taller
+            Remove source            Trust the new key          ▸ Keep
+       the old key   
+
+    Keys: ↑↓ choose  ↵ confirm  Esc decide later

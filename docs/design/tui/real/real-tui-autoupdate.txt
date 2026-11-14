@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    System  ›  Updates  ›  Automatic
+
+    Automatic updates
+    Only versions that ask for nothing new. Anything else waits for you. Next run tonight at 03:00.
+
+
+
+         How often                          Daily        ◂▸
+         Between                            03:00 and 05:00
+
+       Update these apps by themselves
+         moneropay                         [x] On
+         cuprated                          [x] On
+         monokulo-pay                      [x] On
+       ▸ wallet-relay                      [ ] Off   ▲ Runs new code without your review
+
+         Update the Nodo by itself         [ ] Off
+         Updates that need a restart always wait for you, whatever this says.
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  Space on/off  ←→ how often  w between  ↵ save  Esc cancel
