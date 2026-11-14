@@ -111,6 +111,16 @@ pub fn field(f: SettingField) -> Field {
             path: format!("{target}.{setting}"),
             resolved: resolved.unwrap_or_else(|| "does not resolve".to_owned()),
         },
+        // Mixed text and references: shown as text until the editor learns pieces.
+        SettingCurrent::Template { parts, .. } => FieldValue::Text(
+            parts
+                .into_iter()
+                .map(|p| match p {
+                    nodo_api::TemplatePart::Text(t) => t,
+                    nodo_api::TemplatePart::Reference { target, setting } => format!("$({target}.{setting})"),
+                })
+                .collect(),
+        ),
         SettingCurrent::Default => match f.default.as_deref() {
             Some(text) => match reference_path(text) {
                 Some(path) => FieldValue::Reference { path: path.to_owned(), resolved: String::new() },

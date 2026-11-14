@@ -55,6 +55,13 @@ fn sent_values(call: &Request) -> Vec<(String, String)> {
                 SettingInput::Literal(SettingLiteral::Bool(b)) => b.to_string(),
                 SettingInput::Reference { target, setting } => format!("$({target}.{setting})"),
                 SettingInput::Secret(secret) => secret.expose().to_owned(),
+                SettingInput::Template(parts) => parts
+                    .iter()
+                    .map(|part| match part {
+                        nodo_api::TemplatePart::Text(text) => text.clone(),
+                        nodo_api::TemplatePart::Reference { target, setting } => format!("$({target}.{setting})"),
+                    })
+                    .collect(),
                 SettingInput::Reset => String::new(),
             };
             (change.name.clone(), value)

@@ -11,13 +11,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use nodo_api::{
-    ApiError, SettingChange, SettingCurrent, SettingField, SettingInput, SettingKind,
-    SettingLiteral, SettingsForm,
+    ApiError, ImpliedAccess, ReferenceAccess, ReferenceCheck, ReferenceOption, ReferenceStatus,
+    SettingChange, SettingCurrent, SettingField, SettingInput, SettingKind, SettingLiteral,
+    SettingPreview, SettingsForm, TemplatePart,
 };
 use nodo_gen::{service_user, Profile, ResolvedGrants};
 use nodo_manifest::is_valid_package_path;
 use nodo_settings::{
-    env_file, is_valid_setting_name, parse_template, toml_file, Access, DefaultValue, Grant,
+    env_file, escape_literal, is_valid_setting_name, parse_template, toml_file, Access,
+    CatalogAccess, DefaultValue, Grant, ReferenceState,
     Installed, InstalledPackage, NetworkGrant, Part, PortProtocol, ResolveError, Resolved, Schema,
     SettingDef,
     SettingType, SettingValue, Value,
@@ -194,6 +196,44 @@ fn single_reference(text: &str) -> Option<(String, String)> {
         [Part::Reference(reference)] => Some((reference.target.clone(), reference.setting.clone())),
         _ => None,
     }
+}
+
+/// A stored template as pieces, for clients that edit text and references separately.
+fn template_parts(text: &str) -> Option<Vec<TemplatePart>> {
+    let parts = parse_template(text).ok()?;
+    Some(
+        parts
+            .into_iter()
+            .map(|part| match part {
+                Part::Literal(text) => TemplatePart::Text(text),
+                Part::Reference(r) => TemplatePart::Reference {
+                    target: r.target,
+                    setting: r.setting,
+                },
+            })
+            .collect(),
+    )
+}
+
+/// The stored form of pieces: text escaped so a literal `$(` stays text, references written as
+/// `$(target.setting)`. Nothing the user typed can become a reference.
+fn template_text(def: &SettingDef, parts: &[TemplatePart]) -> Result<String, String> {
+    let mut text = String::new();
+    for part in parts {
+        match part {
+            TemplatePart::Text(literal) => text.push_str(&escape_literal(literal)),
+            TemplatePart::Reference { target, setting } => {
+                if !nodo_manifest::is_valid_name(target) || !is_valid_setting_name(setting) {
+                    return Err(format!("{}: invalid reference", def.name));
+                }
+                text.push_str(&format!("$({target}.{setting})"));
+            }
+        }
+    }
+    if parse_template(&text).is_err() {
+        return Err(format!("{}: invalid value", def.name));
+    }
+    Ok(text)
 }
 
 /// The value a stored entry stands for. `None` when it is sealed and the device is locked.
@@ -466,7 +506,13 @@ fn current(
                 setting,
                 resolved: resolved_text(),
             },
-            None => SettingCurrent::Literal(SettingLiteral::Text(text.clone())),
+            None => match template_parts(text) {
+                Some(parts) => SettingCurrent::Template {
+                    parts,
+                    resolved: resolved_text(),
+                },
+                None => SettingCurrent::Literal(SettingLiteral::Text(text.clone())),
+            },
         },
     }
 }
@@ -506,6 +552,30 @@ fn stored_for(def: &SettingDef, input: &SettingInput) -> Result<Option<Stored>, 
                 return Err(format!("{}: invalid reference", def.name));
             }
             Ok(Some(Stored::Template(format!("$({target}.{setting})"))))
+        }
+        SettingInput::Template(_) if secret => Err(format!(
+            "{} is a secret, so it must be sent as one",
+            def.name
+        )),
+        SettingInput::Template(parts) => {
+            let text = template_text(def, parts)?;
+            // A template without references is a plain value, checked like one.
+            match template_parts(&text) {
+                Some(p) if p.iter().all(|p| matches!(p, TemplatePart::Text(_))) => {
+                    let literal: String = p
+                        .into_iter()
+                        .map(|p| match p {
+                            TemplatePart::Text(t) => t,
+                            TemplatePart::Reference { .. } => unreachable!(),
+                        })
+                        .collect();
+                    def.ty
+                        .parse_literal(&literal)
+                        .map_err(|m| format!("{} {m}", def.name))?;
+                    Ok(Some(Stored::Literal(literal)))
+                }
+                _ => Ok(Some(Stored::Template(text))),
+            }
         }
     }
 }
@@ -842,6 +912,143 @@ impl SettingsPolicy for NodoSettings {
         Ok(total)
     }
 
+    fn references(
+        &self,
+        ctx: &SettingsContext,
+        package: &Package,
+    ) -> Result<Vec<ReferenceOption>, ApiError> {
+        let world = World::load(ctx)?;
+        Ok(world
+            .installed
+            .catalog(package.id())
+            .into_iter()
+            .map(|entry| ReferenceOption {
+                package: entry.package,
+                reference: entry.reference,
+                label: entry.label,
+                help: entry.help.unwrap_or_default(),
+                kind: kind(&entry.ty),
+                access: match entry.access {
+                    CatalogAccess::Public { value } => ReferenceAccess::Public { value },
+                    CatalogAccess::Grant { secret, granted } => {
+                        ReferenceAccess::NeedsGrant { secret, granted }
+                    }
+                },
+            })
+            .collect())
+    }
+
+    fn preview(
+        &self,
+        ctx: &SettingsContext,
+        package: &Package,
+        change: &SettingChange,
+    ) -> Result<SettingPreview, ApiError> {
+        let id = package.id();
+        let world = World::load(ctx)?;
+        let def = world.schema(id)?.setting(&change.name).cloned().ok_or_else(|| {
+            failed(format!("{id} has no setting named {}", change.name.escape_debug()))
+        })?;
+        if matches!(change.value, SettingInput::Secret(_)) {
+            return Err(failed("a secret is not previewed".to_owned()));
+        }
+        let value = match stored_for(&def, &change.value).map_err(failed)? {
+            Some(stored) => stored_value(None, id, &def, &stored)
+                .map_err(|m| failed(format!("{} {m}", def.name)))?
+                .ok_or_else(|| failed("a secret is not previewed".to_owned()))?,
+            None => match &def.default {
+                Some(default) => SettingValue::from(default),
+                None => {
+                    return Ok(SettingPreview {
+                        resolved: None,
+                        problem: Some(format!("{} has no default", def.name)),
+                        references: Vec::new(),
+                        new_dependencies: Vec::new(),
+                        new_access: Vec::new(),
+                    })
+                }
+            },
+        };
+        let before = world.installed.resolve(id).ok();
+        let preview = world
+            .installed
+            .preview(id, &change.name, value)
+            .map_err(|e| failed(e.to_string()))?;
+        let had_dependency = |p: &str| {
+            before
+                .as_ref()
+                .is_some_and(|b| b.dependencies.iter().any(|d| d.package == p))
+        };
+        let had_access =
+            |g: &NetworkGrant| before.as_ref().is_some_and(|b| b.network.contains(g));
+        let mut new_dependencies: Vec<String> = preview
+            .dependencies
+            .iter()
+            .filter(|d| !had_dependency(&d.package))
+            .map(|d| d.package.clone())
+            .collect();
+        new_dependencies.dedup();
+        let new_access = preview
+            .network
+            .iter()
+            .filter(|g| !had_access(g))
+            .map(|g| ImpliedAccess {
+                provider: g.provider.clone(),
+                what: match &g.access {
+                    Access::Port { protocol, port } => format!(
+                        "port {port}/{}",
+                        match protocol {
+                            PortProtocol::Tcp => "tcp",
+                            PortProtocol::Udp => "udp",
+                        }
+                    ),
+                    Access::UnixSocket { path } => format!("socket {path}"),
+                },
+            })
+            .collect();
+        let references = preview
+            .references
+            .into_iter()
+            .map(|check| ReferenceCheck {
+                target: check.reference.target,
+                setting: check.reference.setting,
+                status: match check.state {
+                    ReferenceState::Resolves { provider, value } => {
+                        ReferenceStatus::Ok { provider, value }
+                    }
+                    ReferenceState::NotInstalled => ReferenceStatus::NotInstalled,
+                    ReferenceState::NoSuchSetting { provider } => {
+                        ReferenceStatus::NoSuchSetting { provider }
+                    }
+                    ReferenceState::NeedsGrant {
+                        provider,
+                        setting,
+                        secret,
+                    } => ReferenceStatus::NeedsGrant {
+                        provider,
+                        setting,
+                        secret,
+                    },
+                    ReferenceState::TypeMismatch { expected, found } => {
+                        ReferenceStatus::TypeMismatch { expected, found }
+                    }
+                    ReferenceState::Problem(problem) => ReferenceStatus::Problem(problem),
+                },
+            })
+            .collect();
+        let (resolved, problem) = match preview.value {
+            Ok(value) => (value, None),
+            Err(problem) => (None, Some(problem)),
+        };
+        Ok(SettingPreview {
+            resolved,
+            problem,
+            references,
+            new_dependencies,
+            new_access,
+        })
+    }
+
     fn public_value(
         &self,
         ctx: &SettingsContext,
@@ -1135,6 +1342,205 @@ settings = "settings.lua"
                 resolved: Some("18081".into()),
             }
         );
+    }
+
+    fn tpl(parts: &[(&str, &str)]) -> SettingInput {
+        // ("", text) is text; (target, setting) is a reference.
+        SettingInput::Template(
+            parts
+                .iter()
+                .map(|(target, rest)| {
+                    if target.is_empty() {
+                        TemplatePart::Text((*rest).into())
+                    } else {
+                        TemplatePart::Reference {
+                            target: (*target).into(),
+                            setting: (*rest).into(),
+                        }
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn preview(h: &Helper<FakeSystem>, package: &str, name: &str, value: SettingInput) -> SettingPreview {
+        match h.handle(
+            1000,
+            Request::PreviewSetting {
+                package: package.into(),
+                change: change(name, value),
+            },
+        ) {
+            Ok(Response::SettingPreview(p)) => p,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn references_list_public_values_and_lock_the_rest() {
+        let h = setup();
+        let Ok(Response::References(options)) = h.handle(
+            1000,
+            Request::ListReferences {
+                package: "shop".into(),
+            },
+        ) else {
+            panic!()
+        };
+        assert!(options.iter().all(|o| o.package == "cuprated"));
+        let port = options.iter().find(|o| o.reference == "rpc-port").unwrap();
+        assert_eq!(
+            port.access,
+            ReferenceAccess::Public {
+                value: Some("18081".into())
+            }
+        );
+        let token = options.iter().find(|o| o.reference == "token").unwrap();
+        assert_eq!(
+            token.access,
+            ReferenceAccess::NeedsGrant {
+                secret: true,
+                granted: false
+            }
+        );
+        let peers = options
+            .iter()
+            .find(|o| o.reference == "outbound_peers")
+            .unwrap();
+        assert!(matches!(
+            peers.access,
+            ReferenceAccess::NeedsGrant { secret: false, .. }
+        ));
+    }
+
+    #[test]
+    fn text_and_references_together_are_stored_and_reported_as_pieces() {
+        let h = setup();
+        let value = tpl(&[("", "port "), ("cuprated", "rpc-port"), ("", " $(not.a.ref)")]);
+        apply(&h, "shop", vec![change("label", value)]).unwrap();
+        let out: toml::Table = toml::from_str(
+            std::str::from_utf8(&h.sys.get("/etc/apps/shop/settings.toml").unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out["label"].as_str(), Some("port 18081 $(not.a.ref)"));
+        let field = form(&h, "shop")
+            .fields
+            .into_iter()
+            .find(|f| f.name == "label")
+            .unwrap();
+        assert_eq!(
+            field.current,
+            SettingCurrent::Template {
+                parts: vec![
+                    TemplatePart::Text("port ".into()),
+                    TemplatePart::Reference {
+                        target: "cuprated".into(),
+                        setting: "rpc-port".into()
+                    },
+                    TemplatePart::Text(" $(not.a.ref)".into()),
+                ],
+                resolved: Some("port 18081 $(not.a.ref)".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_template_of_only_text_is_a_plain_value_and_secrets_refuse_templates() {
+        let h = setup();
+        apply(&h, "shop", vec![change("label", tpl(&[("", "$(x.y) plain")]))]).unwrap();
+        let field = form(&h, "shop")
+            .fields
+            .into_iter()
+            .find(|f| f.name == "label")
+            .unwrap();
+        assert_eq!(
+            field.current,
+            SettingCurrent::Literal(SettingLiteral::Text("$(x.y) plain".into()))
+        );
+        let h = unlocked();
+        assert!(apply(&h, "cuprated", vec![change("token", tpl(&[("", "abc")]))]).is_err());
+    }
+
+    #[test]
+    fn a_preview_reports_each_reference_and_writes_nothing() {
+        let h = setup();
+        let writes = |h: &Helper<FakeSystem>| {
+            h.sys
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("write"))
+                .count()
+        };
+        let before = writes(&h);
+        let p = preview(
+            &h,
+            "shop",
+            "label",
+            tpl(&[
+                ("", "http://127.0.0.1:"),
+                ("cuprated", "rpc-port"),
+                ("", "/"),
+                ("old-shop", "url"),
+                ("cuprated", "token"),
+            ]),
+        );
+        assert_eq!(
+            p.references[0].status,
+            ReferenceStatus::Ok {
+                provider: "cuprated".into(),
+                value: Some("18081".into())
+            }
+        );
+        assert_eq!(p.references[1].status, ReferenceStatus::NotInstalled);
+        assert!(matches!(
+            p.references[2].status,
+            ReferenceStatus::NeedsGrant { secret: true, .. }
+        ));
+        assert!(p.problem.is_some() && p.resolved.is_none());
+        let ok = preview(
+            &h,
+            "shop",
+            "label",
+            tpl(&[("", "http://127.0.0.1:"), ("cuprated", "rpc-port")]),
+        );
+        assert_eq!(ok.resolved.as_deref(), Some("http://127.0.0.1:18081"));
+        assert_eq!(writes(&h), before, "{:?}", h.sys.calls());
+    }
+
+    #[test]
+    fn a_preview_says_what_a_new_reference_would_open() {
+        let h = setup();
+        apply(&h, "shop", vec![change("daemon_port", int(18081))]).unwrap();
+        let p = preview(
+            &h,
+            "shop",
+            "daemon_port",
+            SettingInput::Reference {
+                target: "cuprated".into(),
+                setting: "rpc-port".into(),
+            },
+        );
+        assert_eq!(p.resolved.as_deref(), Some("18081"));
+        assert_eq!(p.new_dependencies, ["cuprated"]);
+        let mixed = preview(&h, "shop", "daemon_port", tpl(&[("", "1"), ("cuprated", "rpc-port")]));
+        assert!(matches!(
+            mixed.references[0].status,
+            ReferenceStatus::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn a_secret_is_never_previewed() {
+        let h = unlocked();
+        assert!(h
+            .handle(
+                1000,
+                Request::PreviewSetting {
+                    package: "cuprated".into(),
+                    change: change("token", SettingInput::Secret(Secret::new("hunter2"))),
+                },
+            )
+            .is_err());
     }
 
     #[test]

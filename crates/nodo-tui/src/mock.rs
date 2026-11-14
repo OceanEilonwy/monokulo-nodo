@@ -413,7 +413,7 @@ impl Backend for MockBackend {
                                 .map_or_else(String::new, |option| option.value.clone());
                             FieldValue::Reference { path, resolved }
                         }
-                        SettingInput::Reset => field.value.clone(),
+                        SettingInput::Reset | SettingInput::Template(_) => field.value.clone(),
                     };
                 }
                 Ok(Response::Ok)
