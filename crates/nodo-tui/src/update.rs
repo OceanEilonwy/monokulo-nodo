@@ -207,6 +207,7 @@ fn help_document() -> Document {
             "w                Wi-Fi and Bluetooth, from Home",
             "n                onion (Tor) addresses, from Web",
             "q                quit, from a tab",
+            "F4 or Ctrl-.     pick a setting's value from another app, in Settings",
             "",
             "The mouse works too: click, scroll, and hover to see what can be clicked.",
             "Ctrl-C           quit, from anywhere",
@@ -1136,6 +1137,10 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    // F4 and Ctrl-. open the picker even while typing, so they never reach the box.
+    if opens_picker(key) {
+        return open_reference_picker(app);
+    }
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -1175,19 +1180,7 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Right if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
             start_field_edit(state, index, 1);
         }
-        KeyCode::Char('$') => {
-            let field = &state.form.fields[index];
-            // Secrets and non-text fields take no public reference, so only URLs offer the picker.
-            if field.kind == FieldKind::Url {
-                return vec![Effect::LoadReferences {
-                    package: state.form.package.clone(),
-                    field_index: index,
-                    field_key: field.key.clone(),
-                    field_label: field.label.clone(),
-                }];
-            }
-            fail(app, "This field cannot use a reference.");
-        }
+        KeyCode::Char('$') => return open_reference_picker(app),
         KeyCode::Char('z') => state.draft[index] = state.form.fields[index].value.clone(),
         KeyCode::Esc => {
             if state.changed_indices().is_empty() {
@@ -1205,6 +1198,33 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         _ => {}
     }
     Vec::new()
+}
+
+/// The keys that open the picker from the Settings form. F4 opens a drop-down in many programs
+/// and reaches every terminal. Ctrl-. only arrives where the terminal reports it (the kitty
+/// keyboard protocol, see `CrosstermMode`); elsewhere it types nothing or a plain dot.
+pub fn opens_picker(key: KeyEvent) -> bool {
+    key.code == KeyCode::F(4) || is_ctrl(key, '.')
+}
+
+/// Opens the picker for the selected field. Whatever is being typed stays, so Esc from the picker
+/// goes back to it.
+fn open_reference_picker(app: &mut App) -> Vec<Effect> {
+    let Screen::Settings(state) = &app.screen else {
+        return Vec::new();
+    };
+    let index = state.selected;
+    let field = &state.form.fields[index];
+    if !field.kind.takes_reference() {
+        fail(app, "This setting cannot take a value from another app.");
+        return Vec::new();
+    }
+    vec![Effect::LoadReferences {
+        package: state.form.package.clone(),
+        field_index: index,
+        field_key: field.key.clone(),
+        field_label: field.label.clone(),
+    }]
 }
 
 fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
@@ -1261,6 +1281,7 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 pop(app);
                 if let Screen::Settings(settings) = &mut app.screen {
                     settings.draft[field_index] = value;
+                    settings.editing = None;
                 }
             }
         }

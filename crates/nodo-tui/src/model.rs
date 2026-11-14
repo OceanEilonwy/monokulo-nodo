@@ -225,6 +225,14 @@ pub enum FieldKind {
     Toggle,
 }
 
+impl FieldKind {
+    /// Whether the field can take a value picked from another app. A secret is never public, and
+    /// a toggle or a choice is quicker to set by hand, so those three offer no picker.
+    pub fn takes_reference(&self) -> bool {
+        matches!(self, Self::Url | Self::Port | Self::Text | Self::Number { .. } | Self::MoneroAddress)
+    }
+}
+
 /// A setting's value. A stored secret is only ever known as set or unset, so the backend's real
 /// value never enters this process. `NewSecret` holds what the user has just typed.
 #[derive(Debug, Clone, PartialEq, Eq)]

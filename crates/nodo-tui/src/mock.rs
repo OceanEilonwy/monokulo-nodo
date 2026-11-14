@@ -962,6 +962,8 @@ impl ScreenData for MockBackend {
     fn references(&self, package: &str, field: &str) -> ReferenceList {
         if package == "moneropay" && field == "daemon_rpc" {
             sample_references()
+        } else if package == "moneropay" && field == "api_port" {
+            sample_port_references()
         } else {
             ReferenceList { expects: s("a value"), options: Vec::new(), hidden_wrong_type: 0, hidden_secrets: 0 }
         }
@@ -1766,6 +1768,21 @@ fn sample_forms() -> HashMap<String, SettingsForm> {
         public_settings: Vec::new(),
     };
     HashMap::from([(s("moneropay"), moneropay), (s("wallet-relay"), wallet_relay)])
+}
+
+/// Numbers other apps offer, for a port field.
+pub fn sample_port_references() -> ReferenceList {
+    ReferenceList {
+        expects: s("a number"),
+        options: vec![ReferenceOption {
+            path: s("wallet-rpc.port"),
+            value: s("34512"),
+            role_note: None,
+            consequences: vec![s("Update and restart moneropay whenever the value changes.")],
+        }],
+        hidden_wrong_type: 3,
+        hidden_secrets: 0,
+    }
 }
 
 pub fn sample_references() -> ReferenceList {

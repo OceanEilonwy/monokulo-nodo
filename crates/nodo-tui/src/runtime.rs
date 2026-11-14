@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyEventKind, MouseButton,
-    MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyEventKind,
+    KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -529,17 +529,26 @@ pub trait TerminalMode: Send + Sync + 'static {
 }
 
 /// Writes the sequence that puts a terminal back, ignoring errors, because the peer may be gone.
+/// The keyboard flags are popped first, because a terminal keeps them per screen. Popping them is
+/// harmless where none were pushed: terminals without the kitty protocol ignore it.
 pub fn write_restore(out: &mut impl Write) {
-    let _ = execute!(out, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
+    let _ = execute!(out, PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
     let _ = out.flush();
 }
 
 pub struct CrosstermMode;
 
 impl TerminalMode for CrosstermMode {
+    /// Asks for the kitty keyboard protocol's disambiguated keys, so that terminals which speak it
+    /// report Ctrl-. (which opens the settings picker). Only the first level is asked for: keys
+    /// keep arriving as presses, Enter, Tab and Backspace keep their usual codes, and terminals
+    /// without the protocol ignore the request. It is not queried first, because a terminal that
+    /// never answers would hold up the start.
     fn enter(&self) -> io::Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)
+        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)?;
+        let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        Ok(())
     }
 
     fn leave(&self) {

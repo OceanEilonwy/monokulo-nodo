@@ -70,6 +70,8 @@ fn the_restore_sequence_leaves_the_alternate_screen_and_shows_the_cursor() {
     assert!(out.contains("\u{1b}[?1049l"), "{out:?}");
     assert!(out.contains("\u{1b}[?25h"), "{out:?}");
     assert!(out.contains("\u{1b}[?2004l"), "{out:?}");
+    let pop = out.find("\u{1b}[<1u").expect("pops the keyboard flags");
+    assert!(pop < out.find("\u{1b}[?1049l").unwrap(), "while still on the alternate screen: {out:?}");
 }
 
 struct Broken;
