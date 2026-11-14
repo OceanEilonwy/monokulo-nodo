@@ -22,24 +22,22 @@ pub const MAX_UNLOCK_DELAY_SECONDS: u64 = 30;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Home,
-    Packages,
+    /// Installed apps, each with its own page (update, hosting, settings, logs), and Get apps.
+    Apps,
     Web,
-    Feeds,
-    Updates,
-    Logs,
+    /// The Nodo itself: its updates, backups, network and device logs.
+    System,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [Tab::Home, Tab::Packages, Tab::Web, Tab::Feeds, Tab::Updates, Tab::Logs];
+    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Apps, Tab::Web, Tab::System];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Home => "Home",
-            Tab::Packages => "Packages",
+            Tab::Apps => "Apps",
             Tab::Web => "Web",
-            Tab::Feeds => "Feeds",
-            Tab::Updates => "Updates",
-            Tab::Logs => "Logs",
+            Tab::System => "System",
         }
     }
 }
@@ -87,10 +85,18 @@ pub enum ScreenId {
     Rollbacks,
     /// Wi-Fi and Bluetooth.
     Network,
+    /// The installed apps.
+    Apps,
+    /// One installed app's page.
+    AppPage,
+    /// Confirming an app's removal.
+    AppRemove,
+    /// The Nodo itself: updates, backups, network, device logs, about.
+    System,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 33] = [
+    pub const ALL: [ScreenId; 37] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -124,6 +130,10 @@ impl ScreenId {
         ScreenId::Restore,
         ScreenId::Rollbacks,
         ScreenId::Network,
+        ScreenId::Apps,
+        ScreenId::AppPage,
+        ScreenId::AppRemove,
+        ScreenId::System,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -163,6 +173,10 @@ impl ScreenId {
             ScreenId::Restore => "restore",
             ScreenId::Rollbacks => "rollbacks",
             ScreenId::Network => "network",
+            ScreenId::Apps => "apps",
+            ScreenId::AppPage => "app",
+            ScreenId::AppRemove => "appremove",
+            ScreenId::System => "system",
         }
     }
 
@@ -708,6 +722,9 @@ pub struct LogsState {
     pub follow: bool,
     pub find: Input,
     pub finding: bool,
+    /// Opened from an app's page: only that app's log, under Apps. Otherwise the device logs,
+    /// under System, with every source as a filter.
+    pub app: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -972,7 +989,8 @@ pub enum Screen {
     Review(ReviewState),
     Installing(InstallSnapshot),
     Unlock(UnlockState),
-    Feeds { selected: usize },
+    /// Sources (feeds). `keys` shows each one's signing key.
+    Feeds { selected: usize, keys: bool },
     AddFeed(AddFeedState),
     FeedKey(FeedKeyState),
     Settings(SettingsState),
@@ -1000,7 +1018,67 @@ pub enum Screen {
     Restore(RestoreState),
     Rollbacks(RollbacksState),
     Network(NetworkState),
+    Apps { selected: usize },
+    AppPage(AppPageState),
+    AppRemove(AppRemoveState),
+    System { selected: usize },
 }
+
+/// One installed app's page: its status and update, then Hosting, Settings and Logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppPageState {
+    pub name: String,
+    pub selected: usize,
+    /// At 80 columns the page actions fold into "⋯ More", which opens them as a list.
+    pub more_open: bool,
+}
+
+impl AppPageState {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_owned(), selected: 0, more_open: false }
+    }
+}
+
+/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppRemoveState {
+    pub name: String,
+    pub confirm_focused: bool,
+}
+
+/// What Home lets one act on, in order: what needs the owner first (each with its one button),
+/// then every app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeItem {
+    Unlock,
+    /// An app that keeps failing: its log.
+    Failing(String),
+    Updates,
+    App(String),
+}
+
+impl App {
+    pub fn home_items(&self) -> Vec<HomeItem> {
+        let mut items = Vec::new();
+        if self.is_locked() {
+            items.push(HomeItem::Unlock);
+        }
+        for svc in self.data.services.iter().filter(|svc| svc.state == nodo_api::ServiceState::Failed) {
+            items.push(HomeItem::Failing(svc.id.clone()));
+        }
+        if self.pending_updates() > 0 {
+            items.push(HomeItem::Updates);
+        }
+        items.extend(self.data.services.iter().map(|svc| HomeItem::App(svc.id.clone())));
+        items
+    }
+}
+
+/// The rows of the app page, in order.
+pub const APP_SECTIONS: [&str; 3] = ["Hosting", "Settings", "Logs"];
+
+/// The rows of the System page, in order.
+pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
 
 impl Screen {
     pub fn id(&self) -> ScreenId {
@@ -1039,18 +1117,40 @@ impl Screen {
             Screen::Restore(_) => ScreenId::Restore,
             Screen::Rollbacks(_) => ScreenId::Rollbacks,
             Screen::Network(_) => ScreenId::Network,
+            Screen::Apps { .. } => ScreenId::Apps,
+            Screen::AppPage(_) => ScreenId::AppPage,
+            Screen::AppRemove(_) => ScreenId::AppRemove,
+            Screen::System { .. } => ScreenId::System,
         }
     }
 
+    /// The tab a screen's top-level page belongs to: the screens the tab strip itself opens.
     pub fn tab(&self) -> Option<Tab> {
         match self {
             Screen::Home { .. } | Screen::NoDrive { .. } => Some(Tab::Home),
-            Screen::Search(_) => Some(Tab::Packages),
+            Screen::Apps { .. } => Some(Tab::Apps),
             Screen::Web { .. } => Some(Tab::Web),
-            Screen::Feeds { .. } => Some(Tab::Feeds),
-            Screen::Updates(_) => Some(Tab::Updates),
-            Screen::Logs(_) => Some(Tab::Logs),
+            Screen::System { .. } => Some(Tab::System),
             _ => None,
+        }
+    }
+
+    /// The tab shown as current: every screen lives under one of the four.
+    pub fn area(&self) -> Tab {
+        match self {
+            Screen::Home { .. } | Screen::NoDrive { .. } | Screen::Unlock(_) | Screen::Setup(_) | Screen::Restore(_) => Tab::Home,
+            // An app's Hosting and its steps live on the app's page, under Apps.
+            Screen::Web { .. } | Screen::WebDomain(_) | Screen::WebTrust | Screen::Onion(_) => Tab::Web,
+            Screen::WebProviders(state) if state.return_to.is_none() => Tab::Web,
+            Screen::System { .. }
+            | Screen::Updates(_)
+            | Screen::AutoUpdate(_)
+            | Screen::UpdateResults(_)
+            | Screen::Rollbacks(_)
+            | Screen::Backup(_)
+            | Screen::Network(_) => Tab::System,
+            Screen::Logs(state) if state.app.is_none() => Tab::System,
+            _ => Tab::Apps,
         }
     }
 }
@@ -1218,6 +1318,9 @@ pub enum Effect {
     Refresh,
     Start(String),
     Stop(String),
+    Restart(String),
+    /// Removes an installed app. Its data stays on the drive, so installing it again brings it back.
+    RemovePackage(String),
     Unlock(Secret),
     OpenService(String),
     LoadDetail(PackageId),

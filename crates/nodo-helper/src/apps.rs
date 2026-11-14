@@ -405,6 +405,53 @@ impl<S: System> Helper<S> {
             .map_err(|e| e.0)
     }
 
+    /// Removes an app installed from a feed. Its data volumes are kept: the owner may install it
+    /// again, and deleting data is not something to do as a side effect. Base system packages
+    /// and apps with a site online are refused, the latter so nothing public points at a
+    /// stopped app.
+    pub(crate) fn remove_package(&self, package: &str) -> Result<Response, ApiError> {
+        nodo_gen::validate::package_id(package)
+            .map_err(|_| ApiError::NotFound("invalid package id".to_owned()))?;
+        self.refuse_base_id(package)?;
+        let _work = lock(&self.manage.work);
+        let state = self.read_feeds()?;
+        if !state.installed.contains_key(package) {
+            return Err(ApiError::NotFound(format!("{package} is not installed from a feed")));
+        }
+        let (exposure, _): (crate::exposure::ExposureState, _) = self.load_toml(&self.paths.exposure_state)?;
+        let online = exposure
+            .get(package)
+            .is_some_and(|sites| sites.values().any(|e| e.local || e.onion || e.public));
+        if online {
+            return Err(ApiError::Failed(format!(
+                "{package} still has a site online; take it offline in Hosting first"
+            )));
+        }
+        // Stopped first, so nothing runs from files that are about to go.
+        if self.package(package).is_ok() {
+            let _ = self.stop_service(package);
+        }
+        let enabled = self.paths.service_dir.join(package);
+        if self.sys.read_link(&enabled).is_some() {
+            self.sys.remove_file(&enabled).map_err(|e| ApiError::Failed(e.0))?;
+        }
+        let manifest = self.paths.app_manifests.join(format!("{package}.toml"));
+        if self.sys.exists(&manifest) {
+            self.sys.remove_file(&manifest).map_err(|e| ApiError::Failed(e.0))?;
+        }
+        self.manage
+            .packages
+            .remove(package)
+            .map_err(|e| ApiError::Failed(format!("removing the package files failed: {e}")))?;
+        self.with_feeds(|state| {
+            state.installed.remove(package);
+            state.approved.remove(package);
+            Ok(())
+        })?;
+        self.prune_kept();
+        Ok(Response::Ok)
+    }
+
     /// A failed first install removes the package files and manifest it added. The service user
     /// and the id's claim stay, so the install can simply be tried again.
     fn undo_first_install(

@@ -1,0 +1,32 @@
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Installed                                                                         Get apps ›
+
+
+       ▸ cuprated      Monero node in Rust           Running         ›
+
+         tor           Onion routing                 Running         ›
+
+         moneropay     Payment gateway for Monero    Update ready    ›
+
+         wallet-relay  Relay for remote wallets      Update ready    ›
+
+         bell          Alerts when a wallet receiv…  Keeps stopping  ›
+
+         monerod       The reference Monero node     Stopped         ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps

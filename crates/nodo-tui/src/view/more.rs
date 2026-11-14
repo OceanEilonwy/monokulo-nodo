@@ -373,13 +373,13 @@ fn when(at: u64) -> String {
 }
 
 pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
-    let header = crumbs(t, &["Home", "Rollbacks"]);
+    let header = crumbs(t, &["System", "Updates", "Undo an update"]);
     let right = Line::from(t.d(if state.busy { "Working…" } else { "" }));
     let Some(view) = &state.view else {
         let mut items = vec![Item::Text(Line::from(t.d(if state.busy { " Reading…" } else { " Nothing to show." })))];
         items.extend(error_items(t, &state.error));
         return Page::new(header, right)
-            .panel(Panel::new("Roll back a package", items).grow())
+            .panel(Panel::new("Undo an update", items).grow())
             .footer(Item::Text(hints(t, &[("g", "look again"), ("Esc", "back")])));
     };
     let mut options = Vec::new();
@@ -434,7 +434,7 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
         None => Item::Text(Line::from(t.d(" The system runs the version it was updated to. No fallback happened."))),
     };
     Page::new(header, right)
-        .panel(Panel::accent("Roll back a package", options).grow())
+        .panel(Panel::accent("Undo an update", options).grow())
         .panel(Panel::new("Updates that were rolled back", happened))
         .panel(Panel::new("System", vec![system]))
         .footer(Item::Text(hints(t, &[("↑↓", "move"), ("↵", "roll back"), ("l", "log"), ("g", "look again"), ("Esc", "back")])))

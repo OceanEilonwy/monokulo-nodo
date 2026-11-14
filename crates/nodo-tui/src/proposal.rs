@@ -24,7 +24,7 @@ use crate::app::{App, ScreenId, Tab};
 use crate::fixtures::fixture;
 use crate::theme::Theme;
 use crate::view::layout::{draw_page, Item, Page, Panel};
-use crate::view::{self, button_line, checkbox, hints, mark, pad, tab_bar};
+use crate::view::{self, button_line, checkbox, hints, mark, pad};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
@@ -613,8 +613,8 @@ fn field(t: &Theme, label: &str, value: &str, focused: bool) -> Item {
     ]))
 }
 
-fn header(app: &App, t: &Theme) -> Page {
-    Page::new(tab_bar(app, t, Tab::Web), Line::from(t.d("monokulo-nodo")))
+fn header(_app: &App, t: &Theme) -> Page {
+    Page::new(Line::from(t.b(Tab::Web.label())), Line::from(t.d("monokulo-nodo")))
 }
 
 pub fn page(app: &App, t: &Theme, scene: Scene) -> Page {
@@ -1622,7 +1622,7 @@ fn top(app: &App, t: &Theme, tab: Tab, w: u16) -> Page {
     let mut tabs = vec![t.n("  ")];
     for each in Tab::ALL {
         let pending = app.pending_updates();
-        let extra = if each == Tab::Updates && pending > 0 { format!(" {pending}") } else { String::new() };
+        let extra = if each == Tab::Apps && pending > 0 { format!(" {pending}") } else { String::new() };
         if each == tab {
             tabs.push(Span::styled(format!("  {}{extra}  ", each.label()), Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
         } else {
@@ -1798,7 +1798,7 @@ fn v3_hosting(app: &App, t: &Theme, w: u16, h: u16, internet: Internet) -> Page 
         quiet(t, &format!("Choose who can open {name}. Any combination works.")),
         Item::Blank,
     ];
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, Vec::new(), keys, w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, Vec::new(), keys, w, h)
 }
 
 fn v3_confirm(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1818,7 +1818,7 @@ fn v3_confirm(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     items.push(Item::Blank);
     card.buttons(t, &[("Cancel", false), ("Put mk-pay online", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ put online  Esc cancel", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ put online  Esc cancel", w, h)
 }
 
 fn v3_online(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1834,7 +1834,7 @@ fn v3_online(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank, Item::Blank];
     card.buttons(t, &[("Done", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ done", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ done", w, h)
 }
 
 fn v3_blocked(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1852,7 +1852,7 @@ fn v3_blocked(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     items.push(Item::Blank);
     card.buttons(t, &[("Check again", false), ("Use Tor instead", true)]);
     let after = Vec::new();
-    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ use Tor  c check again  Esc back", w, h)
+    fit_page(t, top(app, t, Tab::Apps, w), items, card, after, "Keys: ↵ use Tor  c check again  Esc back", w, h)
 }
 
 fn v3_providers(app: &App, t: &Theme, w: u16, h: u16) -> Page {
@@ -1961,7 +1961,7 @@ fn v3_buttons(app: &App, t: &Theme, w: u16, h: u16) -> Page {
         items.extend(card.items(t));
     }
     let _ = h;
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
+    top(app, t, Tab::Apps, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
 }
 
 // ---------------------------------------------------------------------------------------------

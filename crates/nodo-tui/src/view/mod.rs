@@ -1,21 +1,21 @@
 //! Rendering. Each screen builds a `Page` from the state, and `layout` fits it to the terminal.
 
+mod apps;
 mod backup;
 mod certs;
 mod home;
-mod install;
 mod more;
 mod network;
 pub mod layout;
-mod packages;
 mod settings;
 mod setup;
-mod feeds;
-mod updates;
+mod sources;
+mod system;
 pub mod v3;
 mod web;
 
-use nodo_api::ServiceState;
+pub use apps::empty_catalog_line;
+
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
@@ -50,41 +50,42 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     let mut page = match &app.screen {
         Screen::Home { selected } => home::home(app, t, *selected),
         Screen::NoDrive { choice } => home::no_drive(app, t, *choice),
-        Screen::Search(state) => packages::search(app, t, state),
-        Screen::Detail(detail) => {
-            let has_site = app.data.web.sites.iter().any(|site| site.package == detail.id.name);
-            packages::detail(t, detail, has_site)
-        }
-        Screen::Rejected(data) => packages::rejected(t, data),
-        Screen::Capability(state) => packages::capability(t, state),
-        Screen::Review(state) => install::review(t, state),
-        Screen::Installing(snapshot) => install::installing(t, snapshot),
-        Screen::Unlock(state) => install::unlock(app, t, state),
-        Screen::Feeds { selected } => feeds::feeds(app, t, *selected),
-        Screen::AddFeed(state) => feeds::add_feed(t, state),
-        Screen::FeedKey(state) => feeds::feed_key(t, state),
-        Screen::Settings(state) => settings::settings(t, state),
-        Screen::Reference(state) => settings::reference(t, state),
-        Screen::ApplyFailed(state) => settings::apply_failed(t, state),
-        Screen::Updates(state) => updates::updates(app, t, state),
-        Screen::AutoUpdate(state) => updates::auto_update(t, state),
-        Screen::UpdateResults(state) => updates::results(t, state),
-        Screen::Logs(state) => updates::logs(app, t, state),
+        Screen::Apps { selected } => apps::apps(app, t, *selected),
+        Screen::AppPage(state) => apps::app_page(app, t, state),
+        Screen::AppRemove(state) => apps::app_remove(app, t, state),
+        Screen::Search(state) => apps::search(app, t, state),
+        Screen::Detail(detail) => apps::detail(app, t, detail),
+        Screen::Rejected(data) => apps::rejected(app, t, data),
+        Screen::Capability(state) => apps::capability(app, t, state),
+        Screen::Review(state) => apps::review(app, t, state),
+        Screen::Installing(snapshot) => apps::installing(app, t, snapshot),
+        Screen::Unlock(state) => apps::unlock(app, t, state),
+        Screen::Feeds { selected, keys } => sources::sources(app, t, *selected, *keys),
+        Screen::AddFeed(state) => sources::add_feed(app, t, state),
+        Screen::FeedKey(state) => sources::feed_key(app, t, state),
+        Screen::Settings(state) => settings::settings(app, t, state),
+        Screen::Reference(state) => settings::reference(app, t, state),
+        Screen::ApplyFailed(state) => settings::apply_failed(app, t, state),
+        Screen::System { selected } => system::system(app, t, *selected),
+        Screen::Updates(state) => system::updates(app, t, state),
+        Screen::AutoUpdate(state) => system::auto_update(app, t, state),
+        Screen::UpdateResults(state) => system::results(app, t, state),
+        Screen::Logs(state) => system::logs(app, t, state),
         Screen::Web { selected } => web::sites(app, t, *selected),
         Screen::WebExposure(state) => web::exposure(app, t, state),
         Screen::WebProviders(state) => web::providers(app, t, state),
         Screen::WebCheck(state) => web::check(app, t, state),
         Screen::WebConfirm(state) => web::confirm(app, t, state),
         Screen::WebCgnat(state) => web::cgnat(app, t, state),
-        Screen::WebDomain(state) => certs::domain(app, t, state),
+        Screen::WebDomain(state) => v3::modern(app, t, certs::domain(app, t, state)),
         Screen::WebCertificate(state) => web::online(app, t, state),
-        Screen::WebTrust => certs::trust(app, t),
-        Screen::Setup(state) => setup::setup(t, state),
-        Screen::Backup(state) => backup::backup(t, state),
-        Screen::Onion(state) => more::onion(t, state),
-        Screen::Restore(state) => more::restore(app, t, state),
-        Screen::Rollbacks(state) => more::rollbacks(t, state),
-        Screen::Network(state) => network::network(t, state),
+        Screen::WebTrust => v3::modern(app, t, certs::trust(app, t)),
+        Screen::Setup(state) => v3::modern(app, t, setup::setup(t, state)),
+        Screen::Backup(state) => v3::modern(app, t, backup::backup(t, state)),
+        Screen::Onion(state) => v3::modern(app, t, more::onion(t, state)),
+        Screen::Restore(state) => v3::modern(app, t, more::restore(app, t, state)),
+        Screen::Rollbacks(state) => v3::modern(app, t, more::rollbacks(t, state)),
+        Screen::Network(state) => v3::modern(app, t, network::network(t, state)),
     };
     if let Some(notice) = &app.notice {
         let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {
@@ -114,16 +115,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     if let Some(reason) = area_shown.and_then(|area| app.data.unavailable(area)) {
         page.footer.insert(0, Item::Text(Line::from(t.e(format!("▲ Not available yet: {reason}")))));
     }
-    let v3_screen = matches!(
-        app.screen,
-        Screen::Web { .. }
-            | Screen::WebExposure(_)
-            | Screen::WebProviders(_)
-            | Screen::WebCheck(_)
-            | Screen::WebConfirm(_)
-            | Screen::WebCgnat(_)
-            | Screen::WebCertificate(_)
-    );
+    let v3_screen = true;
     let footer_rows = page.footer.len() as u16;
     let mut targets = std::mem::take(&mut page.targets);
     if !v3_screen {
@@ -235,63 +227,7 @@ pub(crate) fn hints(t: &Theme, keys: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Text with `backtick`-quoted keys in the accent colour. The data layer uses this to write
-/// suggestions without knowing about styles.
-pub(crate) fn keyed(t: &Theme, text: &str) -> Line<'static> {
-    let spans = text
-        .split('`')
-        .enumerate()
-        .map(|(index, part)| {
-            if index % 2 == 1 {
-                t.a(part.to_owned())
-            } else {
-                t.n(part.to_owned())
-            }
-        })
-        .collect::<Vec<_>>();
-    Line::from(spans)
-}
 
-pub(crate) fn tab_bar(app: &App, t: &Theme, active: Tab) -> Line<'static> {
-    let mut spans = Vec::new();
-    let pending = app.pending_updates();
-    for (index, tab) in Tab::ALL.into_iter().enumerate() {
-        if index > 0 {
-            spans.push(t.n("   "));
-        }
-        let count = (tab == Tab::Updates && pending > 0).then(|| format!("({pending})"));
-        if tab == active {
-            let label = match &count {
-                Some(count) => format!("  {} {count}  ", tab.label()),
-                None => format!("  {}  ", tab.label()),
-            };
-            // The current tab is a flat raised fill in the accent, as on the v3 screens.
-            let style = if t.is_mono() {
-                t.selected()
-            } else {
-                ratatui::style::Style::new().fg(t.accent).bg(t.raised).add_modifier(ratatui::style::Modifier::BOLD)
-            };
-            spans.push(Span::styled(label, style));
-        } else {
-            spans.push(t.n(tab.label()));
-            if let Some(count) = count {
-                spans.push(t.n(" "));
-                spans.push(t.a(count));
-            }
-        }
-    }
-    Line::from(spans)
-}
-
-pub(crate) fn service_symbol(t: &Theme, state: ServiceState) -> (Span<'static>, Span<'static>) {
-    match state {
-        ServiceState::Running => (t.o("●"), t.n("running")),
-        ServiceState::Stopped => (t.d("○"), t.d("stopped")),
-        ServiceState::Failed => (t.e("✕"), t.e("failed")),
-        ServiceState::Locked => (t.a("◆"), t.a("locked")),
-        ServiceState::Waiting => (t.d("◌"), t.d("waiting")),
-    }
-}
 
 /// Pads to a display width, for the columns that the design aligns with spaces.
 pub(crate) fn pad(text: &str, width: usize) -> String {

@@ -1,156 +1,201 @@
-//! Home and the data drive failure that replaces it.
+//! Home: what needs you, with one button each, then that everything else is running. The data
+//! drive being missing replaces it.
 
+use crossterm::event::KeyCode;
 use nodo_api::ServiceState;
-use ratatui::text::Line;
 
-use super::layout::{Item, Page, Panel};
-use super::{hints, keyed, mark, pad, service_symbol, tab_bar};
-use crate::app::{App, Tab};
-use crate::model::{AttentionLevel, CheckState};
+use super::layout::{Item, Page};
+use super::pad;
+use super::v3::{heading, Card, Screen3};
+use crate::app::{App, HomeItem, Tab};
+use crate::hit::{Click, Target};
+use crate::model::AttentionLevel;
 use crate::theme::Theme;
 
-fn pair(t: &Theme, label: &str, value: &str) -> Item {
-    Item::Row(Line::from(t.d(label.to_owned())), Line::from(t.n(value.to_owned())))
+/// An app's state in plain words, and whether it is a problem.
+pub(crate) fn app_state(app: &App, id: &str) -> (String, bool) {
+    let Some(svc) = app.data.services.iter().find(|svc| svc.id == id) else {
+        return ("Not running".to_owned(), false);
+    };
+    let base = match svc.state {
+        ServiceState::Running if svc.detail.is_empty() => "Running".to_owned(),
+        ServiceState::Running => format!("Running · {}", svc.detail),
+        ServiceState::Stopped => "Stopped".to_owned(),
+        ServiceState::Failed => "Keeps stopping".to_owned(),
+        ServiceState::Locked => "Locked until you unlock".to_owned(),
+        ServiceState::Waiting => "Waiting for another app".to_owned(),
+    };
+    (base, svc.state == ServiceState::Failed)
+}
+
+/// What an app is for, from its source's description.
+pub(crate) fn tagline(app: &App, id: &str) -> String {
+    app.data.catalog.iter().find(|pkg| pkg.id.name == id).map(|pkg| pkg.tagline.clone()).unwrap_or_default()
+}
+
+/// The device's health in one line: storage, temperature, uptime.
+fn health_line(app: &App) -> String {
+    app.data
+        .overview
+        .device
+        .iter()
+        .take(3)
+        .map(|(label, value)| format!("{label} {value}"))
+        .collect::<Vec<_>>()
+        .join("   ·   ")
 }
 
 pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
-    let overview = &app.data.overview;
-    let node = &overview.node;
-    let mut state = pair(t, "State", "");
-    if let Item::Row(_, right) = &mut state {
-        *right = Line::from(t.i(format!("▲ {}", node.state)));
-    }
-    let node_panel = Panel::new(
-        "Node",
-        vec![
-            pair(t, "Role", &node.role),
-            pair(t, "Provider", &node.provider),
-            state,
-            pair(t, "Height", &node.height),
-            pair(t, "Peers", &node.peers),
-        ],
-    );
-    let device_panel =
-        Panel::new("Device", overview.device.iter().map(|(label, value)| pair(t, label, value)).collect());
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::Home, w);
+    let items = app.home_items();
+    let needs: Vec<&HomeItem> = items.iter().filter(|item| !matches!(item, HomeItem::App(_))).collect();
+    let notes = &app.data.overview.attention;
+    let title = if needs.is_empty() && notes.is_empty() { "Everything is running" } else { "Your Nodo" };
+    screen.before = vec![Item::Blank, heading(t, title), Item::Blank];
 
-    let mut rows = Vec::new();
-    for (index, service) in app.data.services.iter().enumerate() {
-        let origin = overview
-            .service_origins
-            .iter()
-            .find(|(id, _)| id == &service.id)
-            .map_or("", |(_, origin)| origin.as_str());
-        let (symbol, state_label) = service_symbol(t, service.state);
-        let is_selected = index == selected;
-        let lead = mark(is_selected, " ");
-        let mut note = service.detail.clone();
-        if service.state == ServiceState::Failed {
-            note = format!("{note}, press l for logs");
-        }
-        let state_width = pad(&state_label.content, 10);
-        let state_span = ratatui::text::Span::styled(state_width, state_label.style);
-        let mut spans = vec![
-            t.n(lead),
-            symbol,
-            t.n(format!(" {}", pad(&service.id, 17))),
-            state_span,
-            t.n(pad(origin, 15)),
-            t.d(note),
-        ];
-        if is_selected {
-            spans.push(t.n(" "));
-            rows.push(Item::Selected(Line::from(spans), Line::from("Enter to open")));
-        } else {
-            rows.push(Item::Row(Line::from(spans), Line::default()));
-        }
-    }
-
-    let mut attention = Vec::new();
-    if app.is_locked() {
-        attention.push(Item::Text(prefixed(t, true, "This device is locked. Press `u` to unlock all waiting services.")));
-    }
-    for service in app.data.services.iter().filter(|svc| svc.state == ServiceState::Failed) {
-        attention.push(Item::Text(prefixed(
-            t,
-            false,
-            &format!("{} keeps failing. Press `l` to read its log.", service.id),
-        )));
-    }
-    for note in &overview.attention {
-        let symbol = match note.level {
-            AttentionLevel::Critical => t.e("✕"),
-            AttentionLevel::Warning => t.a("▲"),
-            AttentionLevel::Info => t.i("▸"),
+    let mut cards = Vec::new();
+    for (index, item) in needs.iter().enumerate() {
+        let mut card = Card::new(t, w);
+        card.blank(t);
+        let (head, body, label) = match item {
+            HomeItem::Unlock => (
+                "Your Nodo is locked".to_owned(),
+                "Apps' data waits for the device passphrase. They start once you unlock.".to_owned(),
+                "Unlock",
+            ),
+            HomeItem::Failing(id) => (
+                format!("{id} keeps stopping"),
+                "Its log usually says why. Settings or an update can be undone from its page.".to_owned(),
+                "Show log",
+            ),
+            HomeItem::Updates => {
+                let names: Vec<String> = app
+                    .update_rows()
+                    .iter()
+                    .filter(|u| !u.held)
+                    .map(|u| if u.name == crate::model::SYSTEM_BASE { "the Nodo".to_owned() } else { u.name.clone() })
+                    .collect();
+                let count = names.len();
+                (
+                    if count == 1 { "1 update is ready".to_owned() } else { format!("{count} updates are ready") },
+                    format!("{}. Each keeps its settings and can be undone.", names.join(", ")),
+                    "Review updates",
+                )
+            }
+            HomeItem::App(_) => unreachable!("filtered out"),
         };
-        let mut line = keyed(t, &note.text);
-        line.spans.insert(0, t.n(" "));
-        line.spans.insert(0, symbol);
-        attention.push(Item::Text(line));
+        if index == selected {
+            card.focus_here();
+        }
+        let lead = if matches!(item, HomeItem::Failing(_)) { t.e("▲  ") } else { t.n("") };
+        let mark = if index == selected { t.a("▸ ") } else { t.n("") };
+        card.row(t, vec![mark, lead, t.b(head)]);
+        card.row(t, vec![t.d(body)]);
+        card.blank(t);
+        let mut targets = Vec::new();
+        card.buttons(t, &[(label, true, Click::Pick { index, then: Some(KeyCode::Enter) })], &mut targets);
+        screen.targets.extend(targets);
+        cards.push(card);
+    }
+    if !notes.is_empty() {
+        let mut card = Card::new(t, w);
+        card.blank(t);
+        for note in notes {
+            let symbol = match note.level {
+                AttentionLevel::Critical => t.e("✕  "),
+                AttentionLevel::Warning => t.a("▲  "),
+                AttentionLevel::Info => t.i("▸  "),
+            };
+            card.row(t, vec![symbol, t.n(note.text.replace('`', ""))]);
+        }
+        card.blank(t);
+        cards.push(card);
     }
 
-    let mut page = Page::new(tab_bar(app, t, Tab::Home), Line::from(t.d("monokulo-nodo")))
-        .columns(vec![(3, vec![node_panel]), (2, vec![device_panel])])
-        .panel(Panel::new("Services", rows).grow());
-    if !attention.is_empty() {
-        page = page.panel(Panel::accent("Needs attention", attention));
+    let apps: Vec<(usize, &str)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            HomeItem::App(id) => Some((index, id.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut fine = Card::new(t, w);
+    fine.blank(t);
+    let problems = needs.iter().any(|item| matches!(item, HomeItem::Failing(_) | HomeItem::Unlock));
+    let summary = if apps.is_empty() {
+        "No apps yet"
+    } else if problems {
+        "The other apps"
+    } else {
+        "Everything else is running"
+    };
+    let tick = if problems || apps.is_empty() { t.n("") } else { t.o("✓  ") };
+    fine.row(t, vec![tick, t.b(summary.to_owned())]);
+    fine.blank(t);
+    for (index, id) in &apps {
+        let (state, bad) = app_state(app, id);
+        let lead = if *index == selected { t.a("▸ ") } else { t.n("  ") };
+        if *index == selected {
+            fine.focus_here();
+        }
+        let state_span = if bad { t.e(state) } else { t.d(state) };
+        fine.row(t, vec![lead, t.n(pad(id, 14)), state_span]);
+        screen.targets.push(Target::card_row(*id, Click::Pick { index: *index, then: Some(KeyCode::Enter) }));
     }
-    page.footer(Item::Row(
-        hints(t, &[("↑↓", "move"), ("↵", "open"), ("s", "start/stop"), ("/", "search"), ("Tab", "next tab"), ("?", "help")]),
-        hints(t, &[("w", "network"), ("r", "rollbacks"), ("q", "quit")]),
-    ))
-}
-
-fn prefixed(t: &Theme, locked: bool, text: &str) -> Line<'static> {
-    let symbol = if locked { t.a("◆") } else { t.e("✕") };
-    let mut line = keyed(t, text);
-    line.spans.insert(0, t.n(" "));
-    line.spans.insert(0, symbol);
-    line
+    if apps.is_empty() {
+        fine.row(t, vec![t.d("Get apps from Apps › Get apps.")]);
+    }
+    fine.blank(t);
+    let health = health_line(app);
+    if !health.is_empty() {
+        fine.row(t, vec![t.d(health)]);
+        fine.blank(t);
+    }
+    cards.push(fine);
+    let keys = if needs.is_empty() { "Keys: ↑↓ choose  ↵ open  / get apps  1-4 tabs" } else { "Keys: ↑↓ choose  ↵ act on it  / get apps  1-4 tabs" };
+    screen.stack(t, cards, keys, w, h)
 }
 
 const DRIVE_CHOICES: [(&str, &str); 4] = [
-    ("Retry mount", ""),
-    ("Run a read-only drive check", "changes nothing"),
-    ("Repair the filesystem", "can lose data, explains first and asks to confirm"),
-    ("Show diagnostics", ""),
+    ("Check again", ""),
+    ("Check the drive without changing it", "read-only"),
+    ("Repair the filesystem", "can lose data; explains first and asks"),
+    ("Show what the Nodo sees", ""),
 ];
 
 pub fn no_drive(app: &App, t: &Theme, choice: usize) -> Page {
-    let Some(failure) = &app.data.overview.drive else {
-        return Page::new(tab_bar(app, t, Tab::Home), Line::default());
-    };
-    let checks = failure
-        .checks
-        .iter()
-        .map(|check| {
-            let (symbol, note) = match check.state {
-                CheckState::Passed => (t.o("✓"), t.d(check.note.clone())),
-                CheckState::Failed => (t.e("✕"), t.e(check.note.clone())),
-                CheckState::Unknown => (t.a("▲"), t.a(check.note.clone())),
-            };
-            Item::Row(Line::from(vec![symbol, t.n(format!(" {}", check.text))]), Line::from(note))
-        })
-        .collect();
-    let mut choices: Vec<Item> = DRIVE_CHOICES
-        .iter()
-        .enumerate()
-        .map(|(index, (label, note))| {
-            let text = mark(index == choice, &format!(" {label}"));
-            if index == choice {
-                Item::Selected(Line::from(vec![t.n(text), t.n(if note.is_empty() { "" } else { "  " }), t.d(*note)]), Line::default())
-            } else {
-                Item::Text(Line::from(vec![t.n(text), t.n("  "), t.d(*note)]))
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::Home, w);
+    screen.before = vec![Item::Blank, Item::Blank];
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("The data drive isn't connected")]);
+    card.blank(t);
+    match &app.data.overview.drive {
+        Some(failure) => {
+            card.row(t, vec![t.n("Your apps keep their data on the SSD, so they're stopped until it's back. Nothing on it has been touched.")]);
+            card.row(t, vec![t.d(failure.message.clone())]);
+            if !failure.waiting.is_empty() {
+                card.blank(t);
+                card.row(t, vec![t.d(format!("Stopped: {}", failure.waiting))]);
             }
-        })
-        .collect();
-    choices.push(Item::Text(Line::from(t.d("The TUI never formats a drive without you typing its label."))));
-    Page::new(tab_bar(app, t, Tab::Home), Line::from(t.e("✕ Node stopped")))
-        .panel(Panel::error(
-            "The data drive is not available",
-            vec![Item::Text(Line::from(t.n(failure.message.clone())))],
-        ))
-        .panel(Panel::new("Checks", checks))
-        .panel(Panel::new("Also waiting", vec![Item::Text(Line::from(t.d(failure.waiting.clone())))]))
-        .panel(Panel::new("What you can do", choices).grow())
-        .footer(Item::Text(hints(t, &[("↑↓", "choose"), ("↵", "confirm"), ("l", "system log"), ("!", "shell")])))
+        }
+        None => card.row(t, vec![t.n("The drive is back.")]),
+    }
+    card.blank(t);
+    let mut targets = Vec::new();
+    for (index, (label, note)) in DRIVE_CHOICES.iter().enumerate().skip(1) {
+        let lead = if index == choice { t.a("▸ ") } else { t.n("  ") };
+        if index == choice {
+            card.focus_here();
+        }
+        let note = if note.is_empty() { String::new() } else { format!("   {note}") };
+        card.link_row(t, vec![lead, t.a((*label).to_owned()), t.d(note)], label, Click::Pick { index, then: Some(KeyCode::Enter) }, &mut targets);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Check again", true, Click::Pick { index: 0, then: Some(KeyCode::Enter) })], &mut targets);
+    screen.targets.extend(targets);
+    screen.card(t, card, "Keys: ↵ check again  ↑↓ choose  l system log", w, h)
 }

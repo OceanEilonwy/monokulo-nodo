@@ -1,7 +1,7 @@
 
-    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
 
-    Packages  ›  shop  ›  Hosting
+    Apps  ›  shop  ›  Hosting
 
     Ready to put shop on the internet
 

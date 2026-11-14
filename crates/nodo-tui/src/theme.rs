@@ -22,6 +22,8 @@ pub struct Theme {
     pub bar: Color,
     pub card: Color,
     pub raised: Color,
+    /// The fill of a destructive button (Remove): red-tinted, its label in the error colour.
+    pub danger: Color,
     /// Buttons get rounded ends (Powerline caps U+E0B6 and U+E0B4), which need a Nerd Font.
     pub rounded: bool,
     mono: bool,
@@ -42,6 +44,7 @@ impl Theme {
             bar: Color::Rgb(0x17, 0x1A, 0x1D),
             card: Color::Rgb(0x1D, 0x21, 0x25),
             raised: Color::Rgb(0x2C, 0x32, 0x38),
+            danger: Color::Rgb(0x3D, 0x22, 0x24),
             rounded: false,
             mono: false,
         }
@@ -61,6 +64,7 @@ impl Theme {
             bar: Color::Indexed(234),
             card: Color::Indexed(235),
             raised: Color::Indexed(237),
+            danger: Color::Indexed(52),
             rounded: false,
             mono: false,
         }
@@ -80,6 +84,7 @@ impl Theme {
             bar: Color::Reset,
             card: Color::Reset,
             raised: Color::Reset,
+            danger: Color::Reset,
             rounded: false,
             mono: true,
         }

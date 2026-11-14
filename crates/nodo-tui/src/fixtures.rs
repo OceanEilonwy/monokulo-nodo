@@ -58,9 +58,24 @@ fn settings_design_state(mock: &MockBackend) -> SettingsState {
     state
 }
 
+/// The app the app page fixtures show: one with an update waiting, else the first.
+fn sample_app(app: &App) -> String {
+    app.data
+        .services
+        .iter()
+        .find(|svc| app.data.updates.iter().any(|u| u.name == svc.id && !u.held))
+        .or_else(|| app.data.services.first())
+        .map(|svc| svc.id.clone())
+        .unwrap_or_default()
+}
+
 fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
     match id {
         ScreenId::Main => Screen::Home { selected: 0 },
+        ScreenId::Apps => Screen::Apps { selected: 0 },
+        ScreenId::AppPage => Screen::AppPage(crate::app::AppPageState::new(&sample_app(app))),
+        ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState { name: sample_app(app), confirm_focused: false }),
+        ScreenId::System => Screen::System { selected: 0 },
         ScreenId::Network => {
             // The scan has run, and the speaker the Bluetooth scan found waits to be paired.
             let mut bluetooth = mock.bluetooth.clone();
@@ -144,7 +159,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 retry_at_tick: 0,
             })
         }
-        ScreenId::Feeds => Screen::Feeds { selected: 1 },
+        ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false },
         ScreenId::AddFeed => Screen::AddFeed(AddFeedState::Confirm {
             probe: mock.probe_feed("https://github.com/example/monero-tools-feed").expect("sample feed"),
             trust_focused: false,
@@ -199,6 +214,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             follow: true,
             find: Input::plain(""),
             finding: false,
+            app: None,
         }),
         ScreenId::Rejected => {
             let InstallGate::Rejected(data) = gate(mock, "community", "fast-sync-helper") else {

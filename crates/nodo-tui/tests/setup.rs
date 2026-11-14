@@ -54,7 +54,7 @@ fn a_new_device_can_be_restored_from_a_usb_backup_instead_of_set_up() {
     dispatch(&mut app, &mut mock, nodo_tui::fixtures::ctrl('r'));
     assert_eq!(app.screen.id(), ScreenId::Restore);
     let screen = screen_text(&app);
-    assert!(screen.contains("Set up this device › Restore from a USB backup › Drive"), "{screen}");
+    assert!(screen.contains("Set up this device  ›  Restore from a USB backup  ›  Drive"), "{screen}");
     assert!(screen.contains("SanDisk Ultra Fit, BACKUP"), "{screen}");
     key(&mut app, &mut mock, KeyCode::Enter);
     let screen = screen_text(&app);
@@ -63,7 +63,9 @@ fn a_new_device_can_be_restored_from_a_usb_backup_instead_of_set_up() {
     key(&mut app, &mut mock, KeyCode::Enter);
     assert!(screen_text(&app).contains("Open this backup"));
     type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
-    assert!(!screen_text(&app).contains(nodo_tui::mock::MOCK_PASSPHRASE), "the passphrase is never drawn");
+    // The mock passphrase is the word "monokulo", which the tab strip's device label also holds.
+    let drawn = screen_text(&app).replace("monokulo-nodo", "");
+    assert!(!drawn.contains(nodo_tui::mock::MOCK_PASSPHRASE), "the passphrase is never drawn:\n{drawn}");
     key(&mut app, &mut mock, KeyCode::Enter);
     let screen = screen_text(&app);
     assert!(screen.contains("✓ nodo-1762473600.nodobak verified"), "{screen}");
@@ -273,10 +275,11 @@ fn keys_can_be_added_and_removed_only_after_confirming() {
 #[test]
 fn a_slow_helper_call_does_not_block_the_screen() {
     let (mut app, mut mock) = fixture(ScreenId::Main);
+    app.screen = nodo_tui::app::Screen::AppPage(nodo_tui::app::AppPageState::new("cuprated"));
     mock.delay = Some(Duration::from_millis(300));
     let mut worker = EffectWorker::spawn(mock);
     let started = Instant::now();
-    // s stops the selected service, cuprated.
+    // s on cuprated's page stops it.
     dispatch_async(&mut app, &mut worker, press(KeyCode::Char('s')));
     assert!(started.elapsed() < Duration::from_millis(100), "the key returned at once");
     assert!(app.working);
@@ -298,9 +301,11 @@ fn a_slow_helper_call_does_not_block_the_screen() {
 fn areas_without_a_backing_system_say_so() {
     let (mut app, mut mock) = fixture(ScreenId::Main);
     app.data.unavailable = vec![(nodo_tui::model::Area::Feeds, "feeds are not connected yet".to_owned())];
-    // Feeds is the fourth tab.
-    for _ in 0..3 {
-        key(&mut app, &mut mock, KeyCode::Tab);
-    }
+    // Sources, under Apps › Get apps.
+    key(&mut app, &mut mock, KeyCode::Char('2'));
+    key(&mut app, &mut mock, KeyCode::Char('g'));
+    key(&mut app, &mut mock, KeyCode::Down);
+    key(&mut app, &mut mock, KeyCode::Char('s'));
+    assert_eq!(app.screen.id(), ScreenId::Feeds);
     assert!(screen_text(&app).contains("Not available yet: feeds are not connected yet"));
 }

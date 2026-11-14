@@ -68,6 +68,16 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         Effect::Refresh => vec![refresh(backend)],
         Effect::Start(id) => service_command(backend, Request::StartService { id }),
         Effect::Stop(id) => service_command(backend, Request::StopService { id }),
+        Effect::Restart(id) => service_command(backend, Request::RestartService { id }),
+        Effect::RemovePackage(package) => {
+            let mut events = Vec::new();
+            match backend.call(Request::RemovePackage { package: package.clone() }) {
+                Ok(_) => events.push(Event::Info(format!("{package} was removed. Its data stays on the drive; installing it again brings it back."))),
+                Err(error) => events.push(Event::Failed(error.to_string())),
+            }
+            events.push(refresh(backend));
+            events
+        }
         Effect::Unlock(passphrase) => {
             let result = backend.call(Request::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) });
             vec![Event::UnlockResult(result)]

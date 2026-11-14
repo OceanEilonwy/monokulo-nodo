@@ -130,7 +130,7 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
         Item::Blank,
     ];
     screen.targets.push(Target::text("Domain providers ›", Click::Key(KeyCode::Char('p'))));
-    let mut after = vec![Item::Blank, quiet(t, "To put another app online, open it in Packages.")];
+    let mut after = vec![Item::Blank, quiet(t, "To put another app online, open it in Apps.")];
     if let Some(problem) = &web.local_problem {
         after.push(Item::Blank);
         after.push(line(vec![margin(t), t.a(problem.clone())]));
@@ -161,7 +161,7 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
 /// An app's Hosting: home network, Tor and internet, and for the internet the address.
 pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     let (w, h) = size(app);
-    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;
     let site = web.sites.iter().find(|s| s.package == state.site);
     let name = state.site.as_str();
@@ -278,7 +278,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     }
 
     screen.before = vec![
-        trail(t, &["Packages", name, "Hosting"], &mut screen.targets),
+        trail(t, &["Apps", name, "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, "Hosting"),
         quiet(t, &format!("Choose who can open {name}. Any combination works.")),
@@ -405,7 +405,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 ct.push(Target::row(provider.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
             }
             card.blank(t);
-            let first = if state.return_to.is_some() { "Packages" } else { "Web" };
+            let first = if state.return_to.is_some() { "Apps" } else { "Web" };
             screen.before = vec![
                 trail(t, &[first, "Domain providers", "Add"], &mut screen.targets),
                 Item::Blank,
@@ -499,7 +499,7 @@ fn check_symbol(t: &Theme, state: CheckState) -> Span<'static> {
 /// The checks found a problem, or something could not be verified.
 pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
     let (w, h) = size(app);
-    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
     let mut ct = Vec::new();
     card.blank(t);
@@ -540,7 +540,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
     card.buttons(t, &buttons, &mut ct);
     let title = if failed { "The internet can't reach your Nodo yet" } else { "Some checks couldn't be confirmed" };
     screen.before = vec![
-        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, title),
         Item::Blank,
@@ -551,7 +551,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
 /// The checks passed: one clear confirm, starting on Cancel.
 pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     let (w, h) = size(app);
-    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
     let mut ct = Vec::new();
     let web = &app.data.web;
@@ -588,7 +588,7 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     card.row(t, vec![t.d(format!("▸ {selected} is selected for the keyboard."))]);
     card.blank(t);
     screen.before = vec![
-        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, &format!("Ready to put {} on the internet", state.site)),
         Item::Blank,
@@ -599,7 +599,7 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
 /// The internet provider shares one address between homes, so visitors can't reach the Nodo.
 pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
     let (w, h) = size(app);
-    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
     let mut ct = Vec::new();
     card.blank(t);
@@ -627,7 +627,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
     card.blank(t);
     card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))], &mut ct);
     screen.before = vec![
-        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
         Item::Blank,
         heading(t, "The internet can't reach your Nodo"),
         Item::Blank,
@@ -638,7 +638,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
 /// After going public: online, with the secure connection followed until it is in place.
 pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
     let (w, h) = size(app);
-    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;
     let mut card = Card::new(t, w);
     let mut ct = Vec::new();
@@ -668,6 +668,6 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
     }
     card.blank(t);
     card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))], &mut ct);
-    screen.before = vec![trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
+    screen.before = vec![trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
     screen.finish(t, card, ct, Vec::new(), "Keys: ↵ done  l logs  d certificates", w, h)
 }

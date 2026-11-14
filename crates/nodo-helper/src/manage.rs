@@ -172,6 +172,7 @@ impl<S: System> Helper<S> {
                 approval,
                 passphrase,
             } => self.install_from_feed(&feed, &package, &approval, passphrase.as_ref()),
+            Request::RemovePackage { package } => self.remove_package(&package),
             Request::ListUpdates => self.list_updates(),
             Request::UpdateStatus => self.update_status(),
             Request::CheckUpdates => self.check_updates().and_then(|()| self.update_status()),
