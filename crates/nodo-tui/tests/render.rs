@@ -312,3 +312,52 @@ fn working_never_shifts_the_layout() {
         idle.lines().zip(busy.lines()).enumerate().filter(|(_, (a, b))| a != b).map(|(row, _)| row).collect();
     assert!(changed.len() <= 1, "working moved rows {changed:?}:\n{idle}\n----\n{busy}");
 }
+
+/// Each screen's main button stays on screen in a small terminal and a large one: cards cut the
+/// rows above their buttons, never the buttons.
+#[test]
+fn the_main_button_stays_visible_at_80x24_and_120x36() {
+    let main: &[(ScreenId, &str)] = &[
+        (ScreenId::Review, "Install"),
+        (ScreenId::AppRemove, "Remove moneropay"),
+        (ScreenId::Settings, "Save"),
+        (ScreenId::AddFeed, "Add source"),
+        (ScreenId::FeedKey, "Keep the old key"),
+        (ScreenId::Unlock, "Unlock"),
+        (ScreenId::Updates, "Update and restart"),
+        (ScreenId::AutoUpdate, "Save"),
+        (ScreenId::NoDrive, "Check again"),
+        (ScreenId::Rejected, "OK"),
+        (ScreenId::Capability, "Install monerod"),
+        (ScreenId::Detail, "Install"),
+        (ScreenId::ApplyFailed, "Edit again"),
+        (ScreenId::UpdateFailed, "OK"),
+        (ScreenId::Main, "Unlock"),
+        (ScreenId::System, "Review"),
+        (ScreenId::Feeds, "Add a source"),
+    ];
+    for (id, label) in main {
+        for (width, height) in [(80, 24), (120, 36)] {
+            let (mut app, _) = fixture(*id);
+            app.size = (width, height);
+            let screen = text(&draw(&app, width, height).0);
+            assert!(screen.contains(label), "{} at {width}x{height}: {label} is not on screen\n{screen}", id.slug());
+        }
+    }
+}
+
+/// The tab strip is the same four tabs on every screen, with the current area marked.
+#[test]
+fn every_screen_shows_the_four_tabs() {
+    for id in ScreenId::ALL {
+        let (app, _) = fixture(id);
+        let screen = screen_text(&app);
+        let strip = screen.lines().take(3).collect::<Vec<_>>().join("\n");
+        for tab in ["Home", "Apps", "Web", "System"] {
+            assert!(strip.contains(tab), "{}: {tab} missing from the tab strip\n{strip}", id.slug());
+        }
+        for old in ["Packages", "Feeds", "Logs"] {
+            assert!(!strip.contains(old), "{}: the old {old} tab is still there\n{strip}", id.slug());
+        }
+    }
+}

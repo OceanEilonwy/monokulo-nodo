@@ -137,21 +137,47 @@ impl Card {
         }
         self.buttons_at = Some(self.rows.len());
         let room = self.width.saturating_sub(6);
-        let width = list.iter().map(|(label, _, _)| label.trim_start_matches('!').chars().count()).max().unwrap_or(0) + 6;
-        let mut spans = Vec::new();
+        let label_len = |label: &str| label.trim_start_matches('!').chars().count();
         let mut ordered: Vec<&(&str, bool, Click)> = list.iter().filter(|(_, p, _)| !p).collect();
         ordered.extend(list.iter().filter(|(_, p, _)| *p));
-        for (index, (label, primary, click)) in ordered.into_iter().enumerate() {
-            if index > 0 {
-                spans.push(t.n("   "));
+        // One width for all, the longest label's; narrower, each its own; and when even that does
+        // not fit (three buttons at 80 columns), one button per row, the primary last. A button
+        // is never cut by the card's wrapping.
+        let equal = ordered.iter().map(|(label, _, _)| label_len(label)).max().unwrap_or(0) + 6;
+        let gaps = 3 * (ordered.len() - 1);
+        let total_equal = ordered.len() * (equal + 2) + gaps;
+        let total_own: usize = ordered.iter().map(|(label, _, _)| label_len(label) + 6 + 2).sum::<usize>() + gaps;
+        let widths: Vec<usize> = if total_equal <= room {
+            vec![equal; ordered.len()]
+        } else {
+            ordered.iter().map(|(label, _, _)| label_len(label) + 6).collect()
+        };
+        if total_equal <= room || total_own <= room {
+            let mut spans = Vec::new();
+            for (index, ((label, primary, click), width)) in ordered.iter().zip(&widths).enumerate() {
+                if index > 0 {
+                    spans.push(t.n("   "));
+                }
+                spans.extend(button(t, label, *primary, *width, self.surface));
+                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
             }
-            spans.extend(button(t, label, *primary, width, self.surface));
-            targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+            let used = width_of(&spans);
+            let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
+            out.extend(spans);
+            self.row(t, out);
+        } else {
+            for (index, (label, primary, click)) in ordered.iter().enumerate() {
+                if index > 0 {
+                    self.blank(t);
+                }
+                let spans = button(t, label, *primary, equal.min(room.saturating_sub(2)), self.surface);
+                let used = width_of(&spans);
+                let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
+                out.extend(spans);
+                self.row(t, out);
+                targets.push(Target::button(label.trim_start_matches('!'), click.clone()));
+            }
         }
-        let used = width_of(&spans);
-        let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
-        out.extend(spans);
-        self.row(t, out);
         self.blank(t);
     }
 
