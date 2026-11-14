@@ -23,7 +23,7 @@
        SECRETS · NOT PUBLIC
        cuprated.rpc_password         secret           never shown                     Needs your approval · Grant…
 
-       Get more apps that provide values ›
+
 
 
 

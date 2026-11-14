@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+    Settings
+
+
+       Monero node address     ● changed
+                                127.0.0.1:18081▏                                             + reference
+                               ↺ Use cuprated.rpc_address again
+
+       Chose "Type a value instead" on the chip: it became its value, ready to edit. ↺ puts the
+       reference back exactly; Cancel drops every unsaved edit. The reverse works the same:
+       + reference on a typed value replaces the selection, with "↺ Undo".
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type to edit  Ctrl+Z undo  ↵ save  Esc cancel

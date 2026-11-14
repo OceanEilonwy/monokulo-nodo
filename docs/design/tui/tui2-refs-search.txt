@@ -19,7 +19,7 @@
        KRINGLE
        kringle.listen_port           number   public  Port of the tip page            8090
 
-       Get more apps that provide values ›
+
 
 
 

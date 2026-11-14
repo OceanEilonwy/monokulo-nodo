@@ -19,7 +19,7 @@
        cuprated.rpc_host             text             Text; the field takes a number  127.0.0.1
        mk-lws.url                    url              Address; field takes a number   https://mk-lws.local
 
-       Get more apps that provide values ›
+
 
 
 

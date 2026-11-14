@@ -98,6 +98,7 @@ pub enum Scene {
     T2RefsTyped,
     T2RefsGrant,
     T2RefsSave,
+    T2RefsUndo,
     B1Updates,
     B1AutoUpdate,
     B1UpdateFailed,
@@ -125,7 +126,7 @@ pub enum Scene {
 }
 
 impl Scene {
-    pub const ALL: [Scene; 92] = [
+    pub const ALL: [Scene; 93] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -194,6 +195,7 @@ impl Scene {
         Scene::T2RefsTyped,
         Scene::T2RefsGrant,
         Scene::T2RefsSave,
+        Scene::T2RefsUndo,
         Scene::B1Updates,
         Scene::B1AutoUpdate,
         Scene::B1UpdateFailed,
@@ -290,6 +292,7 @@ impl Scene {
             Scene::T2RefsTyped => "tui2-refs-typed",
             Scene::T2RefsGrant => "tui2-refs-grant",
             Scene::T2RefsSave => "tui2-refs-save",
+            Scene::T2RefsUndo => "tui2-refs-undo",
             Scene::B1Updates => "tui1-updates",
             Scene::B1AutoUpdate => "tui1-auto-update",
             Scene::B1UpdateFailed => "tui1-update-failed",
@@ -392,6 +395,7 @@ impl Scene {
             Scene::T2RefsTyped => "A number field: numbers first, the rest dimmed with why",
             Scene::T2RefsGrant => "A secret needs your approval before it can be used",
             Scene::T2RefsSave => "Saving says what the references let the app reach",
+            Scene::T2RefsUndo => "Typed a value instead of a reference: changed, with a way back",
             Scene::B1Updates => "Before: Updates",
             Scene::B1AutoUpdate => "Before: Auto-update",
             Scene::B1UpdateFailed => "Before: Update rolled back",
@@ -503,6 +507,7 @@ impl Scene {
             Scene::T2RefsTyped => "Clickable: each compatible row; dimmed rows say why they can't be used.",
             Scene::T2RefsGrant => "Clickable: Grant (primary), Cancel.",
             Scene::T2RefsSave => "Clickable: Save (primary), Cancel.",
+            Scene::T2RefsUndo => "Clickable: the field (keep typing), ↺ Use cuprated.rpc_address again (puts the chip back), + reference, Save, Cancel (drops every unsaved edit).",
             Scene::T2System => "Clickable: Review (primary), each row (Updates, Backups, Network, Device logs, About). Hover shown on Backups.",
             Scene::T2Updates => "Clickable: Update and restart (primary), each app's box, Update 2 apps, \"Automatic updates\", \"Undo an update\".",
             Scene::T2AutoUpdates => "Clickable: each On/Off box, the When list, Save (primary), Cancel.",
@@ -2131,6 +2136,7 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
         Scene::T2RefsTyped => t2_refs_picker(t, w, h, Picker::Number),
         Scene::T2RefsGrant => t2_refs_grant(t, w, h),
         Scene::T2RefsSave => t2_refs_save(t, w, h),
+        Scene::T2RefsUndo => t2_refs_undo(t, w, h),
         Scene::T2System => t2_system(t, w, h),
         Scene::T2Updates => t2_updates(t, w, h),
         Scene::T2AutoUpdates => t2_auto_updates(t, w, h),
@@ -2517,11 +2523,12 @@ fn refs_settings_card(t: &Theme, w: u16, focus_auto: bool) -> Card {
         card.blank(t);
         return card;
     }
-    setting(&mut card, t, "Payout address", ref_input(t, chip(t, "mk-wallet", "primary_address", "48daf1r…tUvb", false), 60, false), Some(t.d("One reference: the address follows the wallet app.")));
-    setting(&mut card, t, "Confirmations to wait", ref_input(t, vec![text_on_field(t, "10")], 60, false), Some(t.d("A plain value.")));
-    let mut broken = chip(t, "old-shop", "webhook_url", "app removed", true);
+    setting(&mut card, t, "Payout address", ref_input(t, chip(t, "mk-wallet", "primary_address", "", false), 60, false), None);
+    setting(&mut card, t, "Confirmations to wait", ref_input(t, vec![text_on_field(t, "10")], 60, false), None);
+    let mut broken = chip(t, "old-shop", "webhook_url", "", true);
     broken.push(text_on_field(t, "/orders"));
-    setting(&mut card, t, "Order webhook", ref_input(t, broken, 60, false), Some(t.e("✕ old-shop was removed. Click the chip: Replace, Remove, or Type a value.")));
+    setting(&mut card, t, "Order webhook", ref_input(t, broken, 60, false), None);
+    card.row(t, vec![t.n(" ".repeat(64)), t.e("Fix 1 broken reference to save")]);
     card.buttons(t, &[("Cancel", false), ("Save", true)]);
     card
 }
@@ -2532,7 +2539,7 @@ fn t2_refs_field(t: &Theme, w: u16, h: u16) -> Page {
     before.push(heading(t, "Settings"));
     before.push(quiet(t, "Any text, number or address can use another app's public setting: type $( or click + reference."));
     before.push(Item::Blank);
-    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Tab move  $( or Ctrl+R insert a reference  ↵ save  Esc cancel", w, h)
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Tab move  $( or Ctrl+R insert a reference  ↵ on a chip: what it is  Esc cancel", w, h)
 }
 
 fn t2_refs_auto(t: &Theme, w: u16, h: u16) -> Page {
@@ -2627,8 +2634,6 @@ fn t2_refs_picker(t: &Theme, w: u16, h: u16, mode: Picker) -> Page {
         card.row(t, vec![t.d(pad("cuprated.rpc_password", 30)), t.d(pad("secret", 9)), t.d(pad("", 8)), t.d(pad("never shown", 32)), t.a("Needs your approval · Grant…")]);
     }
     card.blank(t);
-    card.row(t, vec![t.a("Get more apps that provide values ›")]);
-    card.blank(t);
     let before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings", "Insert a reference"]), Item::Blank];
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: type to search  ↑↓ choose  ↵ insert  Esc close", w, h)
 }
@@ -2650,6 +2655,27 @@ fn t2_refs_grant(t: &Theme, w: u16, h: u16) -> Page {
     card.blank(t);
     card.buttons(t, &[("Cancel", false), ("Grant", true)]);
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings", "Grant"]), Item::Blank], card, Vec::new(), "Keys: Esc cancel  (Grant asks for a click, not Enter)", w, h)
+}
+
+
+fn t2_refs_undo(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.n(pad("Monero node address", 24)), t.a("● changed")]);
+    let mut spans = vec![t.n(" ".repeat(24))];
+    spans.extend(ref_input(t, vec![text_on_field(t, "127.0.0.1:18081")], 60, true));
+    card.row(t, spans);
+    card.row(t, vec![t.n(" ".repeat(24)), t.a("↺ Use cuprated.rpc_address again")]);
+    card.blank(t);
+    card.row(t, vec![t.d("Chose \"Type a value instead\" on the chip: it became its value, ready to edit. ↺ puts the")]);
+    card.row(t, vec![t.d("reference back exactly; Cancel drops every unsaved edit. The reverse works the same:")]);
+    card.row(t, vec![t.d("+ reference on a typed value replaces the selection, with \"↺ Undo\".")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank];
+    before.push(heading(t, "Settings"));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: type to edit  Ctrl+Z undo  ↵ save  Esc cancel", w, h)
 }
 
 fn t2_refs_save(t: &Theme, w: u16, h: u16) -> Page {
