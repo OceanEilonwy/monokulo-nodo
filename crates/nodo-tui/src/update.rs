@@ -18,8 +18,10 @@ mod net;
 mod web;
 
 pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
-    match event {
-        Event::Key(key) => on_key(app, key),
+    let before = app.screen.id();
+    let input = matches!(event, Event::Key(_) | Event::Mouse { .. } | Event::Paste(_) | Event::Tick | Event::Resize(..));
+    let effects = match event {
+        Event::Key(key) => pressed(app, key),
         Event::Mouse { kind, column, row } => on_mouse(app, kind, column, row),
         Event::Paste(text) => {
             on_paste(app, &text);
@@ -31,7 +33,62 @@ pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
             Vec::new()
         }
         other => on_result(app, other),
+    };
+    // A result ends the work a button started, and a button on another screen is not that one.
+    // The runtime also clears it whenever the worker is idle, so it can never stay stuck.
+    if !input || app.screen.id() != before {
+        app.pending = None;
     }
+    effects
+}
+
+/// The pending button on the current screen, while no modal covers it.
+fn pending_here(app: &App) -> Option<&crate::hit::Click> {
+    app.pending.as_ref().filter(|p| p.screen == app.screen.id() && app.modal.is_none()).map(|p| &p.click)
+}
+
+/// Whether a key does what a button's click does.
+fn presses(click: &crate::hit::Click, key: KeyEvent) -> bool {
+    use crate::hit::Click;
+    match click {
+        Click::Key(code) => key.code == *code && !key.modifiers.contains(KeyModifiers::CONTROL),
+        Click::Ctrl(c) => is_ctrl(key, *c),
+        Click::Pick { then: Some(code), .. } => key.code == *code && !key.modifiers.contains(KeyModifiers::CONTROL),
+        Click::Pick { then: None, .. } | Click::Tab(_) => false,
+    }
+}
+
+/// A key from the keyboard. While a button's work runs, its key is ignored. A key that starts
+/// work on a button drawn on this screen (its own key, or Enter on the focused one) marks that
+/// button pending, as a click on it would.
+fn pressed(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if pending_here(app).is_some_and(|click| presses(click, key)) {
+        return Vec::new();
+    }
+    let before = app.screen.id();
+    let modal = app.modal.is_some();
+    let effects = on_key(app, key);
+    if effects.is_empty() || modal || app.modal.is_some() || app.screen.id() != before {
+        return effects;
+    }
+    let button = {
+        let hits = app.hits.borrow();
+        let buttons = || hits.iter().filter(|hit| hit.button.is_some());
+        buttons()
+            .find(|hit| matches!(hit.click, crate::hit::Click::Key(_) | crate::hit::Click::Ctrl(_)) && presses(&hit.click, key))
+            .or_else(|| {
+                buttons().find(|hit| {
+                    matches!(hit.click, crate::hit::Click::Pick { .. })
+                        && presses(&hit.click, key)
+                        && hit.button.as_deref().is_some_and(|label| label.starts_with('▸'))
+                })
+            })
+            .map(|hit| hit.click.clone())
+    };
+    if let Some(click) = button {
+        app.pending = Some(Pending { click, screen: before });
+    }
+    effects
 }
 
 fn notice(app: &mut App, kind: NoticeKind, text: impl Into<String>) {
@@ -2331,7 +2388,17 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
         MouseKind::Down => {
             let Some(hit) = hit else { return Vec::new() };
             app.hover = None;
-            click(app, hit.click)
+            if pending_here(app) == Some(&hit.click) {
+                return Vec::new();
+            }
+            let before = app.screen.id();
+            let modal = app.modal.is_some();
+            let effects = click(app, hit.click.clone());
+            // A button that started work shows it until the work is done (`App::pending`).
+            if hit.button.is_some() && !effects.is_empty() && !modal && app.modal.is_none() && app.screen.id() == before {
+                app.pending = Some(Pending { click: hit.click, screen: before });
+            }
+            effects
         }
     }
 }

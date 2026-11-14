@@ -429,6 +429,8 @@ pub fn dispatch<T: Backend + ScreenData>(app: &mut App, backend: &mut T, event: 
         let effects = update(app, event);
         run_batch(backend, effects, |events| queue.extend(events));
     }
+    // Every effect has run, so no button is still waiting.
+    app.pending = None;
 }
 
 enum FromWorker {
@@ -506,7 +508,16 @@ impl EffectWorker {
 pub fn dispatch_async(app: &mut App, worker: &mut EffectWorker, event: Event) {
     let effects = update(app, event);
     worker.submit(effects);
+    sync_working(app, worker);
+}
+
+/// Mirrors the worker's state into the app. Once it is idle, no work a button started can still be
+/// running, so the pending button is cleared even if its result never named it.
+fn sync_working(app: &mut App, worker: &EffectWorker) {
     app.working = worker.busy();
+    if !app.working {
+        app.pending = None;
+    }
 }
 
 fn reports_failure(event: &Event) -> bool {
@@ -609,7 +620,7 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, t
         for event in worker.ready() {
             dispatch_async(&mut app, &mut worker, event);
         }
-        app.working = worker.busy();
+        sync_working(&mut app, &worker);
         terminal.draw(|frame| {
             view::render(frame, &app, &theme);
         })?;
