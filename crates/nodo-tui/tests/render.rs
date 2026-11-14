@@ -531,3 +531,18 @@ fn plain_http_feeds_say_what_signatures_do_not_cover() {
     let (buffer, _) = draw(&app, 100, 32);
     assert!(text(&buffer).contains("plain HTTP: signed, but updates can be held back"), "{}", text(&buffer));
 }
+
+/// A request in flight (following a log polls all the time) shows "Working…" in the header's
+/// right-hand text without moving anything else: every row below the header stays the same.
+#[test]
+fn working_never_shifts_the_layout() {
+    let (mut app, _) = fixture(ScreenId::Logs);
+    app.working = false;
+    let idle = text(&draw(&app, 100, 32).0);
+    app.working = true;
+    let busy = text(&draw(&app, 100, 32).0);
+    assert!(busy.contains("Working…"), "the busy mark is not shown:\n{busy}");
+    let changed: Vec<usize> =
+        idle.lines().zip(busy.lines()).enumerate().filter(|(_, (a, b))| a != b).map(|(row, _)| row).collect();
+    assert!(changed.len() <= 1, "working moved rows {changed:?}:\n{idle}\n----\n{busy}");
+}
