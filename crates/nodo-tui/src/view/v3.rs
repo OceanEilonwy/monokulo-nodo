@@ -276,6 +276,12 @@ pub fn inset(t: &Theme, value: &str, width: usize, arrow: Option<&str>, focused:
     spans
 }
 
+/// The click target for a text box drawn as a label padded to `label_width` and then an
+/// `inset` `box_width` wide: the label and the whole box, with the marker a mono theme adds.
+pub fn field_target(label: &str, label_width: usize, box_width: usize) -> Target {
+    Target::field(label, (label_width + box_width + 3) as u16)
+}
+
 pub const CAP_LEFT: &str = "\u{E0B6}";
 pub const CAP_RIGHT: &str = "\u{E0B4}";
 

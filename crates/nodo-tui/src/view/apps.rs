@@ -7,7 +7,7 @@ use nodo_api::ServiceState;
 use super::home::{app_state, tagline};
 use super::layout::{Item, Page};
 use super::pad;
-use super::v3::{focused, heading_link, inset, link, margin, progress, quiet, trail, trail_actions, Card, Screen3};
+use super::v3::{field_target, focused, heading_link, inset, link, margin, progress, quiet, trail, trail_actions, Card, Screen3};
 use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewPurpose, ReviewState, SearchState, Tab, UnlockState, APP_SECTIONS};
 use crate::hit::{Click, Target};
 use crate::model::*;
@@ -132,6 +132,12 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
             sections.focus_here();
         }
         let lead = if index == state.selected { t.a("▸ ") } else { t.n("  ") };
+        // Hosting is about the app's web page; an app without one has nothing to open there, so
+        // the row is dimmed, says why, and takes no click.
+        if *section == "Hosting" && site.is_none() {
+            sections.row(t, vec![lead, t.d(pad(section, 12)), t.d("This app has no web page to put online")]);
+            continue;
+        }
         sections.row(t, vec![lead, t.b(pad(section, 12)), t.d(pad(&summary, 40)), t.d("›")]);
         screen.targets.push(Target::card_row(*section, pick(index)));
     }
@@ -223,7 +229,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     let trail_row = trail(t, &["Apps", "Get apps"], &mut before_targets);
     let mut search = vec![margin(t), t.d(pad("Search", 9))];
     search.extend(inset(t, state.query.text(), 40, None, !state.list_focused));
-    before_targets.push(Target::text("Search", Click::Key(KeyCode::Char('/'))));
+    before_targets.push(field_target("Search", 9, 40));
     let search_row = heading_link(t, t.n(""), "Sources ›", Click::Key(KeyCode::Char('s')), &mut Vec::new());
     let Item::Row(_, right) = search_row else { unreachable!() };
     before_targets.push(Target::text("Sources ›", Click::Key(KeyCode::Char('s'))));
