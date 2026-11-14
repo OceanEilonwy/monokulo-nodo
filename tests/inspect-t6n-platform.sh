@@ -141,6 +141,8 @@ show 'cat /etc/sv/nodo-helper/run' > "$tmp/helper-run"
 grep -q 'LABEL=NODO_BLOCKCHAIN' "$tmp/helper-run" && grep -q 'blkid -p -o value -s "$field"' "$tmp/helper-run" &&
 	! show 'cat /etc/sv/nodo-helper/conf' | grep -q '^DRIVE'
 result "the helper finds the data drive from fstab, with no conf overriding it" "$?"
+grep -q -- "--screen-uid" "$tmp/helper-run" && grep -q "id -u _nodo_screen" "$tmp/helper-run"
+result "the helper gives the touchscreen its own socket, limited by the screen PIN" "$?"
 show 'stat /usr/bin/udevd' | grep -q 'Type: regular' && echo "  note: the image has udevd, so /dev/disk links may exist too"
 
 echo "== nodo-report"

@@ -229,7 +229,7 @@ impl<S: System> Helper<S> {
                 let status = self.screen_status();
                 if !status.pin_set {
                     return Err(ApiError::Locked(
-                        "the screen can only look until a screen PIN is set over SSH or in the TUI"
+                        "the screen can only look until a screen PIN is set over SSH (nodo-tui --ctl screen-pin)"
                             .to_owned(),
                     ));
                 }
@@ -268,7 +268,7 @@ mod tests {
         let h = helper(crate::fake::FakeSystem::default());
         assert!(h.handle_screen(SCREEN, Request::ListServices).is_ok());
         let err = h.handle_screen(SCREEN, Request::StopService { id: "shop".into() }).unwrap_err();
-        assert!(matches!(err, ApiError::Locked(ref m) if m.contains("SSH or in the TUI")), "{err:?}");
+        assert!(matches!(err, ApiError::Locked(ref m) if m.contains("screen-pin")), "{err:?}");
         assert_eq!(h.handle_screen(SCREEN, Request::ScreenUnlock { pin: secret("000000") }).unwrap_err(), ApiError::NotSetUp);
     }
 

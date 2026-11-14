@@ -87,7 +87,7 @@ pub enum Screen {
     Backups,
     Network,
     SshKeys,
-    ScreenSettings,
+    Display,
 }
 
 /// What the keyboard is editing, and what Done does with it.
@@ -430,7 +430,7 @@ impl Manage {
     pub fn open_at_screen_settings(&mut self) {
         self.open();
         self.tab = 3;
-        self.stack = vec![Screen::System, Screen::ScreenSettings];
+        self.stack = vec![Screen::System, Screen::Display];
     }
 
     pub fn close(&mut self) {
@@ -584,7 +584,7 @@ impl Manage {
             self.dialog(
                 "Set a screen PIN first",
                 "The screen can only look until a screen PIN is set. Set one over SSH with \
-                 `nodo-tui --ctl screen-pin`, or in the TUI under System › Screen PIN.",
+                 `nodo-tui --ctl screen-pin` (it asks for the device passphrase, then the PIN).",
                 false,
                 vec![button("dialog-close", "OK", 0)],
             );
@@ -1364,7 +1364,7 @@ impl Manage {
                     .snapshot
                     .as_ref()
                     .and_then(|s| s.web.sites.iter().find(|x| x.package == name))
-                    .map(|s| (s.package.clone(), s.exposure.clone(), s.public_host.clone().unwrap_or_default()))
+                    .map(|s| (s.package.clone(), s.exposure, s.public_host.clone().unwrap_or_default()))
                     .unwrap_or((name.clone(), nodo_api::Exposure { local: false, onion: false, public: false }, String::new()));
                 self.hosting = Some(site);
                 Screen::Hosting(name)
@@ -1377,7 +1377,7 @@ impl Manage {
             "backups" => Screen::Backups,
             "network" => Screen::Network,
             "ssh" => Screen::SshKeys,
-            "screen" => Screen::ScreenSettings,
+            "screen" => Screen::Display,
             _ => return,
         };
         self.push(screen);
@@ -1499,14 +1499,14 @@ impl Manage {
             return;
         }
         let apply = move |m: &mut Manage| {
-            let (site, exposure, host) = (site.clone(), exposure.clone(), host.clone());
+            let (site, exposure, host) = (site.clone(), exposure, host.clone());
             m.change("Saving hosting", move |d| {
                 let id = d.site_id(&site);
                 if !host.is_empty() && exposure.public {
                     d.set_public_host(&site, &host).map_err(ApiError::Failed)?;
                 }
                 let confirmation = exposure.public.then(|| nodo_api::PublicConfirmation { typed_host: host.clone() });
-                d.call(Request::SetExposure { site: id, exposure: exposure.clone(), confirmation })?;
+                d.call(Request::SetExposure { site: id, exposure, confirmation })?;
                 Ok("Saved".into())
             });
         };
@@ -1693,7 +1693,7 @@ impl Manage {
             Screen::Backups => self.backups_page(),
             Screen::Network => self.network(),
             Screen::SshKeys => self.ssh_page(),
-            Screen::ScreenSettings => Page {
+            Screen::Display => Page {
                 crumbs: crumbs_of(&["System"]),
                 title: "Screen".into(),
                 actions: Vec::new(),
@@ -1714,9 +1714,9 @@ impl Manage {
                         segments("screen-dim", "Dim when idle to", &crate::screen_prefs::DIM_LABELS.map(String::from), self.prefs.dim_index),
                         text(
                             if self.screen.pin_set {
-                                "A screen PIN is set. Change it over SSH (nodo-tui --ctl screen-pin) or in the TUI."
+                                "A screen PIN is set. Change it over SSH: nodo-tui --ctl screen-pin."
                             } else {
-                                "No screen PIN yet: the screen can only look. Set one over SSH (nodo-tui --ctl screen-pin) or in the TUI."
+                                "No screen PIN yet: the screen can only look. Set one over SSH: nodo-tui --ctl screen-pin."
                             },
                             0,
                         ),
@@ -2125,7 +2125,7 @@ impl Manage {
     }
 
     fn hosting_page(&self, snap: &Snapshot, site: &str) -> Page {
-        let (exposure, host) = self.hosting.as_ref().map(|h| (h.1.clone(), h.2.clone())).unwrap_or((nodo_api::Exposure { local: false, onion: false, public: false }, String::new()));
+        let (exposure, host) = self.hosting.as_ref().map(|h| (h.1, h.2.clone())).unwrap_or((nodo_api::Exposure { local: false, onion: false, public: false }, String::new()));
         let s = snap.web.sites.iter().find(|x| x.package == site);
         let mut rows = vec![
             toggle("expose:local", "Home network", format!("Phones and computers on your Wi-Fi.  {}", s.map(|s| s.local_url.clone()).unwrap_or_default()), exposure.local),
