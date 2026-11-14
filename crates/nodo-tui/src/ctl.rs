@@ -69,7 +69,10 @@ nodo-tui --ctl COMMAND [ARGS]
   wifi | wifi-on 0|1 | wifi-scan | wifi-forget SSID
   wifi-join SSID wpa2|wpa3|wpa2-wpa3   (passphrase on stdin)
   wifi-join-open SSID              (joins an open network: its traffic is not encrypted)
-  bt | bt-on 0|1 | bt-scan | bt-pair ADDRESS | bt-connect ADDRESS 0|1 | bt-remove ADDRESS";
+  bt | bt-on 0|1 | bt-scan | bt-pair ADDRESS | bt-connect ADDRESS 0|1 | bt-remove ADDRESS
+  screen-pin                       (device passphrase, then the new 6-digit PIN, on stdin)
+  screen-pin-clear                 (device passphrase on stdin; the screen can then only look)
+  screen-status";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -181,6 +184,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["init"] => Request::InitEncryption { passphrase: secret_line()? },
         ["unlock"] => Request::Unlock { passphrase: secret_line()? },
         ["change-passphrase"] => Request::ChangePassphrase { current: secret_line()?, new: secret_line()? },
+        ["screen-pin"] => Request::SetScreenPin { passphrase: secret_line()?, pin: Some(secret_line()?) },
+        ["screen-pin-clear"] => Request::SetScreenPin { passphrase: secret_line()?, pin: None },
+        ["screen-status"] => Request::ScreenStatus,
         ["set", package, name, kind, rest @ ..] => {
             let value = match (*kind, rest) {
                 ("text", [v]) => SettingInput::Literal(SettingLiteral::Text(id(v))),

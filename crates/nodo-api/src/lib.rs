@@ -29,6 +29,8 @@ pub const PROTOCOL_VERSION: u8 = 3;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
+/// The touchscreen's own socket. Only its account may connect, and the helper limits what it may do.
+pub const SCREEN_SOCKET: &str = "/run/nodo/screen.sock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceState {
@@ -1032,11 +1034,38 @@ pub enum Request {
     RemoveBluetooth {
         address: String,
     },
+    /// Whether a screen PIN is set and whether changes from the screen are unlocked now.
+    ScreenStatus,
+    /// Unlocks changes from the touchscreen for a few idle minutes. Only the screen's account
+    /// sends it. A wrong PIN answers `BadPassphrase` after a fixed delay; there is no attempt
+    /// limit, because the screen is only reachable by someone at the device.
+    ScreenUnlock {
+        pin: Secret,
+    },
+    /// Locks changes from the screen again at once.
+    ScreenLock,
+    /// Sets (or with `None` clears) the screen PIN. Never from the screen itself: it needs the
+    /// device passphrase and comes from SSH or the TUI.
+    SetScreenPin {
+        passphrase: Secret,
+        pin: Option<Secret>,
+    },
+}
+
+/// What the touchscreen may do right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenStatus {
+    /// A screen PIN exists. Without one the screen can only look.
+    pub pin_set: bool,
+    /// Changes from the screen are unlocked until it has been idle a few minutes.
+    pub unlocked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
     Ok,
+    /// Answer to `ScreenStatus`.
+    Screen(ScreenStatus),
     Services(Vec<ServiceStatus>),
     /// Settings were restored because the service failed to restart or its health check.
     RolledBack(Rollback),
@@ -1246,6 +1275,10 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::PairBluetooth { .. } => "pair-bluetooth",
         Request::ConnectBluetooth { .. } => "connect-bluetooth",
         Request::RemoveBluetooth { .. } => "remove-bluetooth",
+        Request::ScreenStatus => "screen-status",
+        Request::ScreenUnlock { .. } => "screen-unlock",
+        Request::ScreenLock => "screen-lock",
+        Request::SetScreenPin { .. } => "set-screen-pin",
     }
 }
 

@@ -62,6 +62,39 @@ pub fn serve_connection<S: System>(
     }
 }
 
+/// Serves one connection on the screen's socket. Only `screen_uid` is answered, and only within
+/// what [`crate::screen`] allows.
+pub fn serve_screen_connection<S: System>(
+    helper: &Helper<S>,
+    mut stream: UnixStream,
+    uid: u32,
+    screen_uid: u32,
+) -> Result<(), ProtocolError> {
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    if uid != screen_uid {
+        eprintln!("nodo-helper: denied screen connection from uid {uid}");
+        return respond(&mut stream, &Err(ApiError::Denied));
+    }
+    stream.set_read_timeout(Some(IDLE_TIMEOUT))?;
+    loop {
+        let Some(frame) = protocol::read_frame(&mut stream, MAX_REQUEST)? else {
+            return Ok(());
+        };
+        let request = match protocol::decode_request(&frame) {
+            Ok(request) => request,
+            Err(e) => {
+                respond(&mut stream, &Err(ApiError::Failed(e.to_string())))?;
+                return Err(e);
+            }
+        };
+        drop(frame);
+        let action = action_name(&request);
+        let result = helper.handle_screen(uid, request);
+        eprintln!("nodo-helper: screen {action}: {}", outcome(&result));
+        respond(&mut stream, &result)?;
+    }
+}
+
 /// The kind of result only. Error messages can name settings and paths, and are for the client.
 fn outcome(result: &CallResult) -> &'static str {
     match result {
@@ -92,6 +125,23 @@ pub fn serve<S: System + 'static>(
     listener: UnixListener,
     helper: Arc<Helper<S>>,
 ) -> io::Result<()> {
+    serve_with(listener, helper, None)
+}
+
+/// Like [`serve`], for the screen's socket: every connection is handled as the screen.
+pub fn serve_screen<S: System + 'static>(
+    listener: UnixListener,
+    helper: Arc<Helper<S>>,
+    screen_uid: u32,
+) -> io::Result<()> {
+    serve_with(listener, helper, Some(screen_uid))
+}
+
+fn serve_with<S: System + 'static>(
+    listener: UnixListener,
+    helper: Arc<Helper<S>>,
+    screen_uid: Option<u32>,
+) -> io::Result<()> {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let stream = match stream {
@@ -112,7 +162,10 @@ pub fn serve<S: System + 'static>(
             let _slot = slot;
             let result = peer_uid(&stream)
                 .map_err(ProtocolError::from)
-                .and_then(|uid| serve_connection(&helper, stream, uid));
+                .and_then(|uid| match screen_uid {
+                    Some(screen) => serve_screen_connection(&helper, stream, uid, screen),
+                    None => serve_connection(&helper, stream, uid),
+                });
             if let Err(e) = result {
                 eprintln!("nodo-helper: connection ended: {e}");
             }

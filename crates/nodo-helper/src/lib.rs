@@ -32,6 +32,7 @@ mod radio_tests;
 pub mod real;
 pub mod secrets;
 pub mod server;
+pub mod screen;
 mod service;
 mod settings;
 mod ssh;
