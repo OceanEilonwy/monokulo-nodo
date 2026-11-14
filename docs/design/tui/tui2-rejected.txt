@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  photo-sync
+
+
+       ▲  photo-sync can't be installed
+
+       Its source signed it, but it asks to read every other app's data, and the Nodo never allows
+       that. Nothing was installed. Tell the publisher if you think this is a mistake.
+
+       Show details ›
+
+                                                                                                          OK   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ OK  d details

@@ -102,10 +102,23 @@ pub enum Scene {
     T2UpdateRolledBack,
     T2UndoUpdates,
     T2DeviceLogs,
+    B1Backup,
+    B1Restore,
+    B1Network,
+    B1Rejected,
+    B1Capability,
+    B1NoDrive,
+    T2Backups,
+    T2Restore,
+    T2Network,
+    T2NetworkWifi,
+    T2Rejected,
+    T2Capability,
+    T2NoDrive,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 72] = [
+    pub const ALL: [Scene; 85] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -178,6 +191,19 @@ impl Scene {
         Scene::T2UpdateRolledBack,
         Scene::T2UndoUpdates,
         Scene::T2DeviceLogs,
+        Scene::B1Backup,
+        Scene::B1Restore,
+        Scene::B1Network,
+        Scene::B1Rejected,
+        Scene::B1Capability,
+        Scene::B1NoDrive,
+        Scene::T2Backups,
+        Scene::T2Restore,
+        Scene::T2Network,
+        Scene::T2NetworkWifi,
+        Scene::T2Rejected,
+        Scene::T2Capability,
+        Scene::T2NoDrive,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -254,6 +280,19 @@ impl Scene {
             Scene::T2UpdateRolledBack => "tui2-update-rolled-back",
             Scene::T2UndoUpdates => "tui2-undo-updates",
             Scene::T2DeviceLogs => "tui2-device-logs",
+            Scene::B1Backup => "tui1-backup",
+            Scene::B1Restore => "tui1-restore",
+            Scene::B1Network => "tui1-network",
+            Scene::B1Rejected => "tui1-rejected",
+            Scene::B1Capability => "tui1-capability",
+            Scene::B1NoDrive => "tui1-no-drive",
+            Scene::T2Backups => "tui2-backups",
+            Scene::T2Restore => "tui2-restore",
+            Scene::T2Network => "tui2-network",
+            Scene::T2NetworkWifi => "tui2-network-wifi",
+            Scene::T2Rejected => "tui2-rejected",
+            Scene::T2Capability => "tui2-capability",
+            Scene::T2NoDrive => "tui2-no-drive",
         }
     }
 
@@ -336,6 +375,19 @@ impl Scene {
             Scene::T2UpdateRolledBack => "An update that didn't start was undone by itself",
             Scene::T2UndoUpdates => "Undo an update (the old Rollbacks)",
             Scene::T2DeviceLogs => "Device logs: problems first, plain sentences",
+            Scene::B1Backup => "Before: Backups",
+            Scene::B1Restore => "Before: Restore on a new device",
+            Scene::B1Network => "Before: Wi-Fi and Bluetooth",
+            Scene::B1Rejected => "Before: Package rejected",
+            Scene::B1Capability => "Before: Missing capability",
+            Scene::B1NoDrive => "Before: Data drive missing",
+            Scene::T2Backups => "Backups: when it last ran, one button, three settings",
+            Scene::T2Restore => "A new Nodo: restore from the old one's backup",
+            Scene::T2Network => "Network: cable, Wi-Fi, Bluetooth",
+            Scene::T2NetworkWifi => "Network with Wi-Fi on: pick a network, type its password, Join",
+            Scene::T2Rejected => "An app that can't be installed, and why",
+            Scene::T2Capability => "An app that needs another app first",
+            Scene::T2NoDrive => "The data drive isn't connected",
         }
     }
 
@@ -370,6 +422,12 @@ impl Scene {
             Scene::B1UpdateFailed => ScreenId::UpdateFailed,
             Scene::B1Rollbacks => ScreenId::Rollbacks,
             Scene::B1Logs => ScreenId::Logs,
+            Scene::B1Backup => ScreenId::Backup,
+            Scene::B1Restore => ScreenId::Restore,
+            Scene::B1Network => ScreenId::Network,
+            Scene::B1Rejected => ScreenId::Rejected,
+            Scene::B1Capability => ScreenId::Capability,
+            Scene::B1NoDrive => ScreenId::NoDrive,
             _ => return None,
         })
     }
@@ -416,6 +474,13 @@ impl Scene {
             Scene::T2UpdateRolledBack => "Clickable: OK (primary), Try again, \"Show log\".",
             Scene::T2UndoUpdates => "Clickable: Undo on each card that can still be undone. Hover shown on mk-pay's card.",
             Scene::T2DeviceLogs => "Clickable: the search box, each filter, each line (its full text), \"Show older\", \"Save to a file\". Hover shown on the 13:41 line.",
+            Scene::T2Backups => "Clickable: Back up now (primary), the On/Off box, How often and Where (lists), \"Restore from a backup\".",
+            Scene::T2Restore => "Clickable: the passphrase box, Restore (primary), \"Start fresh instead\".",
+            Scene::T2Network => "Clickable: the Wi-Fi and Bluetooth On/Off boxes.",
+            Scene::T2NetworkWifi => "Clickable: each network (opens its password row), the password box, Join (primary), the On/Off boxes. Hover shown on Home-5G.",
+            Scene::T2Rejected => "Clickable: OK (primary), \"Show details\".",
+            Scene::T2Capability => "Clickable: Install cuprated (primary), Cancel, \"Show details\".",
+            Scene::T2NoDrive => "Clickable: Check again (primary), \"Use a new drive instead\".",
             _ => "",
         }
     }
@@ -2030,6 +2095,13 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
         Scene::T2UpdateRolledBack => t2_update_rolled_back(t, w, h),
         Scene::T2UndoUpdates => t2_undo_updates(t, w, h),
         Scene::T2DeviceLogs => t2_device_logs(t, w, h),
+        Scene::T2Backups => t2_backups(t, w, h),
+        Scene::T2Restore => t2_restore(t, w, h),
+        Scene::T2Network => t2_network(t, w, h, false),
+        Scene::T2NetworkWifi => t2_network(t, w, h, true),
+        Scene::T2Rejected => t2_rejected(t, w, h),
+        Scene::T2Capability => t2_capability(t, w, h),
+        Scene::T2NoDrive => t2_no_drive(t, w, h),
         _ => Page::new(Line::default(), Line::default()),
     }
 }
@@ -2757,6 +2829,160 @@ fn t2_device_logs(t: &Theme, w: u16, h: u16) -> Page {
     fit_page(t, top2(t, "System", Some(("Apps", 2)), w), before, card, Vec::new(), "Click a line for its full text.   Keys: / search  1-5 filter  ↑↓ scroll", w, h)
 }
 
+// Batch 3: backups and restoring onto a new Nodo, network, and the screens that stop something.
+
+fn t2_backups(t: &Theme, w: u16, h: u16) -> Page {
+    let mut last = Card::new(w);
+    last.blank(t);
+    last.row(t, vec![t.o("✓  "), t.b("Backed up 2 days ago"), t.d("   to SANDISK 64GB (USB) · 1.2 GB")]);
+    last.blank(t);
+    last.row_with_button(t, vec![t.d("Next one tonight at 3 am.")], "Back up now", true);
+    last.blank(t);
+    let mut auto = Card::new(w);
+    auto.blank(t);
+    let mut first = vec![t.b(pad("Back up by itself", 30))];
+    first.extend(toggle(t, true));
+    auto.row(t, first);
+    auto.blank(t);
+    let mut when = vec![t.n(pad("How often", 30))];
+    when.extend(inset(t, "Every night, keep 7", 24, Some("▾")));
+    auto.row(t, when);
+    auto.blank(t);
+    let mut to = vec![t.n(pad("Where", 30))];
+    to.extend(inset(t, "SANDISK 64GB (USB)", 24, Some("▾")));
+    auto.row(t, to);
+    auto.blank(t);
+    let mut what = Card::new(w);
+    what.blank(t);
+    what.row(t, vec![t.n("A backup holds your apps' data and settings, your sources and domain providers, locked")]);
+    what.row(t, vec![t.n("with your device passphrase. It leaves out the Monero chain, which syncs again by itself.")]);
+    what.blank(t);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Restore from a backup ›")])];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Backups"]), vec![last, auto, what], after, "Keys: ↵ back up now  Tab move  Esc back", w, h)
+}
+
+fn t2_restore(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Restore onto this Nodo")]);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.n("Found a backup on SANDISK 64GB"), t.d("   from monokulo-nodo · 12 Nov 2026 · 1.2 GB")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Type the device passphrase of the Nodo it came from:")]);
+    let mut pass = vec![t.d(pad("Passphrase", 13))];
+    pass.extend(inset(t, "••••••••••", 30, None));
+    card.row(t, pass);
+    card.blank(t);
+    card.row(t, vec![t.d("Comes back: mk-pay, mk-lws, kringle and cuprated with their data and settings, 2 sources,")]);
+    card.row(t, vec![t.d("1 domain provider. cuprated then syncs the Monero chain again, which takes a few hours.")]);
+    card.blank(t);
+    card.buttons(t, &[("Restore", true)]);
+    let before = vec![Item::Blank, heading(t, "Welcome to your new Nodo"), quiet(t, "Start fresh, or bring everything over from your old one."), Item::Blank, Item::Blank];
+    fit_page(t, top2(t, "Home", None, w), before, card, vec![Item::Blank, line(vec![margin(t), t.a("Start fresh instead ›")])], "Keys: type the passphrase  ↵ restore", w, h)
+}
+
+fn signal(t: &Theme, bars: usize) -> Vec<Span<'static>> {
+    let glyphs = ["▂", "▄", "▆", "█"];
+    glyphs.iter().enumerate().map(|(i, g)| if i < bars { t.n(*g) } else { t.d("·") }).collect()
+}
+
+fn t2_network(t: &Theme, w: u16, h: u16, wifi_on: bool) -> Page {
+    let mut wired = Card::new(w);
+    wired.blank(t);
+    wired.row(t, vec![t.b(pad("Cable", 14)), t.o("●  "), t.n("Connected · 192.168.1.155")]);
+    wired.blank(t);
+    let mut wifi = Card::new(w);
+    wifi.blank(t);
+    let mut head = vec![t.b(pad("Wi-Fi", 14))];
+    head.extend(toggle(t, wifi_on));
+    head.push(t.d(if wifi_on { "   a cable is steadier" } else { "   not needed while the cable is connected" }));
+    wifi.row(t, head);
+    if wifi_on {
+        wifi.blank(t);
+        for (index, (name, bars, locked)) in [("Home-5G", 4, true), ("Home-2.4", 3, true), ("Cafe Guest", 1, false)].into_iter().enumerate() {
+            let mut spans = vec![t.n(" ".repeat(14))];
+            spans.extend(signal(t, bars));
+            spans.push(t.n("   "));
+            spans.push(t.n(pad(name, 16)));
+            spans.push(t.d(if locked { "password" } else { "open" }));
+            if index == 0 {
+                wifi.hover_row(t, spans);
+                let mut pass = vec![t.n(" ".repeat(21)), t.d(pad("Password", 10))];
+                pass.extend(inset(t, "", 16, None));
+                pass.push(t.n("   "));
+                let width = "Join".len() + 6;
+                let [_, button, _] = button_rows(t, "Join", true, ButtonStyle::Rounded, width, S.card);
+                pass.extend(button);
+                wifi.row(t, pass);
+            } else {
+                wifi.row(t, spans);
+            }
+        }
+    }
+    wifi.blank(t);
+    let mut bt = Card::new(w);
+    bt.blank(t);
+    let mut head = vec![t.b(pad("Bluetooth", 14))];
+    head.extend(toggle(t, false));
+    head.push(t.d("   lets a phone set the Nodo up without a cable"));
+    bt.row(t, head);
+    bt.blank(t);
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Network"]), vec![wired, wifi, bt], Vec::new(), "Keys: Tab move  Space on/off  ↵ join  Esc back", w, h)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blocked(t: &Theme, w: u16, h: u16, trail_parts: &[&str], title: &str, body: &[&str], buttons: &[(&str, bool)], keys: &str) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b(title.to_owned())]);
+    card.blank(t);
+    for line_ in body {
+        card.row(t, vec![t.n(line_.to_string())]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    card.buttons(t, buttons);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, trail_parts), Item::Blank], card, Vec::new(), keys, w, h)
+}
+
+fn t2_rejected(t: &Theme, w: u16, h: u16) -> Page {
+    blocked(
+        t, w, h,
+        &["Apps", "Get apps", "photo-sync"],
+        "photo-sync can't be installed",
+        &["Its source signed it, but it asks to read every other app's data, and the Nodo never allows", "that. Nothing was installed. Tell the publisher if you think this is a mistake."],
+        &[("OK", true)],
+        "Keys: ↵ OK  d details",
+    )
+}
+
+fn t2_capability(t: &Theme, w: u16, h: u16) -> Page {
+    blocked(
+        t, w, h,
+        &["Apps", "Get apps", "mk-lws"],
+        "mk-lws needs a Monero node first",
+        &["It reads the Monero chain from a node on this Nodo, and there isn't one yet.", "cuprated is the recommended node; it syncs the chain in a few hours, then mk-lws can be installed."],
+        &[("Cancel", false), ("Install cuprated", true)],
+        "Keys: ↵ install cuprated  Esc cancel",
+    )
+}
+
+fn t2_no_drive(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("The data drive isn't connected")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Your apps keep their data on the SSD, so they're stopped until it's back. Nothing on it has")]);
+    card.row(t, vec![t.n("been touched. Check the cable, or plug it back in; the Nodo notices by itself.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("Stopped: cuprated, mk-pay, mk-lws, kringle")]);
+    card.blank(t);
+    card.buttons(t, &[("Check again", true)]);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Use a new drive instead ›")])];
+    fit_page(t, top2(t, "Home", None, w), vec![Item::Blank, Item::Blank], card, after, "Keys: ↵ check again", w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2809,6 +3035,12 @@ mod tests {
             Scene::T2Updates => Some("Update and restart"),
             Scene::T2AutoUpdates => Some("Save"),
             Scene::T2UpdateRolledBack => Some("OK"),
+            Scene::T2Backups => Some("Back up now"),
+            Scene::T2Restore => Some("Restore"),
+            Scene::T2NetworkWifi => Some("Join"),
+            Scene::T2Rejected => Some("OK"),
+            Scene::T2Capability => Some("Install cuprated"),
+            Scene::T2NoDrive => Some("Check again"),
             _ => None,
         };
         for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
@@ -2867,6 +3099,14 @@ mod tests {
                         assert_eq!(b[(inner, y)].bg, cell.fg, "{at}: cap not joined to its button");
                         if let Some(outer) = outer {
                             assert_eq!(b[(outer, y)].bg, cell.bg, "{at}: button sticks out of its surface");
+                        }
+                        // From a left cap, the fill runs to a right cap on the same row.
+                        if cell.symbol() == "\u{E0B6}" {
+                            let mut end = x + 1;
+                            while end < w && b[(end, y)].bg == cell.fg && b[(end, y)].symbol() != "\u{E0B4}" {
+                                end += 1;
+                            }
+                            assert!(end < w && b[(end, y)].symbol() == "\u{E0B4}", "{at}: button split across rows");
                         }
                     }
                 }

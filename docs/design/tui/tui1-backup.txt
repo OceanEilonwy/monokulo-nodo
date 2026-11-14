@@ -1,0 +1,36 @@
+Home › Backups
+┌ Backups on this device ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  nodo-1762560000.nodobak                                                                                     4.8 MB  │
+│  nodo-1761955200.nodobak                                                                                     4.5 MB  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ USB drive · SanDisk Ultra Fit, BACKUP ───────────────────────────────────────────────────────────────────────────────┐
+│  nodo-1762473600.nodobak                                                                                     4.7 MB  │
+│  FAT32 · 30.1 GB free                                                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ A backup holds ──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✓ Package settings, secrets, certificates and Tor onion keys                                                         │
+│ ✓ The device key, so encrypted storage can be restored                                                               │
+│ ✓ The contents of unlocked encrypted storage                                                                         │
+│ ✓ Feeds, pinned keys, approvals and the verified package files                                                       │
+│                                                                                                                      │
+│ Never chain data. The node syncs it again.                                                                           │
+│ Encrypted with its own passphrase, at the same cost as the device key.                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ move  Tab device or USB  n new backup  u back up to USB  r restore  Esc back

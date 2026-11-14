@@ -1,0 +1,36 @@
+
+    Home     Apps     Web     System                                                                   monokulo-nodo
+
+
+    Welcome to your new Nodo
+    Start fresh, or bring everything over from your old one.
+
+
+
+       Restore onto this Nodo
+
+       ✓  Found a backup on SANDISK 64GB   from monokulo-nodo · 12 Nov 2026 · 1.2 GB
+
+       Type the device passphrase of the Nodo it came from:
+       Passphrase    ••••••••••
+
+       Comes back: mk-pay, mk-lws, kringle and cuprated with their data and settings, 2 sources,
+       1 domain provider. cuprated then syncs the Monero chain again, which takes a few hours.
+
+                                                                                                     Restore   
+
+
+    Start fresh instead ›
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: type the passphrase  ↵ restore

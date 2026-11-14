@@ -70,6 +70,19 @@ tui2-auto-updates.dc.html 1128 836
 tui2-update-rolled-back.dc.html 1128 836
 tui2-undo-updates.dc.html 1128 836
 tui2-device-logs.dc.html 1128 836
+tui1-backup.dc.html 1128 836
+tui1-restore.dc.html 1128 836
+tui1-network.dc.html 1128 836
+tui1-rejected.dc.html 1128 836
+tui1-capability.dc.html 1128 836
+tui1-no-drive.dc.html 1128 836
+tui2-backups.dc.html 1128 836
+tui2-restore.dc.html 1128 836
+tui2-network.dc.html 1128 836
+tui2-network-wifi.dc.html 1128 836
+tui2-rejected.dc.html 1128 836
+tui2-capability.dc.html 1128 836
+tui2-no-drive.dc.html 1128 836
 web2-overview-80x24.dc.html 768 656
 web2-who-80x24.dc.html 768 656
 web2-net-checks-80x24.dc.html 768 656
@@ -82,3 +95,5 @@ tui2-sources-80x24.dc.html 768 656
 tui2-app-page-80x24.dc.html 768 656
 tui2-system-80x24.dc.html 768 656
 tui2-updates-80x24.dc.html 768 656
+tui2-backups-80x24.dc.html 768 656
+tui2-network-wifi-80x24.dc.html 768 656

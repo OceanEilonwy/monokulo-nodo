@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Network
+
+
+       Cable         ●  Connected · 192.168.1.155
+
+
+
+       Wi-Fi         [ ] Off   not needed while the cable is connected
+
+
+
+       Bluetooth     [ ] Off   lets a phone set the Nodo up without a cable
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  Space on/off  ↵ join  Esc back

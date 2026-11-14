@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  mk-lws
+
+
+       ▲  mk-lws needs a Monero node first
+
+       It reads the Monero chain from a node on this Nodo, and there isn't one yet.
+       cuprated is the recommended node; it syncs the chain in a few hours, then mk-lws can be installed.
+
+       Show details ›
+
+                                                                      Cancel              Install cuprated   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ install cuprated  Esc cancel
