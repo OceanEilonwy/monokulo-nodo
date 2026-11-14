@@ -74,10 +74,27 @@ pub enum Scene {
     T2Installing,
     T2AppPage,
     T2Unlock,
+    B1Feeds,
+    B1AddFeed,
+    B1FeedKey,
+    T2Sources,
+    T2SourcesDetails,
+    T2SourceAdd,
+    T2SourceCheck,
+    T2SourceErrors,
+    T2SourceKeyChanged,
+    T2SourceRemoveBuiltin,
+    B1Settings,
+    B1Reference,
+    B1ApplyFailed,
+    T2AppRemove,
+    T2Settings,
+    T2SettingsPick,
+    T2SettingsRolledBack,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 44] = [
+    pub const ALL: [Scene; 61] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -122,6 +139,23 @@ impl Scene {
         Scene::T2Installing,
         Scene::T2AppPage,
         Scene::T2Unlock,
+        Scene::B1Feeds,
+        Scene::B1AddFeed,
+        Scene::B1FeedKey,
+        Scene::T2Sources,
+        Scene::T2SourcesDetails,
+        Scene::T2SourceAdd,
+        Scene::T2SourceCheck,
+        Scene::T2SourceErrors,
+        Scene::T2SourceKeyChanged,
+        Scene::T2SourceRemoveBuiltin,
+        Scene::B1Settings,
+        Scene::B1Reference,
+        Scene::B1ApplyFailed,
+        Scene::T2AppRemove,
+        Scene::T2Settings,
+        Scene::T2SettingsPick,
+        Scene::T2SettingsRolledBack,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -170,6 +204,23 @@ impl Scene {
             Scene::T2Installing => "tui2-installing",
             Scene::T2AppPage => "tui2-app-page",
             Scene::T2Unlock => "tui2-unlock",
+            Scene::B1Feeds => "tui1-feeds",
+            Scene::B1AddFeed => "tui1-add-feed",
+            Scene::B1FeedKey => "tui1-feed-key",
+            Scene::T2Sources => "tui2-sources",
+            Scene::T2SourcesDetails => "tui2-sources-details",
+            Scene::T2SourceAdd => "tui2-source-add",
+            Scene::T2SourceCheck => "tui2-source-check",
+            Scene::T2SourceErrors => "tui2-source-errors",
+            Scene::T2SourceKeyChanged => "tui2-source-key-changed",
+            Scene::T2SourceRemoveBuiltin => "tui2-source-remove-builtin",
+            Scene::B1Settings => "tui1-settings",
+            Scene::B1Reference => "tui1-reference",
+            Scene::B1ApplyFailed => "tui1-apply-failed",
+            Scene::T2AppRemove => "tui2-app-remove",
+            Scene::T2Settings => "tui2-settings",
+            Scene::T2SettingsPick => "tui2-settings-pick",
+            Scene::T2SettingsRolledBack => "tui2-settings-rolled-back",
         }
     }
 
@@ -224,6 +275,23 @@ impl Scene {
             Scene::T2Installing => "Installing: progress in plain steps",
             Scene::T2AppPage => "An app's page: status, its one action, then Hosting, Settings, Logs",
             Scene::T2Unlock => "Unlock after a restart",
+            Scene::B1Feeds => "Before: Feeds",
+            Scene::B1AddFeed => "Before: Add a feed",
+            Scene::B1FeedKey => "Before: Feed key changed",
+            Scene::T2Sources => "Sources: where the Nodo finds apps",
+            Scene::T2SourcesDetails => "Sources with details open: each key, comparable",
+            Scene::T2SourceAdd => "Add a source: paste the address",
+            Scene::T2SourceCheck => "Add a source: what it offers, and its key to compare",
+            Scene::T2SourceErrors => "Add a source: when it can't be added",
+            Scene::T2SourceKeyChanged => "A source's key changed: check before you trust",
+            Scene::T2SourceRemoveBuiltin => "The built-in monokulo source can be removed",
+            Scene::B1Settings => "Before: Package settings",
+            Scene::B1Reference => "Before: Reference picker",
+            Scene::B1ApplyFailed => "Before: Settings rolled back",
+            Scene::T2AppRemove => "Removing an app asks first, in plain words",
+            Scene::T2Settings => "An app's Settings: every kind of field, an error shown in place",
+            Scene::T2SettingsPick => "Settings: picking a value from another app (cuprated)",
+            Scene::T2SettingsRolledBack => "Settings undone because the app didn't start",
         }
     }
 
@@ -247,6 +315,12 @@ impl Scene {
             Scene::B1Review => ScreenId::Review,
             Scene::B1Installing => ScreenId::Installing,
             Scene::B1Unlock => ScreenId::Unlock,
+            Scene::B1Feeds => ScreenId::Feeds,
+            Scene::B1AddFeed => ScreenId::AddFeed,
+            Scene::B1FeedKey => ScreenId::FeedKey,
+            Scene::B1Settings => ScreenId::Settings,
+            Scene::B1Reference => ScreenId::Reference,
+            Scene::B1ApplyFailed => ScreenId::ApplyFailed,
             _ => return None,
         })
     }
@@ -268,14 +342,25 @@ impl Scene {
             Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
             Scene::V3Buttons => "The chosen rounded buttons, the no-Nerd-Font fallback, and the first v3 blocks for comparison.",
             Scene::T2Nav => "Clickable: the four tabs; each section line opens it.",
-            Scene::T2Home => "Clickable: Review updates (the one primary), each app row (opens its page), the tabs.",
-            Scene::T2Apps => "Clickable: each app row (opens its page), \"Get apps\", the tabs. Scroll wheel scrolls.",
-            Scene::T2GetApps => "Clickable: the search box (focus to type), each result (opens it), \"Sources\" (the old Feeds).",
+            Scene::T2Home => "Clickable: Review updates (the one primary), each app row (opens its page), the tabs. Hover shown on mk-pay's row.",
+            Scene::T2Apps => "Clickable: each app row (opens its page), \"Get apps\", the tabs. Scroll wheel scrolls. Hover shown on mk-pay's row.",
+            Scene::T2GetApps => "Clickable: the search box (focus to type), each result (opens it), \"Sources\" (the old Feeds). Hover shown on feather-ws.",
             Scene::T2AppAbout => "Clickable: Install (primary), \"Show details\" (permissions in full), the breadcrumb.",
             Scene::T2Review => "Clickable: the passphrase box, Install (primary), Cancel, \"Show details\".",
             Scene::T2Installing => "Clickable: the breadcrumb and tabs; installing carries on if you leave.",
-            Scene::T2AppPage => "Clickable: Update (primary), each section row (Hosting, Settings, Logs), Restart, Stop, Remove.",
+            Scene::T2AppPage => "Clickable: Update (primary), Restart, Stop, Remove (destructive, asks first), each section row. Hover shown on the Settings row.",
             Scene::T2Unlock => "Clickable: the passphrase box and Unlock.",
+            Scene::T2Sources => "Clickable: Add a source (primary), each On/Off box, Remove on each row, Try again, \"Show details\" (keys). Hover shown on Alice's apps.",
+            Scene::T2SourcesDetails => "Clickable: the same, and \"Hide details\".",
+            Scene::T2SourceAdd => "Clickable: the address box (focus to paste), Check (primary), Cancel.",
+            Scene::T2SourceCheck => "Clickable: Add source (primary), Cancel.",
+            Scene::T2SourceErrors => "Clickable: in the Add card, the address box and Check again.",
+            Scene::T2SourceKeyChanged => "Clickable: Keep the old key (primary), the name box, Trust the new key (only once the name is typed).",
+            Scene::T2SourceRemoveBuiltin => "Clickable: Remove (primary), Cancel.",
+            Scene::T2AppRemove => "Clickable: Remove mk-pay (destructive), Cancel.",
+            Scene::T2Settings => "Clickable: each box (focus to type), Currency and Monero node (open a list), Show, − and +, the On box, Save (primary), Cancel.",
+            Scene::T2SettingsPick => "Clickable: each choice in the list; clicking outside closes it.",
+            Scene::T2SettingsRolledBack => "Clickable: Edit again (primary), Keep as it is, \"Show log\".",
             _ => "",
         }
     }
@@ -1041,7 +1126,13 @@ pub struct Surfaces {
     pub field: Color,
     pub bar: Color,
     pub card: Color,
+    /// A row or button under the mouse pointer: one step lighter than what it sits on.
+    pub hover: Color,
     pub raised: Color,
+    /// A secondary button under the pointer.
+    pub raised_hover: Color,
+    /// The fill of a destructive button (Remove): red-tinted, its label in the error colour.
+    pub danger: Color,
 }
 
 impl Surfaces {
@@ -1050,13 +1141,24 @@ impl Surfaces {
             field: Color::Rgb(0x0B, 0x0D, 0x0F),
             bar: Color::Rgb(0x17, 0x1A, 0x1D),
             card: Color::Rgb(0x1D, 0x21, 0x25),
+            hover: Color::Rgb(0x26, 0x2B, 0x30),
             raised: Color::Rgb(0x2C, 0x32, 0x38),
+            raised_hover: Color::Rgb(0x3A, 0x41, 0x48),
+            danger: Color::Rgb(0x3D, 0x22, 0x24),
         }
     }
 
     /// For terminals without RGB: the nearest grays of the 256-colour cube.
     pub const fn ansi256() -> Self {
-        Self { field: Color::Indexed(232), bar: Color::Indexed(234), card: Color::Indexed(235), raised: Color::Indexed(237) }
+        Self {
+            field: Color::Indexed(232),
+            bar: Color::Indexed(234),
+            card: Color::Indexed(235),
+            hover: Color::Indexed(236),
+            raised: Color::Indexed(237),
+            raised_hover: Color::Indexed(239),
+            danger: Color::Indexed(52),
+        }
     }
 }
 
@@ -1129,6 +1231,27 @@ impl Card {
     /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
     /// keeping its indent, so the fill always stays a rectangle.
     fn row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
+        self.row_on(t, spans, S.card);
+    }
+
+    /// A row as it looks under the mouse pointer: the whole row one step lighter. The keyboard's
+    /// selection is shown differently (the name in the accent with a ▸), so the two never mix up.
+    fn hover_row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
+        self.row_on(t, spans, S.hover);
+    }
+
+    /// A row with one button at its right end, on the card's inner padding.
+    fn row_with_button(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, label: &str, is_primary: bool) {
+        let width = label.trim_start_matches(['!', '~']).chars().count() + 6;
+        let [_, button, _] = button_rows(t, label, is_primary, ButtonStyle::Rounded, width, S.card);
+        let room = self.width.saturating_sub(6);
+        let used = width_of(&spans) + width_of(&button);
+        spans.push(t.n(" ".repeat(room.saturating_sub(used))));
+        spans.extend(button);
+        self.row(t, spans);
+    }
+
+    fn row_on(&mut self, t: &Theme, spans: Vec<Span<'static>>, bg: Color) {
         let room = self.width.saturating_sub(4);
         let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
         if width_of(&spans) <= room {
@@ -1155,10 +1278,10 @@ impl Card {
             }
         }
         for spans in lines {
-            let mut out = vec![margin(t), on(t.n("   "), S.card)];
+            let mut out = vec![margin(t), on(t.n("   "), bg)];
             let used = 3 + width_of(&spans);
-            out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, S.card) } else { s }));
-            out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), S.card));
+            out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, bg) } else { s }));
+            out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), bg));
             self.rows.push(line(out));
         }
     }
@@ -1249,7 +1372,7 @@ pub enum ButtonStyle {
 
 /// Every button in a bar has the same width: the longest label plus padding.
 fn button_width(list: &[(&str, bool)]) -> usize {
-    list.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0) + 6
+    list.iter().map(|(label, _)| label.trim_start_matches(['!', '~']).chars().count()).max().unwrap_or(0) + 6
 }
 
 fn centred(label: &str, width: usize) -> String {
@@ -1263,9 +1386,19 @@ const CAP_RIGHT: &str = "\u{E0B4}";
 
 /// One button's three rows, drawn on the surface `under`. Rounded and plain buttons are one row
 /// tall with the rows above and below left empty: those still count for a click.
+/// A label starting with `!` is destructive (red-tinted fill, label in the error colour); one
+/// starting with `~` is drawn as under the mouse pointer.
 fn button_rows(t: &Theme, label: &str, is_primary: bool, style: ButtonStyle, width: usize, under: Color) -> [Vec<Span<'static>>; 3] {
-    let colour = if is_primary { t.accent } else { S.raised };
-    let ink = if is_primary { t.ground } else { t.fg };
+    let danger = label.starts_with('!');
+    let hovered = label.contains('~');
+    let label = label.trim_start_matches(['!', '~']);
+    let (colour, ink) = if danger {
+        (S.danger, t.err)
+    } else if is_primary {
+        (if hovered { Color::Rgb(0xF7, 0xB8, 0x5E) } else { t.accent }, t.ground)
+    } else {
+        (if hovered { S.raised_hover } else { S.raised }, t.fg)
+    };
     let weight = if is_primary { Modifier::BOLD } else { Modifier::empty() };
     let fill = Style::new().fg(ink).bg(colour).add_modifier(weight);
     let cap = Style::new().fg(colour).bg(under);
@@ -1337,7 +1470,7 @@ fn rows_of(items: &[Item], w: u16) -> usize {
 /// comes after, and the one line of keys at the bottom.
 #[allow(clippy::too_many_arguments)]
 fn fit_page(t: &Theme, page: Page, before: Vec<Item>, mut card: Card, after: Vec<Item>, keys: &str, w: u16, h: u16) -> Page {
-    let used = usize::from(STRIP_ROWS) + 1 + rows_of(&before, w) + rows_of(&after, w);
+    let used = usize::from(STRIP_ROWS) + rows_of(&action_bar(t, keys), w) + rows_of(&before, w) + rows_of(&after, w);
     card.fit(t, usize::from(h).saturating_sub(used));
     let mut items = before;
     items.extend(card.items(t));
@@ -1767,6 +1900,17 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
         Scene::T2Installing => t2_installing(t, w, h),
         Scene::T2AppPage => t2_app_page(t, w),
         Scene::T2Unlock => t2_unlock(t, w, h),
+        Scene::T2Sources => t2_sources(t, w, h, false),
+        Scene::T2SourcesDetails => t2_sources(t, w, h, true),
+        Scene::T2SourceAdd => t2_source_add(t, w, h),
+        Scene::T2SourceCheck => t2_source_check(t, w, h),
+        Scene::T2SourceErrors => t2_source_errors(t, w),
+        Scene::T2SourceKeyChanged => t2_source_key_changed(t, w, h),
+        Scene::T2SourceRemoveBuiltin => t2_source_remove_builtin(t, w, h),
+        Scene::T2AppRemove => t2_app_remove(t, w, h),
+        Scene::T2Settings => t2_settings(t, w, h, false),
+        Scene::T2SettingsPick => t2_settings(t, w, h, true),
+        Scene::T2SettingsRolledBack => t2_settings_rolled_back(t, w, h),
         _ => Page::new(Line::default(), Line::default()),
     }
 }
@@ -1827,7 +1971,11 @@ fn t2_home(t: &Theme, w: u16) -> Page {
         ("mk-lws", "Running"),
         ("kringle", "Running"),
     ] {
-        fine.row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+        if name == "mk-pay" {
+            fine.hover_row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+        } else {
+            fine.row(t, vec![t.n(pad(name, 12)), t.d(state.to_owned())]);
+        }
     }
     fine.blank(t);
     fine.row(t, vec![t.d("Storage 27% used of 2 TB   ·   Temperature 48 °C   ·   Up 3 days")]);
@@ -1853,7 +2001,12 @@ fn t2_apps(t: &Theme, w: u16) -> Page {
             card.blank(t);
         }
         let status = if state == "Update ready" { t.a(pad(state, 14)) } else { t.d(pad(state, 14)) };
-        card.row(t, vec![t.b(pad(name, 12)), t.n(pad(what, 28)), status, t.d("›")]);
+        let spans = vec![t.b(pad(name, 12)), t.n(pad(what, 28)), status, t.d("›")];
+        if name == "mk-pay" {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
     }
     card.blank(t);
     let before = vec![
@@ -1880,7 +2033,12 @@ fn t2_get_apps(t: &Theme, w: u16) -> Page {
         if index > 0 {
             card.blank(t);
         }
-        card.row(t, vec![t.b(pad(name, 13)), t.n(pad(what, 42)), t.d(tag.to_owned())]);
+        let spans = vec![t.b(pad(name, 13)), t.n(pad(what, 42)), t.d(tag.to_owned())];
+        if name == "feather-ws" {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
     }
     card.blank(t);
     let before = vec![
@@ -1971,9 +2129,9 @@ fn t2_app_page(t: &Theme, w: u16) -> Page {
     status.row(t, vec![t.b("mk-pay"), t.d("   Payments for your shop")]);
     status.row(t, vec![t.o("●  "), t.n("Running for 3 days   ·   open at https://pay.example.com")]);
     status.blank(t);
-    status.row(t, vec![t.a("Version 0.2 is ready"), t.d("   fixes receipts in some currencies")]);
+    status.row_with_button(t, vec![t.a("Version 0.2 is ready"), t.d("   fixes receipts in some currencies")], "Update", true);
     status.blank(t);
-    status.buttons(t, &[("Update", true)]);
+    status.buttons(t, &[("Restart", false), ("Stop", false), ("!Remove…", false)]);
     let mut sections = Card::new(w);
     sections.blank(t);
     for (index, (name, summary)) in [
@@ -1987,12 +2145,103 @@ fn t2_app_page(t: &Theme, w: u16) -> Page {
         if index > 0 {
             sections.blank(t);
         }
-        sections.row(t, vec![t.b(pad(name, 12)), t.d(pad(summary, 40)), t.d("›")]);
+        let spans = vec![t.b(pad(name, 12)), t.d(pad(summary, 40)), t.d("›")];
+        if name == "Settings" {
+            sections.hover_row(t, spans);
+        } else {
+            sections.row(t, spans);
+        }
     }
     sections.blank(t);
-    let after = vec![Item::Blank, line(vec![margin(t), t.d("Restart  ·  Stop  ·  Remove")])];
     let before = vec![Item::Blank, trail(t, &["Apps", "mk-pay"]), Item::Blank];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], after, "Click a section.   Keys: ↑↓ choose  ↵ open  u update  Esc back")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Click a section.   Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back")
+}
+
+fn t2_app_remove(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("Remove mk-pay?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Its data on the drive is deleted: orders, receipts and settings. Your shop stops taking")]);
+    card.row(t, vec![t.n("payments. Make a backup first if you might want it back.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("!Remove mk-pay", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Remove"]), Item::Blank], card, Vec::new(), "Keys: Esc cancel  (Remove asks for a click, not Enter)", w, h)
+}
+
+/// A settings field: label column, then the control, and a quiet hint or an error under it.
+fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, hint: Option<Span<'static>>) {
+    let mut spans = vec![t.n(pad(label, 24))];
+    spans.extend(control);
+    card.row(t, spans);
+    if let Some(hint) = hint {
+        card.row(t, vec![t.n(" ".repeat(24)), hint]);
+    }
+    card.blank(t);
+}
+
+fn t2_settings(t: &Theme, w: u16, h: u16, picking: bool) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    setting(&mut card, t, "Store name", inset(t, "Corner Café", 30, None), None);
+    setting(&mut card, t, "Currency", inset(t, "EUR — euro", 28, Some("▾")), None);
+    setting(
+        &mut card,
+        t,
+        "Payment address",
+        {
+            let mut v = inset(t, "48ZqC7…x3", 30, None);
+            v[0].style = v[0].style.fg(t.err);
+            v
+        },
+        Some(t.e("✕ That isn't a Monero address: it should be 95 characters starting with 4 or 8")),
+    );
+    setting(&mut card, t, "View key", vec![Span::styled(format!(" {} ", pad("••••••••••••••••", 30)), Style::new().fg(t.fg).bg(S.field)), t.a("   Show")], Some(t.d("Lets mk-pay see payments arrive, but not spend them.")));
+    setting(&mut card, t, "Confirmations to wait", vec![Span::styled("  10  ", Style::new().fg(t.fg).bg(S.field)), t.n("   "), t.a("−"), t.n("   "), t.a("+")], Some(t.d("0 to 30. More is safer but slower; 10 takes about 20 minutes.")));
+    setting(&mut card, t, "Email receipts", toggle(t, true), None);
+    let mut node = inset(t, "cuprated  · Monero node on this Nodo", 36, Some(if picking { "▴" } else { "▾" }));
+    if picking {
+        node[0].style = node[0].style.bg(S.field);
+    }
+    card.row(t, {
+        let mut spans = vec![t.n(pad("Monero node", 24))];
+        spans.extend(node);
+        spans
+    });
+    if picking {
+        let list = Style::new().fg(t.fg).bg(S.raised);
+        let pad_left = " ".repeat(24);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!(" ✓ {} ", pad("cuprated  · on this Nodo (recommended)", 36)), list)]);
+        card.row(t, vec![t.n(pad_left.clone()), Span::styled(format!("   {} ", pad("monerod   · on this Nodo, stopped", 36)), Style::new().fg(t.dim).bg(S.raised))]);
+        card.row(t, vec![t.n(pad_left), Span::styled(format!("   {} ", pad("Another node… type its address", 36)), Style::new().fg(t.accent).bg(S.raised))]);
+    } else {
+        card.row(t, vec![t.n(" ".repeat(24)), t.d("Picked from your apps, so it follows cuprated if its address changes.")]);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    let mut before = vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank];
+    before.push(heading(t, "Settings"));
+    before.push(quiet(t, "mk-pay restarts with the new settings. If it doesn't start, they're undone by themselves."));
+    before.push(Item::Blank);
+    let keys = if picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  ↵ save  Esc cancel" };
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), keys, w, h)
+}
+
+fn t2_settings_rolled_back(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("mk-pay didn't start with the new settings, so they were undone")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It's running again with the settings it had before. What you changed:")]);
+    card.row(t, vec![t.d(pad("  Confirmations to wait", 26)), t.n("10  →  0")]);
+    card.row(t, vec![t.d(pad("  Email receipts", 26)), t.n("On  →  Off")]);
+    card.blank(t);
+    card.row(t, vec![t.d("mk-pay said: \"confirmations must be at least 1\"")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show log ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Keep as it is", false), ("Edit again", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), vec![Item::Blank, trail(t, &["Apps", "mk-pay", "Settings"]), Item::Blank], card, Vec::new(), "Keys: ↵ edit again  Esc keep as it is", w, h)
 }
 
 fn t2_unlock(t: &Theme, w: u16, h: u16) -> Page {
@@ -2010,6 +2259,166 @@ fn t2_unlock(t: &Theme, w: u16, h: u16) -> Page {
     card.buttons(t, &[("Unlock", true)]);
     let before = vec![Item::Blank, Item::Blank];
     fit_page(t, top2(t, "Home", None, w), before, card, Vec::new(), "Keys: type the passphrase  ↵ unlock", w, h)
+}
+
+// Sources (the old Feeds), under Apps › Get apps › Sources. Adding your own is a main task, so it
+// is the card's primary action. Keys are shown as four groups of four, to compare by eye.
+
+fn fingerprint_groups(fp: &str) -> String {
+    let parts: Vec<&str> = fp.split(':').collect();
+    parts.chunks(4).map(|c| c.join("")).collect::<Vec<_>>().join("  ")
+}
+
+const MONOKULO_FP: &str = "62:54:a2:57:c2:57:9d:7e:11:8f:4c:30:a9:32:93:07";
+const ALICE_FP: &str = "9f:03:6e:b1:44:d2:7a:10:c8:5b:e3:91:0d:76:2a:ff";
+const ALICE_NEW_FP: &str = "17:c4:90:2e:aa:5f:63:08:b9:d1:4e:77:30:1c:e5:42";
+
+fn sources_trail(t: &Theme, last: &[&str]) -> Vec<Item> {
+    let mut parts = vec!["Apps", "Get apps", "Sources"];
+    parts.extend_from_slice(last);
+    vec![Item::Blank, trail(t, &parts), Item::Blank]
+}
+
+fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
+    if on_ {
+        vec![t.a("[x]"), t.n(" On ")]
+    } else {
+        vec![t.d("[ ]"), t.d(" Off")]
+    }
+}
+
+fn t2_sources(t: &Theme, w: u16, h: u16, details: bool) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    // name, address, apps, enabled, problem, key
+    type SourceRow<'a> = (&'a str, &'a str, &'a str, bool, Option<&'a str>, &'a str);
+    let rows: [SourceRow; 3] = [
+        ("monokulo", "nodo.monokulo.com/feed", "5 apps · built in", true, None, MONOKULO_FP),
+        ("Alice's apps", "apps.alice.example/feed", "2 apps", true, Some("Couldn't reach it since yesterday"), ALICE_FP),
+        ("Test builds", "192.168.1.40:8080/feed", "1 app", false, None, "4a:11:0e:93:5c:28:b7:f0:62:d9:13:8e:a4:07:5b:c1"),
+    ];
+    for (index, (name, address, count, enabled, problem, fp)) in rows.into_iter().enumerate() {
+        if index > 0 {
+            card.blank(t);
+        }
+        let mut first = vec![t.b(pad(name, 15)), t.n(pad(address, 28)), t.d(pad(count, 18))];
+        first.extend(toggle(t, enabled));
+        first.push(t.n("   "));
+        first.push(Span::styled("  Remove  ", Style::new().fg(t.fg).bg(S.raised)));
+        if index == 1 {
+            card.hover_row(t, first);
+        } else {
+            card.row(t, first);
+        }
+        if let Some(problem) = problem {
+            card.row(t, vec![t.n(" ".repeat(15)), t.e(format!("✕ {problem}")), t.d("   · Try again")]);
+        }
+        if details {
+            card.row(t, vec![t.n(" ".repeat(15)), t.d(format!("Key  {}", fingerprint_groups(fp)))]);
+        }
+    }
+    card.blank(t);
+    card.row(t, vec![t.a(if details { "Hide details ‹" } else { "Show details ›" })]);
+    card.blank(t);
+    card.buttons(t, &[("Add a source", true)]);
+    let mut before = sources_trail(t, &[]);
+    before.push(heading(t, "Sources"));
+    before.push(quiet(t, "Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed."));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↑↓ choose  Space on/off  a add  x remove  d details  Esc back", w, h)
+}
+
+fn t2_source_add(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Add a source")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Paste the address the publisher gave you.")]);
+    card.blank(t);
+    let mut address = vec![t.d(pad("Address", 10))];
+    address.extend(inset(t, "https://apps.bob.example/feed", 44, None));
+    card.row(t, address);
+    card.blank(t);
+    card.row(t, vec![t.d("Nothing is installed yet: the Nodo first shows you what the source offers and its key.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Check", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["Add"]), card, Vec::new(), "Keys: paste the address  ↵ check  Esc cancel", w, h)
+}
+
+fn t2_source_check(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.b("Bob's apps"), t.d("   apps.bob.example/feed")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It offers 3 apps: "), t.b("bob-notes"), t.n(", "), t.b("bob-photos"), t.n(", "), t.b("bob-backup")]);
+    card.blank(t);
+    card.row(t, vec![t.n("Its key")]);
+    card.row(t, vec![Span::styled(format!("  {}  ", fingerprint_groups("3c:8e:51:0a:d7:26:f4:9b:e0:12:6d:a8:47:c3:b5:19")), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))]);
+    card.blank(t);
+    card.row(t, vec![t.n("Check this matches what the publisher gave you, by a way you trust (in person, their site,")]);
+    card.row(t, vec![t.n("a message you know is from them). If it doesn't match, don't add it.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Add source", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["Add"]), card, Vec::new(), "Keys: ↵ add source  Esc cancel", w, h)
+}
+
+fn t2_source_errors(t: &Theme, w: u16) -> Page {
+    let make = |title: &str, body: &[&str]| {
+        let mut card = Card::new(w);
+        card.blank(t);
+        card.row(t, vec![t.e("✕  "), t.b(title.to_owned())]);
+        for line_ in body {
+            card.row(t, vec![t.n(format!("   {line_}"))]);
+        }
+        card.blank(t);
+        card
+    };
+    let cards = vec![
+        make("That address isn't a source", &["It answered, but with a web page, not a list of apps. Check you copied the whole address."]),
+        make("Couldn't reach it", &["Nothing answered at apps.bob.example. It may be offline, or the address may be wrong.", "Try again later, or check the address with the publisher."]),
+        make("Its signature doesn't check out", &["The list of apps wasn't signed by the key it claims. Someone may have tampered with it,", "so the Nodo won't use it. Tell the publisher."]),
+    ];
+    let mut before = sources_trail(t, &["Add"]);
+    before.push(heading(t, "When a source can't be added (three cases, shown in the Add card)"));
+    before.push(Item::Blank);
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, Vec::new(), "Each case appears in place of the source's details; the address stays filled in to fix and Check again.")
+}
+
+fn t2_source_key_changed(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("Alice's apps is now signed with a different key")]);
+    card.blank(t);
+    card.row(t, vec![t.n("This happens when a publisher replaces a lost key, and also when someone else takes over their address. Until you decide, the Nodo installs nothing new from Alice's apps.")]);
+    card.blank(t);
+    card.row(t, vec![t.d(pad("Key you trust", 15)), t.n(fingerprint_groups(ALICE_FP))]);
+    card.row(t, vec![t.d(pad("New key", 15)), Span::styled(format!(" {} ", fingerprint_groups(ALICE_NEW_FP)), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))]);
+    card.blank(t);
+    card.row(t, vec![t.n("Ask Alice, by a way you trust, whether the new key is hers. To trust it, type the source's name:")]);
+    let mut typed = vec![t.d(pad("Name", 15))];
+    typed.extend(inset(t, "", 30, None));
+    typed.push(t.d("   Alice's apps"));
+    card.row(t, typed);
+    card.blank(t);
+    card.buttons(t, &[("Trust the new key", false), ("Keep the old key", true)]);
+    let mut before = sources_trail(t, &["Alice's apps"]);
+    before.push(heading(t, "Check before you trust"));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: ↵ keep the old key  Tab move  Esc back", w, h)
+}
+
+fn t2_source_remove_builtin(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.b("Remove monokulo?")]);
+    card.blank(t);
+    card.row(t, vec![t.n("It came with the Nodo, but you don't have to keep it. Apps you installed from it keep")]);
+    card.row(t, vec![t.n("running; they just won't get updates until you add it back.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("To add it back later: Sources › Show details › Restore built-in sources.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Remove", true)]);
+    fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["monokulo"]), card, Vec::new(), "Keys: ↵ remove  Esc cancel", w, h)
 }
 
 #[cfg(test)]
@@ -2052,6 +2461,14 @@ mod tests {
             Scene::T2AppAbout | Scene::T2Review => Some("Install"),
             Scene::T2AppPage => Some("Update"),
             Scene::T2Unlock => Some("Unlock"),
+            Scene::T2Sources | Scene::T2SourcesDetails => Some("Add a source"),
+            Scene::T2SourceAdd => Some("Check"),
+            Scene::T2SourceCheck => Some("Add source"),
+            Scene::T2SourceKeyChanged => Some("Keep the old key"),
+            Scene::T2SourceRemoveBuiltin => Some("Remove"),
+            Scene::T2AppRemove => Some("Remove mk-pay"),
+            Scene::T2Settings => Some("Save"),
+            Scene::T2SettingsRolledBack => Some("Edit again"),
             _ => None,
         };
         for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {

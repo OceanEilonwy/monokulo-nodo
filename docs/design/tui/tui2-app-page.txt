@@ -8,9 +8,9 @@
        mk-pay   Payments for your shop
        ●  Running for 3 days   ·   open at https://pay.example.com
 
-       Version 0.2 is ready   fixes receipts in some currencies
+       Version 0.2 is ready   fixes receipts in some currencies                                       Update   
 
-                                                                                                      Update   
+                                                                 Restart          Stop           Remove…   
 
 
 
@@ -21,7 +21,6 @@
        Logs        Last problem: none                      ›
 
 
-    Restart  ·  Stop  ·  Remove
 
 
 
@@ -33,4 +32,5 @@
 
 
 
-    Click a section.   Keys: ↑↓ choose  ↵ open  u update  Esc back
+
+    Click a section.   Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back

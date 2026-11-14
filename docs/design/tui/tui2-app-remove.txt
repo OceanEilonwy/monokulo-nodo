@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Remove
+
+
+       ▲  Remove mk-pay?
+
+       Its data on the drive is deleted: orders, receipts and settings. Your shop stops taking
+       payments. Make a backup first if you might want it back.
+
+                                                                          Cancel             Remove mk-pay   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Esc cancel  (Remove asks for a click, not Enter)

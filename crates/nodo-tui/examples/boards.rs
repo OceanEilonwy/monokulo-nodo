@@ -187,7 +187,7 @@ renderVals() {{ return {{}}; }}
             String::new()
         } else {
             format!(
-                "<div style=\"font-size:13px;color:#D7DADC\">{} <span style=\"color:#A3AAB0\">(Mouse: left click, drag and the scroll wheel, as crossterm reports them; no hover.)</span></div>\n",
+                "<div style=\"font-size:13px;color:#D7DADC\">{} <span style=\"color:#A3AAB0\">(Mouse: click, drag, scroll wheel and hover, as crossterm reports them.)</span></div>\n",
                 escape(scene.clickable())
             )
         },
@@ -227,7 +227,7 @@ fn main() {
     for scene in Scene::ALL {
         emit(scene, 120, 36, "");
     }
-    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps] {
+    for scene in [Scene::Overview, Scene::Who, Scene::NetChecks, Scene::V3Web, Scene::V3HostingInternet, Scene::T2Home, Scene::T2GetApps, Scene::T2SourceKeyChanged] {
         emit(scene, 80, 24, "-80x24");
     }
     // Board names and sizes, one per line, for laying them out on the canvas.

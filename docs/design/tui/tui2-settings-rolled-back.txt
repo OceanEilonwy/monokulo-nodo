@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+
+       ▲  mk-pay didn't start with the new settings, so they were undone
+
+       It's running again with the settings it had before. What you changed:
+         Confirmations to wait   10  →  0
+         Email receipts          On  →  Off
+
+       mk-pay said: "confirmations must be at least 1"
+
+       Show log ›
+
+                                                                       Keep as it is          Edit again     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ edit again  Esc keep as it is
