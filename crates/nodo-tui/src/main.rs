@@ -134,7 +134,7 @@ fn main() -> ExitCode {
 
     let colorterm = std::env::var("COLORTERM").ok();
     let no_color = std::env::var_os("NO_COLOR").is_some();
-    let theme = Theme::detect(colorterm.as_deref(), no_color);
+    let theme = Theme::detect(colorterm.as_deref(), no_color).with_rounded(rounded_buttons());
 
     let result = if mock {
         match (screen, no_drive) {
@@ -166,4 +166,23 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `[tui] rounded_buttons` from the user's config, then the system's, resolved for this terminal.
+fn rounded_buttons() -> bool {
+    use nodo_tui::theme::RoundedButtons;
+    let mut paths = Vec::new();
+    if let Some(home) = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+    }) {
+        paths.push(home.join("nodo/tui.toml"));
+    }
+    paths.push(std::path::PathBuf::from("/etc/nodo/tui.toml"));
+    let choice = paths
+        .iter()
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .map_or(RoundedButtons::Auto, |text| RoundedButtons::from_config(&text));
+    let term = std::env::var("TERM").ok();
+    let program = std::env::var("TERM_PROGRAM").ok();
+    choice.resolve(term.as_deref(), program.as_deref(), std::env::var_os("KITTY_WINDOW_ID").is_some())
 }

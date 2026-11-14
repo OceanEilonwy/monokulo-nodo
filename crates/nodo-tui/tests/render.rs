@@ -229,59 +229,45 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "The TUI never formats a drive without you typing its label.", "↑↓ choose", "↵ confirm", "l system log", "! shell",
         ],
         ScreenId::WebSites => &[
-            "Package        Local  Onion  Public  Public address", "Status", "▸shop", "shop.example.com", "All online",
-            "monokulo-pay", "Not public", "◆ Device locked", "● Local network   ◉ Tor onion   ▲ Public, reveals your home IP   · off",
-            "A site can use any combination. Each address is switched on and off separately.", "example.com", "Porkbun",
-            "✓ Renew in 61 days", "203.0.113.42", "✓ Yes", "3 days ago",
-            "80 and 443 are open on this device because shop is public.", "✓ Reachable",
-            "↵ change exposure", "d domains", "t test reachability", "l proxy log", "n onion", "o take all sites offline",
+            "Home", "Packages", "Feeds", "Sites online", "Domain providers ›", "▸ shop", "https://shop.example.com",
+            "Home and internet", "monokulo-pay", "Home network and Tor", "moneropay", "Home network",
+            "To put another app online, open it in Packages.", "↵ open", "p providers", "↑↓ choose",
         ],
         ScreenId::WebExposure => &[
-            "Web › shop › Exposure", "● 1 unsaved change", "Where is shop available? Turn on any combination.",
-            "[x] ● Local network", "https://shop.local  Online", "Devices on your Wi-Fi or LAN", "[x] ◉ Tor onion",
-            "http://abc…xyz.onion  Online", "Anyone with the address, using Tor Browser", "[x] ▲ Public internet",
-            "https://shop.example.com  Turning on", "Anyone, at your own domain", "Turning on public internet",
-            "▲ Your home IP becomes visible in public DNS.", "▲ shop can be reached and attacked by anyone on the internet.",
-            "▲ Your router must forward ports 80 and 443 to this device.", "✕ Keeping onion on too can link it to your home IP.",
-            "Identical content on both addresses lets visitors connect them. Use a separate",
-            "site for onion if that address must stay anonymous.",
-            "Local and onion stay online while public is checked and confirmed.",
-            "↑↓ move", "Space toggle", "↵ save and check", "e edit address", "Esc back",
+            "Packages  ›  shop  ›  Hosting", "Choose who can open shop. Any combination works.", "[x]  Home network",
+            "Phones and computers on your Wi-Fi.   https://shop.local", "[x]  Tor",
+            "A private link that opens in Tor Browser. It doesn't reveal your home.", "[x]  Internet",
+            "Anyone, at a web address you own.", "Provider", "Porkbun", "Domain", "example.com", "Address",
+            "Visitors will be able to see your home's internet address.",
+            "With Tor on too, visitors could tell the two addresses are the same app.", "Show details ›", "Check and save",
+            "Tab move", "Space tick", "↵ save", "Esc back",
         ],
         ScreenId::WebProviders => &[
-            "Web › Domains › Connect a domain", "Bring your own domain", "Where is your DNS hosted?", "Provider", "Dynamic DNS",
-            "HTTPS without open ports", "▸ Porkbun", "Cloudflare", "GoDaddy", "▲ account", "Namecheap", "IONOS", "Gandi", "Name.com",
-            "Alibaba Cloud", "Hostinger", "▲ limited", "Ports needed", "Hover", "✕ no API", "Squarespace", "Domain", "example.com",
-            "API key", "••••••••••••••••", "Secret key", "✓ Test passed: read and wrote a", "Stored as a secret. Packages",
-            "↑↓ provider", "Tab fields", "t test", "↵ save", "? where to find keys", "Esc back",
+            "Web  ›  Domain providers  ›  Add", "Where did you buy your web address?", "▸ Porkbun", "Cloudflare",
+            "GoDaddy", "Namecheap", "Hover", "Can't be connected: no way to change records",
+            "Somewhere else? It can't be connected yet, but Tor works without a web address.", "↑↓ choose", "↵ next", "Esc back",
         ],
         ScreenId::WebCheck => &[
-            "Web › shop › Reachability check", "▲ One step needs you", "✓ Domain and API key work", "example.com", "✓ Public IP found",
-            "203.0.113.42", "✓ Router has a real public IP", "No CGNAT detected", "✓ Temporary DNS record works",
-            "Removed after this check", "✕ Port 80 is not reachable from outside", "✕ Port 443 is not reachable from outside",
-            "Timed out", "Set up port forwarding on your router", "http://192.168.1.1", "to 192.168.1.50:80", "to 192.168.1.50:443",
-            "Also reserve 192.168.1.50 for this device, so the forwarding keeps working.",
-            "Monokulo will not change your router automatically. UPnP is off by default.",
-            "shop is not public yet. Its local and onion addresses keep working during this check.",
-            "r check again", "? router guides", "o turn on Tor onion", "Esc back",
+            "Packages  ›  shop  ›  Hosting", "The internet can't reach your Nodo yet", "✓  Domain and API key work",
+            "✕  Port 80 is not reachable from outside", "✕  Port 443 is not reachable from outside",
+            "Your router needs to send web visitors to the Nodo. In its settings, forward:", "to 192.168.1.50:80",
+            "to 192.168.1.50:443", "A private Tor link works without any of this.", "Show details ›", "Check again",
+            "Use Tor instead", "r check again", "? router help", "Esc back",
         ],
         ScreenId::WebConfirm => &[
-            "Web › shop › Go public", "✓ All checks passed", "This puts shop on the public internet", "https://shop.example.com",
-            "shop.example.com  A  203.0.113.42", "Opens 80 and 443", "[ ] Require a password in front of this site",
-            "shop has its own login", "Repeated requests are rate-limited", "Admin paths are blocked from the public",
-            "▲ Your home IP will be published, and DNS history can keep it after you stop.",
-            "▲ Anyone can link this domain to your IP, including your Monero node's IP.",
-            "▲ Certificate logs record shop.example.com permanently.",
-            "You can take this offline at any time from the Web tab.", "Type the address to confirm",
-            "▸Cancel", "Go public", "Tab fields", "Space toggle", "↵ confirm", "Esc cancel",
+            "Packages  ›  shop  ›  Hosting", "Ready to put shop on the internet", "✓  Porkbun accepted the key",
+            "✓  shop.example.com points to your home", "✓  The internet can reach your Nodo",
+            "Anyone will be able to open https://shop.example.com",
+            "Your home's internet address becomes public.", "Records of it can stay online after you stop.",
+            "Anyone can connect this address to your home, including your Monero node.",
+            "Public certificate logs list shop.example.com permanently.", "Cancel", "Put shop online",
+            "▸ Cancel is selected for the keyboard.", "Tab choose", "↵ press", "Esc cancel",
         ],
         ScreenId::WebCgnat => &[
-            "Web › shop › Reachability check", "✕ Public cannot work on this connection", "Your ISP shares your public IP (CGNAT)",
-            "Your router's WAN address", "100.72.14.9 in 100.64.0.0/10", "Address the internet sees", "203.0.113.42",
-            "▸◉ Turn on Tor onion", "Works now, no domain needed", "Ask your ISP for a public IP", "Some offer it free or as an add-on",
-            "Use IPv6 if your ISP provides it", "Only IPv6 visitors can reach you", "Connect your own relay tunnel",
-            "Needs a server you control", "Your domain stays connected. Run this check again if your connection changes.",
-            "↑↓ choose", "↵ continue", "r check again", "Esc back",
+            "Packages  ›  shop  ›  Hosting", "The internet can't reach your Nodo",
+            "Your internet provider shares one address between many homes",
+            "A private Tor link still works on this connection.", "Show details ›", "Check again", "Use Tor instead",
+            "o use Tor", "r check again", "Esc back",
         ],
         ScreenId::WebDomain => &[
             "Web › Domains", "✓ Certificates in place", "example.com", "Porkbun", "DNS-01 through Porkbun",
@@ -292,9 +278,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
             "shop.home.example.com", "Hidden by this network", "rebinding exceptions", "↵ save", "Esc back",
         ],
         ScreenId::WebCertificate => &[
-            "Web › shop › Certificate", "◆ Getting a certificate", "shop.example.com is configured on this device",
-            "Asking Let's Encrypt to prove control of the name", "DNS-01 through Porkbun", "Certificate in place",
-            "What happens now", "It usually takes under a minute.", "r refresh", "l proxy log", "Esc back",
+            "Packages  ›  shop  ›  Hosting", "shop is online", "https://shop.example.com",
+            "The Nodo renews the secure connection and follows your home's address by itself.", "Done", "↵ done",
         ],
         ScreenId::WebTrust => &[
             "Web › Domains › Local CA", "✓ Served at http://nodo.local", "Open on a phone or computer here",
@@ -372,7 +357,7 @@ fn colours_follow_the_design() {
         let (buffer, _) = draw(&app, 100, 32);
         for cell in buffer.content() {
             assert!(
-                cell.bg == theme.ground || cell.bg == theme.accent,
+                [theme.ground, theme.accent, theme.bar, theme.card, theme.field, theme.raised].contains(&cell.bg),
                 "{}: unexpected background {:?}",
                 id.slug(),
                 cell.bg
@@ -438,11 +423,14 @@ fn the_focused_row_stays_visible_on_a_small_terminal() {
 /// The confirm buttons must not scroll off when the terminal is short.
 #[test]
 fn dangerous_screens_keep_their_buttons_visible_when_small() {
-    for id in [ScreenId::Review, ScreenId::AddFeed, ScreenId::WebConfirm] {
+    for id in [ScreenId::Review, ScreenId::AddFeed] {
         let (app, _) = fixture(id);
         let screen = text(&draw(&app, 80, 16).0);
         assert!(screen.contains("▸Cancel"), "{}:\n{screen}", id.slug());
     }
+    let (app, _) = fixture(ScreenId::WebConfirm);
+    let screen = text(&draw(&app, 80, 16).0);
+    assert!(screen.contains("Cancel") && screen.contains("Put shop online"), "webconfirm:\n{screen}");
 }
 
 /// Real packages have labels longer than the design's, such as cuprated's "Restricted RPC on

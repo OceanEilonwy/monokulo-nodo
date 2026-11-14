@@ -16,6 +16,14 @@ pub struct Theme {
     pub err: Color,
     pub info: Color,
     pub border: Color,
+    /// Surfaces, darkest to lightest: inset fields sit below the background, bars and cards rise
+    /// above it, and selected or open things are raised further. Steps stay small to keep it calm.
+    pub field: Color,
+    pub bar: Color,
+    pub card: Color,
+    pub raised: Color,
+    /// Buttons get rounded ends (Powerline caps U+E0B6 and U+E0B4), which need a Nerd Font.
+    pub rounded: bool,
     mono: bool,
 }
 
@@ -30,6 +38,11 @@ impl Theme {
             err: Color::Rgb(0xFF, 0x8A, 0x7A),
             info: Color::Rgb(0x86, 0xBE, 0xFF),
             border: Color::Rgb(0x54, 0x5C, 0x63),
+            field: Color::Rgb(0x0B, 0x0D, 0x0F),
+            bar: Color::Rgb(0x17, 0x1A, 0x1D),
+            card: Color::Rgb(0x1D, 0x21, 0x25),
+            raised: Color::Rgb(0x2C, 0x32, 0x38),
+            rounded: false,
             mono: false,
         }
     }
@@ -44,6 +57,11 @@ impl Theme {
             err: Color::Indexed(210),
             info: Color::Indexed(111),
             border: Color::Indexed(240),
+            field: Color::Indexed(232),
+            bar: Color::Indexed(234),
+            card: Color::Indexed(235),
+            raised: Color::Indexed(237),
+            rounded: false,
             mono: false,
         }
     }
@@ -58,6 +76,11 @@ impl Theme {
             err: Color::Reset,
             info: Color::Reset,
             border: Color::Reset,
+            field: Color::Reset,
+            bar: Color::Reset,
+            card: Color::Reset,
+            raised: Color::Reset,
+            rounded: false,
             mono: true,
         }
     }
@@ -72,6 +95,17 @@ impl Theme {
         } else {
             Self::ansi256()
         }
+    }
+
+    pub fn with_rounded(mut self, rounded: bool) -> Self {
+        self.rounded = rounded && !self.mono;
+        self
+    }
+
+    /// Whether this theme is the no-colour one, where surfaces cannot show and selection uses
+    /// reverse video.
+    pub fn is_mono(&self) -> bool {
+        self.mono
     }
 
     pub fn base(&self) -> Style {
@@ -123,6 +157,58 @@ impl Theme {
     }
 }
 
+/// The `[tui] rounded_buttons` choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundedButtons {
+    Auto,
+    On,
+    Off,
+}
+
+impl RoundedButtons {
+    /// Reads `rounded_buttons` from the `[tui]` table of a config file's text. Anything missing or
+    /// unknown is `Auto`.
+    pub fn from_config(text: &str) -> Self {
+        let mut in_tui = false;
+        for line in text.lines() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_tui = line == "[tui]";
+                continue;
+            }
+            if !in_tui {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "rounded_buttons" {
+                    return match value.trim().trim_matches('"') {
+                        "on" | "true" => Self::On,
+                        "off" | "false" => Self::Off,
+                        _ => Self::Auto,
+                    };
+                }
+            }
+        }
+        Self::Auto
+    }
+
+    /// `Auto` turns rounded ends on only in terminals known to draw Nerd Font symbols without a
+    /// patched font: kitty, WezTerm and Ghostty bundle them. `TERM` usually survives SSH, so a
+    /// session from those terminals is recognised too. Anywhere else, including the Linux console,
+    /// buttons keep plain flat ends, which always draw correctly.
+    pub fn resolve(self, term: Option<&str>, term_program: Option<&str>, kitty: bool) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::Auto => {
+                kitty
+                    || matches!(term, Some("xterm-kitty" | "xterm-ghostty" | "wezterm"))
+                    || matches!(term_program, Some("WezTerm" | "ghostty"))
+            }
+        }
+    }
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self::truecolor()
@@ -139,6 +225,21 @@ mod tests {
         assert_eq!(Theme::detect(Some("truecolor"), false), Theme::truecolor());
         assert_eq!(Theme::detect(Some("24bit"), false), Theme::truecolor());
         assert_eq!(Theme::detect(None, false), Theme::ansi256());
+    }
+
+    #[test]
+    fn rounded_buttons_config_and_auto_detection() {
+        assert_eq!(RoundedButtons::from_config("[tui]\nrounded_buttons = \"on\"\n"), RoundedButtons::On);
+        assert_eq!(RoundedButtons::from_config("[tui]\nrounded_buttons = \"off\" # plain\n"), RoundedButtons::Off);
+        assert_eq!(RoundedButtons::from_config("[other]\nrounded_buttons = \"on\"\n"), RoundedButtons::Auto);
+        assert_eq!(RoundedButtons::from_config(""), RoundedButtons::Auto);
+        assert!(RoundedButtons::Auto.resolve(Some("xterm-kitty"), None, false));
+        assert!(RoundedButtons::Auto.resolve(Some("xterm-256color"), Some("WezTerm"), false));
+        assert!(!RoundedButtons::Auto.resolve(Some("linux"), None, false));
+        assert!(!RoundedButtons::Auto.resolve(Some("xterm-256color"), None, false));
+        assert!(!RoundedButtons::Off.resolve(Some("xterm-kitty"), None, true));
+        assert!(RoundedButtons::On.resolve(Some("linux"), None, false));
+        assert!(!Theme::mono().with_rounded(true).rounded, "no colour means no caps to draw");
     }
 
     #[test]

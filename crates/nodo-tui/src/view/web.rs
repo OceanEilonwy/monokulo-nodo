@@ -1,264 +1,294 @@
-//! The six screens for putting a site online.
+//! Web flow v3: the Web tab lists the sites that are online; a click opens that app's Hosting,
+//! where home network, Tor and internet are ticked and, for the internet, a connected provider's
+//! domain is used. Domain providers are added once, under Web › Domain providers.
+//!
+//! Plain words on the main screens; addresses, records and ports only behind "Show details".
+//! Every row, field, tick box and button is a click target (`crate::hit`).
 
-use nodo_api::Exposure;
+use crossterm::event::KeyCode;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::layout::{Item, Page, Panel};
-use super::{button_line, checkbox, hints, mark, pad, tab_bar};
+use super::layout::{Item, Page};
+use super::pad;
+use super::v3::{heading, inset, line, margin, quiet, tick, trail, Card, Screen3};
 use crate::app::*;
+use crate::hit::{Click, Target};
 use crate::model::*;
-use crate::secret::{Input, STORED_MASK};
 use crate::theme::Theme;
 
-fn crumbs(t: &Theme, site: &str, leaf: &str) -> Line<'static> {
-    Line::from(vec![t.n("Web "), t.d("› "), t.n(format!("{site} ")), t.d("› "), t.b(leaf.to_owned())])
+/// The size of the frame being drawn. Pages fit cards to it, so it is the real area, not the last
+/// size the app was told about.
+fn size(_app: &App) -> (u16, u16) {
+    super::frame_size()
 }
 
-fn online_count(exposure: Exposure) -> usize {
-    usize::from(exposure.local) + usize::from(exposure.onion) + usize::from(exposure.public)
-}
-
-pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
-    let web = &app.data.web;
-    let mut rows = vec![Item::Row(
-        Line::from(t.d(" Package        Local  Onion  Public  Public address")),
-        Line::from(t.d("Status")),
-    )];
-    for (index, site) in web.sites.iter().enumerate() {
-        let is_selected = index == selected;
-        let on = |flag: bool, symbol: &'static str, span: fn(&Theme, &'static str) -> Span<'static>| {
-            if flag {
-                span(t, symbol)
-            } else {
-                t.d("·")
-            }
-        };
-        let e = site.exposure;
-        let address = if e.public {
-            site.public_host.clone().unwrap_or_default()
-        } else if online_count(e) > 0 {
-            "Not public".to_owned()
-        } else {
-            "Off".to_owned()
-        };
-        let public_cert = site.public_host.as_deref().filter(|_| e.public).and_then(|host| web.cert(host));
-        let status = if site.locked {
-            t.a("◆ Device locked")
-        } else if public_cert.is_some_and(|c| matches!(c.state, nodo_api::CertState::Failed | nodo_api::CertState::Expired)) {
-            t.e("✕ No certificate")
-        } else if public_cert.is_some_and(|c| matches!(c.state, nodo_api::CertState::Obtaining | nodo_api::CertState::Waiting)) {
-            t.a("◆ Getting certificate")
-        } else {
-            match online_count(e) {
-                0 => t.d("Off"),
-                1 => t.o("Online"),
-                _ => t.o("All online"),
-            }
-        };
-        let left = Line::from(vec![
-            t.n(mark(is_selected, &format!(" {}", pad(&site.package, 15)))),
-            on(e.local, "●", |t, s| t.o(s)),
-            t.n("      "),
-            on(e.onion, "◉", |t, s| t.i(s)),
-            t.n("      "),
-            on(e.public, "▲", |t, s| t.a(s)),
-            t.n("       "),
-            if e.public { t.n(address) } else { t.d(address) },
-        ]);
-        rows.push(if is_selected {
-            Item::Selected(left, Line::from(status))
-        } else {
-            Item::Row(left, Line::from(status))
-        });
-    }
-    rows.push(Item::Blank);
-    rows.push(Item::Text(Line::from(t.d(" ● Local network   ◉ Tor onion   ▲ Public, reveals your home IP   · off"))));
-    rows.push(Item::Text(Line::from(t.d(
-        " A site can use any combination. Each address is switched on and off separately.",
-    ))));
-
-    let pair = |label: &str, value: Span<'static>| Item::Row(Line::from(t.d(label.to_owned())), Line::from(value));
-    let domain = Panel::new(
-        "Domain",
-        vec![
-            pair("Domain", t.n(web.domain.clone())),
-            pair("Provider", t.n(web.provider.clone())),
-            pair("Certificates", super::certs::overview_line(t, web)),
-        ],
-    );
-    let ddns = Panel::new(
-        "Dynamic DNS",
-        vec![
-            pair("Public IP", t.n(web.public_ip.clone())),
-            pair("DNS matches", if web.dns_matches { t.o("✓ Yes") } else { t.e("✕ No") }),
-            pair("Last changed", t.n(web.dns_changed.clone())),
-        ],
-    );
-    let public: Vec<&str> =
-        web.sites.iter().filter(|site| site.exposure.public).map(|site| site.package.as_str()).collect();
-    let ports = if public.is_empty() {
-        Item::Text(Line::from(t.n("80 and 443 are closed on this device, because no site is public.")))
+/// A row marker: `▸` where the keyboard focus is, so focus reads without colour.
+fn marker(t: &Theme, focused: bool) -> Span<'static> {
+    if focused {
+        t.a("▸ ")
     } else {
-        let names = public.join(", ");
-        let verb = if public.len() == 1 { "is" } else { "are" };
-        Item::Row(
-            Line::from(t.n(format!("80 and 443 are open on this device because {names} {verb} public."))),
-            Line::from(if web.reachable { t.o("✓ Reachable") } else { t.e("✕ Not reachable") }),
-        )
-    };
-    if let Some(bad) = web.certs.iter().find(|c| c.problem.is_some() && c.state != nodo_api::CertState::Valid) {
-        rows.push(Item::Blank);
-        rows.push(Item::Text(Line::from(vec![
-            t.e(format!("✕ {}: ", bad.host)),
-            t.n(bad.problem.clone().unwrap_or_default()),
-        ])));
+        t.n("  ")
     }
+}
+
+fn label(t: &Theme, text: &str, focused: bool) -> Span<'static> {
+    if focused {
+        Span::styled(text.to_owned(), Style::new().fg(t.accent).add_modifier(Modifier::BOLD))
+    } else {
+        t.b(text.to_owned())
+    }
+}
+
+/// Who can open a site, in words.
+pub fn reach_words(site: &Site) -> &'static str {
+    let e = site.exposure;
+    match (e.local, e.onion, e.public) {
+        (_, _, true) if e.local || e.onion => "Home and internet",
+        (_, _, true) => "Internet",
+        (true, true, false) => "Home network and Tor",
+        (true, false, false) => "Home network",
+        (false, true, false) => "Tor",
+        (false, false, false) => "Not online",
+    }
+}
+
+fn site_address(site: &Site) -> String {
+    if site.exposure.public {
+        if let Some(host) = &site.public_host {
+            return format!("https://{host}");
+        }
+    }
+    if site.exposure.local && !site.local_url.is_empty() {
+        return site.local_url.clone();
+    }
+    if site.exposure.onion && !site.onion_url.is_empty() {
+        return site.onion_url.clone();
+    }
+    String::new()
+}
+
+fn short(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        text.to_owned()
+    } else {
+        let head: String = text.chars().take(width.saturating_sub(1)).collect();
+        format!("{head}…")
+    }
+}
+
+fn details_toggle(open: bool) -> &'static str {
+    if open {
+        "Hide details ‹"
+    } else {
+        "Show details ›"
+    }
+}
+
+/// The Web tab: only the sites that are online. A click opens that app's Hosting.
+pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Web, w);
+    let web = &app.data.web;
+    let active = app.active_sites();
+    let mut card = Card::new(t, w);
+    let mut card_targets = Vec::new();
+    card.blank(t);
+    if active.is_empty() {
+        card.row(t, vec![t.d("No site is online yet.")]);
+    }
+    let address_width = if w >= 100 { 34 } else { 24 };
+    for (index, site) in active.iter().enumerate() {
+        if index > 0 {
+            card.blank(t);
+        }
+        let focused = index == selected;
+        let status = if site.locked {
+            t.a("  Locked until unlocked")
+        } else if site.local_waiting {
+            t.a("  Waiting for a home address")
+        } else {
+            t.n("")
+        };
+        card.row(
+            t,
+            vec![
+                marker(t, focused),
+                label(t, &pad(&site.package, 15), focused),
+                t.n(pad(&short(&site_address(site), address_width), address_width + 2)),
+                t.d(pad(reach_words(site), 22)),
+                status,
+                t.d("›"),
+            ],
+        );
+        card_targets.push(Target::row(site.package.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+    }
+    card.blank(t);
+    screen.before = vec![
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t), t.b("Sites online")]), Line::from(vec![t.a("Domain providers ›"), t.n("    ")])),
+        Item::Blank,
+    ];
+    screen.targets.push(Target::text("Domain providers ›", Click::Key(KeyCode::Char('p'))));
+    let mut after = vec![Item::Blank, quiet(t, "To put another app online, open it in Packages.")];
     if let Some(problem) = &web.local_problem {
-        rows.push(Item::Blank);
-        rows.push(Item::Text(Line::from(vec![t.a("▲ Local sites are unavailable: "), t.n(problem.clone())])));
+        after.push(Item::Blank);
+        after.push(line(vec![margin(t), t.a(problem.clone())]));
         if let Some(remedy) = &web.local_remedy {
-            rows.push(Item::Text(Line::from(t.d(format!("  {remedy}")))));
+            after.push(quiet(t, remedy));
         }
     }
     if let Some(note) = &web.local_records_note {
-        rows.push(Item::Blank);
-        rows.push(Item::Text(Line::from(vec![t.a("▲ Local names: "), t.n(note.clone())])));
+        after.push(Item::Blank);
+        after.push(quiet(t, note));
     }
-    Page::new(tab_bar(app, t, Tab::Web), Line::from(t.d("monokulo-nodo")))
-        .panel(Panel::new("Sites", rows).grow())
-        .columns(vec![(1, vec![domain]), (1, vec![ddns])])
-        .panel(Panel::new("Ports", vec![ports]))
-        .footer(Item::Text(hints(
-            t,
-            &[
-                ("↵", "change exposure"),
-                ("d", "domains"),
-                ("t", "test reachability"),
-                ("l", "proxy log"),
-                ("n", "onion"),
-                ("o", "take all sites offline"),
-            ],
-        )))
-}
-
-pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
-    let Some(site) = app.data.web.sites.iter().find(|site| site.package == state.site) else {
-        return Page::new(crumbs(t, &state.site, "Exposure"), Line::default());
-    };
-    let saved = site.exposure;
-    let draft = state.draft;
-    let changes = usize::from(draft.local != saved.local)
-        + usize::from(draft.onion != saved.onion)
-        + usize::from(draft.public != saved.public);
-    let right = match changes {
-        0 => t.d("No unsaved changes"),
-        1 => t.a("● 1 unsaved change"),
-        n => t.a(format!("● {n} unsaved changes")),
-    };
-    let status = |on_now: bool, on_draft: bool| -> Span<'static> {
-        match (on_now, on_draft) {
-            (true, true) => t.o("Online"),
-            (false, true) => t.a("Turning on"),
-            (true, false) => t.a("Turning off"),
-            (false, false) => t.d("Off"),
-        }
-    };
-    let host = site.public_host.as_deref().map_or_else(|| "no address yet".to_owned(), |host| format!("https://{host}"));
-    let local_note = match (&app.data.web.local_problem, site.local_waiting || site.local_url.is_empty()) {
-        (Some(problem), true) => format!("Unavailable: {problem}"),
-        _ => "Devices on your Wi-Fi or LAN".to_owned(),
-    };
-    let rows = [
-        (draft.local, t.o("●"), "Local network", site.local_url.clone(), saved.local, local_note.as_str()),
-        (draft.onion, t.i("◉"), "Tor onion", site.onion_url.clone(), saved.onion, "Anyone with the address, using Tor Browser"),
-        (draft.public, t.a("▲"), "Public internet", host, saved.public, "Anyone, at your own domain"),
-    ];
-    let mut items = Vec::new();
-    let web = &app.data.web;
-    let cert_of = |index: usize| match index {
-        // Only a name under the owner's domain has a public certificate worth a line here.
-        0 => web.site_certs(&state.site).find(|c| c.kind == CertKind::LocalDomain),
-        2 => site.public_host.as_deref().filter(|_| saved.public).and_then(|host| web.cert(host)),
-        _ => None,
-    };
-    for (index, (on, symbol, label, address, was_on, note)) in rows.into_iter().enumerate() {
-        let selected = index == state.selected;
-        let left = Line::from(vec![t.n(mark(selected, &format!(" {} ", checkbox(on)))), symbol, t.n(format!(" {label}"))]);
-        let right = Line::from(vec![t.n(format!("{address}  ")), status(was_on, on)]);
-        items.push(if selected { Item::Selected(left, right) } else { Item::Row(left, right) });
-        items.push(Item::Text(Line::from(t.d(format!("       {note}")))));
-        if let Some(cert) = cert_of(index) {
-            items.push(Item::Text(super::certs::exposure_note(t, cert)));
-        }
-        if index < 2 {
-            items.push(Item::Blank);
-        }
+    if !web.sites.iter().any(|site| site.exposure.public) {
+        after.push(Item::Blank);
+        after.push(quiet(t, "Nothing is on the internet, so ports 80 and 443 are closed on this device."));
     }
-    if let Some(input) = &state.editing_host {
-        items.push(Item::Blank);
-        items.push(Item::Text(Line::from(vec![t.d(" Public address: "), t.n(input.display()), t.s(" ")])));
-    }
-
-    let mut page = Page::new(
-        Line::from(vec![t.n("Web "), t.d("› "), t.b(state.site.clone()), t.n(" "), t.d("› "), t.n("Exposure")]),
-        Line::from(right),
+    screen.after = after;
+    screen.finish(
+        t,
+        card,
+        card_targets,
+        Vec::new(),
+        "Keys: ↑↓ choose  ↵ open  p providers  n Tor links  d certificates",
+        w,
+        h,
     )
-    .panel(Panel::new(
-        format!("Where is {} available? Turn on any combination.", state.site),
-        items,
-    ));
-    if draft.public && !saved.public {
-        let mut warning = vec![
-            Item::Text(Line::from(vec![t.a("▲"), t.n(" Your home IP becomes visible in public DNS.")])),
-            Item::Text(Line::from(vec![
-                t.a("▲"),
-                t.n(format!(" {} can be reached and attacked by anyone on the internet.", state.site)),
-            ])),
-            Item::Text(Line::from(vec![t.a("▲"), t.n(" Your router must forward ports 80 and 443 to this device.")])),
-        ];
-        if draft.onion {
-            warning.push(Item::Blank);
-            warning.push(Item::Text(Line::from(t.e("✕ Keeping onion on too can link it to your home IP."))));
-            warning.push(Item::Text(Line::from(t.d(
-                "  Identical content on both addresses lets visitors connect them. Use a separate",
-            ))));
-            warning.push(Item::Text(Line::from(t.d("  site for onion if that address must stay anonymous."))));
+}
+
+/// An app's Hosting: home network, Tor and internet, and for the internet the address.
+pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let web = &app.data.web;
+    let site = web.sites.iter().find(|s| s.package == state.site);
+    let name = state.site.as_str();
+    let focus = state.focus();
+    let order = state.order();
+    let index_of = |f: HostingFocus| order.iter().position(|x| *x == f).unwrap_or(0);
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    card.blank(t);
+
+    let local_url = site.map(|s| s.local_url.clone()).filter(|u| !u.is_empty()).unwrap_or_else(|| format!("https://{name}.local"));
+    let choices = [
+        (HostingFocus::Home, "Home network", state.draft.local, format!("Phones and computers on your Wi-Fi.   {local_url}")),
+        (HostingFocus::Tor, "Tor", state.draft.onion, "A private link that opens in Tor Browser. It doesn't reveal your home.".to_owned()),
+        (HostingFocus::Internet, "Internet", state.draft.public, "Anyone, at a web address you own.".to_owned()),
+    ];
+    for (index, (which, title, on, about)) in choices.into_iter().enumerate() {
+        if index > 0 {
+            card.blank(t);
         }
-        warning.push(Item::Blank);
-        warning.push(Item::Text(Line::from(t.d("Local and onion stay online while public is checked and confirmed."))));
-        page = page.panel(Panel::accent("Turning on public internet", warning).grow());
+        let focused = focus == which && !state.picking;
+        if focused {
+            card.focus_here();
+        }
+        card.row(t, vec![marker(t, focused), tick(t, on), t.n("  "), label(t, title, focused)]);
+        card.row(t, vec![t.d(format!("       {about}"))]);
+        ct.push(Target::row(title, Click::Pick { index: index_of(which), then: Some(KeyCode::Char(' ')) }).below(1));
     }
-    let keys: &[(&str, &str)] = if state.editing_host.is_some() {
-        &[("type", "an address"), ("↵", "done"), ("Esc", "cancel")]
-    } else {
-        &[("↑↓", "move"), ("Space", "toggle"), ("↵", "save and check"), ("e", "edit address"), ("Esc", "back")]
-    };
-    page.footer(Item::Text(hints(t, keys)))
+
+    let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
+    if state.draft.public {
+        card.blank(t);
+        if state.has_provider {
+            card.row(t, vec![field_label("Provider"), t.n(web.provider.clone())]);
+            card.blank(t);
+            let mut domain = vec![field_label("Domain")];
+            let domain_focus = focus == HostingFocus::Domain && !state.picking;
+            if domain_focus || state.picking {
+                card.focus_here();
+            }
+            domain.extend(inset(t, &web.domain, 28, Some(if state.picking { "▴" } else { "▾" }), domain_focus));
+            card.row(t, domain);
+            ct.push(Target::text(web.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) }));
+            if state.picking {
+                let list = Style::new().fg(t.fg).bg(t.raised);
+                let chosen = |i: usize| if state.pick == i { "▸" } else { " " };
+                card.row(
+                    t,
+                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} ✓ {} {} ", chosen(0), pad(&web.domain, 18), pad(&web.provider, 10)), list)],
+                );
+                ct.push(Target::text(format!("✓ {}", web.domain), Click::Pick { index: 0, then: Some(KeyCode::Enter) }));
+                card.row(
+                    t,
+                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", chosen(1), pad("+ Add a provider…", 32)), Style::new().fg(t.accent).bg(t.raised))],
+                );
+                ct.push(Target::text("+ Add a provider…", Click::Pick { index: 1, then: Some(KeyCode::Enter) }));
+            } else {
+                card.blank(t);
+                if focus == HostingFocus::Address {
+                    card.focus_here();
+                }
+                let mut address = vec![field_label("Address")];
+                address.extend(inset(t, state.sub.text(), 12, None, focus == HostingFocus::Address));
+                address.push(t.n(format!(" .{}", web.domain)));
+                card.row(t, address);
+                ct.push(Target::row(format!(".{}", web.domain), Click::Pick { index: index_of(HostingFocus::Address), then: None }));
+                card.blank(t);
+                card.row(t, vec![t.d("       Visitors will be able to see your home's internet address.")]);
+                if state.draft.onion {
+                    card.row(t, vec![t.a("       With Tor on too, visitors could tell the two addresses are the same app.")]);
+                }
+            }
+        } else {
+            card.row(t, vec![t.n("       To use a web address you own, first add the company you bought it from.")]);
+            card.row(t, vec![t.d("       You'll come back here when it's added.")]);
+            card.blank(t);
+            let at = index_of(HostingFocus::AddProvider);
+            card.inline_button(t, "Add a provider", 7, Click::Pick { index: at, then: Some(KeyCode::Enter) }, &mut ct);
+        }
+    }
+    card.blank(t);
+    let details_focus = focus == HostingFocus::Details && !state.picking;
+    if details_focus {
+        card.focus_here();
+    }
+    card.row(t, vec![marker(t, details_focus), t.a(details_toggle(state.details))]);
+    ct.push(Target::text(details_toggle(state.details), Click::Pick { index: index_of(HostingFocus::Details), then: Some(KeyCode::Enter) }));
+    if state.details {
+        if let Some(site) = site {
+            if !site.onion_url.is_empty() {
+                card.row(t, vec![t.d(format!("  Tor link        {}", site.onion_url))]);
+            }
+            if let Some(host) = &site.public_host {
+                card.row(t, vec![t.d(format!("  Internet address  {host}"))]);
+            }
+        }
+        if !web.acme.challenge.is_empty() {
+            card.row(t, vec![t.d(format!("  Certificates    {}", web.acme.challenge))]);
+        }
+        if !web.public_ip.is_empty() {
+            card.row(t, vec![t.d(format!("  Home's internet address   {}", web.public_ip))]);
+        }
+    }
+    card.blank(t);
+    let going_public = state.draft.public && site.is_some_and(|s| !s.exposure.public);
+    let primary = if going_public { "Check and save" } else { "Save" };
+    if order.contains(&HostingFocus::Save) {
+        // The button saves wherever the keyboard focus is: it moves the focus to itself first.
+        card.buttons(t, &[(primary, true, Click::Pick { index: index_of(HostingFocus::Save), then: Some(KeyCode::Enter) })], &mut ct);
+    }
+
+    screen.before = vec![
+        trail(t, &["Packages", name, "Hosting"], &mut screen.targets),
+        Item::Blank,
+        heading(t, "Hosting"),
+        quiet(t, &format!("Choose who can open {name}. Any combination works.")),
+    ];
+    let keys = if state.picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  Space tick  ↵ save  Esc back" };
+    screen.finish(t, card, ct, Vec::new(), keys, w, h)
 }
 
-fn capability_span(t: &Theme, capability: Capability) -> Span<'static> {
-    let text = match capability {
-        Capability::Yes => "✓",
-        Capability::Account => "▲ account",
-        Capability::Limited => "▲ limited",
-        Capability::PortsNeeded => "Ports needed",
-        Capability::NoApi => "✕ no API",
-    };
-    let padded = pad(text, 14);
-    match capability {
-        Capability::Yes => t.o(padded),
-        Capability::Account | Capability::Limited => t.a(padded),
-        Capability::PortsNeeded => t.d(padded),
-        Capability::NoApi => t.e(padded),
-    }
-}
-
-fn field_label(field: &str) -> String {
+fn field_name(field: &str) -> String {
     match field {
         "api_key" => "API key".to_owned(),
         "secret_key" => "Secret key".to_owned(),
         "api_token" => "API token".to_owned(),
-        "personal_access_token" => "Personal access token".to_owned(),
+        "personal_access_token" => "Access token".to_owned(),
         "username" => "Username".to_owned(),
         "access_key_id" => "AccessKey ID".to_owned(),
         "access_key_secret" => "AccessKey secret".to_owned(),
@@ -266,277 +296,302 @@ fn field_label(field: &str) -> String {
     }
 }
 
-fn credential(t: &Theme, label: &str, input: &Input, focused: bool, stored: bool, mask: &str) -> Vec<Item> {
-    let mut value = vec![if input.is_empty() && stored { t.n(mask.to_owned()) } else { t.n(input.display()) }];
-    if focused {
-        value.push(t.s(" "));
-    }
-    let label = if focused { t.b(format!("▸{label}")) } else { t.d(label.to_owned()) };
-    vec![Item::Text(Line::from(label)), Item::Text(Line::from(value))]
-}
-
+/// Domain providers: the list, choosing a company, its key, and done.
 pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
-    let mut rows = vec![Item::Text(Line::from(t.d(format!(
-        "   {}{}{}",
-        pad("Provider", 16),
-        pad("Dynamic DNS", 14),
-        "HTTPS without open ports"
-    ))))];
-    for (index, provider) in app.data.providers.iter().enumerate() {
-        let selected = index == state.selected;
-        let left = Line::from(vec![
-            t.n(format!(" {} {}", if selected { "▸" } else { " " }, pad(&provider.name, 16))),
-            capability_span(t, provider.dynamic_dns),
-            capability_span(t, provider.https_without_ports),
-        ]);
-        rows.push(if selected { Item::Selected(left, Line::default()) } else { Item::Row(left, Line::default()) });
-    }
-
-    let mut detail = Vec::new();
-    let current = app.data.providers.get(state.selected);
-    if let Some(provider) = current {
-        if provider.is_supported() {
-            let stored = provider.name == app.data.web.provider;
-            detail.push(Item::Text(Line::from(t.n(provider.instructions.clone()))));
-            detail.push(Item::Blank);
-            let long_mask = format!("{STORED_MASK}••••");
-            detail.extend(credential(t, "Domain", &state.domain, state.focus == ProviderFocus::Domain, false, ""));
-            let label = |index: usize, fallback: &str| {
-                provider.fields.get(index).map_or_else(|| fallback.to_owned(), |f| field_label(f))
-            };
-            detail.extend(credential(t, &label(0, "API key"), &state.api_key, state.focus == ProviderFocus::ApiKey, stored, &long_mask));
-            if provider.fields.len() != 1 {
-                detail.extend(credential(
-                    t,
-                    &label(1, "Secret key"),
-                    &state.secret_key,
-                    state.focus == ProviderFocus::SecretKey,
-                    stored,
-                    &long_mask,
-                ));
-            }
-            if let Some(note) = &provider.dns01_note {
-                detail.push(Item::Text(Line::from(t.a(format!("▲ Certificates without open ports: {note}")))));
-            }
-            detail.push(Item::Blank);
-            match &state.test {
-                Some(Ok(text)) => detail.push(Item::Text(Line::from(t.o(format!("✓ {text}"))))),
-                Some(Err(text)) => detail.push(Item::Text(Line::from(t.e(format!("✕ {text}"))))),
-                None => {}
-            }
-            detail.push(Item::Text(Line::from(t.d("Stored as a secret. Packages cannot read it."))));
-        } else {
-            detail.push(Item::Text(Line::from(t.e("✕ Not supported"))));
-            detail.push(Item::Blank);
-            detail.push(Item::Text(Line::from(t.n(provider.instructions.clone()))));
-            detail.push(Item::Blank);
-            detail.push(Item::Text(Line::from(t.d("Monokulo only works with providers that have an API."))));
-        }
-    }
-    let supported = current.is_some_and(Provider::is_supported);
-    let keys: &[(&str, &str)] = if supported {
-        &[("↑↓", "provider"), ("Tab", "fields"), ("t", "test"), ("↵", "save"), ("?", "where to find keys"), ("Esc", "back")]
-    } else {
-        &[("↑↓", "provider"), ("Esc", "back")]
-    };
-    let title = current.map_or_else(String::new, |provider| provider.name.clone());
-    Page::new(
-        Line::from(vec![t.n("Web "), t.d("› "), t.n("Domains "), t.d("› "), t.b("Connect a domain")]),
-        Line::from(t.d("Bring your own domain")),
-    )
-    .columns(vec![
-        (62, vec![Panel::new("Where is your DNS hosted?", rows).grow()]),
-        (38, vec![Panel::new(title, detail).grow()]),
-    ])
-    .footer(Item::Text(hints(t, keys)))
-}
-
-fn check_rows(t: &Theme, checks: &[Check]) -> Vec<Item> {
-    checks
-        .iter()
-        .map(|check| match check.state {
-            CheckState::Passed => Item::Row(
-                Line::from(vec![t.o("✓"), t.n(format!(" {}", check.text))]),
-                Line::from(t.d(check.note.clone())),
-            ),
-            CheckState::Failed => Item::Row(
-                Line::from(vec![t.e("✕ "), t.b(check.text.clone())]),
-                Line::from(t.e(check.note.clone())),
-            ),
-            CheckState::Unknown => Item::Row(
-                Line::from(vec![t.a("▲ "), t.n(check.text.clone())]),
-                Line::from(t.a(check.note.clone())),
-            ),
-        })
-        .collect()
-}
-
-pub fn check(t: &Theme, state: &WebCheckState) -> Page {
-    let failed = state.checks.iter().any(|check| check.state == CheckState::Failed);
-    let unknown = state.checks.iter().any(|check| check.state == CheckState::Unknown);
-    let right = if failed {
-        t.a("▲ One step needs you")
-    } else if unknown {
-        t.a("▲ Some checks could not be verified")
-    } else {
-        t.o("✓ All checks passed")
-    };
-    let mut page = Page::new(crumbs(t, &state.site, "Reachability check"), Line::from(right))
-        .panel(Panel::new("Checks", check_rows(t, &state.checks)));
-    if let Some(router) = &state.router {
-        let pair = |label: &str, value: &str| Item::Row(Line::from(t.d(label.to_owned())), Line::from(t.n(value.to_owned())));
-        page = page.panel(Panel::new(
-            "Set up port forwarding on your router",
-            vec![
-                pair("Router admin page", &router.admin_page),
-                pair("Forward TCP 80", &router.forward_http),
-                pair("Forward TCP 443", &router.forward_https),
-                Item::Blank,
-                Item::Text(Line::from(t.d(format!(
-                    "Also reserve {} for this device, so the forwarding keeps working.",
-                    router.device_ip
-                )))),
-                Item::Text(Line::from(t.d("Monokulo will not change your router automatically. UPnP is off by default."))),
-            ],
-        ));
-    }
-    if !state.manual.is_empty() {
-        let steps = state.manual.iter().map(|step| Item::Text(Line::from(t.n(format!(" • {step}"))))).collect();
-        page = page.panel(Panel::new("Check the ports yourself, from outside", steps));
-    }
-    if failed {
-        page = page.plain(vec![Item::Text(Line::from(t.n(format!(
-            " {} is not public yet. Its local and onion addresses keep working during this check.",
-            state.site
-        ))))]);
-    }
-    let keys: &[(&str, &str)] = if state.going_public && state.plan.is_some() && !failed {
-        &[("c", "continue to confirm"), ("r", "check again"), ("?", "router guides"), ("Esc", "back")]
-    } else {
-        &[("r", "check again"), ("?", "router guides"), ("o", "turn on Tor onion"), ("Esc", "back")]
-    };
-    page.footer(Item::Text(hints(t, keys)))
-}
-
-fn rate_limit_row(t: &Theme, app: &App, site: &str) -> Item {
-    let unenforced = app.data.web.sites.iter().any(|s| s.package == site && s.rate_limit_unenforced);
-    if unenforced {
-        Item::Row(
-            Line::from(vec![t.a("▲"), t.n(" Repeated requests are not rate-limited for this site")]),
-            Line::from(t.d("Not enforced")),
-        )
-    } else {
-        Item::Row(Line::from(vec![t.o("●"), t.n(" Repeated requests are rate-limited")]), Line::from(t.d("Always")))
-    }
-}
-
-pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
-    let plan = &state.plan;
-    let pair = |label: &str, value: &str| Item::Row(Line::from(t.d(label.to_owned())), Line::from(t.n(value.to_owned())));
-    let access_row = |focus: ConfirmFocus, on: bool, label: &str, note: &str| {
-        let selected = state.focus == focus;
-        let left = Line::from(t.n(mark(selected, &format!(" {} {label}", checkbox(on)))));
-        if selected {
-            Item::Selected(left, Line::from(note.to_owned()))
-        } else {
-            Item::Row(left, Line::from(t.d(note.to_owned())))
-        }
-    };
-    let mut address = vec![Item::Text(Line::from(t.d("Type the address to confirm")))];
-    let typing = state.focus == ConfirmFocus::Address;
-    let mut typed = vec![t.n(state.typed.display())];
-    if typing {
-        typed.push(t.s(" "));
-    }
-    address.push(Item::Text(Line::from(typed)));
-    if let Some(error) = &state.error {
-        address.push(Item::Text(Line::from(t.e(format!("✕ {error}")))));
-    }
-    Page::new(crumbs(t, &state.site, "Go public"), Line::from(t.o("✓ All checks passed")))
-        .panel(Panel::accent(
-            format!("This puts {} on the public internet", state.site),
-            vec![
-                pair("Address", &plan.url),
-                pair("DNS record", &plan.dns_record),
-                pair("Device firewall", &plan.firewall),
-            ],
-        ))
-        .panel(Panel::new(
-            "Access",
-            vec![
-                access_row(
-                    ConfirmFocus::Password,
-                    state.access.require_password,
-                    "Require a password in front of this site",
-                    &format!("{} has its own login", state.site),
-                ),
-                rate_limit_row(t, app, &state.site),
-                // Not a choice: the proxy never serves admin paths on a public address.
-                Item::Row(
-                    Line::from(vec![t.o("●"), t.n(" Admin paths are blocked from the public")]),
-                    Line::from(t.d("Always")),
-                ),
-            ],
-        ))
-        .panel(
-            Panel::new(
-                "Before you confirm",
-                vec![
-                    Item::Text(Line::from(vec![t.a("▲"), t.n(" Your home IP will be published, and DNS history can keep it after you stop.")])),
-                    Item::Text(Line::from(vec![t.a("▲"), t.n(" Anyone can link this domain to your IP, including your Monero node's IP.")])),
-                    Item::Text(Line::from(vec![t.a("▲"), t.n(format!(" Certificate logs record {} permanently.", plan.host))])),
-                    Item::Blank,
-                    Item::Text(Line::from(t.d("You can take this offline at any time from the Web tab."))),
-                ],
-            )
-            .grow(),
-        )
-        .plain(address)
-        .footer(Item::Row(
-            button_line(t, "Cancel", "Go public", state.focus == ConfirmFocus::GoPublic),
-            hints(t, &[("Tab", "fields"), ("Space", "toggle"), ("↵", "confirm"), ("Esc", "cancel")]),
-        ))
-}
-
-pub fn cgnat(t: &Theme, state: &CgnatState) -> Page {
-    let options = [
-        ("◉ Turn on Tor onion", "Works now, no domain needed"),
-        ("  Ask your ISP for a public IP", "Some offer it free or as an add-on"),
-        ("  Use IPv6 if your ISP provides it", "Only IPv6 visitors can reach you"),
-        ("  Connect your own relay tunnel", "Needs a server you control"),
-    ];
-    let mut choices: Vec<Item> = options
-        .iter()
-        .enumerate()
-        .map(|(index, (label, note))| {
-            let selected = index == state.choice;
-            let left = Line::from(t.n(mark(selected, &format!(" {label}"))));
-            if selected {
-                Item::Selected(left, Line::from((*note).to_owned()))
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Web, w);
+    let web = &app.data.web;
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    let mut after = Vec::new();
+    let mut after_targets = Vec::new();
+    card.blank(t);
+    let keys = match &state.stage {
+        ProviderStage::List => {
+            if app.has_provider() {
+                card.row(t, vec![t.b(pad(&web.provider, 14)), t.n(web.domain.clone())]);
             } else {
-                Item::Row(left, Line::from(t.d((*note).to_owned())))
+                card.row(t, vec![t.d("None yet.")]);
             }
-        })
-        .collect();
-    choices.push(Item::Blank);
-    choices.push(Item::Text(Line::from(t.d("Your domain stays connected. Run this check again if your connection changes."))));
-    Page::new(crumbs(t, &state.site, "Reachability check"), Line::from(t.e("✕ Public cannot work on this connection")))
-        .panel(Panel::error(
-            "Your ISP shares your public IP (CGNAT)",
-            vec![Item::Text(Line::from(t.n(
-                "Router forwarding will not help, because traffic stops at your ISP before it reaches your router. Dynamic DNS would point visitors at an address you do not control.",
-            )))],
-        ))
-        .panel(Panel::new(
-            "Evidence",
-            vec![
-                Item::Row(
-                    Line::from(t.d("Your router's WAN address")),
-                    Line::from(vec![t.n(format!("{} ", state.wan_address)), t.d(format!("in {}", state.wan_range))]),
-                ),
-                Item::Row(Line::from(t.d("Address the internet sees")), Line::from(t.n(state.internet_address.clone()))),
-            ],
-        ))
-        .panel(Panel::new("What you can do", choices).grow())
-        .footer(Item::Text(hints(t, &[("↑↓", "choose"), ("↵", "continue"), ("r", "check again"), ("Esc", "back")])))
+            card.blank(t);
+            let add = if app.has_provider() { "Change provider" } else { "Add a provider" };
+            card.buttons(t, &[(add, true, Click::Key(KeyCode::Char('a')))], &mut ct);
+            screen.before = vec![
+                trail(t, &["Web", "Domain providers"], &mut screen.targets),
+                Item::Blank,
+                heading(t, "Domain providers"),
+                quiet(t, "The company where you bought your web address. Add it once; then any app can use its domain."),
+                Item::Blank,
+            ];
+            after.push(Item::Blank);
+            after.push(line(vec![margin(t), t.a("Certificates and home names ›")]));
+            after_targets.push(Target::text("Certificates and home names ›", Click::Key(KeyCode::Char('c'))));
+            "Keys: a add  c certificates  Esc back"
+        }
+        ProviderStage::Pick => {
+            for (index, provider) in app.data.providers.iter().enumerate() {
+                let focused = index == state.selected;
+                if focused {
+                    card.focus_here();
+                }
+                let note = if !provider.is_supported() {
+                    t.d("Can't be connected: no way to change records".to_owned())
+                } else {
+                    t.d(provider.dns01_note.clone().unwrap_or_default())
+                };
+                card.row(t, vec![marker(t, focused), label(t, &pad(&provider.name, 14), focused), note]);
+                ct.push(Target::row(provider.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+            }
+            card.blank(t);
+            let first = if state.return_to.is_some() { "Packages" } else { "Web" };
+            screen.before = vec![
+                trail(t, &[first, "Domain providers", "Add"], &mut screen.targets),
+                Item::Blank,
+                heading(t, "Where did you buy your web address?"),
+            ];
+            match &state.test {
+                Some(Err(text)) => screen.before.push(line(vec![margin(t), t.e(text.clone())])),
+                _ => screen.before.push(Item::Blank),
+            }
+            after.push(Item::Blank);
+            after.push(quiet(t, "Somewhere else? It can't be connected yet, but Tor works without a web address."));
+            "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back"
+        }
+        ProviderStage::Key => {
+            let provider = app.data.providers.get(state.selected);
+            let name = provider.map_or("the provider", |p| p.name.as_str());
+            let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| field_name(f)).collect()).unwrap_or_default();
+            let mut domain = vec![t.d(pad("Web address", 15))];
+            domain.extend(inset(t, state.domain.text(), 34, None, state.focus == ProviderFocus::Domain));
+            card.row(t, domain);
+            ct.push(Target::row("Web address", Click::Pick { index: 0, then: None }));
+            card.blank(t);
+            let first = names.first().cloned().unwrap_or_else(|| "API key".to_owned());
+            let mut key = vec![t.d(pad(&first, 15))];
+            key.extend(inset(t, &state.api_key.display(), 34, None, state.focus == ProviderFocus::ApiKey));
+            card.row(t, key);
+            ct.push(Target::row(first, Click::Pick { index: 1, then: None }));
+            if let Some(second) = names.get(1) {
+                card.blank(t);
+                let mut secret = vec![t.d(pad(second, 15))];
+                secret.extend(inset(t, &state.secret_key.display(), 34, None, state.focus == ProviderFocus::SecretKey));
+                card.row(t, secret);
+                ct.push(Target::row(second.clone(), Click::Pick { index: 2, then: None }));
+            }
+            card.blank(t);
+            match &state.test {
+                Some(Err(text)) => card.row(t, vec![t.e(text.clone())]),
+                _ => card.row(t, vec![t.d("The key stays on this Nodo, locked with your device passphrase, and is never shown again.")]),
+            }
+            card.blank(t);
+            card.buttons(t, &[("Connect", true, Click::Key(KeyCode::Enter))], &mut ct);
+            let instructions = provider.map(|p| p.instructions.clone()).unwrap_or_default();
+            screen.before = vec![
+                trail(t, &["Web", "Domain providers", "Add", name], &mut screen.targets),
+                Item::Blank,
+                heading(t, &format!("Connect {name}")),
+                quiet(t, &instructions),
+                Item::Blank,
+            ];
+            "Keys: Tab next box  ↵ connect  Esc back"
+        }
+        ProviderStage::Done { provider, domain } => {
+            card.row(t, vec![t.o("✓  "), t.b(format!("{provider} is connected"))]);
+            card.blank(t);
+            card.row(t, vec![t.d("   Apps can now use this web address:")]);
+            card.row(t, vec![t.n(format!("   {domain}"))]);
+            card.blank(t);
+            let back = state.return_to.as_ref().map_or("Done".to_owned(), |site| format!("Back to {site}"));
+            card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))], &mut ct);
+            screen.before =
+                vec![trail(t, &["Web", "Domain providers", "Add", provider.as_str()], &mut screen.targets), Item::Blank, Item::Blank];
+            "Keys: ↵ continue"
+        }
+    };
+    screen.after = after;
+    screen.finish(t, card, ct, after_targets, keys, w, h)
+}
+
+fn check_symbol(t: &Theme, state: CheckState) -> Span<'static> {
+    match state {
+        CheckState::Passed => t.o("✓  "),
+        CheckState::Failed => t.e("✕  "),
+        CheckState::Unknown => t.a("?  "),
+    }
+}
+
+/// The checks found a problem, or something could not be verified.
+pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    card.blank(t);
+    let failed = state.checks.iter().any(|c| c.state == CheckState::Failed);
+    for check in &state.checks {
+        card.row(t, vec![check_symbol(t, check.state), t.n(check.text.clone())]);
+        if check.state != CheckState::Passed && !check.note.is_empty() {
+            card.row(t, vec![t.d(format!("   {}", check.note))]);
+        }
+    }
+    if let Some(router) = &state.router {
+        card.blank(t);
+        card.row(t, vec![t.n("Your router needs to send web visitors to the Nodo. In its settings, forward:")]);
+        card.row(t, vec![t.n(format!("   Port 80   {}", router.forward_http))]);
+        card.row(t, vec![t.n(format!("   Port 443  {}", router.forward_https))]);
+        card.row(t, vec![t.d(format!("   The router's settings page is usually {}.", router.admin_page))]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d("A private Tor link works without any of this.")]);
+    card.blank(t);
+    card.row(t, vec![t.a(details_toggle(state.details))]);
+    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    if state.details {
+        for step in &state.manual {
+            card.row(t, vec![t.d(format!("  {step}"))]);
+        }
+        if let Some(plan) = &state.plan {
+            card.row(t, vec![t.d(format!("  Record    {}", plan.dns_record))]);
+            card.row(t, vec![t.d(format!("  Firewall  {}", plan.firewall))]);
+        }
+    }
+    card.blank(t);
+    let mut buttons: Vec<(&str, bool, Click)> = vec![("Check again", false, Click::Key(KeyCode::Char('r')))];
+    if state.going_public && !failed && state.plan.is_some() {
+        buttons.push(("Continue anyway", false, Click::Key(KeyCode::Char('c'))));
+    }
+    buttons.push(("Use Tor instead", true, Click::Key(KeyCode::Char('o'))));
+    card.buttons(t, &buttons, &mut ct);
+    let title = if failed { "The internet can't reach your Nodo yet" } else { "Some checks couldn't be confirmed" };
+    screen.before = vec![
+        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        Item::Blank,
+        heading(t, title),
+        Item::Blank,
+    ];
+    screen.finish(t, card, ct, Vec::new(), "Keys: ↵ use Tor  r check again  d details  ? router help  Esc back", w, h)
+}
+
+/// The checks passed: one clear confirm, starting on Cancel.
+pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    let web = &app.data.web;
+    card.blank(t);
+    let provider = if web.provider.is_empty() { "Your provider".to_owned() } else { web.provider.clone() };
+    for text in [format!("{provider} accepted the key"), format!("{} points to your home", state.plan.host), "The internet can reach your Nodo".to_owned()] {
+        card.row(t, vec![t.o("✓  "), t.n(text)]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.n("Anyone will be able to open "), t.b(state.plan.url.clone())]);
+    card.row(t, vec![t.a("Your home's internet address becomes public.")]);
+    card.row(t, vec![t.a("Records of it can stay online after you stop.")]);
+    card.row(t, vec![t.a("Anyone can connect this address to your home, including your Monero node.")]);
+    card.row(t, vec![t.a(format!("Public certificate logs list {} permanently.", state.plan.host))]);
+    card.row(t, vec![t.d("The Nodo keeps the secure connection up to date. Take it offline at any time.")]);
+    if web.sites.iter().any(|s| s.package == state.site && s.rate_limit_unenforced) {
+        card.row(t, vec![t.a("Repeated requests can't be slowed down for this app.")]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.a(details_toggle(state.details))]);
+    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    if state.details {
+        card.row(t, vec![t.d(format!("  Record    {}", state.plan.dns_record))]);
+        card.row(t, vec![t.d(format!("  Firewall  {}", state.plan.firewall))]);
+    }
+    card.blank(t);
+    let go = format!("Put {} online", state.site);
+    card.buttons(
+        t,
+        &[("Cancel", false, Click::Pick { index: 0, then: Some(KeyCode::Enter) }), (go.as_str(), true, Click::Pick { index: 1, then: Some(KeyCode::Enter) })],
+        &mut ct,
+    );
+    let selected = if state.focus == ConfirmFocus::Cancel { "Cancel".to_owned() } else { go.clone() };
+    card.row(t, vec![t.d(format!("▸ {selected} is selected for the keyboard."))]);
+    card.blank(t);
+    screen.before = vec![
+        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        Item::Blank,
+        heading(t, &format!("Ready to put {} on the internet", state.site)),
+        Item::Blank,
+    ];
+    screen.finish(t, card, ct, Vec::new(), "Keys: Tab choose  ↵ press  Esc cancel", w, h)
+}
+
+/// The internet provider shares one address between homes, so visitors can't reach the Nodo.
+pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    card.blank(t);
+    card.row(
+        t,
+        vec![t.n("Your internet provider shares one address between many homes, so visitors stop at the provider and never reach you. Router settings can't change this.")],
+    );
+    card.blank(t);
+    card.row(t, vec![t.d("A private Tor link still works on this connection.")]);
+    card.blank(t);
+    card.row(t, vec![t.a(details_toggle(state.details))]);
+    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    if state.details {
+        card.row(t, vec![t.d(format!("  Your router's outside address  {} (in {}, the shared range)", state.wan_address, state.wan_range))]);
+        card.row(t, vec![t.d(format!("  What the internet sees         {}", state.internet_address))]);
+        card.blank(t);
+        for (index, option) in ["Ask your provider for a public address", "Use IPv6, if your provider has it", "Use a relay that forwards visitors"]
+            .into_iter()
+            .enumerate()
+        {
+            card.row(t, vec![marker(t, state.choice == index + 1), t.n(format!("{option} ›"))]);
+            ct.push(Target::row(option, Click::Pick { index: index + 1, then: Some(KeyCode::Enter) }));
+        }
+    }
+    card.blank(t);
+    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))], &mut ct);
+    screen.before = vec![
+        trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets),
+        Item::Blank,
+        heading(t, "The internet can't reach your Nodo"),
+        Item::Blank,
+    ];
+    screen.finish(t, card, ct, Vec::new(), "Keys: o use Tor  r check again  d details  Esc back", w, h)
+}
+
+/// After going public: online, with the secure connection followed until it is in place.
+pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
+    let (w, h) = size(app);
+    let mut screen = Screen3::new(app, t, Tab::Packages, w);
+    let web = &app.data.web;
+    let mut card = Card::new(t, w);
+    let mut ct = Vec::new();
+    let cert = web.cert(&state.host);
+    let cert_state = cert.map(|c| c.state).unwrap_or(nodo_api::CertState::Waiting);
+    let broken = matches!(cert_state, nodo_api::CertState::Failed | nodo_api::CertState::Expired);
+    card.blank(t);
+    match cert_state {
+        nodo_api::CertState::Valid => card.row(t, vec![t.o("✓  "), t.b(format!("{} is online", state.site))]),
+        _ if broken => card.row(t, vec![t.e("✕  "), t.b("The secure connection isn't ready")]),
+        _ => card.row(t, vec![t.a("◆  "), t.b(format!("{} is online. Getting its secure connection…", state.site))]),
+    }
+    card.blank(t);
+    card.row(t, vec![t.n(format!("   https://{}", state.host))]);
+    if let Some(site) = web.sites.iter().find(|s| s.package == state.site) {
+        if site.exposure.local && !site.local_url.is_empty() {
+            card.row(t, vec![t.n(format!("   {}", site.local_url))]);
+        }
+    }
+    card.blank(t);
+    match cert.and_then(|c| c.problem.clone()) {
+        Some(problem) if broken => {
+            card.row(t, vec![t.e(format!("   {problem}"))]);
+            card.row(t, vec![t.d("   The Nodo keeps trying. Visitors see a warning until it works.")]);
+        }
+        _ => card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]),
+    }
+    card.blank(t);
+    card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))], &mut ct);
+    screen.before = vec![trail(t, &["Packages", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
+    screen.finish(t, card, ct, Vec::new(), "Keys: ↵ done  l logs  d certificates", w, h)
 }

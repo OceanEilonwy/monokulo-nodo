@@ -12,6 +12,7 @@ mod settings;
 mod setup;
 mod feeds;
 mod updates;
+pub mod v3;
 mod web;
 
 use nodo_api::ServiceState;
@@ -19,16 +20,30 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
+use crossterm::event::KeyCode;
+
 use crate::app::{App, Modal, NoticeKind, Overlay, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
+use crate::hit::{self, Click, Target};
 use crate::model::Area;
 use crate::theme::Theme;
 use layout::{draw_boxed, draw_page, FitReport, Item};
 
+thread_local! {
+    static FRAME_SIZE: std::cell::Cell<(u16, u16)> = const { std::cell::Cell::new((100, 32)) };
+}
+
+/// The size of the frame `render` is drawing.
+pub(crate) fn frame_size() -> (u16, u16) {
+    FRAME_SIZE.with(std::cell::Cell::get)
+}
+
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     let area = frame.area();
+    FRAME_SIZE.with(|size| size.set((area.width, area.height)));
     frame.buffer_mut().set_style(area, theme.base());
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(frame, area, theme);
+        app.hits.borrow_mut().clear();
         return FitReport::default();
     }
     let t = theme;
@@ -36,7 +51,10 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Home { selected } => home::home(app, t, *selected),
         Screen::NoDrive { choice } => home::no_drive(app, t, *choice),
         Screen::Search(state) => packages::search(app, t, state),
-        Screen::Detail(detail) => packages::detail(t, detail),
+        Screen::Detail(detail) => {
+            let has_site = app.data.web.sites.iter().any(|site| site.package == detail.id.name);
+            packages::detail(t, detail, has_site)
+        }
         Screen::Rejected(data) => packages::rejected(t, data),
         Screen::Capability(state) => packages::capability(t, state),
         Screen::Review(state) => install::review(t, state),
@@ -55,11 +73,11 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Web { selected } => web::sites(app, t, *selected),
         Screen::WebExposure(state) => web::exposure(app, t, state),
         Screen::WebProviders(state) => web::providers(app, t, state),
-        Screen::WebCheck(state) => web::check(t, state),
+        Screen::WebCheck(state) => web::check(app, t, state),
         Screen::WebConfirm(state) => web::confirm(app, t, state),
-        Screen::WebCgnat(state) => web::cgnat(t, state),
+        Screen::WebCgnat(state) => web::cgnat(app, t, state),
         Screen::WebDomain(state) => certs::domain(app, t, state),
-        Screen::WebCertificate(state) => certs::certificate(app, t, state),
+        Screen::WebCertificate(state) => web::online(app, t, state),
         Screen::WebTrust => certs::trust(app, t),
         Screen::Setup(state) => setup::setup(t, state),
         Screen::Backup(state) => backup::backup(t, state),
@@ -91,13 +109,49 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     if let Some(reason) = area_shown.and_then(|area| app.data.unavailable(area)) {
         page.footer.insert(0, Item::Text(Line::from(t.e(format!("▲ Not available yet: {reason}")))));
     }
+    let v3_screen = matches!(
+        app.screen,
+        Screen::Web { .. }
+            | Screen::WebExposure(_)
+            | Screen::WebProviders(_)
+            | Screen::WebCheck(_)
+            | Screen::WebConfirm(_)
+            | Screen::WebCgnat(_)
+            | Screen::WebCertificate(_)
+    );
+    let footer_rows = page.footer.len() as u16;
+    let mut targets = std::mem::take(&mut page.targets);
+    if !v3_screen {
+        if let Some(tab) = app.screen.tab() {
+            let _ = tab;
+            let mut tabs: Vec<Target> = Tab::ALL.into_iter().map(|tab| Target::text(tab.label(), Click::Tab(tab))).collect();
+            tabs.append(&mut targets);
+            targets = tabs;
+        }
+    }
     let report = draw_page(frame, area, t, page);
+    if v3_screen {
+        v3::paint_strips(frame.buffer_mut(), area, t, footer_rows);
+    } else if app.screen.tab().is_some() {
+        v3::paint_strips(frame.buffer_mut(), Rect::new(area.x, area.y, area.width, 1), t, 0);
+    }
+    let mut hits = hit::resolve(frame.buffer_mut(), area, &targets);
     if let Some(overlay) = &app.overlay {
         draw_overlay(frame, area, t, overlay);
+        hits.clear();
     }
     if let Some(modal) = &app.modal {
         draw_modal(frame, area, t, modal);
+        let modal_targets = [
+            Target::text(modal.title.clone(), Click::Key(KeyCode::Null)),
+            Target::button("Cancel", Click::Pick { index: 0, then: Some(KeyCode::Enter) }),
+            Target::button(modal.confirm_label.clone(), Click::Pick { index: 1, then: Some(KeyCode::Enter) }),
+        ];
+        hits = hit::resolve(frame.buffer_mut(), area, &modal_targets);
+        hits.retain(|hit| hit.click != Click::Key(KeyCode::Null));
     }
+    hit::paint_hover(frame.buffer_mut(), &hits, app.hover, t);
+    *app.hits.borrow_mut() = hits;
     report
 }
 
@@ -198,15 +252,21 @@ pub(crate) fn tab_bar(app: &App, t: &Theme, active: Tab) -> Line<'static> {
     let pending = app.pending_updates();
     for (index, tab) in Tab::ALL.into_iter().enumerate() {
         if index > 0 {
-            spans.push(t.n("  "));
+            spans.push(t.n("   "));
         }
         let count = (tab == Tab::Updates && pending > 0).then(|| format!("({pending})"));
         if tab == active {
             let label = match &count {
-                Some(count) => format!(" {} {count} ", tab.label()),
-                None => format!(" {} ", tab.label()),
+                Some(count) => format!("  {} {count}  ", tab.label()),
+                None => format!("  {}  ", tab.label()),
             };
-            spans.push(t.s(label));
+            // The current tab is a flat raised fill in the accent, as on the v3 screens.
+            let style = if t.is_mono() {
+                t.selected()
+            } else {
+                ratatui::style::Style::new().fg(t.accent).bg(t.raised).add_modifier(ratatui::style::Modifier::BOLD)
+            };
+            spans.push(Span::styled(label, style));
         } else {
             spans.push(t.n(tab.label()));
             if let Some(count) = count {

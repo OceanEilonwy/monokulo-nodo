@@ -4,6 +4,7 @@
 //! and occupies exactly its number of cells, so nothing appears that a terminal can't show.
 //!
 //!     cargo run -p nodo-tui --example boards -- docs/design/tui
+//!     cargo run -p nodo-tui --example boards -- --real docs/design/tui   (the real web screens)
 //!
 //! Writes `<slug>.dc.html` for each scene at 120x36, and `<slug>-80x24.dc.html` for a few.
 
@@ -133,6 +134,11 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
 
 fn board(scene: Scene, width: u16, height: u16, theme: &Theme) -> (String, u32, u32) {
     let buffer = proposal::render(scene, width, height, theme);
+    board_from(&buffer, scene.title(), scene.slug(), scene.clickable(), width, height, theme)
+}
+
+/// A board from any rendered buffer: the proposal's scenes, or the real screens with `--real`.
+fn board_from(buffer: &Buffer, title: &str, slug: &str, clickable: &str, width: u16, height: u16, theme: &Theme) -> (String, u32, u32) {
     let grid_w = (f32::from(width) * FONT_PX * 0.6).ceil() as u32;
     let grid_h = (f32::from(height) * ROW_PX).ceil() as u32;
     let w = grid_w + 2 * PAD_PX;
@@ -178,17 +184,17 @@ renderVals() {{ return {{}}; }}
 </body>
 </html>
 "#,
-        title = escape(scene.title()),
-        slug = scene.slug(),
+        title = escape(title),
+        slug = slug,
         ground = hex(theme.ground, "#101214"),
-        grid = grid(&buffer, theme),
+        grid = grid(buffer, theme),
         caps_font = std::env::var("NODO_BOARD_CAPS_FONT").unwrap_or_else(|_| "fonts/nodo-caps.woff2".into()),
-        clickable = if scene.clickable().is_empty() {
+        clickable = if clickable.is_empty() {
             String::new()
         } else {
             format!(
-                "<div style=\"font-size:13px;color:#D7DADC\">{} <span style=\"color:#A3AAB0\">(Mouse: left click, drag and the scroll wheel, as crossterm reports them; no hover.)</span></div>\n",
-                escape(scene.clickable())
+                "<div style=\"font-size:13px;color:#D7DADC\">{} <span style=\"color:#A3AAB0\">(Mouse: left click, the scroll wheel, and hover as crossterm reports pointer moves.)</span></div>\n",
+                escape(clickable)
             )
         },
     );
@@ -196,6 +202,12 @@ renderVals() {{ return {{}}; }}
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--real") {
+        let out: PathBuf = std::env::args().nth(2).unwrap_or_else(|| "docs/design/tui".into()).into();
+        std::fs::create_dir_all(&out).expect("create the output directory");
+        real_screens(&out);
+        return;
+    }
     let out: PathBuf = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "docs/design/tui".into())
@@ -232,4 +244,82 @@ fn main() {
     }
     // Board names and sizes, one per line, for laying them out on the canvas.
     std::fs::write(out.join("web2-boards.txt"), index.join("\n") + "\n").expect("write index");
+}
+
+/// The real web screens (web flow v3 as built), rendered through `view::render` from the mock
+/// device, for comparing with the approved proposal boards.
+pub fn real_screens(out: &std::path::Path) {
+    use nodo_tui::app::{ProviderStage, Screen, ScreenId};
+    use nodo_tui::fixtures::fixture;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let theme = Theme::truecolor().with_rounded(true);
+    let render = |app: &nodo_tui::app::App, width: u16, height: u16| {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+        terminal.draw(|frame| {
+            nodo_tui::view::render(frame, app, &theme);
+        })
+        .expect("draw");
+        terminal.backend().buffer().clone()
+    };
+    let mut scenes: Vec<(&str, &str, nodo_tui::app::App)> = Vec::new();
+    scenes.push(("real-web3-sites", "Web: the sites that are online (real)", fixture(ScreenId::WebSites).0));
+    let (mut app, _) = fixture(ScreenId::WebExposure);
+    if let Screen::WebExposure(state) = &mut app.screen {
+        state.draft.onion = false;
+    }
+    scenes.push(("real-web3-hosting-internet", "Hosting with the internet ticked (real)", app));
+    let (mut app, _) = fixture(ScreenId::WebExposure);
+    app.data.web.provider.clear();
+    if let Screen::WebExposure(state) = &mut app.screen {
+        state.has_provider = false;
+        state.draft.onion = false;
+    }
+    scenes.push(("real-web3-no-provider", "Internet ticked, no provider yet (real)", app));
+    scenes.push(("real-web3-add-provider", "Add a provider: choose the company (real)", fixture(ScreenId::WebProviders).0));
+    let (mut app, _) = fixture(ScreenId::WebProviders);
+    if let Screen::WebProviders(state) = &mut app.screen {
+        state.stage = ProviderStage::Key;
+        state.test = None;
+        state.return_to = Some("shop".to_owned());
+    }
+    scenes.push(("real-web3-provider-key", "Connect Porkbun (real)", app));
+    let (mut app, _) = fixture(ScreenId::WebProviders);
+    if let Screen::WebProviders(state) = &mut app.screen {
+        state.stage = ProviderStage::Done { provider: "Porkbun".to_owned(), domain: "example.com".to_owned() };
+        state.return_to = Some("shop".to_owned());
+    }
+    scenes.push(("real-web3-provider-done", "Provider connected (real)", app));
+    scenes.push(("real-web3-check", "Checks found a problem (real)", fixture(ScreenId::WebCheck).0));
+    scenes.push(("real-web3-confirm", "One confirm, starting on Cancel (real)", fixture(ScreenId::WebConfirm).0));
+    scenes.push(("real-web3-blocked", "The internet can't reach your Nodo (real)", fixture(ScreenId::WebCgnat).0));
+    scenes.push(("real-web3-online", "Online, getting the secure connection (real)", fixture(ScreenId::WebCertificate).0));
+    let mut index = Vec::new();
+    for (slug, title, app) in &scenes {
+        for (width, height, suffix) in [(120u16, 36u16, ""), (80, 24, "-80x24")] {
+            if !suffix.is_empty() && !matches!(*slug, "real-web3-sites" | "real-web3-hosting-internet" | "real-web3-confirm") {
+                continue;
+            }
+            let buffer = render(app, width, height);
+            let (html, w, h) = board_from(&buffer, title, slug, "", width, height, &theme);
+            let name = format!("{slug}{suffix}.dc.html");
+            std::fs::write(out.join(&name), html).expect("write board");
+            let text: String = (0..height)
+                .map(|y| {
+                    let mut line = String::new();
+                    let mut x = 0;
+                    while x < width {
+                        let symbol = buffer[(x, y)].symbol();
+                        line.push_str(symbol);
+                        x += UnicodeWidthStr::width(symbol).max(1) as u16;
+                    }
+                    line.trim_end().to_owned() + "\n"
+                })
+                .collect();
+            std::fs::write(out.join(format!("{slug}{suffix}.txt")), text).expect("write text");
+            index.push(format!("{name} {w} {h}"));
+        }
+    }
+    std::fs::write(out.join("real-web3-boards.txt"), index.join("\n") + "\n").expect("write index");
 }

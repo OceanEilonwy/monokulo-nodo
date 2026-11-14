@@ -182,13 +182,13 @@ fn rejected_packages_have_no_way_to_install() {
     }
 }
 
-// Exposure
+// Web, Hosting and domain providers (web flow v3)
 
 fn shop_exposure(mock: &MockBackend) -> Exposure {
     mock.web.sites[0].exposure
 }
 
-/// Web tab to the exposure screen for shop, with public switched off first.
+/// Web tab to shop's Hosting, with the internet switched off first.
 fn exposure_with_public_off() -> (App, MockBackend) {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     mock.web.sites[0].exposure = Exposure { local: true, onion: true, public: false };
@@ -209,11 +209,24 @@ fn at_confirm_screen() -> (App, MockBackend) {
 }
 
 #[test]
+fn the_web_tab_lists_only_the_sites_that_are_online() {
+    let (app, _mock) = fixture(ScreenId::WebSites);
+    let screen = screen_text(&app);
+    for online in ["shop", "monokulo-pay", "moneropay"] {
+        assert!(screen.contains(online), "{online} missing:\n{screen}");
+    }
+    assert!(!screen.contains("wallet-relay"), "an app that is not online is not listed:\n{screen}");
+    assert!(screen.contains("Home and internet") && screen.contains("Home network and Tor"), "{screen}");
+    assert!(screen.contains("To put another app online, open it in Packages."), "{screen}");
+    assert!(screen.contains("Domain providers ›"), "{screen}");
+}
+
+#[test]
 fn exposures_toggle_independently() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     key(&mut app, &mut mock, ENTER);
     let draft = |app: &App| {
-        let Screen::WebExposure(state) = &app.screen else { panic!("expected exposure") };
+        let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
         state.draft
     };
     assert_eq!(draft(&app), Exposure { local: true, onion: true, public: true });
@@ -224,14 +237,14 @@ fn exposures_toggle_independently() {
     keys(&mut app, &mut mock, &[UP, SPACE]);
     assert_eq!(draft(&app), Exposure { local: true, onion: false, public: true });
 
-    // A site that is already public keeps public while another flag changes, with no retyping.
+    // A site already on the internet keeps it while another choice changes, with no confirm.
     key(&mut app, &mut mock, ENTER);
     assert_eq!(shop_exposure(&mock), Exposure { local: true, onion: false, public: true });
     assert_eq!(app.screen.id(), ScreenId::WebSites);
 }
 
 #[test]
-fn turning_public_off_needs_no_confirmation() {
+fn turning_the_internet_off_needs_no_confirmation() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     key(&mut app, &mut mock, ENTER);
     keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE, ENTER]);
@@ -239,19 +252,23 @@ fn turning_public_off_needs_no_confirmation() {
 }
 
 #[test]
-fn turning_on_public_warns_and_mentions_onion_only_when_onion_is_on() {
+fn hosting_speaks_plainly_and_shows_the_address_it_will_use() {
     let (mut app, mut mock) = exposure_with_public_off();
-    assert!(!screen_text(&app).contains("Turning on public internet"));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Choose who can open shop. Any combination works."), "{screen}");
+    assert!(!screen.contains("Provider"), "the internet's fields only show once it is ticked");
     keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE]);
     let screen = screen_text(&app);
-    assert!(screen.contains("Turning on public internet"));
-    assert!(screen.contains("Keeping onion on too can link it to your home IP."));
-    keys(&mut app, &mut mock, &[UP, SPACE]);
-    assert!(!screen_text(&app).contains("Keeping onion on too"));
+    for expected in ["Provider", "Porkbun", "example.com", "shop", "Visitors will be able to see your home's internet address.", "Check and save"] {
+        assert!(screen.contains(expected), "{expected} missing:\n{screen}");
+    }
+    for jargon in ["DNS-01", "CGNAT", "ACME", "port 80", "A record"] {
+        assert!(!screen.contains(jargon), "{jargon} on the main screen:\n{screen}");
+    }
 }
 
 #[test]
-fn local_and_onion_changes_apply_but_public_waits_for_confirmation() {
+fn home_and_tor_changes_apply_but_the_internet_waits_for_the_checks() {
     let (mut app, mut mock) = exposure_with_public_off();
     keys(&mut app, &mut mock, &[SPACE, DOWN, DOWN, SPACE, ENTER]);
     assert_eq!(exposure_calls(&mock), [Exposure { local: false, onion: true, public: false }]);
@@ -259,54 +276,27 @@ fn local_and_onion_changes_apply_but_public_waits_for_confirmation() {
 }
 
 #[test]
-fn going_public_requires_typing_the_exact_address() {
+fn going_online_takes_one_confirm_that_starts_on_cancel() {
     let (mut app, mut mock) = at_confirm_screen();
     mock.calls.clear();
-    let wrong = [
-        "",
-        "shop.example.co",
-        "SHOP.EXAMPLE.COM",
-        "shop.example.com ",
-        " shop.example.com",
-        "https://shop.example.com",
-        "shop.example.com.",
-    ];
-    for attempt in wrong {
-        dispatch(&mut app, &mut mock, ctrl('u'));
-        type_text(&mut app, &mut mock, attempt);
-        key(&mut app, &mut mock, ENTER);
-        assert!(exposure_calls(&mock).is_empty(), "accepted {attempt:?}");
-        assert!(screen_text(&app).contains("Type shop.example.com exactly to confirm."), "{attempt:?}");
-        // The button cannot be reached and pressed around the check either.
-        keys(&mut app, &mut mock, &[TAB, TAB, ENTER]);
-        assert!(exposure_calls(&mock).is_empty(), "button accepted {attempt:?}");
-        assert_eq!(app.screen.id(), ScreenId::WebConfirm);
-    }
+    let screen = screen_text(&app);
+    assert!(screen.contains("Ready to put shop on the internet"), "{screen}");
+    assert!(screen.contains("Put shop online") && screen.contains("https://shop.example.com"), "{screen}");
+    assert!(screen.contains("▸ Cancel is selected"), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    assert!(exposure_calls(&mock).is_empty(), "Enter on the default does nothing risky");
+    assert_ne!(app.screen.id(), ScreenId::WebConfirm);
 
-    dispatch(&mut app, &mut mock, ctrl('u'));
-    type_text(&mut app, &mut mock, "shop.example.com");
-    key(&mut app, &mut mock, ENTER);
-    assert!(exposure_calls(&mock).is_empty(), "Enter in the field only moves on to the button");
-    key(&mut app, &mut mock, ENTER);
+    let (mut app, mut mock) = at_confirm_screen();
+    mock.calls.clear();
+    keys(&mut app, &mut mock, &[TAB, ENTER]);
     assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
-    // Going public follows the certificate, and only says it is in place once Caddy has one.
+    // Going online follows the secure connection, and says so only once it is in place.
     assert_eq!(app.screen.id(), ScreenId::WebCertificate);
-    assert!(screen_text(&app).contains("✓ Certificate in place"), "{}", screen_text(&app));
-    key(&mut app, &mut mock, KeyCode::Esc);
+    assert!(screen_text(&app).contains("shop is online"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::WebSites);
     assert!(!mock.public_access["shop"].require_password);
-}
-
-#[test]
-fn confirm_default_is_cancel_even_with_the_right_text_typed() {
-    let (mut app, mut mock) = at_confirm_screen();
-    mock.calls.clear();
-    type_text(&mut app, &mut mock, "shop.example.com");
-    assert!(screen_text(&app).contains("▸Cancel"));
-    key(&mut app, &mut mock, TAB);
-    key(&mut app, &mut mock, ENTER);
-    assert!(exposure_calls(&mock).is_empty());
-    assert_ne!(app.screen.id(), ScreenId::WebConfirm);
 }
 
 #[test]
@@ -314,8 +304,7 @@ fn a_site_does_not_go_public_if_its_protections_fail() {
     let (mut app, mut mock) = at_confirm_screen();
     mock.calls.clear();
     mock.fail_public_access = true;
-    type_text(&mut app, &mut mock, "shop.example.com");
-    keys(&mut app, &mut mock, &[ENTER, ENTER]);
+    keys(&mut app, &mut mock, &[TAB, ENTER]);
     assert!(exposure_calls(&mock).is_empty());
     assert!(screen_text(&app).contains("Could not apply the site's protections."));
 }
@@ -328,21 +317,24 @@ fn escape_from_confirm_leaves_the_site_not_public() {
 }
 
 #[test]
-fn cgnat_blocks_public_and_offers_onion_without_touching_public() {
+fn a_shared_isp_address_blocks_the_internet_and_offers_tor_without_touching_it() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     keys(&mut app, &mut mock, &[DOWN, ENTER, DOWN, DOWN, SPACE, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::WebCgnat);
+    let screen = screen_text(&app);
+    assert!(screen.contains("shares one address between many homes"), "{screen}");
+    assert!(screen.contains("Use Tor instead"), "{screen}");
     let Screen::WebCgnat(state) = &app.screen else { panic!("expected cgnat") };
-    assert_eq!(state.choice, 0, "onion is the suggested way forward");
+    assert_eq!(state.choice, 0, "Tor is the suggested way forward");
     key(&mut app, &mut mock, ENTER);
     let pay = &mock.web.sites[1];
     assert!(pay.exposure.onion && !pay.exposure.public);
-    keys(&mut app, &mut mock, &[DOWN, ENTER]);
-    assert!(app.overlay.is_some());
+    keys(&mut app, &mut mock, &[KeyCode::Char('d'), DOWN, ENTER]);
+    assert!(app.overlay.is_some(), "the other ways out are behind the details");
 }
 
 #[test]
-fn check_screen_can_turn_on_onion_without_going_public() {
+fn the_check_screen_can_turn_on_tor_without_going_public() {
     let (mut app, mut mock) = exposure_with_public_off();
     mock.web.sites[0].exposure.onion = false;
     app.data = load_snapshot(&mut mock).unwrap();
@@ -353,18 +345,29 @@ fn check_screen_can_turn_on_onion_without_going_public() {
 }
 
 #[test]
-fn a_site_without_an_address_asks_for_one_before_checking() {
+fn the_address_part_is_saved_under_the_providers_domain() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    keys(&mut app, &mut mock, &[DOWN, DOWN, DOWN, ENTER, DOWN, DOWN, SPACE, ENTER]);
-    let Screen::WebExposure(state) = &app.screen else { panic!("expected exposure") };
-    assert!(state.editing_host.is_some());
-    type_text(&mut app, &mut mock, "relay.other.org");
-    key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("The address must be under example.com."));
+    keys(&mut app, &mut mock, &[DOWN, ENTER, DOWN, DOWN, SPACE, DOWN, DOWN]);
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert_eq!(state.focus(), HostingFocus::Address);
+    assert_eq!(state.sub.text(), "pay", "the saved address starts the field");
     dispatch(&mut app, &mut mock, ctrl('u'));
-    type_text(&mut app, &mut mock, "relay.example.com");
+    type_text(&mut app, &mut mock, "payments");
     key(&mut app, &mut mock, ENTER);
-    assert_eq!(mock.web.sites[3].public_host.as_deref(), Some("relay.example.com"));
+    assert_eq!(mock.web.sites[1].public_host.as_deref(), Some("payments.example.com"));
+}
+
+#[test]
+fn an_app_page_in_packages_opens_its_hosting_even_when_offline() {
+    let (mut app, mut mock) = fixture(ScreenId::Detail);
+    let Screen::Detail(detail) = &mut app.screen else { panic!("expected detail") };
+    detail.id.name = "wallet-relay".to_owned();
+    detail.installed = true;
+    assert!(screen_text(&app).contains("h hosting"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, KeyCode::Char('h'));
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert_eq!(state.site, "wallet-relay");
+    assert_eq!(state.draft, Exposure::default());
 }
 
 #[test]
@@ -376,43 +379,62 @@ fn taking_all_sites_offline_covers_every_online_site() {
     assert!(screen_text(&app).contains("80 and 443 are closed on this device"));
 }
 
-// Providers
+// Domain providers
+
+fn without_a_provider() -> (App, MockBackend) {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.web.provider.clear();
+    mock.web.domain.clear();
+    mock.stored_provider = None;
+    app.data = load_snapshot(&mut mock).unwrap();
+    (app, mock)
+}
+
+fn select_provider(app: &mut App, mock: &mut MockBackend, name: &str) {
+    for _ in 0..20 {
+        let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+        if app.data.providers[state.selected].name == name {
+            return;
+        }
+        key(app, mock, DOWN);
+    }
+    panic!("{name} is not in the catalog");
+}
 
 #[test]
-fn providers_without_an_api_are_unsupported_with_no_guided_move() {
-    for (name, steps) in [("Hover", 9), ("Squarespace", 10)] {
+fn providers_without_an_api_cannot_be_connected_and_offer_no_guided_move() {
+    for name in ["Hover", "Squarespace"] {
         let (mut app, mut mock) = fixture(ScreenId::WebProviders);
-        for _ in 0..steps {
-            key(&mut app, &mut mock, DOWN);
-        }
+        select_provider(&mut app, &mut mock, name);
+        key(&mut app, &mut mock, ENTER);
         let screen = screen_text(&app);
-        assert!(screen.contains("✕ Not supported"), "{screen}");
-        assert!(screen.contains(&format!("{name} has no DNS")), "{screen}");
+        assert!(screen.contains(&format!("{name} can't be connected")), "{screen}");
         assert!(!screen.contains("API key"), "{screen}");
         let lower = screen.to_lowercase();
         for banned in ["move your", "migrate", "migration", "transfer", "nameserver", "switch to"] {
             assert!(!lower.contains(banned), "{name} offers {banned}:\n{screen}");
         }
-        for code in [ENTER, TAB, KeyCode::Char('t'), KeyCode::Char('?')] {
-            assert!(update(&mut app, press(code)).is_empty(), "{name} acted on {code:?}");
-            assert!(screen_text(&app).contains("has no DNS API, so it is not supported."));
-        }
+        let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+        assert_eq!(state.stage, ProviderStage::Pick);
         assert_eq!(mock.stored_provider.as_ref().unwrap().provider, "Porkbun");
     }
 }
 
 #[test]
-fn a_supported_provider_can_be_tested_and_saved() {
-    let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    key(&mut app, &mut mock, KeyCode::Char('d'));
-    assert_eq!(app.screen.id(), ScreenId::WebDomain);
-    // Off the email field, p opens the provider list.
-    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('p')]);
-    assert_eq!(app.screen.id(), ScreenId::WebProviders);
-    key(&mut app, &mut mock, DOWN);
-    key(&mut app, &mut mock, KeyCode::Char('t'));
-    assert!(screen_text(&app).contains("✕ Enter the domain and both"));
-    key(&mut app, &mut mock, TAB);
+fn hosting_without_a_provider_adds_one_and_comes_back() {
+    let (mut app, mut mock) = without_a_provider();
+    keys(&mut app, &mut mock, &[DOWN, ENTER, DOWN, DOWN, SPACE]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("first add the company you bought it from"), "{screen}");
+    assert!(screen.contains("Add a provider"), "{screen}");
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.return_to.as_deref(), Some("monokulo-pay"));
+    select_provider(&mut app, &mut mock, "Cloudflare");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Connect Cloudflare"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Type the web address you bought"), "{}", screen_text(&app));
     type_text(&mut app, &mut mock, "example.org");
     key(&mut app, &mut mock, TAB);
     type_text(&mut app, &mut mock, "api-value-123");
@@ -422,10 +444,33 @@ fn a_supported_provider_can_be_tested_and_saved() {
     assert!(!screen.contains("api-value-123") && !screen.contains("secret-value-456"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(mock.stored_provider.as_ref().unwrap().provider, "Cloudflare");
-    assert_eq!(app.screen.id(), ScreenId::WebDomain);
-    key(&mut app, &mut mock, KeyCode::Esc);
-    assert_eq!(app.screen.id(), ScreenId::WebSites);
-    assert!(screen_text(&app).contains("Cloudflare"));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Cloudflare is connected") && screen.contains("Back to monokulo-pay"), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting again") };
+    assert_eq!(state.site, "monokulo-pay");
+    assert!(state.draft.public, "the internet stays ticked");
+    assert!(screen_text(&app).contains(".example.org"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_refused_key_says_so_in_the_card() {
+    let (mut app, _mock) = fixture(ScreenId::WebProviders);
+    let Screen::WebProviders(state) = &mut app.screen else { panic!("expected providers") };
+    state.stage = ProviderStage::Key;
+    update(&mut app, Event::ProviderTested(Err("invalid API key".to_owned())));
+    assert!(screen_text(&app).contains("Porkbun refused the key: invalid API key"), "{}", screen_text(&app));
+}
+
+#[test]
+fn keys_typed_for_one_provider_are_not_kept_for_another() {
+    let (mut app, mut mock) = fixture(ScreenId::WebProviders);
+    keys(&mut app, &mut mock, &[ENTER, TAB]);
+    type_text(&mut app, &mut mock, "porkbun-key");
+    keys(&mut app, &mut mock, &[ESC, DOWN, ENTER]);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert!(state.api_key.is_empty());
+    assert!(state.test.is_none());
 }
 
 #[test]
@@ -451,20 +496,87 @@ fn local_name_records_that_lag_are_explained_on_the_web_tab() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     app.data.web.local_records_note = Some("The DNS records wait for the unlock.".to_owned());
     app.data.web.trust_url = None;
-    assert!(screen_text(&app).contains("▲ Local names: The DNS records wait for the unlock."));
+    assert!(screen_text(&app).contains("The DNS records wait for the unlock."));
     keys(&mut app, &mut mock, &[KeyCode::Char('d'), DOWN, KeyCode::Char('c')]);
     assert!(screen_text(&app).contains("▲ Not served"));
 }
 
+// Mouse
+
+/// Where `needle` is drawn, as (column, row), at 120x36.
+fn find(app: &App, needle: &str) -> (u16, u16) {
+    let (buffer, _) = draw(app, 120, 36);
+    for (row, line) in text(&buffer).lines().enumerate() {
+        if let Some(byte) = line.find(needle) {
+            let column = line[..byte].chars().count();
+            return (column as u16, row as u16);
+        }
+    }
+    panic!("{needle} is not on screen:\n{}", text(&buffer));
+}
+
+fn click(app: &mut App, mock: &mut MockBackend, needle: &str) {
+    let (column, row) = find(app, needle);
+    dispatch(app, mock, Event::Mouse { kind: MouseKind::Down, column, row });
+}
+
 #[test]
-fn keys_typed_for_one_provider_are_not_kept_for_another() {
-    let (mut app, mut mock) = fixture(ScreenId::WebProviders);
-    keys(&mut app, &mut mock, &[TAB, TAB]);
-    type_text(&mut app, &mut mock, "porkbun-key");
-    keys(&mut app, &mut mock, &[ESC, DOWN]);
-    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
-    assert!(state.api_key.is_empty());
-    assert!(state.test.is_none());
+fn clicks_open_a_site_tick_a_choice_and_switch_tabs() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    click(&mut app, &mut mock, "monokulo-pay");
+    let Screen::WebExposure(state) = &app.screen else { panic!("a row click opens hosting") };
+    assert_eq!(state.site, "monokulo-pay");
+    click(&mut app, &mut mock, "Tor");
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert!(!state.draft.onion, "a click on a choice ticks it like Space");
+    click(&mut app, &mut mock, "Show details");
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert!(state.details);
+    click(&mut app, &mut mock, "Save");
+    assert_eq!(mock.web.sites[1].exposure, Exposure { local: true, onion: false, public: false });
+    click(&mut app, &mut mock, "Feeds");
+    assert_eq!(app.screen.id(), ScreenId::Feeds);
+}
+
+#[test]
+fn the_confirm_buttons_and_breadcrumbs_take_clicks() {
+    let (mut app, mut mock) = at_confirm_screen();
+    mock.calls.clear();
+    click(&mut app, &mut mock, "Put shop online");
+    assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: true }]);
+
+    let (mut app, mut mock) = exposure_with_public_off();
+    click(&mut app, &mut mock, "Packages  ›");
+    assert_eq!(app.screen.id(), ScreenId::Search, "the first crumb opens its tab");
+}
+
+#[test]
+fn the_wheel_scrolls_like_the_arrow_keys() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    draw(&app, 120, 36);
+    dispatch(&mut app, &mut mock, Event::Mouse { kind: MouseKind::ScrollDown, column: 10, row: 10 });
+    assert_eq!(app.screen, Screen::Web { selected: 1 });
+    dispatch(&mut app, &mut mock, Event::Mouse { kind: MouseKind::ScrollUp, column: 10, row: 10 });
+    assert_eq!(app.screen, Screen::Web { selected: 0 });
+}
+
+#[test]
+fn hovering_a_row_lifts_it_and_moving_off_clears_it() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    let (column, row) = find(&app, "moneropay");
+    let theme = nodo_tui::theme::Theme::truecolor();
+    let before = draw(&app, 120, 36).0[(column + 20, row)].bg;
+    assert_eq!(before, theme.card);
+    dispatch(&mut app, &mut mock, Event::Mouse { kind: MouseKind::Moved, column, row });
+    assert!(app.hover.is_some());
+    let (buffer, _) = draw(&app, 120, 36);
+    assert_eq!(buffer[(column + 20, row)].bg, theme.raised, "the whole row is one surface lighter");
+    assert_eq!(buffer[(column + 20, row - 2)].bg, theme.card, "other rows are not");
+    // Hover is not selection: the keyboard focus stays on the first site.
+    assert_eq!(app.screen, Screen::Web { selected: 0 });
+    dispatch(&mut app, &mut mock, Event::Mouse { kind: MouseKind::Moved, column: 0, row: 35 });
+    assert!(app.hover.is_none());
+    assert_eq!(draw(&app, 120, 36).0[(column + 20, row)].bg, theme.card);
 }
 
 // Secrets
@@ -1067,8 +1179,7 @@ fn pasted_text_only_goes_to_a_focused_input_and_never_confirms() {
     mock.calls.clear();
     dispatch(&mut app, &mut mock, Event::Paste("shop.example.com\n".to_owned()));
     let Screen::WebConfirm(state) = &app.screen else { panic!("expected confirm") };
-    assert_eq!(state.typed.text(), "shop.example.com");
-    assert_eq!(state.focus, ConfirmFocus::Address);
+    assert_eq!(state.focus, ConfirmFocus::Cancel);
     assert!(exposure_calls(&mock).is_empty());
 
     // A pasted passphrase stays hidden.

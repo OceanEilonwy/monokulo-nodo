@@ -10,7 +10,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, KeyEventKind};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, KeyEventKind, MouseButton,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -19,7 +22,7 @@ use nodo_api::{ApiError, Backend, PublicConfirmation, Request, Response};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, Effect, Event, ExposureAfter, UsbView, TICKS_PER_SECOND};
+use crate::app::{App, Effect, Event, ExposureAfter, MouseKind, UsbView, TICKS_PER_SECOND};
 use crate::model::*;
 use crate::theme::Theme;
 use crate::update::update;
@@ -517,7 +520,7 @@ pub trait TerminalMode: Send + Sync + 'static {
 
 /// Writes the sequence that puts a terminal back, ignoring errors, because the peer may be gone.
 pub fn write_restore(out: &mut impl Write) {
-    let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen, Show);
+    let _ = execute!(out, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
     let _ = out.flush();
 }
 
@@ -526,7 +529,7 @@ pub struct CrosstermMode;
 impl TerminalMode for CrosstermMode {
     fn enter(&self) -> io::Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, Hide)
+        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)
     }
 
     fn leave(&self) {
@@ -608,6 +611,26 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, t
                     dispatch_async(&mut app, &mut worker, Event::Key(key));
                 }
                 event::Event::Paste(text) => dispatch_async(&mut app, &mut worker, Event::Paste(text)),
+                event::Event::Mouse(mouse) => {
+                    let kind = match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => Some(MouseKind::Down),
+                        MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => Some(MouseKind::Moved),
+                        MouseEventKind::ScrollUp => Some(MouseKind::ScrollUp),
+                        MouseEventKind::ScrollDown => Some(MouseKind::ScrollDown),
+                        _ => None,
+                    };
+                    if let Some(kind) = kind {
+                        // A move only matters when it changes which target is under the pointer, so
+                        // moves within one target, or over nothing, cost nothing.
+                        let changes = kind != MouseKind::Moved || {
+                            let under = crate::hit::hit_at(&app.hits.borrow(), mouse.column, mouse.row).map(|hit| hit.rect);
+                            under != app.hover
+                        };
+                        if changes {
+                            dispatch_async(&mut app, &mut worker, Event::Mouse { kind, column: mouse.column, row: mouse.row });
+                        }
+                    }
+                }
                 event::Event::Resize(width, height) => {
                     dispatch_async(&mut app, &mut worker, Event::Resize(width, height));
                 }

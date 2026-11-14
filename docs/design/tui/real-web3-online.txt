@@ -1,0 +1,36 @@
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
+    Packages  ›  shop  ›  Hosting
+
+
+
+       ◆  shop is online. Getting its secure connection…
+
+          https://shop.example.com
+          https://shop.local
+
+          The Nodo renews the secure connection and follows your home's address by itself.
+
+                                                                                                        Done   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ done  l logs  d certificates

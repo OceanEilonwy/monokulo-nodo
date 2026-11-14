@@ -103,11 +103,13 @@ pub struct Page {
     pub sections: Vec<Section>,
     /// Pinned to the bottom, because this is where the buttons and key hints live.
     pub footer: Vec<Item>,
+    /// What a click can do on this page, found by text after drawing (see `crate::hit`).
+    pub targets: Vec<crate::hit::Target>,
 }
 
 impl Page {
     pub fn new(left: Line<'static>, right: Line<'static>) -> Self {
-        Self { left, right, sections: Vec::new(), footer: Vec::new() }
+        Self { left, right, sections: Vec::new(), footer: Vec::new(), targets: Vec::new() }
     }
 
     pub fn panel(mut self, panel: Panel) -> Self {
@@ -127,6 +129,11 @@ impl Page {
 
     pub fn footer(mut self, item: Item) -> Self {
         self.footer.push(item);
+        self
+    }
+
+    pub fn target(mut self, target: crate::hit::Target) -> Self {
+        self.targets.push(target);
         self
     }
 }

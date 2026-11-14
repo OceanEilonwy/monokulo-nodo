@@ -138,6 +138,27 @@ codebase, and signed xbps packages from user-added feeds.
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. Admin paths are always blocked on public and
   onion addresses.
+- **Web screens (flow v3):** The TUI's Web tab lists only the sites that are online, each with who can
+  open it in words; clicking one, or pressing `h` on an installed app's page in Packages, opens that
+  app's Hosting. There the owner ticks Home network, Tor and Internet in any combination, and for the
+  internet uses the connected provider's domain with an address part (`pay` + `.example.com`). Home
+  network and Tor apply at once; the internet only turns on after the reachability checks pass and
+  the owner presses "Put … online" on a screen that shows the address and what becomes public, with
+  the focus starting on Cancel (the helper still requires the host quoted back, which the screen
+  sends). Domain providers are added once (Web › Domain providers): pick the company, type the web
+  address and paste the key; the TUI tests the key, then stores it as a secret, and returns to the
+  Hosting screen it came from. The helper keeps one provider and domain at a time, so "Add" replaces
+  it. Technical terms (records, ports, the challenge) are behind "Show details"; certificates and home
+  names live under Web › Domain providers › Certificates and home names.
+- **Mouse:** The TUI turns on mouse reporting (crossterm's `EnableMouseCapture`; it is turned off
+  again on exit and from the panic hook). Screens declare click targets by the text they draw, which
+  are found in the drawn frame (`crates/nodo-tui/src/hit.rs`), so a click lands on exactly what is
+  shown at any size. Left click activates, the wheel scrolls like the arrow keys, and pointer moves
+  give the target under the pointer a hover fill one surface lighter, distinct from the keyboard
+  selection; a move only redraws when the hovered target changes. Buttons get rounded ends (Nerd Font
+  Powerline caps) where `[tui] rounded_buttons` in `~/.config/nodo/tui.toml` or `/etc/nodo/tui.toml`
+  says `"on"`, or with `"auto"` (the default) in kitty, WezTerm and Ghostty, which bundle the symbols;
+  elsewhere they are flat with plain ends.
 - **Node onion address:** The node is not a site, so it has its own switch (`SetNodeOnion`, the TUI's
   Web › Onion screen). Tor forwards the onion address straight to the node's restricted RPC on
   loopback, never to a full RPC: to the port the node exports as its public `restricted-rpc-port`
@@ -158,7 +179,8 @@ codebase, and signed xbps packages from user-added feeds.
   80, which nftables sends to a listener bound to that address alone, for LAN sources only. It
   offers the root in DER and PEM, its SHA-256 fingerprint, and short install steps per platform.
   The helper writes the files to `/var/lib/nodo-web/trust` (root:_caddy) from the root Caddy
-  reports, and the TUI shows the same fingerprint under Web › Domains › Local CA so the owner can
+  reports, and the TUI shows the same fingerprint under Web › Domain providers › Certificates and home names ›
+  Local CA so the owner can
   compare before trusting a page that is necessarily unencrypted. No public, onion or main-address
   listener has a route to it.
 - **Certificates:** Public certificates come from Let's Encrypt through Caddy's ACME issuer, with an

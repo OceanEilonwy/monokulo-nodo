@@ -1,32 +1,32 @@
-Web › shop › Reachability check                              ✕ Public cannot work on this connection
-┌ Your ISP shares your public IP (CGNAT) ──────────────────────────────────────────────────────────┐
-│ Router forwarding will not help, because traffic stops at your ISP before it reaches your        │
-│ router. Dynamic DNS would point visitors at an address you do not control.                       │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Evidence ────────────────────────────────────────────────────────────────────────────────────────┐
-│ Your router's WAN address                                           100.72.14.9 in 100.64.0.0/10 │
-│ Address the internet sees                                                           203.0.113.42 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ What you can do ─────────────────────────────────────────────────────────────────────────────────┐
-│ ▸◉ Turn on Tor onion                                                 Works now, no domain needed │
-│    Ask your ISP for a public IP                               Some offer it free or as an add-on │
-│    Use IPv6 if your ISP provides it                             Only IPv6 visitors can reach you │
-│    Connect your own relay tunnel                                      Needs a server you control │
-│                                                                                                  │
-│ Your domain stays connected. Run this check again if your connection changes.                    │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ choose  ↵ continue  r check again  Esc back
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                     monokulo-nodo
+
+    Packages  ›  shop  ›  Hosting
+
+    The internet can't reach your Nodo
+
+
+       Your internet provider shares one address between many homes, so visitors stop at the
+       provider and never reach you. Router settings can't change this.
+
+       A private Tor link still works on this connection.
+
+       Show details ›
+
+                                                  Check again             Use Tor instead
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: o use Tor  r check again  d details  Esc back
