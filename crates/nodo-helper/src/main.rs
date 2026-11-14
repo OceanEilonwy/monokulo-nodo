@@ -1,5 +1,5 @@
 //! `nodo-helper --allow-uid <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]
-//!  [--drive <device> --drive-mount <path>]`
+//!  [--drive <device> --drive-mount <path>] [--screen-uid <uid> [--screen-socket <path>]]`
 //!
 //! `nodo-helper --settings-worker` is the unprivileged child that runs package settings code.
 //! The helper starts it itself.
@@ -28,6 +28,9 @@ struct Options {
     socket_gid: Option<u32>,
     drive: Option<PathBuf>,
     drive_mount: Option<PathBuf>,
+    /// The touchscreen's account, served on its own socket within what it may do.
+    screen_uid: Option<u32>,
+    screen_socket: PathBuf,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -37,6 +40,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         socket_gid: None,
         drive: None,
         drive_mount: None,
+        screen_uid: None,
+        screen_socket: nodo_api::SCREEN_SOCKET.into(),
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -55,11 +60,22 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             "--socket" => options.socket = value()?.into(),
             "--drive" => options.drive = Some(value()?.into()),
             "--drive-mount" => options.drive_mount = Some(value()?.into()),
+            "--screen-uid" => {
+                let uid = value()?.parse().map_err(|_| "--screen-uid needs a number")?;
+                options.screen_uid = Some(uid);
+            }
+            "--screen-socket" => options.screen_socket = value()?.into(),
             other => return Err(format!("unknown option: {other}")),
         }
     }
     if options.allowed.is_empty() {
         return Err("at least one --allow-uid is required".to_owned());
+    }
+    // A fully allowed account gains nothing from the screen socket, and the helper must still
+    // start, so the screen socket is left out.
+    if options.screen_uid.is_some_and(|uid| options.allowed.contains(&uid)) {
+        eprintln!("nodo-helper: the screen account is fully allowed already; no screen socket");
+        options.screen_uid = None;
     }
     if options.drive.is_some() != options.drive_mount.is_some() {
         return Err("--drive and --drive-mount go together".to_owned());
@@ -93,6 +109,13 @@ fn bind(path: &Path, gid: Option<u32>) -> std::io::Result<UnixListener> {
     let mode = if gid.is_some() { 0o660 } else { 0o600 };
     chown(path, None, gid)?;
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(listener)
+}
+
+/// The screen's socket belongs to the screen's account alone (0600). SO_PEERCRED is still checked.
+fn bind_owned(path: &Path, uid: u32) -> std::io::Result<UnixListener> {
+    let listener = bind(path, None)?;
+    chown(path, Some(uid), None)?;
     Ok(listener)
 }
 
@@ -174,6 +197,19 @@ fn main() -> ExitCode {
     let helper = Arc::new(helper);
     watch_local_address(helper.clone());
     refresh_feeds_at_start(helper.clone());
+    if let Some(screen_uid) = options.screen_uid {
+        match bind_owned(&options.screen_socket, screen_uid) {
+            Ok(screen) => {
+                let helper = helper.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = server::serve_screen(screen, helper, screen_uid) {
+                        eprintln!("nodo-helper: screen socket: {e}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("nodo-helper: cannot listen on {}: {e}", options.screen_socket.display()),
+        }
+    }
     if let Err(e) = server::serve(listener, helper) {
         eprintln!("nodo-helper: {e}");
         return ExitCode::FAILURE;

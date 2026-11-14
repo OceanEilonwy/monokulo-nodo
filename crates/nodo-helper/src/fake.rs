@@ -547,6 +547,7 @@ pub const TEST_PATHS: fn() -> Paths = || Paths {
         mount_point: "/media/monero".into(),
     }),
     bindings: "/s/bindings.toml".into(),
+    screen_pin: "/s/screen-pin".into(),
 };
 
 /// Stores plain text values and writes them as a flat file, refusing any value containing

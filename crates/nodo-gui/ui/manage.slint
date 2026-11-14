@@ -1,0 +1,1046 @@
+// Management on the touchscreen (canvas page "Touch screen GUI v2"): four tabs over cards, drawn
+// from page models the Rust side builds from the helper's data. Slint handles the touches here;
+// every tap reports an action id, and Rust decides what it does.
+
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+import { ScrollView } from "std-widgets.slint";
+
+export global MG {
+    out property <color> ground: #000000;
+    out property <color> surface: #0C0E10;
+    out property <color> card: #15181C;
+    out property <color> raised: #20252A;
+    out property <color> hover: #2A3036;
+    out property <color> pressed: #343B42;
+    out property <color> field: #0A0C0E;
+    out property <color> line: #2A3036;
+    out property <color> edge: #FFFFFF12;
+    out property <color> fg: #E4E6E8;
+    out property <color> bright: #F7F8F9;
+    out property <color> dim: #9AA2A9;
+    out property <color> faint: #656D74;
+    out property <color> accent: #F2A33A;
+    out property <color> accent-hover: #F6B358;
+    out property <color> accent-press: #D98D25;
+    out property <color> on-accent: #17130D;
+    out property <color> ok: #6FD6B3;
+    out property <color> ok-fill: #10251E;
+    out property <color> err: #FF8A7A;
+    out property <color> err-fill: #2C1613;
+    out property <string> ui: "Inter";
+    out property <string> mono: "JetBrains Mono";
+    // tone: 0 dim, 1 accent, 2 ok, 3 err, 4 fg
+    public pure function tone(t: int) -> color {
+        t == 1 ? self.accent : t == 2 ? self.ok : t == 3 ? self.err : t == 4 ? self.fg : self.dim
+    }
+}
+
+// kind: 0 primary, 1 secondary, 2 destructive, 3 text
+export struct MButton {
+    id: string,
+    label: string,
+    kind: int,
+    enabled: bool,
+    lock: bool,
+    busy: bool,
+}
+
+export struct MChip {
+    label: string,
+    value: string,
+    broken: bool,
+    // Typed text between references, drawn as text, not a chip.
+    plain: bool,
+}
+
+// One line of a card. kind:
+//   "row"      title, sub, value (tone), chevron when id is set, switch when toggle > 0 (1 off, 2 on)
+//   "text"     a paragraph (title), tone colours it
+//   "field"    a labelled input box showing text or chips; tapping it reports its id
+//   "long"     a labelled monospace value that wraps (addresses, keys)
+//   "progress" a bar (progress 0..1) with title and sub
+//   "step"     a progress step: value is the mark (✓ ◌ ✕ ·), tone colours it
+//   "buttons"  a row of buttons, right-aligned
+//   "segments" a segmented choice: options, selected
+//   "log"      one monospace log line, tone colours it
+export struct MRow {
+    kind: string,
+    id: string,
+    title: string,
+    sub: string,
+    value: string,
+    tone: int,
+    toggle: int,
+    mono: bool,
+    changed: bool,
+    placeholder: string,
+    chips: [MChip],
+    buttons: [MButton],
+    options: [string],
+    selected: int,
+    progress: float,
+    enabled: bool,
+}
+
+export struct MCard {
+    title: string,
+    sub: string,
+    tone: int,
+    rows: [MRow],
+}
+
+export struct MDialog {
+    shown: bool,
+    title: string,
+    text: string,
+    danger: bool,
+    buttons: [MButton],
+}
+
+export struct MPicker {
+    shown: bool,
+    title: string,
+    sub: string,
+    query: string,
+    rows: [MRow],
+}
+
+export struct MKeyboard {
+    shown: bool,
+    label: string,
+    text: string,
+    secret: bool,
+    mono: bool,
+    error: string,
+    can-paste: bool,
+}
+
+export struct MPin {
+    shown: bool,
+    title: string,
+    sub: string,
+    digits: int,
+    wrong: bool,
+    busy: bool,
+}
+
+component MText inherits Text {
+    color: MG.fg;
+    font-family: MG.ui;
+    font-size: 26px;
+    vertical-alignment: center;
+}
+
+component Lock inherits Rectangle {
+    in property <color> c: MG.dim;
+    in property <bool> open: false;
+    width: 22px;
+    height: 26px;
+    Rectangle {
+        x: open ? 10px : 4px;
+        y: 0;
+        width: 14px;
+        height: 16px;
+        border-radius: 7px;
+        border-width: 3px;
+        border-color: c;
+    }
+    Rectangle {
+        x: 0;
+        y: 10px;
+        width: 22px;
+        height: 16px;
+        border-radius: 4px;
+        background: c;
+    }
+}
+
+export component MBtn inherits Rectangle {
+    in property <MButton> b;
+    in property <length> min-w: 200px;
+    callback clicked(string);
+    horizontal-stretch: 0;
+    property <bool> on: b.enabled && !b.busy;
+    property <bool> down: ta.pressed && on;
+    property <bool> over: ta.has-hover && on;
+    height: 80px;
+    min-width: max(min-w, label.preferred-width + (b.lock ? 96px : 64px));
+    border-radius: 20px;
+    background: !on ? (b.kind == 0 ? #3A3226 : MG.card)
+        : b.kind == 0 ? (down ? MG.accent-press : over ? MG.accent-hover : MG.accent)
+        : b.kind == 1 ? (down ? MG.pressed : over ? MG.hover : MG.raised)
+        : b.kind == 2 ? (down ? #4A2520 : over ? #3A1D19 : MG.err-fill)
+        : (down || over ? MG.raised : transparent);
+    border-width: b.kind == 2 ? 2px : b.kind == 1 ? 1px : 0px;
+    border-color: b.kind == 2 ? #A8574C : MG.edge;
+    drop-shadow-blur: b.kind == 0 && on && !down ? 18px : 0px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #F2A33A30;
+    animate background { duration: 90ms; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 12px;
+        if b.lock: VerticalLayout {
+            alignment: center;
+            Lock {
+                c: b.kind == 0 ? MG.on-accent : MG.dim;
+            }
+        }
+        label := MText {
+            text: b.busy ? "…" + b.label : b.label;
+            font-weight: 600;
+            color: !on ? MG.faint : b.kind == 0 ? MG.on-accent : b.kind == 2 ? MG.err : b.kind == 3 ? MG.accent : MG.bright;
+        }
+    }
+    ta := TouchArea {
+        enabled: on;
+        clicked => {
+            root.clicked(b.id);
+        }
+    }
+}
+
+component MSwitch inherits Rectangle {
+    in property <bool> on;
+    width: 92px;
+    height: 52px;
+    border-radius: 26px;
+    background: on ? MG.accent : MG.raised;
+    border-width: on ? 0px : 1px;
+    border-color: MG.line;
+    animate background { duration: 120ms; }
+    Rectangle {
+        x: on ? parent.width - 48px : 4px;
+        y: 4px;
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        background: on ? #FFFFFF : MG.dim;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <MChip> c;
+    height: 52px;
+    width: t.preferred-width + (c.plain ? 0px : 32px);
+    border-radius: 14px;
+    background: c.plain ? transparent : c.broken ? MG.err-fill : #2A2116;
+    border-width: c.plain ? 0px : 2px;
+    border-color: c.broken ? #A8574C : #6B4A1E;
+    t := Text {
+        x: c.plain ? 0px : 16px;
+        text: c.value == "" ? c.label : c.label + "  →  " + c.value;
+        font-family: MG.mono;
+        font-size: 22px;
+        color: c.plain ? MG.bright : c.broken ? MG.err : MG.accent;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+}
+
+component RowView inherits Rectangle {
+    in property <MRow> r;
+    in property <bool> last;
+    callback act(string);
+    callback toggled(string, bool);
+    callback segment(string, int);
+    property <bool> tappable: r.id != "" && (r.kind == "row" || r.kind == "field");
+    background: tappable && ta.pressed ? MG.pressed : tappable && ta.has-hover ? MG.hover : transparent;
+    border-radius: 18px;
+    min-height: r.kind == "text" || r.kind == "log" ? 0px : r.kind == "buttons" ? 96px : 96px;
+    VerticalLayout {
+        padding-left: 28px;
+        padding-right: 24px;
+        padding-top: r.kind == "log" ? 2px : r.kind == "text" ? 8px : 12px;
+        padding-bottom: r.kind == "log" ? 2px : r.kind == "text" ? 8px : 12px;
+        spacing: 8px;
+        if r.kind == "row" || r.kind == "step": HorizontalLayout {
+            spacing: 24px;
+            min-height: 72px;
+            if r.kind == "step": MText {
+                text: r.value;
+                width: 36px;
+                font-family: MG.mono;
+                font-size: 30px;
+                color: MG.tone(r.tone);
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                horizontal-stretch: 1;
+                MText {
+                    text: r.title;
+                    font-size: 27px;
+                    font-weight: 600;
+                    color: r.enabled ? MG.bright : MG.faint;
+                    wrap: word-wrap;
+                }
+                if r.sub != "": MText {
+                    text: r.sub;
+                    font-size: 22px;
+                    color: MG.dim;
+                    font-family: r.mono ? MG.mono : MG.ui;
+                    wrap: word-wrap;
+                }
+            }
+            if r.kind == "row" && r.value != "": MText {
+                text: r.value;
+                font-size: 24px;
+                font-weight: 500;
+                color: MG.tone(r.tone);
+            }
+            if r.toggle > 0: VerticalLayout {
+                alignment: center;
+                MSwitch {
+                    on: r.toggle == 2;
+                }
+            }
+            if r.kind == "row" && r.id != "" && r.toggle == 0: MText {
+                text: "›";
+                font-size: 40px;
+                color: MG.faint;
+                width: 28px;
+            }
+        }
+        if r.kind == "text": MText {
+            text: r.title;
+            font-size: 24px;
+            color: r.tone == 0 ? MG.dim : MG.tone(r.tone);
+            wrap: word-wrap;
+        }
+        if r.kind == "log": MText {
+            text: r.title;
+            font-family: MG.mono;
+            font-size: 20px;
+            color: r.tone == 0 ? MG.dim : MG.tone(r.tone);
+            wrap: word-wrap;
+        }
+        if r.kind == "field" || r.kind == "long": VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 12px;
+                MText {
+                    text: r.title;
+                    font-size: 22px;
+                    color: MG.dim;
+                }
+                if r.changed: MText {
+                    text: "· changed";
+                    font-size: 22px;
+                    color: MG.accent;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Rectangle {
+                min-height: 72px;
+                border-radius: 16px;
+                background: MG.field;
+                border-width: 2px;
+                border-color: r.tone == 3 ? MG.err : r.changed ? #6B4A1E : MG.line;
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 16px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    spacing: 10px;
+                    if r.chips.length == 0: MText {
+                        horizontal-stretch: 1;
+                        text: r.value == "" ? r.placeholder : r.value;
+                        color: r.value == "" ? MG.faint : MG.bright;
+                        font-family: r.mono || r.kind == "long" ? MG.mono : MG.ui;
+                        font-size: r.mono || r.kind == "long" ? 22px : 26px;
+                        wrap: r.mono || r.kind == "long" ? char-wrap : word-wrap;
+                    }
+                    for c in r.chips: Chip {
+                        c: c;
+                    }
+                    if r.chips.length > 0: Rectangle { horizontal-stretch: 1; }
+                    if r.kind == "field" && r.id != "" && r.selected >= 0: MText {
+                        text: r.options.length > 0 ? "▾" : "{ }";
+                        font-family: MG.mono;
+                        font-size: 24px;
+                        color: MG.accent;
+                        width: 44px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+            if r.sub != "": MText {
+                text: r.sub;
+                font-size: 21px;
+                color: r.tone == 3 ? MG.err : MG.faint;
+                wrap: word-wrap;
+            }
+        }
+        if r.kind == "progress": VerticalLayout {
+            spacing: 10px;
+            HorizontalLayout {
+                MText {
+                    text: r.title;
+                    font-size: 26px;
+                    font-weight: 600;
+                    color: MG.bright;
+                    horizontal-stretch: 1;
+                }
+                MText {
+                    text: r.value;
+                    font-size: 24px;
+                    color: MG.dim;
+                }
+            }
+            Rectangle {
+                height: 14px;
+                border-radius: 7px;
+                background: MG.raised;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * clamp(r.progress, 0, 1);
+                    height: parent.height;
+                    border-radius: 7px;
+                    background: MG.accent;
+                    animate width { duration: 300ms; }
+                }
+            }
+            if r.sub != "": MText {
+                text: r.sub;
+                font-size: 22px;
+                color: MG.dim;
+                wrap: word-wrap;
+            }
+        }
+        if r.kind == "segments": VerticalLayout {
+            spacing: 8px;
+            if r.title != "": MText {
+                text: r.title;
+                font-size: 22px;
+                color: MG.dim;
+            }
+            Rectangle {
+                height: 72px;
+                border-radius: 18px;
+                background: MG.field;
+                border-width: 1px;
+                border-color: MG.line;
+                HorizontalLayout {
+                    padding: 6px;
+                    spacing: 6px;
+                    for o[i] in r.options: Rectangle {
+                        border-radius: 14px;
+                        background: i == r.selected ? MG.raised : seg.has-hover ? MG.card : transparent;
+                        MText {
+                            text: o;
+                            horizontal-alignment: center;
+                            font-size: 24px;
+                            font-weight: i == r.selected ? 600 : 400;
+                            color: i == r.selected ? MG.bright : MG.dim;
+                        }
+                        seg := TouchArea {
+                            clicked => {
+                                root.segment(r.id, i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if r.kind == "buttons": HorizontalLayout {
+            alignment: end;
+            spacing: 20px;
+            for b in r.buttons: MBtn {
+                b: b;
+                clicked(id) => {
+                    root.act(id);
+                }
+            }
+        }
+    }
+    ta := TouchArea {
+        enabled: tappable;
+        clicked => {
+            if (r.toggle > 0) {
+                root.toggled(r.id, r.toggle == 1);
+            } else {
+                root.act(r.id);
+            }
+        }
+    }
+    if !last && (r.kind == "row") : Rectangle {
+        x: 28px;
+        y: parent.height - 1px;
+        width: parent.width - 56px;
+        height: 1px;
+        background: MG.line;
+    }
+}
+
+component CardView inherits Rectangle {
+    in property <MCard> c;
+    callback act(string);
+    callback toggled(string, bool);
+    callback segment(string, int);
+    background: MG.card;
+    border-radius: 28px;
+    border-width: 1px;
+    border-color: c.tone == 3 ? #A8574C : c.tone == 1 ? #6B4A1E : MG.edge;
+    VerticalLayout {
+        padding: 12px;
+        padding-top: c.title == "" ? 12px : 24px;
+        spacing: 0px;
+        if c.title != "": VerticalLayout {
+            padding-left: 28px;
+            padding-right: 28px;
+            padding-bottom: 8px;
+            spacing: 4px;
+            MText {
+                text: c.title;
+                font-size: 30px;
+                font-weight: 700;
+                color: c.tone == 0 || c.tone == 4 ? MG.bright : MG.tone(c.tone);
+                wrap: word-wrap;
+            }
+            if c.sub != "": MText {
+                text: c.sub;
+                font-size: 23px;
+                color: MG.dim;
+                wrap: word-wrap;
+            }
+        }
+        for r[i] in c.rows: RowView {
+            r: r;
+            last: i == c.rows.length - 1;
+            act(id) => {
+                root.act(id);
+            }
+            toggled(id, on) => {
+                root.toggled(id, on);
+            }
+            segment(id, n) => {
+                root.segment(id, n);
+            }
+        }
+    }
+}
+
+component Tab inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <string> badge;
+    callback clicked();
+    height: 64px;
+    border-radius: 16px;
+    background: on ? MG.accent : ta.has-hover ? MG.raised : transparent;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 10px;
+        MText {
+            text: label;
+            font-size: 26px;
+            font-weight: on ? 600 : 500;
+            color: on ? MG.on-accent : MG.fg;
+        }
+        if badge != "": Rectangle {
+            width: 34px;
+            height: 34px;
+            border-radius: 17px;
+            background: on ? MG.on-accent : MG.accent;
+            MText {
+                text: badge;
+                font-size: 20px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                color: on ? MG.accent : MG.on-accent;
+            }
+        }
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Key inherits Rectangle {
+    in property <string> k;
+    in property <length> w: 140px;
+    in property <bool> special;
+    callback pressed(string);
+    width: w;
+    height: 92px;
+    border-radius: 14px;
+    background: ta.pressed ? MG.pressed : special ? MG.raised : MG.hover;
+    MText {
+        text: k;
+        horizontal-alignment: center;
+        font-size: 30px;
+        color: MG.bright;
+    }
+    ta := TouchArea {
+        clicked => {
+            root.pressed(k);
+        }
+    }
+}
+
+export component ManageView inherits Rectangle {
+    in property <int> tab: 0;
+    in property <[string]> badges: ["", "", "", ""];
+    in property <bool> unlocked;
+    in property <bool> pin-set;
+    in property <[string]> crumbs;
+    in property <string> title;
+    in property <[MButton]> actions;
+    in property <[MCard]> cards;
+    in property <string> toast;
+    in property <bool> toast-error;
+    in property <MDialog> dialog;
+    in property <MPicker> picker;
+    in property <MKeyboard> keyboard;
+    in property <MPin> pin;
+    in property <bool> busy;
+    in-out property <length> scroll-y: 0px;
+
+    callback act(string);
+    callback toggled(string, bool);
+    callback segment(string, int);
+    callback tab-clicked(int);
+    callback crumb(int);
+    callback key(string);
+    callback any-touch();
+
+    background: MG.ground;
+
+    // Top bar: back to the tiles, the four tabs, the lock and power.
+    Rectangle {
+        y: 0;
+        height: 104px;
+        background: MG.ground;
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            spacing: 20px;
+            alignment: space-between;
+            VerticalLayout {
+                alignment: center;
+                MBtn {
+                    b: { id: "screen", label: "‹  Screen", kind: 1, enabled: true };
+                    min-w: 180px;
+                    clicked(id) => { root.act(id); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 760px;
+                    height: 80px;
+                    border-radius: 22px;
+                    background: MG.surface;
+                    border-width: 1px;
+                    border-color: MG.edge;
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        for t[i] in ["Home", "Apps", "Web", "System"]: Tab {
+                            label: t;
+                            on: i == root.tab;
+                            badge: root.badges[i];
+                            clicked => { root.tab-clicked(i); }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 220px;
+                        height: 72px;
+                        border-radius: 20px;
+                        background: root.unlocked ? MG.ok-fill : MG.raised;
+                        border-width: 1px;
+                        border-color: root.unlocked ? #2C6B57 : MG.edge;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                Lock {
+                                    c: root.unlocked ? MG.ok : MG.dim;
+                                    open: root.unlocked;
+                                }
+                            }
+                            MText {
+                                text: root.unlocked ? "Unlocked" : "Locked";
+                                font-size: 24px;
+                                font-weight: 600;
+                                color: root.unlocked ? MG.ok : MG.fg;
+                            }
+                        }
+                        TouchArea {
+                            clicked => { root.act(root.unlocked ? "lock" : "unlock"); }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 80px;
+                        height: 72px;
+                        border-radius: 20px;
+                        background: power.pressed ? #4A2520 : MG.err-fill;
+                        border-width: 2px;
+                        border-color: #A8574C;
+                        MText {
+                            text: "⏻";
+                            font-family: MG.mono;
+                            horizontal-alignment: center;
+                            font-size: 30px;
+                            color: MG.err;
+                        }
+                        power := TouchArea {
+                            clicked => { root.act("power"); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Breadcrumb, title and the page's own actions on one row.
+    Rectangle {
+        y: 112px;
+        x: 32px;
+        width: parent.width - 64px;
+        height: 110px;
+        VerticalLayout {
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 8px;
+                for c[i] in root.crumbs: HorizontalLayout {
+                    spacing: 8px;
+                    MText {
+                        text: c;
+                        font-size: 22px;
+                        color: MG.accent;
+                        TouchArea {
+                            clicked => { root.crumb(i); }
+                        }
+                    }
+                    MText {
+                        text: "›";
+                        font-size: 22px;
+                        color: MG.faint;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 20px;
+                MText {
+                    text: root.title;
+                    font-size: 44px;
+                    font-weight: 700;
+                    color: MG.bright;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                for b in root.actions: MBtn {
+                    b: b;
+                    min-w: 160px;
+                    clicked(id) => { root.act(id); }
+                }
+            }
+        }
+    }
+
+    // The cards, scrolling.
+    page := Flickable {
+        x: 32px;
+        y: 232px;
+        width: parent.width - 64px;
+        height: parent.height - 232px;
+        content-height: cards-box.preferred-height + 40px;
+        content-y <=> root.scroll-y;
+        cards-box := VerticalLayout {
+            width: parent.width;
+            spacing: 20px;
+            for c in root.cards: CardView {
+                c: c;
+                act(id) => { root.act(id); }
+                toggled(id, on) => { root.toggled(id, on); }
+                segment(id, n) => { root.segment(id, n); }
+            }
+        }
+    }
+
+    if root.toast != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 140px;
+        width: min(1400px, toast-text.preferred-width + 80px);
+        height: 88px;
+        border-radius: 22px;
+        background: root.toast-error ? MG.err-fill : MG.raised;
+        border-width: 1px;
+        border-color: root.toast-error ? #A8574C : MG.edge;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000A0;
+        toast-text := MText {
+            text: root.toast;
+            horizontal-alignment: center;
+            color: root.toast-error ? MG.err : MG.bright;
+        }
+    }
+
+    // A dialog over a scrim.
+    if root.dialog.shown: Rectangle {
+        background: #000000B0;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 1500px;
+            height: dlg.preferred-height;
+            border-radius: 32px;
+            background: MG.card;
+            border-width: 2px;
+            border-color: root.dialog.danger ? #A8574C : MG.edge;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: #000000C0;
+            dlg := VerticalLayout {
+                padding: 48px;
+                spacing: 24px;
+                MText {
+                    text: root.dialog.title;
+                    font-size: 38px;
+                    font-weight: 700;
+                    color: root.dialog.danger ? MG.err : MG.bright;
+                    wrap: word-wrap;
+                }
+                MText {
+                    text: root.dialog.text;
+                    font-size: 26px;
+                    color: MG.fg;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 20px;
+                    for b in root.dialog.buttons: MBtn {
+                        b: b;
+                        min-w: 140px;
+                        clicked(id) => { root.act(id); }
+                    }
+                }
+            }
+        }
+    }
+
+    // The generic reference picker (and any searchable list): a sheet from the right.
+    if root.picker.shown: Rectangle {
+        background: #00000090;
+        TouchArea {
+            clicked => { root.act("picker-close"); }
+        }
+        Rectangle {
+            x: parent.width - self.width;
+            width: 1000px;
+            background: MG.surface;
+            border-width: 1px;
+            border-color: MG.edge;
+            TouchArea {}
+            VerticalLayout {
+                padding: 32px;
+                spacing: 16px;
+                HorizontalLayout {
+                    MText {
+                        text: root.picker.title;
+                        font-size: 36px;
+                        font-weight: 700;
+                        color: MG.bright;
+                        horizontal-stretch: 1;
+                    }
+                    MBtn {
+                        b: { id: "picker-close", label: "Close", kind: 3, enabled: true };
+                        min-w: 120px;
+                        clicked(id) => { root.act(id); }
+                    }
+                }
+                if root.picker.sub != "": MText {
+                    vertical-stretch: 0;
+                    text: root.picker.sub;
+                    font-size: 22px;
+                    color: MG.dim;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    height: 80px;
+                    border-radius: 18px;
+                    background: MG.field;
+                    border-width: 2px;
+                    border-color: MG.accent;
+                    MText {
+                        x: 24px;
+                        text: root.picker.query == "" ? "Search apps, settings, descriptions or values" : root.picker.query;
+                        color: root.picker.query == "" ? MG.faint : MG.bright;
+                    }
+                    TouchArea {
+                        clicked => { root.act("picker-search"); }
+                    }
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: plist.preferred-height;
+                    plist := VerticalLayout {
+                        width: parent.width;
+                        spacing: 4px;
+                        for r[i] in root.picker.rows: RowView {
+                            r: r;
+                            last: i == root.picker.rows.length - 1;
+                            act(id) => { root.act(id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The on-screen keyboard, editing one value.
+    if root.keyboard.shown: Rectangle {
+        background: #000000C0;
+        TouchArea {}
+        Rectangle {
+            y: 120px;
+            x: 160px;
+            width: parent.width - 320px;
+            height: 150px;
+            border-radius: 24px;
+            background: MG.card;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                MText {
+                    text: root.keyboard.label;
+                    font-size: 22px;
+                    color: MG.dim;
+                }
+                MText {
+                    text: root.keyboard.text + "▏";
+                    font-family: root.keyboard.mono ? MG.mono : MG.ui;
+                    font-size: root.keyboard.mono ? 26px : 32px;
+                    color: MG.bright;
+                    overflow: elide;
+                }
+                if root.keyboard.error != "": MText {
+                    text: root.keyboard.error;
+                    font-size: 22px;
+                    color: MG.err;
+                }
+            }
+        }
+        VerticalLayout {
+            y: parent.height - 560px;
+            height: 560px;
+            padding: 24px;
+            spacing: 12px;
+            alignment: end;
+            for row in [["1","2","3","4","5","6","7","8","9","0"], ["q","w","e","r","t","y","u","i","o","p"], ["a","s","d","f","g","h","j","k","l",":"], ["z","x","c","v","b","n","m",".","/","-"]]: HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                for k in row: Key {
+                    k: k;
+                    pressed(t) => { root.key(t); }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                Key { k: "⇧"; w: 160px; special: true; pressed(t) => { root.key("shift"); } }
+                Key { k: "$("; w: 140px; special: true; pressed(t) => { root.key("$("); } }
+                Key { k: "space"; w: 540px; pressed(t) => { root.key(" "); } }
+                if root.keyboard.can-paste: Key { k: "Paste"; w: 180px; special: true; pressed(t) => { root.key("paste"); } }
+                Key { k: "⌫"; w: 160px; special: true; pressed(t) => { root.key("back"); } }
+                Key { k: "Cancel"; w: 200px; special: true; pressed(t) => { root.key("cancel"); } }
+                Key { k: "Done"; w: 200px; special: true; pressed(t) => { root.key("done"); } }
+            }
+        }
+    }
+
+    // The screen PIN pad.
+    if root.pin.shown: Rectangle {
+        background: #000000C8;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 640px;
+            height: 860px;
+            border-radius: 36px;
+            background: MG.card;
+            border-width: 1px;
+            border-color: MG.edge;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 24px;
+                alignment: start;
+                MText {
+                    text: root.pin.title;
+                    font-size: 34px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    color: MG.bright;
+                }
+                MText {
+                    text: root.pin.wrong ? "That's not the PIN" : root.pin.sub;
+                    font-size: 24px;
+                    horizontal-alignment: center;
+                    color: root.pin.wrong ? MG.err : MG.dim;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 20px;
+                    for i in [0, 1, 2, 3, 4, 5]: Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: i < root.pin.digits ? MG.accent : transparent;
+                        border-width: 3px;
+                        border-color: i < root.pin.digits ? MG.accent : MG.faint;
+                    }
+                }
+                for row in [["1","2","3"],["4","5","6"],["7","8","9"],["cancel","0","back"]]: HorizontalLayout {
+                    alignment: center;
+                    spacing: 20px;
+                    for k in row: Rectangle {
+                        width: 160px;
+                        height: 120px;
+                        border-radius: 22px;
+                        background: pk.pressed ? MG.pressed : k == "cancel" || k == "back" ? MG.surface : MG.raised;
+                        MText {
+                            text: k == "cancel" ? "Cancel" : k == "back" ? "⌫" : k;
+                            horizontal-alignment: center;
+                            font-size: k == "cancel" ? 26px : 40px;
+                            font-weight: 600;
+                            color: MG.bright;
+                        }
+                        pk := TouchArea {
+                            enabled: !root.pin.busy;
+                            clicked => { root.key("pin:" + k); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Any touch keeps the screen from returning to the tiles.
+    TouchArea {
+        z: -1;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { root.any-touch(); }
+        }
+    }
+}

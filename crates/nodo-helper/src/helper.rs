@@ -56,6 +56,8 @@ pub struct Paths {
     pub drive: Option<DriveConfig>,
     /// Role bindings, approved grants and data drive choices, in one root-only file.
     pub bindings: PathBuf,
+    /// The screen PIN's salted hash, root-only. Missing means the screen can only look.
+    pub screen_pin: PathBuf,
 }
 
 impl Default for Paths {
@@ -77,6 +79,7 @@ impl Default for Paths {
             authorized_keys: "/root/.ssh/authorized_keys".into(),
             drive: None,
             bindings: "/var/lib/nodo/bindings.toml".into(),
+            screen_pin: "/var/lib/nodo/screen-pin".into(),
         }
     }
 }
@@ -89,6 +92,8 @@ pub struct Timing {
     pub stable_secs: u64,
     pub unlock_backoff_base: Duration,
     pub unlock_backoff_max: Duration,
+    /// How long the screen stays unlocked for changes after its last change.
+    pub screen_idle: Duration,
 }
 
 impl Default for Timing {
@@ -99,6 +104,7 @@ impl Default for Timing {
             stable_secs: 5,
             unlock_backoff_base: Duration::from_secs(2),
             unlock_backoff_max: Duration::from_secs(60),
+            screen_idle: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -125,6 +131,8 @@ pub struct Helper<S: System> {
     pub(crate) secrets: Mutex<Option<std::sync::Arc<crate::secrets::SecretsKey>>>,
     /// Wi-Fi and Bluetooth.
     pub(crate) radios: crate::radio::Radios,
+    /// Whether the touchscreen may make changes right now.
+    pub(crate) screen: crate::screen::ScreenGate,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +167,7 @@ impl<S: System> Helper<S> {
             manage: crate::manage::Manage::default(),
             secrets: Mutex::new(None),
             radios: crate::radio::Radios::default(),
+            screen: crate::screen::ScreenGate::default(),
         }
     }
 
@@ -192,6 +201,18 @@ impl<S: System> Helper<S> {
     pub fn handle(&self, uid: u32, request: Request) -> Result<Response, ApiError> {
         // Secrets in the request are wiped when it drops, on the denied path too.
         self.authorize(uid)?;
+        if matches!(
+            request,
+            Request::ScreenStatus | Request::ScreenUnlock { .. } | Request::ScreenLock | Request::SetScreenPin { .. }
+        ) {
+            return self.screen_request_from_owner(request);
+        }
+        self.handle_trusted(uid, request)
+    }
+
+    /// Answers a request from a caller already allowed to send it: an allowed uid on the main
+    /// socket, or the screen within what [`crate::screen`] lets it do.
+    pub(crate) fn handle_trusted(&self, uid: u32, request: Request) -> Result<Response, ApiError> {
         match request {
             Request::Unlock { passphrase } => self.unlock(&passphrase),
             Request::InitEncryption { passphrase } => {

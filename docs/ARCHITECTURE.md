@@ -62,7 +62,9 @@ codebase, and signed xbps packages from user-added feeds.
   here reads (`scripts/_build-image-inner.sh` lists them and why), and `scripts/build-image.sh`
   fails a board over its size budget (`tests/size-check.sh`). The T6N images carry the platform (nodo-tools,
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
-  nodo-autoupdate at boot; the helper starts the web services when sites need them. They also
+  nodo-autoupdate at boot; the helper starts the web services when sites need them. The helper also
+  serves the touchscreen (nodo-gui, as `_nodo_screen`) on `/run/nodo/screen.sock`, where reading is
+  always allowed and changes need the screen PIN (docs/SCREEN.md, "Changes need the screen PIN"). They also
   start udevd, which loads the board's driver modules and firmware and handles USB hotplug, and
   `nodo-sound` for the mixer state; [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) lists the hardware
   setup. The helper's run script does not rely on udev's `/dev/disk` links: it takes the data

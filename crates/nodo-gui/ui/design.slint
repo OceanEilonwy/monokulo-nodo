@@ -1,0 +1,2086 @@
+// Design boards for the touch screen's management and wallpapers (mock data, no helper).
+//
+// `nodo-gui --screenshot <scene> <file.png>` renders one of these at 1920 x 1080 with the real
+// Slint software renderer, so the canvas shows exactly what the panel would. The screens mirror
+// the simplified TUI (Home, Apps, Web, System) laid out for fingers: every target is at least
+// 88 px, one primary action per screen, buttons inside the card they act on.
+
+global DP {
+    out property <color> ground: #000000;
+    out property <color> surface: #0B0D0F;
+    out property <color> card: #14181B;
+    out property <color> raised: #1E2327;
+    out property <color> hover: #262C31;
+    out property <color> field: #07090A;
+    out property <color> line: #2A2F33;
+    out property <color> fg: #D7DADC;
+    out property <color> bright: #F4F5F6;
+    out property <color> dim: #8A9298;
+    out property <color> faint: #5C646A;
+    out property <color> accent: #F2A33A;
+    out property <color> on-accent: #121416;
+    out property <color> ok: #6FD6B3;
+    out property <color> err: #FF8A7A;
+    out property <color> err-fill: #3A1D1A;
+    out property <color> info: #86BEFF;
+}
+
+// ---------------------------------------------------------------- building blocks
+
+component T inherits Text {
+    color: DP.fg;
+    font-size: 28px;
+    vertical-alignment: center;
+}
+
+
+// A small padlock drawn with rectangles (the screen's font has no emoji).
+component LockIcon inherits Rectangle {
+    in property <color> tint;
+    in property <bool> open: false;
+    width: 26px;
+    height: 30px;
+    Rectangle {
+        x: open ? 9px : 4px;
+        y: 0;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        border-width: 4px;
+        border-color: tint;
+    }
+    Rectangle {
+        x: 0;
+        y: 12px;
+        width: 26px;
+        height: 18px;
+        border-radius: 4px;
+        background: tint;
+    }
+}
+
+// kind: 0 primary (orange), 1 secondary (grey), 2 destructive (red tint), 3 quiet (text only)
+component Btn inherits Rectangle {
+    in property <string> label;
+    in property <int> kind: 0;
+    in property <length> w: 280px;
+    in property <bool> locked: false;
+    width: w;
+    height: 88px;
+    border-radius: 44px;
+    background: kind == 0 ? DP.accent : kind == 1 ? DP.raised : kind == 2 ? DP.err-fill : transparent;
+    border-width: kind == 2 ? 2px : 0px;
+    border-color: DP.err;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 14px;
+        if locked: VerticalLayout {
+            alignment: center;
+            LockIcon {
+                tint: kind == 0 ? DP.on-accent : DP.dim;
+            }
+        }
+        Text {
+            text: label;
+            font-size: 30px;
+            font-weight: 700;
+            vertical-alignment: center;
+            color: kind == 0 ? DP.on-accent : kind == 2 ? DP.err : kind == 3 ? DP.accent : DP.bright;
+        }
+    }
+}
+
+component Card inherits Rectangle {
+    background: DP.card;
+    border-radius: 28px;
+}
+
+// A tappable row: name, detail, value on the right and a chevron. 112 px tall.
+component Row inherits Rectangle {
+    in property <string> name;
+    in property <string> detail;
+    in property <string> value;
+    in property <color> value-color: DP.dim;
+    in property <bool> chevron: true;
+    in property <bool> hovered: false;
+    in property <bool> last: false;
+    in property <length> name-width: 300px;
+    height: 112px;
+    background: hovered ? DP.hover : transparent;
+    border-radius: 20px;
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        spacing: 28px;
+        T {
+            text: name;
+            font-weight: 700;
+            color: DP.bright;
+            width: name-width;
+        }
+        T {
+            text: detail;
+            color: DP.dim;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        T {
+            text: value;
+            color: value-color;
+        }
+        if chevron: T {
+            text: "›";
+            font-size: 44px;
+            color: DP.faint;
+        }
+    }
+    if !last: Rectangle {
+        x: 32px;
+        y: parent.height - 1px;
+        width: parent.width - 64px;
+        height: 1px;
+        background: DP.line;
+    }
+}
+
+component Toggle inherits Rectangle {
+    in property <bool> on;
+    width: 112px;
+    height: 60px;
+    border-radius: 30px;
+    background: on ? DP.accent : DP.raised;
+    Rectangle {
+        x: on ? parent.width - 54px : 6px;
+        y: 6px;
+        width: 48px;
+        height: 48px;
+        border-radius: 24px;
+        background: on ? DP.on-accent : DP.dim;
+    }
+}
+
+component Field inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> help;
+    in property <bool> focused: false;
+    in property <bool> error: false;
+    in property <string> suffix;
+    height: help != "" ? 150px : 112px;
+    HorizontalLayout {
+        y: 0;
+        height: 112px;
+        spacing: 28px;
+        T {
+            text: label;
+            color: DP.dim;
+            width: 300px;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 88px;
+            border-radius: 18px;
+            background: DP.field;
+            border-width: focused || error ? 3px : 1px;
+            border-color: error ? DP.err : focused ? DP.accent : DP.line;
+            HorizontalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                T {
+                    text: value;
+                    color: DP.bright;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                if focused: Rectangle {
+                    width: 3px;
+                    height: 44px;
+                    background: DP.accent;
+                }
+                if suffix != "": T {
+                    text: suffix;
+                    color: DP.dim;
+                }
+            }
+        }
+    }
+    if help != "": T {
+        x: 328px;
+        y: 112px;
+        height: 38px;
+        text: help;
+        font-size: 24px;
+        color: error ? DP.err : DP.dim;
+    }
+}
+
+component Key inherits Rectangle {
+    in property <string> label;
+    in property <length> kw: 150px;
+    in property <bool> dark: false;
+    width: kw;
+    height: 92px;
+    border-radius: 16px;
+    background: dark ? DP.card : DP.raised;
+    T {
+        text: label;
+        font-size: 32px;
+        color: DP.bright;
+        horizontal-alignment: center;
+    }
+}
+
+// An on-screen keyboard: the bottom 440 px of the screen.
+component Keyboard inherits Rectangle {
+    background: DP.surface;
+    height: 440px;
+    width: 1920px;
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: DP.line;
+    }
+    VerticalLayout {
+        padding: 22px;
+        spacing: 14px;
+        alignment: center;
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: center;
+            for k in ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]: Key {
+                label: k;
+            }
+            Key {
+                label: "⌫";
+                kw: 190px;
+                dark: true;
+            }
+        }
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: center;
+            for k in ["a", "s", "d", "f", "g", "h", "j", "k", "l"]: Key {
+                label: k;
+            }
+            Key {
+                label: "Done";
+                kw: 260px;
+                dark: true;
+            }
+        }
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: center;
+            Key {
+                label: "⇧";
+                kw: 190px;
+                dark: true;
+            }
+            for k in ["z", "x", "c", "v", "b", "n", "m", ".", "/"]: Key {
+                label: k;
+            }
+            Key {
+                label: "-";
+                kw: 120px;
+            }
+        }
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: center;
+            Key {
+                label: "123";
+                kw: 190px;
+                dark: true;
+            }
+            Key {
+                label: ":";
+                kw: 120px;
+            }
+            Key {
+                label: "space";
+                kw: 820px;
+            }
+            Key {
+                label: "Paste";
+                kw: 220px;
+                dark: true;
+            }
+            Key {
+                label: "← →";
+                kw: 190px;
+                dark: true;
+            }
+        }
+    }
+}
+
+// The management screens' top bar: back to the wallpaper, the four tabs, the lock state.
+// lock: 0 changes locked, 1 unlocked (counts down), 2 no screen PIN set.
+component Bar inherits Rectangle {
+    in property <int> tab: 0;
+    in property <int> lock: 0;
+    in property <string> apps-count: "2";
+    x: 0;
+    y: 0;
+    width: 1920px;
+    height: 136px;
+    background: DP.surface;
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 24px;
+        padding-bottom: 24px;
+        spacing: 16px;
+        Rectangle {
+            width: 220px;
+            border-radius: 44px;
+            background: DP.raised;
+            T {
+                horizontal-alignment: center;
+                text: "‹  Screen";
+                font-weight: 700;
+                color: DP.bright;
+            }
+        }
+        Rectangle {
+            width: 36px;
+        }
+        for name[i] in ["Home", "Apps", "Web", "System"]: Rectangle {
+            width: 220px;
+            border-radius: 44px;
+            background: i == tab ? DP.accent : transparent;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                T {
+                    text: name;
+                    font-size: 32px;
+                    font-weight: 700;
+                    color: i == tab ? DP.on-accent : DP.fg;
+                }
+                if i == 1 && apps-count != "": T {
+                    text: apps-count;
+                    font-size: 28px;
+                    color: i == tab ? DP.on-accent : DP.accent;
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: lock == 1 ? 420px : 360px;
+            border-radius: 44px;
+            background: lock == 1 ? #1D2A24 : DP.raised;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 14px;
+                VerticalLayout {
+                    alignment: center;
+                    LockIcon {
+                        tint: lock == 1 ? DP.ok : DP.dim;
+                        open: lock == 1;
+                    }
+                }
+                T {
+                    text: lock == 0 ? "Changes locked" : lock == 1 ? "Unlocked · 4:12" : "No screen PIN";
+                    font-weight: 700;
+                    color: lock == 1 ? DP.ok : DP.dim;
+                }
+            }
+        }
+        Rectangle {
+            width: 88px;
+            border-radius: 44px;
+            background: DP.raised;
+            border-width: 2px;
+            border-color: #7A3A33;
+            T {
+                text: "⏻";
+                font-size: 36px;
+                color: DP.err;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// A crumb line ("Apps › mk-pay") with page actions on the right.
+component Crumbs inherits HorizontalLayout {
+    in property <[string]> trail;
+    height: 96px;
+    spacing: 16px;
+    for c[i] in trail: HorizontalLayout {
+        spacing: 16px;
+        if i > 0: T {
+            text: "›";
+            color: DP.faint;
+            font-size: 34px;
+        }
+        T {
+            text: c;
+            font-size: 32px;
+            font-weight: i == trail.length - 1 ? 700 : 400;
+            color: i == trail.length - 1 ? DP.bright : DP.dim;
+        }
+    }
+    Rectangle {
+        horizontal-stretch: 1;
+    }
+    @children
+}
+
+component Caption inherits Text {
+    x: 48px;
+    y: 1044px;
+    height: 30px;
+    font-size: 20px;
+    color: DP.faint;
+}
+
+// The Nodo logo, drawn from tools/splash/logo.svg.
+component Logo inherits Image {
+    source: @image-url("logo.svg");
+    image-fit: contain;
+}
+
+// ---------------------------------------------------------------- the screens
+
+component WallpaperLogo inherits Rectangle {
+    in property <bool> with-panels;
+    background: DP.ground;
+    // Top bar as on the panels wallpaper: name and time left, Manage and Shut down right.
+    HorizontalLayout {
+        x: 36px;
+        y: 24px;
+        width: 1848px;
+        height: 88px;
+        spacing: 20px;
+        T {
+            text: "monokulo-nodo";
+            font-size: 26px;
+            font-weight: 700;
+        }
+        T {
+            text: "thu 13 nov  14:32";
+            font-size: 26px;
+            color: DP.dim;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 236px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #3A4045;
+            T {
+                horizontal-alignment: center;
+                text: "☰  Manage";
+                font-size: 26px;
+                font-weight: 700;
+                color: DP.fg;
+            }
+        }
+        Rectangle {
+            width: 236px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #7A3A33;
+            T {
+                horizontal-alignment: center;
+                text: "⏻  Shut down";
+                font-size: 26px;
+                font-weight: 700;
+                color: DP.err;
+            }
+        }
+    }
+    if !with-panels: Rectangle {
+        Logo {
+            x: (1920px - 560px) / 2;
+            y: 230px;
+            width: 560px;
+            height: 560px;
+        }
+        T {
+            x: 0;
+            y: 830px;
+            width: 1920px;
+            height: 60px;
+            horizontal-alignment: center;
+            text: "n o d o";
+            font-size: 44px;
+            font-weight: 700;
+            color: #FF6600;
+        }
+        T {
+            x: 0;
+            y: 900px;
+            width: 1920px;
+            height: 44px;
+            horizontal-alignment: center;
+            text: "All 4 apps running  ·  node 63% synced  ·  48 °C";
+            font-size: 26px;
+            color: DP.dim;
+        }
+    }
+    if with-panels: Rectangle {
+        Logo {
+            x: 120px;
+            y: 220px;
+            width: 640px;
+            height: 640px;
+        }
+        T {
+            x: 120px;
+            y: 880px;
+            width: 640px;
+            height: 60px;
+            horizontal-alignment: center;
+            text: "n o d o";
+            font-size: 44px;
+            font-weight: 700;
+            color: #FF6600;
+        }
+        // Two panels in the tiles' style on the right.
+        for p[i] in [
+            { title: "MONERO NODE", big: "63%", unit: "synced", note: "height 2,190,400 · about 7 h left", c: #F2A33A },
+            { title: "PAYMENTS TODAY", big: "4.82", unit: "XMR", note: "37 paid · 2 waiting", c: #6FD6B3 },
+            { title: "DEVICE", big: "48", unit: "°C", note: "ssd 27% · up 3 days", c: #6FD6B3 }
+        ]: Rectangle {
+            x: 900px;
+            y: 180px + i * 280px;
+            width: 900px;
+            height: 248px;
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: #3A4045;
+            T {
+                x: 36px;
+                y: 24px;
+                height: 40px;
+                text: p.title;
+                font-size: 22px;
+                font-weight: 700;
+                letter-spacing: 1.3px;
+                color: DP.dim;
+            }
+            HorizontalLayout {
+                x: 36px;
+                y: 72px;
+                height: 100px;
+                spacing: 16px;
+                alignment: start;
+                T {
+                    text: p.big;
+                    font-size: 84px;
+                    font-weight: 700;
+                    color: p.c;
+                }
+                T {
+                    text: p.unit;
+                    font-size: 30px;
+                    color: DP.dim;
+                    vertical-alignment: bottom;
+                }
+            }
+            T {
+                x: 36px;
+                y: 186px;
+                height: 40px;
+                text: p.note;
+                font-size: 24px;
+                color: DP.dim;
+            }
+        }
+    }
+}
+
+// System › Screen: which wallpaper, and when management goes back to it.
+component ScreenSettings inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["System", "Screen"];
+        }
+        Card {
+            height: 480px;
+            VerticalLayout {
+                padding: 36px;
+                spacing: 24px;
+                T {
+                    text: "Wallpaper";
+                    font-size: 34px;
+                    font-weight: 700;
+                    color: DP.bright;
+                }
+                T {
+                    text: "What the screen shows when nobody is using it.";
+                    color: DP.dim;
+                }
+                HorizontalLayout {
+                    spacing: 28px;
+                    for o[i] in [
+                        { name: "Panels", sub: "Your apps' tiles" },
+                        { name: "Logo", sub: "The Nodo, and one status line" },
+                        { name: "Logo and panels", sub: "The logo beside three tiles" }
+                    ]: Rectangle {
+                        height: 260px;
+                        horizontal-stretch: 1;
+                        border-radius: 24px;
+                        background: i == 1 ? DP.raised : DP.surface;
+                        border-width: i == 1 ? 3px : 1px;
+                        border-color: i == 1 ? DP.accent : DP.line;
+                        // A small preview of each.
+                        if i == 0: Rectangle {
+                            x: 28px;
+                            y: 28px;
+                            width: 220px;
+                            height: 124px;
+                            for c[j] in [0, 1, 2, 3]: Rectangle {
+                                x: Math.mod(j, 2) * 112px;
+                                y: Math.floor(j / 2) * 64px;
+                                width: 104px;
+                                height: 56px;
+                                border-radius: 8px;
+                                border-width: 2px;
+                                border-color: #3A4045;
+                            }
+                        }
+                        if i == 1: Logo {
+                            x: 28px;
+                            y: 20px;
+                            width: 140px;
+                            height: 140px;
+                        }
+                        if i == 2: Rectangle {
+                            x: 28px;
+                            y: 20px;
+                            width: 260px;
+                            height: 140px;
+                            Logo {
+                                x: 0;
+                                y: 10px;
+                                width: 120px;
+                                height: 120px;
+                            }
+                            for j in [0, 1, 2]: Rectangle {
+                                x: 136px;
+                                y: 8px + j * 44px;
+                                width: 120px;
+                                height: 36px;
+                                border-radius: 8px;
+                                border-width: 2px;
+                                border-color: #3A4045;
+                            }
+                        }
+                        T {
+                            x: 28px;
+                            y: 172px;
+                            height: 40px;
+                            text: (i == 1 ? "●  " : "○  ") + o.name;
+                            font-weight: 700;
+                            color: i == 1 ? DP.accent : DP.bright;
+                        }
+                        T {
+                            x: 28px;
+                            y: 212px;
+                            height: 32px;
+                            text: o.sub;
+                            font-size: 22px;
+                            color: DP.dim;
+                        }
+                    }
+                }
+            }
+        }
+        Card {
+            height: 260px;
+            VerticalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "Back to it";
+                    detail: "after 2 minutes without a touch";
+                    value: "2 min";
+                }
+                Row {
+                    name: "Dim";
+                    detail: "the wallpaper to 20% after 2 minutes";
+                    chevron: false;
+                    last: true;
+                    HorizontalLayout {
+                        alignment: end;
+                        padding-right: 32px;
+                        VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                on: true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Home inherits Rectangle {
+    Bar {
+        tab: 0;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 28px;
+        T {
+            height: 80px;
+            text: "Good afternoon";
+            font-size: 40px;
+            font-weight: 700;
+            color: DP.bright;
+        }
+        Card {
+            height: 220px;
+            HorizontalLayout {
+                padding: 40px;
+                spacing: 32px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    T {
+                        text: "2 app updates are ready";
+                        font-size: 34px;
+                        font-weight: 700;
+                        color: DP.bright;
+                    }
+                    T {
+                        text: "mk-pay and kringle. Each keeps its settings and can be undone.";
+                        color: DP.dim;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Review updates";
+                        w: 360px;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 470px;
+            VerticalLayout {
+                padding-top: 24px;
+                padding-left: 4px;
+                padding-right: 4px;
+                T {
+                    height: 72px;
+                    text: "     ✓  Everything else is running";
+                    font-size: 30px;
+                    font-weight: 700;
+                    color: DP.ok;
+                }
+                Row {
+                    name: "cuprated";
+                    detail: "Syncing the Monero chain";
+                    value: "63%";
+                    value-color: DP.accent;
+                    hovered: true;
+                }
+                Row {
+                    name: "mk-pay";
+                    detail: "open at https://pay.example.com";
+                    value: "Running";
+                }
+                Row {
+                    name: "mk-lws";
+                    detail: "Light wallet server";
+                    value: "Running";
+                    last: true;
+                }
+            }
+        }
+        T {
+            height: 48px;
+            text: "Storage 27% used of 2 TB    ·    Temperature 48 °C    ·    Up 3 days";
+            color: DP.dim;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+component Apps inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        HorizontalLayout {
+            height: 96px;
+            T {
+                text: "Installed";
+                font-size: 36px;
+                font-weight: 700;
+                color: DP.bright;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Get apps";
+                    kind: 1;
+                    w: 260px;
+                }
+            }
+        }
+        Card {
+            height: 600px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "cuprated";
+                    detail: "Monero node";
+                    value: "Syncing · 63%";
+                }
+                Row {
+                    name: "mk-pay";
+                    detail: "Payments for your shop";
+                    value: "Update ready";
+                    value-color: DP.accent;
+                    hovered: true;
+                }
+                Row {
+                    name: "mk-lws";
+                    detail: "Light wallet server";
+                    value: "Running";
+                }
+                Row {
+                    name: "mk-bell";
+                    detail: "Payment alerts";
+                    value: "Running";
+                }
+                Row {
+                    name: "kringle";
+                    detail: "Tip jar";
+                    value: "Update ready";
+                    value-color: DP.accent;
+                    last: true;
+                }
+            }
+        }
+    }
+}
+
+component AppPage inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["Apps", "mk-pay"];
+            HorizontalLayout {
+                spacing: 20px;
+                alignment: end;
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Restart";
+                        kind: 1;
+                        w: 220px;
+                        locked: true;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Stop";
+                        kind: 1;
+                        w: 180px;
+                        locked: true;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Remove…";
+                        kind: 2;
+                        w: 240px;
+                        locked: true;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 260px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 24px;
+                    T {
+                        text: "mk-pay";
+                        font-size: 36px;
+                        font-weight: 700;
+                        color: DP.bright;
+                    }
+                    T {
+                        text: "Payments for your shop";
+                        color: DP.dim;
+                    }
+                }
+                T {
+                    text: "●  Running for 3 days   ·   open at https://pay.example.com";
+                    color: DP.ok;
+                }
+                HorizontalLayout {
+                    spacing: 24px;
+                    T {
+                        text: "Version 0.2 is ready";
+                        font-weight: 700;
+                        color: DP.accent;
+                    }
+                    T {
+                        text: "fixes receipts in some currencies";
+                        color: DP.dim;
+                        horizontal-stretch: 1;
+                    }
+                    Btn {
+                        label: "Update";
+                        w: 240px;
+                        locked: true;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 360px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "Hosting";
+                    detail: "Home network and internet";
+                }
+                Row {
+                    name: "Settings";
+                    detail: "Store name, currency, 4 more";
+                    hovered: true;
+                }
+                Row {
+                    name: "Logs";
+                    detail: "Last problem: none";
+                    last: true;
+                }
+            }
+        }
+    }
+    Caption {
+        text: "A lock on a button: it asks for the screen PIN first. Looking around never does.";
+    }
+}
+
+component Settings inherits Rectangle {
+    in property <bool> keyboard;
+    Bar {
+        tab: 1;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 16px;
+        Crumbs {
+            trail: ["Apps", "mk-pay", "Settings"];
+        }
+        Card {
+            height: keyboard ? 380px : 780px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 8px;
+                Field {
+                    label: "Store name";
+                    value: keyboard ? "Corner Café" : "Corner Cafe";
+                    focused: keyboard;
+                }
+                if !keyboard: Field {
+                    label: "Currency";
+                    value: "EUR  ▾";
+                }
+                if !keyboard: Field {
+                    label: "Wallet address";
+                    value: "48daf1rG3hE…tUvb";
+                    error: true;
+                    help: "That isn't a Monero address. It should start with 4 or 8.";
+                }
+                if !keyboard: Field {
+                    label: "Monero node";
+                    value: "cuprated on this Nodo   ▾";
+                }
+                if !keyboard: HorizontalLayout {
+                    height: 112px;
+                    spacing: 28px;
+                    T {
+                        text: "Email receipts";
+                        color: DP.dim;
+                        width: 300px;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            on: true;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    spacing: 24px;
+                    alignment: end;
+                    Btn {
+                        label: "Cancel";
+                        kind: 1;
+                        w: 220px;
+                    }
+                    Btn {
+                        label: "Save";
+                        w: 220px;
+                    }
+                }
+            }
+        }
+    }
+    if keyboard: Keyboard {
+        x: 0;
+        y: 640px;
+    }
+}
+
+component GetApps inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["Apps", "Get apps"];
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Sources";
+                    kind: 1;
+                    w: 240px;
+                }
+            }
+        }
+        Field {
+            label: "Search";
+            value: "wallet";
+        }
+        Card {
+            height: 380px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "mk-lws";
+                    detail: "Light wallet server for Monero wallets";
+                    value: "Installed";
+                }
+                Row {
+                    name: "feather-ws";
+                    detail: "Server for Feather Wallet";
+                    value: "";
+                    hovered: true;
+                }
+                Row {
+                    name: "mk-pay";
+                    detail: "Accept Monero in your shop";
+                    value: "Installed";
+                    last: true;
+                }
+            }
+        }
+        T {
+            height: 48px;
+            text: "3 of 14 apps from your sources match. Tap one to see what it does before installing.";
+            color: DP.dim;
+        }
+    }
+}
+
+component InstallReview inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["Apps", "Get apps", "feather-ws", "Install"];
+        }
+        Card {
+            height: 640px;
+            VerticalLayout {
+                padding: 48px;
+                spacing: 20px;
+                T {
+                    text: "Install feather-ws?";
+                    font-size: 38px;
+                    font-weight: 700;
+                    color: DP.bright;
+                }
+                T {
+                    text: "It will be able to:";
+                    color: DP.dim;
+                }
+                for l in ["Read from your Monero node", "Use the internet to reach other Monero nodes", "Keep 2 GB on the drive, locked with your device passphrase"]: T {
+                    text: "✓   " + l;
+                    color: DP.fg;
+                }
+                T {
+                    text: "It can't see your other apps or their data. You can remove it at any time.";
+                    color: DP.dim;
+                }
+                T {
+                    text: "Show details  ›";
+                    color: DP.accent;
+                    font-weight: 700;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    spacing: 24px;
+                    alignment: end;
+                    Btn {
+                        label: "Cancel";
+                        kind: 1;
+                        w: 220px;
+                    }
+                    Btn {
+                        label: "Install";
+                        w: 240px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component WebSites inherits Rectangle {
+    Bar {
+        tab: 2;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        HorizontalLayout {
+            height: 96px;
+            T {
+                text: "Sites online";
+                font-size: 36px;
+                font-weight: 700;
+                color: DP.bright;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Domain providers";
+                    kind: 1;
+                    w: 380px;
+                }
+            }
+        }
+        Card {
+            height: 380px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "mk-pay";
+                    detail: "https://pay.example.com";
+                    value: "Home and internet";
+                    hovered: true;
+                }
+                Row {
+                    name: "mk-lws";
+                    detail: "https://mk-lws.local";
+                    value: "Home network";
+                }
+                Row {
+                    name: "kringle";
+                    detail: "http://kringlqx3v7…ylpd7qd.onion";
+                    value: "Tor";
+                    last: true;
+                }
+            }
+        }
+        T {
+            height: 48px;
+            text: "To put another app online, open it in Apps.";
+            color: DP.dim;
+        }
+    }
+}
+
+component Choice inherits Rectangle {
+    in property <bool> on;
+    in property <string> name;
+    in property <string> detail;
+    in property <string> address;
+    height: 128px;
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        spacing: 28px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 56px;
+                height: 56px;
+                border-radius: 14px;
+                background: on ? DP.accent : DP.field;
+                border-width: on ? 0px : 2px;
+                border-color: DP.dim;
+                if on: T {
+                    text: "✓";
+                    font-size: 34px;
+                    font-weight: 700;
+                    color: DP.on-accent;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            horizontal-stretch: 1;
+            T {
+                text: name;
+                font-size: 32px;
+                font-weight: 700;
+                color: DP.bright;
+            }
+            T {
+                text: detail;
+                font-size: 26px;
+                color: DP.dim;
+            }
+        }
+        T {
+            text: address;
+            color: DP.fg;
+        }
+    }
+}
+
+component Hosting inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 16px;
+        Crumbs {
+            trail: ["Apps", "mk-pay", "Hosting"];
+        }
+        T {
+            height: 48px;
+            text: "Choose who can open mk-pay. Any combination works.";
+            color: DP.dim;
+        }
+        Card {
+            height: 680px;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 0px;
+                Choice {
+                    on: true;
+                    name: "Home network";
+                    detail: "Phones and computers on your Wi-Fi";
+                    address: "https://mk-pay.local";
+                }
+                Choice {
+                    on: false;
+                    name: "Tor";
+                    detail: "A private link that opens in Tor Browser. It doesn't reveal your home.";
+                }
+                Choice {
+                    on: true;
+                    name: "Internet";
+                    detail: "Anyone, at a web address you own";
+                }
+                VerticalLayout {
+                    padding-left: 116px;
+                    padding-right: 32px;
+                    spacing: 0px;
+                    Field {
+                        label: "Domain";
+                        value: "example.com · Porkbun   ▾";
+                    }
+                    Field {
+                        label: "Address";
+                        value: "pay";
+                        suffix: ".example.com";
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    padding-right: 16px;
+                    padding-bottom: 8px;
+                    Btn {
+                        label: "Check and save";
+                        w: 360px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Sources inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["Apps", "Get apps", "Sources"];
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Add a source";
+                    w: 320px;
+                    locked: true;
+                }
+            }
+        }
+        for s[i] in [
+            { name: "monokulo", tag: "built in", addr: "nodo.monokulo.com/feed  ·  5 apps", on: true, problem: "" },
+            { name: "Alice's apps", tag: "", addr: "apps.alice.example/feed  ·  2 apps", on: true, problem: "✕  Couldn't reach it since yesterday" },
+            { name: "Test builds", tag: "", addr: "192.168.1.40:8080/feed  ·  1 app", on: false, problem: "" }
+        ]: Card {
+            height: s.problem != "" ? 220px : 170px;
+            background: i == 1 ? DP.raised : DP.card;
+            VerticalLayout {
+                padding-left: 40px;
+                padding-right: 40px;
+                padding-top: 28px;
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 20px;
+                    height: 60px;
+                    T {
+                        text: s.name;
+                        font-size: 32px;
+                        font-weight: 700;
+                        color: DP.bright;
+                    }
+                    if s.tag != "": T {
+                        text: s.tag;
+                        font-size: 24px;
+                        color: DP.dim;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            on: s.on;
+                        }
+                    }
+                    Btn {
+                        label: "Remove";
+                        kind: 1;
+                        w: 200px;
+                        locked: true;
+                    }
+                }
+                T {
+                    text: s.addr;
+                    color: DP.dim;
+                }
+                if s.problem != "": HorizontalLayout {
+                    spacing: 24px;
+                    T {
+                        text: s.problem;
+                        color: DP.err;
+                    }
+                    T {
+                        text: "Try again";
+                        color: DP.accent;
+                        font-weight: 700;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component AddSource inherits Rectangle {
+    Bar {
+        tab: 1;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 16px;
+        Crumbs {
+            trail: ["Apps", "Get apps", "Sources", "Add"];
+        }
+        Card {
+            height: 380px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 12px;
+                T {
+                    text: "Paste or type the address the publisher gave you.";
+                    color: DP.dim;
+                }
+                Field {
+                    label: "Address";
+                    value: "https://apps.bob.example/feed";
+                    focused: true;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    spacing: 24px;
+                    alignment: end;
+                    Btn {
+                        label: "Cancel";
+                        kind: 1;
+                        w: 220px;
+                    }
+                    Btn {
+                        label: "Check";
+                        w: 220px;
+                    }
+                }
+            }
+        }
+    }
+    Keyboard {
+        x: 0;
+        y: 640px;
+    }
+}
+
+component System inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 0;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        T {
+            height: 80px;
+            text: "This Nodo";
+            font-size: 40px;
+            font-weight: 700;
+            color: DP.bright;
+        }
+        Card {
+            height: 200px;
+            HorizontalLayout {
+                padding: 40px;
+                spacing: 32px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    T {
+                        text: "A Nodo update is ready";
+                        font-size: 34px;
+                        font-weight: 700;
+                        color: DP.bright;
+                    }
+                    T {
+                        text: "2026.11.14 · needs a restart, about 2 minutes · faster syncing for cuprated";
+                        color: DP.dim;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Review";
+                        w: 240px;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 600px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "Updates";
+                    detail: "2 for apps, 1 for the Nodo · automatic for apps, overnight";
+                }
+                Row {
+                    name: "Backups";
+                    detail: "Last backup 2 days ago, to the USB drive";
+                }
+                Row {
+                    name: "Network";
+                    detail: "Cable · 192.168.1.155 · Wi-Fi off";
+                    hovered: true;
+                }
+                Row {
+                    name: "Screen";
+                    detail: "Wallpaper: logo · screen PIN on";
+                }
+                Row {
+                    name: "Device logs";
+                    detail: "Last problem: none today";
+                    last: true;
+                }
+            }
+        }
+    }
+}
+
+component Updates inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["System", "Updates"];
+        }
+        Card {
+            height: 280px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 12px;
+                T {
+                    text: "The Nodo   2026.11.14";
+                    font-size: 34px;
+                    font-weight: 700;
+                    color: DP.bright;
+                }
+                T {
+                    text: "Faster syncing for cuprated; gentler temperature limits. Needs a restart, about 2 minutes.";
+                    color: DP.dim;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Btn {
+                        label: "Update and restart";
+                        w: 400px;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 470px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 4px;
+                T {
+                    height: 56px;
+                    text: "Apps";
+                    font-size: 34px;
+                    font-weight: 700;
+                    color: DP.bright;
+                }
+                Row {
+                    name: "mk-pay";
+                    detail: "0.1 → 0.2 · fixes receipts in some currencies";
+                    chevron: false;
+                }
+                Row {
+                    name: "kringle";
+                    detail: "0.4.1 → 0.4.2 · smaller tip page";
+                    chevron: false;
+                    last: true;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Btn {
+                        label: "Update 2 apps";
+                        kind: 1;
+                        w: 320px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Network inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 20px;
+        Crumbs {
+            trail: ["System", "Network"];
+        }
+        Card {
+            height: 112px;
+            Row {
+                name: "Cable";
+                detail: "●  Connected · 192.168.1.155";
+                chevron: false;
+                last: true;
+            }
+        }
+        Card {
+            height: 360px;
+            VerticalLayout {
+                padding-top: 8px;
+                HorizontalLayout {
+                    height: 112px;
+                    padding-left: 32px;
+                    padding-right: 32px;
+                    spacing: 28px;
+                    T {
+                        text: "Wi-Fi";
+                        font-weight: 700;
+                        color: DP.bright;
+                        width: 300px;
+                    }
+                    T {
+                        text: "On";
+                        color: DP.dim;
+                        horizontal-stretch: 1;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            on: true;
+                        }
+                    }
+                }
+                Row {
+                    name: "   Home";
+                    detail: "▂▄▆  secured";
+                    chevron: false;
+                }
+                HorizontalLayout {
+                    height: 112px;
+                    padding-left: 60px;
+                    padding-right: 32px;
+                    spacing: 24px;
+                    T {
+                        text: "Corner-Cafe";
+                        font-weight: 700;
+                        color: DP.bright;
+                        width: 272px;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 88px;
+                        border-radius: 18px;
+                        background: DP.field;
+                        border-width: 3px;
+                        border-color: DP.accent;
+                        T {
+                            x: 28px;
+                            text: "••••••••";
+                            color: DP.bright;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            label: "Join";
+                            w: 200px;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Caption {
+        text: "Tapping the password box brings up the on-screen keyboard, as on the Settings and Add a source boards.";
+    }
+}
+
+component Backups inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 1;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["System", "Backups"];
+        }
+        Card {
+            height: 220px;
+            HorizontalLayout {
+                padding: 40px;
+                spacing: 32px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    T {
+                        text: "Last backup 2 days ago";
+                        font-size: 34px;
+                        font-weight: 700;
+                        color: DP.bright;
+                    }
+                    T {
+                        text: "To the USB drive \"NODO-BACKUP\" · 1.2 GB · locked with your passphrase";
+                        color: DP.dim;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "Back up now";
+                        w: 320px;
+                    }
+                }
+            }
+        }
+        Card {
+            height: 360px;
+            VerticalLayout {
+                padding: 4px;
+                padding-top: 12px;
+                Row {
+                    name: "Automatically";
+                    detail: "every night at 03:00, when the drive is in";
+                    value: "On";
+                }
+                Row {
+                    name: "Keep";
+                    detail: "the last 7 backups";
+                }
+                Row {
+                    name: "What's in it";
+                    detail: "apps' settings and data, sources, hosting · not the Monero chain";
+                    last: true;
+                }
+            }
+        }
+    }
+}
+
+component Blocked inherits Rectangle {
+    Bar {
+        tab: 0;
+        lock: 0;
+    }
+    Card {
+        x: 360px;
+        y: 300px;
+        width: 1200px;
+        height: 520px;
+        VerticalLayout {
+            padding: 56px;
+            spacing: 24px;
+            T {
+                text: "▲  The data drive isn't connected";
+                font-size: 38px;
+                font-weight: 700;
+                color: DP.accent;
+            }
+            T {
+                text: "Your apps keep their data on the SSD, so they can't start without it.";
+                color: DP.fg;
+                wrap: word-wrap;
+            }
+            T {
+                text: "Check the drive is seated in the Nodo, then check again. Nothing has been lost.";
+                color: DP.dim;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+            }
+            HorizontalLayout {
+                alignment: end;
+                Btn {
+                    label: "Check again";
+                    w: 300px;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- unlocking changes
+
+component PinKey inherits Rectangle {
+    in property <string> label;
+    in property <bool> dark;
+    width: 200px;
+    height: 120px;
+    border-radius: 24px;
+    background: dark ? DP.surface : DP.raised;
+    border-width: dark ? 1px : 0px;
+    border-color: DP.line;
+    T {
+        text: label;
+        font-size: dark ? 32px : 44px;
+        font-weight: 700;
+        color: dark ? DP.dim : DP.bright;
+        horizontal-alignment: center;
+    }
+}
+
+// state: 0 asking, 1 wrong, 2 locked out
+component PinPrompt inherits Rectangle {
+    in property <int> state;
+    background: #000000E0;
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #000000D0;
+    }
+    Card {
+        x: 360px;
+        y: 90px;
+        width: 1200px;
+        height: 900px;
+        background: DP.card;
+        border-width: 1px;
+        border-color: DP.line;
+        VerticalLayout {
+            padding: 48px;
+            spacing: 20px;
+            alignment: start;
+            T {
+                height: 60px;
+                horizontal-alignment: center;
+                text: state == 2 ? "Too many tries" : "Enter the screen PIN";
+                font-size: 40px;
+                font-weight: 700;
+                color: state == 2 ? DP.err : DP.bright;
+            }
+            T {
+                height: 44px;
+                horizontal-alignment: center;
+                text: state == 0 ? "to update mk-pay" : state == 1 ? "That PIN isn't right. 4 tries left." : "Try again in 4:51, or unlock from SSH.";
+                color: state == 1 ? DP.err : DP.dim;
+            }
+            HorizontalLayout {
+                height: 80px;
+                alignment: center;
+                spacing: 28px;
+                for d[i] in [0, 1, 2, 3, 4, 5]: Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 18px;
+                    background: state == 2 ? DP.card : (i < (state == 1 ? 0 : 4) ? DP.accent : DP.card);
+                    border-width: 2px;
+                    border-color: state == 1 ? DP.err : DP.dim;
+                }
+            }
+            if state != 2: HorizontalLayout {
+                alignment: center;
+                VerticalLayout {
+                    spacing: 18px;
+                    for r in [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]]: HorizontalLayout {
+                        spacing: 18px;
+                        for k in r: PinKey {
+                            label: k;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 18px;
+                        PinKey {
+                            label: "Cancel";
+                            dark: true;
+                        }
+                        PinKey {
+                            label: "0";
+                        }
+                        PinKey {
+                            label: "⌫";
+                            dark: true;
+                        }
+                    }
+                }
+            }
+            if state == 2: VerticalLayout {
+                padding-top: 60px;
+                spacing: 40px;
+                T {
+                    horizontal-alignment: center;
+                    text: "Looking around still works; only changes wait.";
+                    color: DP.dim;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Btn {
+                        label: "OK";
+                        kind: 1;
+                        w: 220px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component NoPin inherits Rectangle {
+    Bar {
+        tab: 3;
+        lock: 2;
+    }
+    VerticalLayout {
+        x: 48px;
+        y: 160px;
+        width: 1824px;
+        spacing: 24px;
+        Crumbs {
+            trail: ["System", "Screen", "Screen PIN"];
+        }
+        Card {
+            height: 560px;
+            VerticalLayout {
+                padding: 48px;
+                spacing: 22px;
+                T {
+                    text: "Changes from this screen are off";
+                    font-size: 36px;
+                    font-weight: 700;
+                    color: DP.bright;
+                }
+                T {
+                    text: "Anyone near the Nodo can touch its screen, so it can show you everything but change nothing until you choose a screen PIN.";
+                    color: DP.fg;
+                    wrap: word-wrap;
+                }
+                T {
+                    text: "Choose one from a computer: ssh into the Nodo, then System › Screen › Screen PIN. You'll need the device passphrase.";
+                    color: DP.dim;
+                    wrap: word-wrap;
+                }
+                T {
+                    text: "After 5 wrong tries the screen waits 5 minutes, then longer. Changes lock again 5 minutes after the last touch.";
+                    color: DP.dim;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+export component DesignBoard inherits Window {
+    width: 1920px;
+    height: 1080px;
+    background: DP.ground;
+    default-font-family: "JetBrains Mono";
+    in property <string> scene;
+
+    if scene == "wp-logo": WallpaperLogo { with-panels: false; }
+    if scene == "wp-logo-panels": WallpaperLogo { with-panels: true; }
+    if scene == "m-screen": ScreenSettings { }
+    if scene == "m-home": Home { }
+    if scene == "m-apps": Apps { }
+    if scene == "m-app": AppPage { }
+    if scene == "m-settings": Settings { keyboard: false; }
+    if scene == "m-settings-kbd": Settings { keyboard: true; }
+    if scene == "m-get-apps": GetApps { }
+    if scene == "m-install": InstallReview { }
+    if scene == "m-web": WebSites { }
+    if scene == "m-hosting": Hosting { }
+    if scene == "m-sources": Sources { }
+    if scene == "m-add-source": AddSource { }
+    if scene == "m-system": System { }
+    if scene == "m-updates": Updates { }
+    if scene == "m-network": Network { }
+    if scene == "m-backups": Backups { }
+    if scene == "m-blocked": Blocked { }
+    if scene == "u-pin" || scene == "u-pin-wrong" || scene == "u-lockout": Rectangle {
+        AppPage { }
+        PinPrompt {
+            state: scene == "u-pin" ? 0 : scene == "u-pin-wrong" ? 1 : 2;
+        }
+    }
+    if scene == "u-no-pin": NoPin { }
+}

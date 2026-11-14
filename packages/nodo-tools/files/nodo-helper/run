@@ -38,6 +38,9 @@ for user in $members; do
 done
 gid=$(getent group nodo | cut -d: -f3)
 [ -n "$gid" ] && set -- "$@" --socket-gid "$gid"
+# The touchscreen (nodo-gui, as _nodo_screen) gets its own socket, where it may always look and
+# may change things only while unlocked with the screen PIN (docs/SCREEN.md).
+screen_uid=$(id -u _nodo_screen 2>/dev/null) && set -- "$@" --screen-uid "$screen_uid"
 if [ -n "${DRIVE:-}" ] && [ -n "${DRIVE_MOUNT:-}" ]; then
 	set -- "$@" --drive "$DRIVE" --drive-mount "$DRIVE_MOUNT"
 fi

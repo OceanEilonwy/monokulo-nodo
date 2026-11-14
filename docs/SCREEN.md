@@ -317,6 +317,51 @@ the black never change.
 - `nodo-splash --preview` prints the logo at rest and mid-glint in 24-bit colour, for a desktop
   terminal.
 
+## Managing the Nodo on the screen
+
+The tile grid is always the resting screen. Its top bar has a gear (**Manage**), **Arrange** and
+**Shut down**. Manage opens the same four tabs as the TUI, Home, Apps, Web and System, laid out for
+touch (`ui/manage.slint`, built from page models in `src/manage.rs`). Every screen reads and
+changes the Nodo through nodo-tui's helper backend and data model, so the screen and the TUI show
+and do the same things. Calls run on a worker thread; the screen returns to the tiles after the idle
+time set in System › Screen.
+
+- **Settings and references.** Any text, number or address field can hold text, one
+  `$(app.setting)` reference or text mixed with references. References are chips showing what
+  they resolve to now (the helper's `PreviewSetting`); a broken one is red and its reason is in the
+  field's menu. Tapping a field offers Insert a reference (one generic picker over everything
+  `ListReferences` offers that fits the field), Replace…, Type a value instead and an undo. A secret
+  or non-public setting asks to allow it first (`SetGrant`). Saving lists new dependencies and
+  access first.
+- **The on-screen keyboard** types values; `$(` in a field opens the reference picker. Paste is not
+  offered: the screen has no clipboard.
+- **System › Screen** sets the brightness, how far idle dims it, when management goes back to the
+  tiles, and the logo tile's options. They are kept in `/var/lib/nodo-screen/gui.toml`.
+
+### The Nodo logo tile
+
+A built-in tile, offered like any panel, from 2 x 2 up to the whole 8 x 4 grid (a wallpaper). It
+draws the vector logo or, in the Text style, the boot splash's block logo with the splash's glint
+crossing it once every four seconds (nodo-splash's grid and frames). While arranging with it
+selected, **Logo options** opens System › Screen.
+
+### Changes need the screen PIN
+
+Anyone at the device can touch the screen, so the helper, not the screen, decides what it may do.
+nodo-gui connects on its own socket, `/run/nodo/screen.sock` (owned by `_nodo_screen`, 0600, and
+checked with SO_PEERCRED):
+
+- Requests that only read are always answered. Everything else is refused with `Locked` until the
+  screen is unlocked with the 6-digit **screen PIN**; an unlock lasts until the screen has been
+  idle five minutes, and the lock pill (Locked / Unlocked) locks it again at once.
+- The PIN is set or cleared over SSH with the device passphrase: `nodo-tui --ctl screen-pin` (or
+  `screen-pin-clear`). Without a PIN the screen can only look, and says how to set one.
+- It is stored as a salted Argon2id hash in `/var/lib/nodo/screen-pin` (root only).
+- There is no attempt limit or lockout, by the owner's decision: only someone at the device can
+  type on the screen. Each check takes at least a second inside the helper, so a compromised screen
+  process cannot try PINs quickly. Unlocking encrypted storage after a restart needs only the
+  device passphrase. Shut down never needs the PIN.
+
 ## What the owner approves
 
 A package's panels are listed in its install review ("shows 2 panels on the screen, reading its own
