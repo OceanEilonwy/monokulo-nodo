@@ -308,11 +308,12 @@ jobs:
           cargo run -q --release -p nodo-update --bin nodo-snapshot -- xbps-key out/throwaway.pub.pem monokulo-nodo out/throwaway-keys
           echo "NODO_REPO_KEYS=$GITHUB_WORKSPACE/out/throwaway-keys" >> "$GITHUB_ENV"
 
-      - name: Copy Void's index
-        run: scripts/publish-snapshot.sh index "$NAME" aarch64
-
+      # Copies Void's index, then builds and inspects an image from only the snapshot. If Void
+      # publishes while that runs, the copied index goes stale; it copies the index again and
+      # retries (up to 3 attempts). The index that passed is the one stamped and uploaded, so
+      # publish signs exactly what was tested.
       - name: Build and inspect a T6N image from only the snapshot
-        run: scripts/publish-snapshot.sh test "$NAME" "$BOARD"
+        run: scripts/publish-snapshot.sh index-and-test "$NAME" "$BOARD" aarch64
 
       - name: Does it need a restart
         id: restart
