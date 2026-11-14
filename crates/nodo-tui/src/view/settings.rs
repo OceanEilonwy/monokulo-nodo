@@ -14,6 +14,9 @@ use crate::model::*;
 use crate::secret::STORED_MASK;
 use crate::theme::Theme;
 
+/// The link beside the selected field that opens the picker, the same as F4.
+const PICK: &str = "▾ Pick from an app";
+
 /// Long values such as addresses are cut in the form, so the column stays readable.
 const VALUE_MAX: usize = 34;
 
@@ -105,13 +108,27 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         }
         let typing = (index == state.selected).then_some(editing.as_deref()).flatten();
         let label = if index == state.selected { format!("▸ {}", field.label) } else { format!("  {}", field.label) };
-        setting(&mut card, t, &label, control(t, field, &state.draft[index], typing), hint(t, state, index));
+        let mut spans = control(t, field, &state.draft[index], typing);
+        let picker = index == state.selected && field.kind.takes_reference();
+        if picker {
+            spans.extend([t.n("   "), t.a(PICK)]);
+        }
+        setting(&mut card, t, &label, spans, hint(t, state, index));
         screen.targets.push(Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+        if picker {
+            screen.targets.push(Target::text(PICK, Click::Key(KeyCode::F(4))));
+        }
     }
     let mut targets = Vec::new();
     card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Ctrl('s'))], &mut targets);
     screen.targets.extend(targets);
-    let keys = if state.editing.is_some() { "Keys: type a value  ↵ done  Esc cancel" } else { "Keys: ↑↓ choose  ↵ edit  $ pick from an app  ctrl-s save  z undo  Esc back" };
+    let picker = state.form.fields.get(state.selected).is_some_and(|field| field.kind.takes_reference());
+    let keys = match (state.editing.is_some(), picker) {
+        (true, true) => "Keys: type a value  F4 pick from an app  ↵ done  Esc cancel",
+        (true, false) => "Keys: type a value  ↵ done  Esc cancel",
+        (false, true) => "Keys: ↑↓ choose  ↵ edit  F4 pick from an app  ctrl-s save  z undo  Esc back",
+        (false, false) => "Keys: ↑↓ choose  ↵ edit  ctrl-s save  z undo  Esc back",
+    };
     screen.card(t, card, keys, w, h)
 }
 
@@ -125,7 +142,10 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
         trail(t, &["Apps", state.package.as_str(), "Settings", state.field_label.as_str()], &mut before_targets),
         Item::Blank,
         heading(t, &format!("Pick {} from your apps", state.field_label.to_lowercase())),
-        quiet(t, &format!("It follows the app you pick if its value changes. Expects {}.", state.list.expects)),
+        quiet(t, &match state.list.expects.as_str() {
+            "" => "It follows the app you pick if its value changes. Search by name or value.".to_owned(),
+            expects => format!("It follows the app you pick if its value changes. Expects {expects}."),
+        }),
         Item::Blank,
     ];
     screen.targets.extend(before_targets);
