@@ -12,11 +12,11 @@
 
 
 
-       ▸ Hosting     Home network                            ›
+       ▸ Hosting     Home network                                                           ›
 
-         Settings    Change how it works                     ›
+         Settings    Change how it works                                                    ›
 
-         Logs        What it has been doing                  ›
+         Logs        What it has been doing                                                 ›
 
 
 

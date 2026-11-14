@@ -214,6 +214,20 @@ impl Card {
         self.row(t, spans);
     }
 
+    /// The width rows have up to the card's inner right padding, where right-aligned parts end.
+    pub fn inner(&self) -> usize {
+        self.width.saturating_sub(6)
+    }
+
+    /// A row with `end` right-aligned on the card's inner padding. When both do not fit, they are
+    /// kept two cells apart and the row wraps as any other.
+    pub fn row_end(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, end: Vec<Span<'static>>) {
+        let used = width_of(&spans) + width_of(&end);
+        spans.push(t.n(" ".repeat(self.inner().saturating_sub(used).max(2))));
+        spans.extend(end);
+        self.row(t, spans);
+    }
+
     /// A clickable row: the row, and a target over the card's width on it, found by `find`.
     pub fn link_row(&mut self, t: &Theme, spans: Vec<Span<'static>>, find: &str, click: Click, targets: &mut Vec<Target>) {
         self.row(t, spans);
@@ -533,13 +547,35 @@ pub fn signal(t: &Theme, bars: usize) -> Vec<Span<'static>> {
     ["▂", "▄", "▆", "█"].iter().enumerate().map(|(i, g)| if i < bars { t.n(*g) } else { t.d("·") }).collect()
 }
 
-/// A settings field: the label column, then the control, and a quiet hint or an error under it.
+/// Cells between a settings field's left column and its control.
+const SETTING_GAP: usize = 3;
+
+/// A settings field: the label with its help or error wrapped under it in the left column, and
+/// the control right-aligned on the card's inner padding. A label too long to sit beside the
+/// control keeps its row whole (click targets find it by its text) and the control takes the
+/// next row, so the two never overlap; so does a wide control that would leave the help a
+/// column too narrow to read (80 columns).
 pub fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, hint: Option<Span<'static>>) {
-    let mut spans = vec![t.n(pad(label, 24))];
-    spans.extend(control);
-    card.row(t, spans);
+    let room = card.inner();
+    // The help lines up with the label's text, after the focus marker's column.
+    let indent = label.chars().take_while(|c| matches!(c, ' ' | '▸')).count();
+    let left = room.saturating_sub(width_of(&control) + SETTING_GAP);
+    let beside = unicode_width::UnicodeWidthStr::width(label) <= left && left >= room * 2 / 5;
+    if beside {
+        card.row_end(t, vec![t.n(label.to_owned())], control);
+    } else {
+        card.row(t, vec![t.n(label.to_owned())]);
+        card.row_end(t, Vec::new(), control);
+    }
     if let Some(hint) = hint {
-        card.row(t, vec![t.n(" ".repeat(24)), hint]);
+        // Beside a control the help keeps to the left column, one measure for every field so the
+        // form reads as a column; under a control it has the card's width.
+        let column = if beside { left.min(room * 3 / 5) } else { room };
+        for wrapped in super::layout::wrap_line(&Line::from(hint), column.saturating_sub(indent).max(12)) {
+            let mut spans = vec![t.n(" ".repeat(indent))];
+            spans.extend(wrapped.spans);
+            card.row(t, spans);
+        }
     }
     card.blank(t);
 }

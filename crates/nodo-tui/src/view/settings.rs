@@ -17,6 +17,9 @@ use crate::theme::Theme;
 /// Long values such as addresses are cut in the form, so the column stays readable.
 const VALUE_MAX: usize = 34;
 
+/// A number's box, wide enough for a port or a count of days.
+const NUMBER_WIDTH: usize = 6;
+
 fn shown(text: &str) -> String {
     if text.chars().count() > VALUE_MAX {
         let start: String = text.chars().take(8).collect();
@@ -35,7 +38,8 @@ fn control(t: &Theme, field: &Field, value: &FieldValue, editing: Option<&str>) 
         (FieldKind::Toggle, FieldValue::Bool(on)) => toggle(t, *on),
         (FieldKind::Choice(_), FieldValue::Text(text)) => inset(t, text, 28, Some("▾"), false),
         (FieldKind::Number { .. } | FieldKind::Port, FieldValue::Text(text)) => {
-            let mut spans = vec![Span::styled(format!("  {text}  "), Style::new().fg(t.fg).bg(t.field))];
+            // One width for every number's box, so − and + line up from row to row.
+            let mut spans = vec![Span::styled(format!("  {}  ", pad(text, NUMBER_WIDTH)), Style::new().fg(t.fg).bg(t.field))];
             spans.extend([t.n("   "), t.a("−"), t.n("   "), t.a("+")]);
             spans
         }
