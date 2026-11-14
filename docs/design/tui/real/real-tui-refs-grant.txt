@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Grant
+
+
+       ▲  Let moneropay use cuprated's admin address?
+
+       admin_url isn't public: only apps you approve can use it.
+       moneropay receives it when it starts. You can take this back in its settings.
+
+                                                                                     Cancel         Grant    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ grant  Esc cancel

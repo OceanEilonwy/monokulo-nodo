@@ -203,6 +203,114 @@ renderVals() {{ return {{}}; }}
     (html, w, h)
 }
 
+/// The reference screens, driven through the mock the way a person would: the boards
+/// `real-tui-refs-*`, to compare with the approved `tui2-refs-*` design boards.
+fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use nodo_tui::app::{Event, Screen};
+    use nodo_tui::mock::MockBackend;
+    use nodo_tui::runtime::dispatch;
+
+    fn start() -> (nodo_tui::app::App, MockBackend) {
+        let (mut app, mut mock) = nodo_tui::fixtures::fixture(nodo_tui::app::ScreenId::Main);
+        let form = nodo_tui::model::ScreenData::settings_form(&mock, "moneropay");
+        dispatch(&mut app, &mut mock, Event::SettingsLoaded { package: "moneropay".to_owned(), form });
+        (app, mock)
+    }
+    fn key(app: &mut nodo_tui::app::App, mock: &mut MockBackend, code: KeyCode) {
+        dispatch(app, mock, Event::Key(KeyEvent::from(code)));
+    }
+    fn ctrl(app: &mut nodo_tui::app::App, mock: &mut MockBackend, c: char) {
+        dispatch(app, mock, Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)));
+    }
+    fn typed(app: &mut nodo_tui::app::App, mock: &mut MockBackend, text: &str) {
+        for c in text.chars() {
+            key(app, mock, KeyCode::Char(c));
+        }
+    }
+    /// The mixed address of the field board: http:// host : port /json_rpc.
+    fn mixed(app: &mut nodo_tui::app::App, mock: &mut MockBackend) {
+        key(app, mock, KeyCode::Enter);
+        ctrl(app, mock, 'u');
+        typed(app, mock, "http://$(cuprated.rpc_h");
+        key(app, mock, KeyCode::Enter);
+        typed(app, mock, ":$(cuprated.rpc_p");
+        key(app, mock, KeyCode::Enter);
+        typed(app, mock, "/json_rpc");
+        key(app, mock, KeyCode::Enter);
+    }
+
+    let mut scenes = Vec::new();
+
+    let (mut app, mut mock) = start();
+    mixed(&mut app, &mut mock);
+    if let Screen::Settings(state) = &mut app.screen {
+        state.draft[3] = nodo_tui::model::FieldValue::Pieces(vec![
+            nodo_tui::model::Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
+            nodo_tui::model::Piece::Text("/orders".into()),
+        ]);
+    }
+    let value = match &app.screen {
+        Screen::Settings(state) => state.draft[3].clone(),
+        _ => unreachable!(),
+    };
+    for event in nodo_tui::runtime::execute_effect(
+        &mut mock,
+        nodo_tui::app::Effect::PreviewSetting { package: "moneropay".into(), field_index: 3, key: "payment_address".into(), value },
+    ) {
+        dispatch(&mut app, &mut mock, event);
+    }
+    scenes.push(("real-tui-refs-field".to_owned(), "References: text and chips, one broken (real)".to_owned(), app.clone()));
+
+    let (mut app2, mut mock2) = start();
+    key(&mut app2, &mut mock2, KeyCode::Enter);
+    ctrl(&mut app2, &mut mock2, 'u');
+    typed(&mut app2, &mut mock2, "http://$(cu");
+    scenes.push(("real-tui-refs-auto".to_owned(), "References: suggestions after $( (real)".to_owned(), app2));
+
+    let (mut app3, mut mock3) = start();
+    ctrl(&mut app3, &mut mock3, 'r');
+    scenes.push(("real-tui-refs-picker".to_owned(), "References: the one picker (real)".to_owned(), app3.clone()));
+    typed(&mut app3, &mut mock3, "port");
+    scenes.push(("real-tui-refs-search".to_owned(), "References: the picker, searching (real)".to_owned(), app3));
+
+    let (mut app4, mut mock4) = start();
+    key(&mut app4, &mut mock4, KeyCode::Down);
+    key(&mut app4, &mut mock4, KeyCode::F(4));
+    scenes.push(("real-tui-refs-typed".to_owned(), "References: a number field, others dimmed (real)".to_owned(), app4));
+
+    let (mut app5, mut mock5) = start();
+    if let Some(option) = mock5.references.iter_mut().find(|o| o.reference == "rpc_password") {
+        option.kind = nodo_api::SettingKind::Url;
+        option.access = nodo_api::ReferenceAccess::NeedsGrant { secret: false, granted: false };
+        option.reference = "admin_url".into();
+        option.label = "Admin address".into();
+        option.help = "Where the node's admin RPC answers".into();
+    }
+    if let Screen::Settings(state) = &mut app5.screen {
+        state.catalog = None;
+    }
+    ctrl(&mut app5, &mut mock5, 'r');
+    typed(&mut app5, &mut mock5, "admin_url");
+    key(&mut app5, &mut mock5, KeyCode::Enter);
+    scenes.push(("real-tui-refs-grant".to_owned(), "References: approving a non-public setting (real)".to_owned(), app5));
+
+    let (mut app6, mut mock6) = start();
+    mixed(&mut app6, &mut mock6);
+    ctrl(&mut app6, &mut mock6, 's');
+    scenes.push(("real-tui-refs-save".to_owned(), "References: what saving allows (real)".to_owned(), app6));
+
+    let (mut app7, mut mock7) = start();
+    key(&mut app7, &mut mock7, KeyCode::Char('$'));
+    typed(&mut app7, &mut mock7, "rpc_url");
+    key(&mut app7, &mut mock7, KeyCode::Enter);
+    key(&mut app7, &mut mock7, KeyCode::Char('c'));
+    scenes.push(("real-tui-refs-chip".to_owned(), "References: a chip's menu (real)".to_owned(), app7.clone()));
+    key(&mut app7, &mut mock7, KeyCode::Char('t'));
+    scenes.push(("real-tui-refs-undo".to_owned(), "References: typed instead, with the way back (real)".to_owned(), app7));
+    scenes
+}
+
 /// Every real screen, from its fixture, at 120×36 and 80×24: `real-tui-<slug>` boards and text.
 pub fn real_all(out: &std::path::Path) {
     use nodo_tui::app::{Screen, ScreenId};
@@ -219,6 +327,7 @@ pub fn real_all(out: &std::path::Path) {
     let (mut app, _) = fixture(ScreenId::Feeds);
     app.screen = Screen::Feeds { selected: 0, keys: true };
     scenes.push(("real-tui-feeds-keys".into(), "Sources with keys shown (real)".into(), app));
+    scenes.extend(refs_scenes());
     let mut index = Vec::new();
     for (slug, title, app) in &scenes {
         for (width, height, suffix) in [(120u16, 36u16, ""), (80, 24, "-80x24")] {

@@ -11,7 +11,7 @@
 
        ▸ moneropay      Payment gateway for Monero
 
-         monokulo-pay   Accept payments from your node              Installed
+         monokulo-pay   Accept payments from your node                                                  Installed
 
          paywall-relay  Pay-to-use relay access
 

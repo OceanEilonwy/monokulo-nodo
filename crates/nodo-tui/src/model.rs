@@ -233,12 +233,46 @@ impl FieldKind {
     }
 }
 
+/// One piece of a value that mixes typed text and references to other apps' settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Piece {
+    Text(String),
+    /// `$(app.setting)`. `setting` is the name the reference uses: the public name, or the
+    /// setting's own name for one read through a grant.
+    Ref { app: String, setting: String },
+}
+
+/// Pieces with adjacent text merged and empty text dropped, so equal values compare equal.
+pub fn tidy(pieces: Vec<Piece>) -> Vec<Piece> {
+    let mut out: Vec<Piece> = Vec::new();
+    for piece in pieces {
+        match (out.last_mut(), piece) {
+            (_, Piece::Text(text)) if text.is_empty() => {}
+            (Some(Piece::Text(last)), Piece::Text(text)) => last.push_str(&text),
+            (_, piece) => out.push(piece),
+        }
+    }
+    out
+}
+
+/// The references in pieces, in order.
+pub fn refs(pieces: &[Piece]) -> Vec<(&str, &str)> {
+    pieces
+        .iter()
+        .filter_map(|piece| match piece {
+            Piece::Ref { app, setting } => Some((app.as_str(), setting.as_str())),
+            Piece::Text(_) => None,
+        })
+        .collect()
+}
+
 /// A setting's value. A stored secret is only ever known as set or unset, so the backend's real
 /// value never enters this process. `NewSecret` holds what the user has just typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldValue {
     Text(String),
-    Reference { path: String, resolved: String },
+    /// Text and references together, or one reference. Always holds at least one reference.
+    Pieces(Vec<Piece>),
     Bool(bool),
     SecretUnset,
     SecretSet,
@@ -246,16 +280,59 @@ pub enum FieldValue {
 }
 
 impl FieldValue {
+    /// The value for pieces: plain text when no reference is left.
+    pub fn from_pieces(pieces: Vec<Piece>) -> Self {
+        let pieces = tidy(pieces);
+        if refs(&pieces).is_empty() {
+            Self::Text(
+                pieces
+                    .into_iter()
+                    .map(|piece| match piece {
+                        Piece::Text(text) => text,
+                        Piece::Ref { .. } => String::new(),
+                    })
+                    .collect(),
+            )
+        } else {
+            Self::Pieces(pieces)
+        }
+    }
+
+    pub fn reference(app: &str, setting: &str) -> Self {
+        Self::Pieces(vec![Piece::Ref { app: app.to_owned(), setting: setting.to_owned() }])
+    }
+
+    /// The value as pieces, for the editor. Secrets and switches have none.
+    pub fn pieces(&self) -> Option<Vec<Piece>> {
+        match self {
+            Self::Text(text) => Some(if text.is_empty() { Vec::new() } else { vec![Piece::Text(text.clone())] }),
+            Self::Pieces(pieces) => Some(pieces.clone()),
+            _ => None,
+        }
+    }
+
     /// The typed form sent to the helper. Typed text is always a literal, even if it looks like
-    /// `$(...)`, because only the reference picker makes a reference. Stored secrets have no
-    /// wire form; callers only send changes.
+    /// `$(...)`: references are separate pieces, and the helper escapes text pieces. Stored
+    /// secrets have no wire form; callers only send changes.
     pub fn to_input(&self) -> Option<SettingInput> {
         match self {
             Self::Text(text) => Some(SettingInput::Literal(SettingLiteral::Text(text.clone()))),
-            Self::Reference { path, .. } => {
-                let (target, setting) = path.split_once('.')?;
-                Some(SettingInput::Reference { target: target.to_owned(), setting: setting.to_owned() })
-            }
+            Self::Pieces(pieces) => match pieces.as_slice() {
+                [Piece::Ref { app, setting }] => {
+                    Some(SettingInput::Reference { target: app.clone(), setting: setting.clone() })
+                }
+                _ => Some(SettingInput::Template(
+                    pieces
+                        .iter()
+                        .map(|piece| match piece {
+                            Piece::Text(text) => nodo_api::TemplatePart::Text(text.clone()),
+                            Piece::Ref { app, setting } => {
+                                nodo_api::TemplatePart::Reference { target: app.clone(), setting: setting.clone() }
+                            }
+                        })
+                        .collect(),
+                )),
+            },
             Self::Bool(value) => Some(SettingInput::Literal(SettingLiteral::Bool(*value))),
             Self::NewSecret(secret) => Some(SettingInput::Secret(nodo_api::Secret::new(secret.expose()))),
             Self::SecretUnset | Self::SecretSet => None,
@@ -280,21 +357,57 @@ pub struct SettingsForm {
     pub public_settings: Vec<String>,
 }
 
+/// One setting of another app that a field could reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceOption {
-    pub path: String,
-    pub value: String,
-    /// Shown when the path is a role, because a role survives switching provider.
-    pub role_note: Option<(String, String)>,
-    pub consequences: Vec<String>,
+    pub app: String,
+    /// The name the reference uses.
+    pub setting: String,
+    pub label: String,
+    pub help: String,
+    pub kind: FieldKind,
+    /// The current value of a public setting. Never set for a secret or a non-public setting.
+    pub value: Option<String>,
+    /// `Some` for a secret or a non-public setting: it needs the user's approval.
+    pub locked: Option<Locked>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Locked {
+    pub secret: bool,
+    pub granted: bool,
+}
+
+impl ReferenceOption {
+    pub fn path(&self) -> String {
+        format!("{}.{}", self.app, self.setting)
+    }
+}
+
+/// Everything a package's fields could reference, from the helper's `ListReferences`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReferenceList {
-    pub expects: String,
     pub options: Vec<ReferenceOption>,
-    pub hidden_wrong_type: u32,
-    pub hidden_secrets: u32,
+}
+
+/// What a field's value resolves to and implies, from the helper's `PreviewSetting`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FieldPreview {
+    /// The value it was computed for; a preview of an older draft is not shown.
+    pub for_value: Option<FieldValue>,
+    pub resolved: Option<String>,
+    pub problem: Option<String>,
+    /// One per reference, in order: `Ok(value)` (value `None` for a secret) or why it is broken.
+    pub chips: Vec<Result<Option<String>, String>>,
+    pub new_dependencies: Vec<String>,
+    /// (app, what), such as ("cuprated", "port 18081/tcp").
+    pub new_access: Vec<(String, String)>,
+}
+
+impl FieldPreview {
+    pub fn broken(&self) -> usize {
+        self.chips.iter().filter(|chip| chip.is_err()).count()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -762,7 +875,6 @@ pub trait ScreenData {
     fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String>;
 
     fn settings_form(&self, package: &str) -> Option<SettingsForm>;
-    fn references(&self, package: &str, field: &str) -> ReferenceList;
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation;
     /// The helper's name for a site the screens know by one string. Sites are keyed by package
     /// in the mock, where every package serves one site.

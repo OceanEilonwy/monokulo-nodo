@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings
+
+    Settings                                                  No changes yet
+    moneropay restarts with the new settings. If it doesn't start, they're
+    undone by themselves.
+
+
+
+       ▸ Daemon RPC                        http://$(cu▏
+         Typing $( suggests references                        + reference
+         at the cursor.
+
+                 ▸ cuprated.rpc_url            url
+                 http://127.0.0.1:18081
+                   cuprated.rpc_host           text     127.0.0.1
+                   cuprated.rpc_port           number   18081
+       ↓ 24 more — scroll or make the window taller
+                                             Cancel          Save    
+
+    Keys: ↑↓ choose  ↵ insert  Esc keep typing

@@ -1,6 +1,7 @@
 
     Home     Apps 2     Web     System 1
 
+
     Web  ›  Domain providers  ›  Add
 
     Where did you buy your web address?
@@ -16,8 +17,7 @@
          Alibaba Cloud
          Hostinger
          Hover         Can't be connected: no way to change records
-         Squarespace   Can't be connected: no way to change records
-
+       ↓ 2 more — scroll or make the window taller
 
     Somewhere else? It can't be connected yet, but Tor works without a web
     address.

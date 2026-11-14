@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into moneropay · Daemon RPC (url)
+
+       Search    port▏
+
+         cuprated.rpc_port      number   18081
+           A number; the field takes an address.
+         wallet-rpc.port        number   34512
+           A number; the field takes an address.
+         cuprated.rpc_host      text     127.0.0.1
+           Text; the field takes an address.
+         cuprated.network       choice   mainnet
+           A choice; the field takes an address.
+
+       SECRETS · NOT PUBLIC
+         cuprated.rpc_password  secret   Grant…
+       ↓ 2 more — scroll or make the window taller
+    Keys: type to search  ↓ list  ↵ insert  Esc close

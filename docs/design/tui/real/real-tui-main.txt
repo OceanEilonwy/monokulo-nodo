@@ -28,8 +28,8 @@
 
        The other apps
 
-         cuprated      Running
-         tor           Running
+         cuprated      Running · up 2d 5h
+         tor           Running · up 3h 12m
 
     ↓ more below — scroll
 

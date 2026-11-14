@@ -53,8 +53,8 @@ mod url;
 pub use escape::{env_file, env_name, env_pairs, toml_file, toml_value, EnvError};
 pub use monero::{check_monero_address, MoneroNetwork};
 pub use resolve::{
-    Access, Dependency, Grant, Installed, InstalledPackage, NetworkGrant, PortProtocol, Rendered, ResolveError,
-    Resolved,
+    Access, CatalogAccess, CatalogEntry, Dependency, Grant, Installed, InstalledPackage, NetworkGrant, PortProtocol,
+    Preview, ReferenceCheck, ReferenceState, Rendered, ResolveError, Resolved,
 };
 pub use sandbox::{load_settings, Limit, Limits, LoadedSettings, Sandbox, SettingsError};
 /// The Lua binding the sandbox uses, so that code built on [`Sandbox`] shares its version.

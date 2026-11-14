@@ -60,6 +60,8 @@ pub struct MockBackend {
     pub web: WebOverview,
     pub drive: Option<DriveFailure>,
     pub forms: HashMap<String, SettingsForm>,
+    /// What other apps offer to reference, as the helper lists it, with grants the user gave.
+    pub references: Vec<nodo_api::ReferenceOption>,
     pub public_access: BTreeMap<String, PublicAccess>,
     /// The connected provider accounts, as the helper would report them.
     pub connected: Vec<ConnectedProvider>,
@@ -124,6 +126,7 @@ impl MockBackend {
             web: sample_web(),
             drive: None,
             forms: sample_forms(),
+            references: sample_reference_options(),
             public_access: BTreeMap::new(),
             connected: vec![ConnectedProvider {
                 id: s("porkbun"),
@@ -383,6 +386,24 @@ impl Backend for MockBackend {
                     Err(ApiError::BadPassphrase)
                 }
             }
+            Request::ListReferences { package } => {
+                if !self.forms.contains_key(&package) {
+                    return Err(ApiError::NotFound(package));
+                }
+                Ok(Response::References(self.references.iter().filter(|o| o.package != package).cloned().collect()))
+            }
+            Request::PreviewSetting { package, change } => Ok(Response::SettingPreview(self.preview(&package, &change))),
+            Request::SetGrant { grant, approved } => {
+                let option = self
+                    .references
+                    .iter_mut()
+                    .find(|o| o.package == grant.provider && o.reference == grant.setting)
+                    .ok_or_else(|| ApiError::NotFound(format!("{}.{}", grant.provider, grant.setting)))?;
+                if let nodo_api::ReferenceAccess::NeedsGrant { granted, .. } = &mut option.access {
+                    *granted = approved;
+                }
+                Ok(Response::Ok)
+            }
             Request::ApplySettings { package, changes } => {
                 let form =
                     self.forms.get_mut(&package).ok_or_else(|| ApiError::NotFound(package.clone()))?;
@@ -404,14 +425,9 @@ impl Backend for MockBackend {
                         SettingInput::Literal(SettingLiteral::Bool(value)) => FieldValue::Bool(value),
                         SettingInput::Literal(SettingLiteral::Int(value)) => FieldValue::Text(value.to_string()),
                         SettingInput::Literal(SettingLiteral::Text(value)) => FieldValue::Text(value),
-                        SettingInput::Reference { target, setting } => {
-                            let path = format!("{target}.{setting}");
-                            let resolved = sample_references()
-                                .options
-                                .iter()
-                                .find(|option| option.path == path)
-                                .map_or_else(String::new, |option| option.value.clone());
-                            FieldValue::Reference { path, resolved }
+                        SettingInput::Reference { target, setting } => FieldValue::reference(&target, &setting),
+                        SettingInput::Template(parts) => {
+                            FieldValue::from_pieces(crate::helper_backend::pieces_of(parts))
                         }
                         SettingInput::Reset => field.value.clone(),
                     };
@@ -966,16 +982,6 @@ impl ScreenData for MockBackend {
 
     fn settings_form(&self, package: &str) -> Option<SettingsForm> {
         self.forms.get(package).cloned()
-    }
-
-    fn references(&self, package: &str, field: &str) -> ReferenceList {
-        if package == "moneropay" && field == "daemon_rpc" {
-            sample_references()
-        } else if package == "moneropay" && field == "api_port" {
-            sample_port_references()
-        } else {
-            ReferenceList { expects: s("a value"), options: Vec::new(), hidden_wrong_type: 0, hidden_secrets: 0 }
-        }
     }
 
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
@@ -1782,60 +1788,105 @@ fn sample_forms() -> HashMap<String, SettingsForm> {
     HashMap::from([(s("moneropay"), moneropay), (s("wallet-relay"), wallet_relay)])
 }
 
-/// Numbers other apps offer, for a port field.
-pub fn sample_port_references() -> ReferenceList {
-    ReferenceList {
-        expects: s("a number"),
-        options: vec![ReferenceOption {
-            path: s("wallet-rpc.port"),
-            value: s("34512"),
-            role_note: None,
-            consequences: vec![s("Update and restart moneropay whenever the value changes.")],
-        }],
-        hidden_wrong_type: 3,
-        hidden_secrets: 0,
-    }
+/// What the mock's other apps offer to reference, as the helper's `ListReferences` lists it.
+pub fn sample_reference_options() -> Vec<nodo_api::ReferenceOption> {
+    use nodo_api::{ReferenceAccess, ReferenceOption as Option_, SettingKind};
+    let public = |package: &str, reference: &str, label: &str, help: &str, kind: SettingKind, value: &str| Option_ {
+        package: s(package),
+        reference: s(reference),
+        label: s(label),
+        help: s(help),
+        kind,
+        access: ReferenceAccess::Public { value: Some(s(value)) },
+    };
+    let int = || SettingKind::Int { min: Some(1), max: Some(65535) };
+    vec![
+        public("cuprated", "rpc_url", "RPC address", "Where it answers RPC", SettingKind::Url, "http://127.0.0.1:18081"),
+        public("cuprated", "rpc_host", "RPC host", "Address it answers RPC on", SettingKind::Text, "127.0.0.1"),
+        public("cuprated", "rpc_port", "RPC port", "RPC port", int(), "18081"),
+        public(
+            "cuprated",
+            "network",
+            "Network",
+            "Mainnet or testnet",
+            SettingKind::Choice(vec![s("mainnet"), s("testnet")]),
+            "mainnet",
+        ),
+        public("wallet-rpc", "url", "Wallet RPC", "Where the wallet answers", SettingKind::Url, "http://127.0.0.1:34512"),
+        public("wallet-rpc", "port", "Wallet RPC port", "Port the wallet answers on", int(), "34512"),
+        Option_ {
+            package: s("cuprated"),
+            reference: s("rpc_password"),
+            label: s("RPC password"),
+            help: s("Password for the unrestricted RPC"),
+            kind: SettingKind::Secret,
+            access: ReferenceAccess::NeedsGrant { secret: true, granted: false },
+        },
+    ]
 }
 
+/// The same list as the screens use it.
 pub fn sample_references() -> ReferenceList {
-    let daemon_consequences = |port: &str| {
-        vec![
-            s("Make moneropay depend on monero-daemon, so it starts afterward."),
-            format!("Let moneropay's sandbox reach 127.0.0.1:{port}."),
-            s("Update and restart moneropay whenever the value changes."),
-        ]
-    };
-    let role = || {
-        Some((s("monero-daemon is a role."), s("It stays correct if you switch between cuprated and monerod.")))
-    };
-    ReferenceList {
-        expects: s("a URL"),
-        options: vec![
-            ReferenceOption {
-                path: s("monero-daemon.public_rpc_url"),
-                value: s("http://127.0.0.1:18081"),
-                role_note: role(),
-                consequences: daemon_consequences("18081"),
-            },
-            ReferenceOption {
-                path: s("monero-daemon.restricted_rpc_url"),
-                value: s("http://127.0.0.1:18089"),
-                role_note: role(),
-                consequences: daemon_consequences("18089"),
-            },
-            ReferenceOption {
-                path: s("wallet-rpc.url"),
-                value: s("http://127.0.0.1:34512"),
-                role_note: None,
-                consequences: vec![
-                    s("Make moneropay depend on wallet-rpc, so it starts afterward."),
-                    s("Let moneropay's sandbox reach 127.0.0.1:34512."),
-                    s("Update and restart moneropay whenever the value changes."),
-                ],
-            },
-        ],
-        hidden_wrong_type: 4,
-        hidden_secrets: 2,
+    crate::helper_backend::reference_list(sample_reference_options())
+}
+
+impl MockBackend {
+    /// A preview the way the helper makes one: each reference resolves when an app offers it,
+    /// needs approval when locked, and is not installed otherwise.
+    fn preview(&self, package: &str, change: &nodo_api::SettingChange) -> nodo_api::SettingPreview {
+        use nodo_api::{ImpliedAccess, ReferenceAccess, ReferenceCheck, ReferenceStatus, TemplatePart};
+        let parts = match &change.value {
+            SettingInput::Reference { target, setting } => {
+                vec![TemplatePart::Reference { target: target.clone(), setting: setting.clone() }]
+            }
+            SettingInput::Template(parts) => parts.clone(),
+            SettingInput::Literal(SettingLiteral::Text(text)) => vec![TemplatePart::Text(text.clone())],
+            _ => Vec::new(),
+        };
+        let mut resolved = String::new();
+        let mut references = Vec::new();
+        let mut new_dependencies = Vec::new();
+        let mut new_access = Vec::new();
+        for part in parts {
+            match part {
+                TemplatePart::Text(text) => resolved.push_str(&text),
+                TemplatePart::Reference { target, setting } => {
+                    let option = self.references.iter().find(|o| o.package == target && o.reference == setting);
+                    let status = match option.map(|o| &o.access) {
+                        Some(ReferenceAccess::Public { value }) => {
+                            resolved.push_str(value.as_deref().unwrap_or_default());
+                            ReferenceStatus::Ok { provider: target.clone(), value: value.clone() }
+                        }
+                        Some(ReferenceAccess::NeedsGrant { granted: true, secret }) => ReferenceStatus::Ok {
+                            provider: target.clone(),
+                            value: (!secret).then(String::new),
+                        },
+                        Some(ReferenceAccess::NeedsGrant { secret, .. }) => {
+                            ReferenceStatus::NeedsGrant { provider: target.clone(), setting: setting.clone(), secret: *secret }
+                        }
+                        None if self.references.iter().any(|o| o.package == target) => {
+                            ReferenceStatus::NoSuchSetting { provider: target.clone() }
+                        }
+                        None => ReferenceStatus::NotInstalled,
+                    };
+                    if matches!(status, ReferenceStatus::Ok { .. }) && target != package && !new_dependencies.contains(&target) {
+                        new_dependencies.push(target.clone());
+                        if target == "cuprated" {
+                            new_access.push(ImpliedAccess { provider: target.clone(), what: s("port 18081/tcp") });
+                        }
+                    }
+                    references.push(ReferenceCheck { target, setting, status });
+                }
+            }
+        }
+        let broken = references.iter().any(|r| !matches!(r.status, ReferenceStatus::Ok { .. }));
+        nodo_api::SettingPreview {
+            resolved: (!broken).then_some(resolved),
+            problem: broken.then(|| s("A reference does not resolve.")),
+            references,
+            new_dependencies,
+            new_access,
+        }
     }
 }
 

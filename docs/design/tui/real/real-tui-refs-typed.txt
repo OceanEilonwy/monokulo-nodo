@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System 1                                                               monokulo-nodo
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into moneropay · API port (number)
+
+       Search    ▏
+
+       Numbers first; the others are dimmed because a number field can't hold them.
+
+       CUPRATED
+         cuprated.rpc_port      number   public  RPC port                              18081
+
+       WALLET-RPC
+         wallet-rpc.port        number   public  Port the wallet answers on            34512
+         cuprated.rpc_url       url      public  An address; the field takes a numbe…  http://127.0.0.1:18081
+         cuprated.rpc_host      text     public  Text; the field takes a number.       127.0.0.1
+         cuprated.network       choice   public  A choice; the field takes a number.   mainnet
+         wallet-rpc.url         url      public  An address; the field takes a numbe…  http://127.0.0.1:34512
+
+       SECRETS · NOT PUBLIC
+         cuprated.rpc_password  secret           never shown                           Grant…
+
+
+
+
+
+
+
+
+
+
+    Keys: type to search  ↓ list  ↵ insert  Esc close

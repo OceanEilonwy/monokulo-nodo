@@ -6,17 +6,17 @@
 
 
        moneropay   Payment gateway for Monero
-       ●  Running   ·   open at https://moneropay.example.com
+       ●  Running · up 45m   ·   open at https://moneropay.example.com
 
        Version 2.7.1 is ready   from 2.7.0                                                            Update   
 
 
 
-       ▸ Hosting     Home network                            ›
+       ▸ Hosting     Home network                                                                               ›
 
-         Settings    Change how it works                     ›
+         Settings    Change how it works                                                                        ›
 
-         Logs        What it has been doing                  ›
+         Logs        What it has been doing                                                                     ›
 
 
 

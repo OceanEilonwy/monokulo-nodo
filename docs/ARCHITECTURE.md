@@ -83,6 +83,23 @@ codebase, and signed xbps packages from user-added feeds.
 - **References:** Public settings are referenced as `$(package.setting)`. Only Rust resolves them, inserting
   typed, escaped values, and never through a shell. Secrets are never public and need an explicit grant
   approved by the user. A reference implies the dependency and the sandbox and firewall access.
+  - **Values made of pieces:** a text or URL setting may mix text and references
+    (`SettingInput::Template` with `TemplatePart::Text` and `TemplatePart::Reference`). The helper
+    escapes the text pieces (`$(` becomes `$$(`), so nothing typed becomes a reference, and stores the
+    result as a template; a template without references is stored as a plain value. `SettingsForm`
+    reports such a value as `SettingCurrent::Template { parts, resolved }`; a value that is exactly one
+    reference stays `SettingCurrent::Reference`.
+  - **`ListReferences { package }`** returns every setting of the other installed packages that
+    `package` could reference (`ReferenceOption`): its package, the name to write in `$(package.name)`,
+    label, help, kind, and `ReferenceAccess::Public { value }` with the current value, or
+    `ReferenceAccess::NeedsGrant { secret, granted }` for secrets and non-public settings, whose values
+    are never listed. Reading one of those needs `SetGrant` with the setting's own name.
+  - **`PreviewSetting { package, change }`** says what saving one change would do, without changing
+    anything: the resolved value (never a secret), why it does not resolve, a `ReferenceCheck` per
+    reference (`Ok`, `NotInstalled`, `NoSuchSetting`, `NeedsGrant`, `TypeMismatch`, `Problem`), and the
+    dependencies and access (`ImpliedAccess`, such as "port 18081/tcp") the package does not have yet,
+    for a save confirmation. A secret value is refused rather than previewed. Both requests use the
+    helper's normal authorization; validation on save is unchanged.
 - **Encrypted storage:** Packages opt in. One single device passphrase unlocks all of it at once after a
   reboot. There are no per-package passphrases. Each volume is mounted only inside its own sandbox.
   A manifest may ask for a volume size and declare a data layout version. An update keeps the
@@ -199,6 +216,19 @@ codebase, and signed xbps packages from user-added feeds.
   Powerline caps) where `[tui] rounded_buttons` in `~/.config/nodo/tui.toml` or `/etc/nodo/tui.toml`
   says `"on"`, or with `"auto"` (the default) in kitty, WezTerm and Ghostty, which bundle the symbols;
   elsewhere they are flat with plain ends.
+- **References in the TUI:** App › Settings fields that take text, a number, a URL or an address hold
+  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-tui/src/refs.rs`):
+  a chip is one cursor step and is only ever made by the picker or a suggestion, so typed `$(` stays text.
+  Typing `$(` suggests fitting references at the cursor; Ctrl+R, F4 or a field's "+ reference" link opens
+  the one picker, which searches every other app's settings (`ListReferences`) by app, name,
+  description and value, lists those that fit the field first, dims the rest with why, and puts
+  secrets and non-public settings last, locked, with Grant… (`SetGrant`, after a confirmation that
+  never shows the value). Each change is previewed (`PreviewSetting`): a chip that does not resolve is
+  drawn in the error colour, Enter on the field opens its menu with the reason and Replace…, Type a
+  value instead and Remove, and Save is refused with "Fix N broken references to save". Replacing or
+  removing leaves a "↺ …" link that puts the value back while the field still holds it, and Save asks
+  first when the changed references open access or add a dependency, listing them in plain words.
+  Secret settings do not take references in the TUI.
 - **Node onion address:** The node is not a site, so it has its own switch (`SetNodeOnion`, the TUI's
   Web › Onion screen). Tor forwards the onion address straight to the node's restricted RPC on
   loopback, never to a full RPC: to the port the node exports as its public `restricted-rpc-port`

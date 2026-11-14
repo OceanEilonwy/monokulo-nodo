@@ -607,13 +607,58 @@ pub struct SettingsState {
     pub form: SettingsForm,
     pub draft: Vec<FieldValue>,
     pub selected: usize,
+    /// A secret being typed. Other fields are typed in `editor`.
     pub editing: Option<Input>,
+    /// Text and reference chips being typed in the selected field.
+    pub editor: Option<crate::refs::PieceEditor>,
+    /// What the other apps offer to reference, once loaded.
+    pub catalog: Option<ReferenceList>,
+    /// The latest preview of each field's draft, from the helper.
+    pub previews: Vec<Option<FieldPreview>>,
+    /// The selected field's chip whose menu is open, and the highlighted action.
+    pub chip_menu: Option<ChipMenu>,
+    /// One step back, offered as "↺ …" under the field while it applies.
+    pub undo: Option<Undo>,
+    /// The save confirmation, listing what the changed references allow.
+    pub confirm: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChipMenu {
+    /// Which reference of the field, counting from 0.
+    pub chip: usize,
+    /// 0 Replace…, 1 Type a value instead, 2 Remove.
+    pub choice: usize,
+}
+
+pub const CHIP_ACTIONS: [&str; 3] = ["Replace…", "Type a value instead", "Remove"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undo {
+    pub field: usize,
+    /// The value before the step, and the value right after it: the link shows only while the
+    /// field still holds what the step made, so it never undoes something else.
+    pub before: FieldValue,
+    pub after: FieldValue,
+    pub label: String,
 }
 
 impl SettingsState {
     pub fn new(form: SettingsForm) -> Self {
-        let draft = form.fields.iter().map(|field| field.value.clone()).collect();
-        Self { form, draft, selected: 0, editing: None }
+        let draft: Vec<FieldValue> = form.fields.iter().map(|field| field.value.clone()).collect();
+        let previews = vec![None; draft.len()];
+        Self {
+            form,
+            draft,
+            selected: 0,
+            editing: None,
+            editor: None,
+            catalog: None,
+            previews,
+            chip_menu: None,
+            undo: None,
+            confirm: None,
+        }
     }
 
     pub fn changed_indices(&self) -> Vec<usize> {
@@ -623,10 +668,26 @@ impl SettingsState {
     pub fn error_for(&self, index: usize) -> Option<String> {
         validate(&self.form.fields[index].kind, &self.draft[index])
     }
+
+    /// The preview of a field, if it is for the value the field holds now.
+    pub fn preview(&self, index: usize) -> Option<&FieldPreview> {
+        self.previews.get(index)?.as_ref().filter(|p| p.for_value.as_ref() == Some(&self.draft[index]))
+    }
+
+    /// References that do not resolve, over every field, as far as the previews know.
+    pub fn broken(&self) -> usize {
+        (0..self.draft.len()).filter_map(|i| self.preview(i)).map(FieldPreview::broken).sum()
+    }
+
+    /// The undo step for a field, while the field still holds what that step made.
+    pub fn undo_for(&self, index: usize) -> Option<&Undo> {
+        self.undo.as_ref().filter(|u| u.field == index && self.draft[index] == u.after)
+    }
 }
 
 /// Field validation, kept pure so that it can be tested and so save can refuse early.
 pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
+    // A value with references is checked by the helper's preview, against what it resolves to.
     let FieldValue::Text(text) = value else {
         return None;
     };
@@ -661,27 +722,37 @@ pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
     }
 }
 
+/// Where a picked reference goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickMode {
+    /// At the cursor of the field's editor, or as the whole value when nothing is being typed.
+    Insert,
+    /// In place of this reference of the field.
+    Replace(usize),
+}
+
+/// The one reference picker, for every field: search everything the other apps offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceState {
     pub package: String,
     pub field_index: usize,
     pub field_label: String,
+    pub field_kind: FieldKind,
+    pub mode: PickMode,
+    /// Whether the reference would sit beside other text or references.
+    pub assembled: bool,
     pub list: ReferenceList,
     pub query: Input,
     pub list_focused: bool,
     pub selected: usize,
+    /// A locked setting the user chose, waiting for their approval.
+    pub granting: Option<ReferenceOption>,
 }
 
 impl ReferenceState {
-    /// The options matching the search, by path or by value, ignoring case, so both "daemon" and
-    /// "18081" find the Monero node.
-    pub fn visible(&self) -> Vec<&ReferenceOption> {
-        let query = self.query.text().to_lowercase();
-        self.list
-            .options
-            .iter()
-            .filter(|option| option.path.to_lowercase().contains(&query) || option.value.to_lowercase().contains(&query))
-            .collect()
+    /// The options the search shows, in the order they are listed, each with whether it fits.
+    pub fn visible(&self) -> Vec<(&ReferenceOption, Result<(), String>)> {
+        crate::refs::ordered(&self.field_kind, crate::refs::search(&self.list.options, self.query.text()), self.assembled)
     }
 }
 
@@ -1393,7 +1464,9 @@ pub enum Effect {
     LoadKeyChange(String),
     TrustNewKey { change: KeyChange, typed: String },
     OpenSettings(String),
-    LoadReferences { package: String, field_index: usize, field_key: String, field_label: String },
+    LoadReferences { package: String },
+    PreviewSetting { package: String, field_index: usize, key: String, value: FieldValue },
+    Grant { consumer: String, provider: String, setting: String },
     ApplySettings { package: String, values: Vec<(String, FieldValue)> },
     CheckUpdates,
     ReviewUpdate {
@@ -1502,7 +1575,9 @@ pub enum Event {
     KeyChangeLoaded(Option<KeyChange>),
     NewKeyTrusted(Result<String, String>),
     SettingsLoaded { package: String, form: Option<SettingsForm> },
-    ReferencesLoaded { package: String, field_index: usize, field_label: String, list: ReferenceList },
+    ReferencesLoaded { package: String, list: ReferenceList },
+    SettingPreviewed { package: String, field_index: usize, preview: FieldPreview },
+    Granted { provider: String, setting: String, result: Result<(), ApiError> },
     SettingsApplied(Result<(), ApiError>),
     SettingsRolledBack { package: String, explanation: RollbackExplanation },
     UpdateReviewLoaded {

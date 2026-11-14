@@ -2,31 +2,31 @@
     Home     Apps 2     Web     System 1                                           monokulo-nodo
 
 
-    Apps  ›  moneropay  ›  Settings  ›  Daemon RPC
+    Apps  ›  moneropay  ›  Settings  ›  Insert a reference
 
-    Pick daemon rpc from your apps
-    It follows the app you pick if its value changes. Expects a URL.
 
+       Insert a reference   into moneropay · Daemon RPC (url)
 
        Search    rpc
 
-       ✓ monero-daemon.public_rpc_url      http://127.0.0.1:18081
-         monero-daemon.restricted_rpc_url  http://127.0.0.1:18089
-         wallet-rpc.url                    http://127.0.0.1:34512
+       Those that fit first; the others are dimmed with why.
 
-       monero-daemon is a role.
-       It stays correct if you switch between cuprated and monerod.
+       CUPRATED
+       ▸ cuprated.rpc_url       url      public  Where it answers RPC  http://127.0.0.1:18081
 
-                                      Type a value instead                  Use it
+       WALLET-RPC
+         wallet-rpc.url         url      public  Where the wallet an…  http://127.0.0.1:34512
+         cuprated.rpc_host      text     public  Text; the field tak…  127.0.0.1
+         cuprated.rpc_port      number   public  A number; the field…  18081
+         wallet-rpc.port        number   public  A number; the field…  34512
 
-
-
-
-
-
-
+       SECRETS · NOT PUBLIC
+         cuprated.rpc_password  secret           never shown           Grant…
 
 
 
 
-    Keys: ↑↓ choose  ↵ use it  t type a value  Esc close
+
+
+
+    Keys: ↑↓ choose  ↵ insert  / search  Esc close

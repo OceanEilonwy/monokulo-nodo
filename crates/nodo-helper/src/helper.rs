@@ -234,6 +234,8 @@ impl<S: System> Helper<S> {
                 self.set_role_binding(&role, package.as_deref())
             }
             Request::ListGrants => self.list_grants(),
+            Request::ListReferences { package } => self.list_references(&package),
+            Request::PreviewSetting { package, change } => self.preview_setting(&package, &change),
             Request::SetGrant { grant, approved } => self.set_grant(&grant, approved),
             Request::UseDataDrive { package, enabled } => self.use_data_drive(&package, enabled),
             request @ (Request::CheckReachability { .. }
@@ -327,6 +329,16 @@ mod tests {
             Request::PackageDetail { id: "shop".into() },
             Request::SettingsForm {
                 package: "shop".into(),
+            },
+            Request::ListReferences {
+                package: "shop".into(),
+            },
+            Request::PreviewSetting {
+                package: "shop".into(),
+                change: nodo_api::SettingChange {
+                    name: "label".into(),
+                    value: nodo_api::SettingInput::Reset,
+                },
             },
             Request::LogSources,
             Request::ReadLog {

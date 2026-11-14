@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into moneropay · Daemon RPC (url)
+
+       Search    ▏
+
+       Those that fit first; the others are dimmed with why.
+
+       CUPRATED
+         cuprated.rpc_url       url      http://127.0.0.1:18081
+           Where it answers RPC
+
+       WALLET-RPC
+         wallet-rpc.url         url      http://127.0.0.1:34512
+           Where the wallet answers
+         cuprated.rpc_host      text     127.0.0.1
+           Text; the field takes an address.
+       ↓ 11 more — scroll or make the window taller
+    Keys: type to search  ↓ list  ↵ insert  Esc close
