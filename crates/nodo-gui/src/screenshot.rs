@@ -15,9 +15,40 @@ use slint::{ComponentHandle, PhysicalSize};
 use crate::geometry;
 use crate::state::{App, Button, Mode};
 use crate::view::Presenter;
-use crate::MainWindow;
+use crate::{ButtonView, DesignBoard, DesignBoard2, MainWindow};
+use slint::Model;
 
 pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "confirm", "progress", "failed", "off"];
+
+/// Design boards for the touch management screens and wallpapers (ui/design.slint), mock data
+/// only. "wp-panels" is the real tile screen with the proposed Manage button added.
+pub const DESIGN_SCENES: [&str; 23] = [
+    "wp-panels", "wp-logo", "wp-logo-panels", "m-screen", "m-home", "m-apps", "m-app", "m-settings",
+    "m-settings-kbd", "m-get-apps", "m-install", "m-web", "m-hosting", "m-sources", "m-add-source",
+    "m-system", "m-updates", "m-network", "m-backups", "m-blocked", "u-pin", "u-pin-wrong", "u-lockout",
+];
+/// Also a design scene, kept out of the array above to keep its length readable in reviews.
+pub const NO_PIN_SCENE: &str = "u-no-pin";
+
+/// Touch screen GUI v2 (ui/design2.slint): every screen with proper Slint controls, mock data.
+pub const G2_SCENES: &[&str] = &[
+    "g-widgets", "g-tiles-logo", "g-tiles-full", "g-tiles-full-k1", "g-tiles-full-k2", "g-tiles-full-k3",
+    "g-tile-settings", "g-tiles-add", "g-home", "g-unlock", "g-apps", "g-get-apps", "g-about",
+    "g-install", "g-installing", "g-app", "g-remove", "g-settings", "g-combo-open", "g-ref-open", "g-ref-manual", "g-ref-empty", "g-settings-kbd",
+    "g-refs-field", "g-refs-auto", "g-refs-picker", "g-refs-search", "g-refs-typed", "g-refs-grant",
+    "g-refs-invalid", "g-refs-invalid-popover", "g-refs-save",
+    "g-refs-seq1", "g-refs-seq2", "g-refs-seq3", "g-refs-seq4",
+    "g-rolled-back", "g-sources", "g-add-source", "g-source-check", "g-source-errors", "g-key-changed",
+    "g-remove-builtin", "g-web", "g-hosting", "g-hosting-domain", "g-providers", "g-add-provider",
+    "g-provider-key", "g-provider-done", "g-checks", "g-confirm", "g-online", "g-blocked-isp", "g-system",
+    "g-updates", "g-auto", "g-undo", "g-update-rolled-back", "g-logs", "g-backups", "g-backing-up",
+    "g-restore", "g-network", "g-wifi-join", "g-ssh-keys", "g-screen", "g-rejected", "g-capability",
+    "g-no-drive", "g-pin", "g-pin-wrong", "g-no-pin",
+];
+
+fn is_design(name: &str) -> bool {
+    name == NO_PIN_SCENE || (DESIGN_SCENES.contains(&name) && name != "wp-panels")
+}
 
 struct Offscreen {
     window: Rc<MinimalSoftwareWindow>,
@@ -190,21 +221,81 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
             .clone()
     });
     window.set_size(PhysicalSize::new(geometry::WIDTH as u32, geometry::HEIGHT as u32));
+    let mut buffer = vec![Rgb8Pixel::default(); (geometry::WIDTH * geometry::HEIGHT) as usize];
+    if G2_SCENES.contains(&name) {
+        let board = DesignBoard2::new().map_err(|e| e.to_string())?;
+        board.set_scene(name.into());
+        board.set_text_logo(text_logo(match name {
+            "g-tiles-full-k1" => Some(30),
+            "g-tiles-full-k2" => Some(56),
+            "g-tiles-full-k3" => Some(82),
+            _ => None,
+        }));
+        board.show().map_err(|e| e.to_string())?;
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut buffer, geometry::WIDTH as usize);
+        });
+        board.hide().map_err(|e| e.to_string())?;
+        return Ok(buffer);
+    }
+    if is_design(name) {
+        let board = DesignBoard::new().map_err(|e| e.to_string())?;
+        board.set_scene(name.into());
+        board.show().map_err(|e| e.to_string())?;
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut buffer, geometry::WIDTH as usize);
+        });
+        board.hide().map_err(|e| e.to_string())?;
+        return Ok(buffer);
+    }
     let ui = MainWindow::new().map_err(|e| e.to_string())?;
     ui.set_host("monokulo-nodo".into());
     ui.set_address("192.168.1.155".into());
     let now = Instant::now();
-    let app = scene(name, now)?;
+    let app = scene(if name == "wp-panels" { "view" } else { name }, now)?;
     let mut presenter = Presenter::new(&ui);
     presenter.show(&ui, &app, now, ("thu 13 nov", "14:32"));
+    if name == "wp-panels" {
+        add_manage_button(&ui);
+    }
     ui.show().map_err(|e| e.to_string())?;
-    let mut buffer = vec![Rgb8Pixel::default(); (geometry::WIDTH * geometry::HEIGHT) as usize];
     window.request_redraw();
     window.draw_if_needed(|renderer| {
         renderer.render(&mut buffer, geometry::WIDTH as usize);
     });
     ui.hide().map_err(|e| e.to_string())?;
     Ok(buffer)
+}
+
+/// The boot splash's logo grid as an image, one pixel per cell (Slint scales it pixelated), with
+/// the glint at `t` (`None` is the logo at rest). Shared with nodo-splash: the same grid, frames
+/// and palette.
+pub fn text_logo(t: Option<i32>) -> slint::Image {
+    let grid = nodo_splash::frame(&nodo_splash::logo(), t);
+    let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(nodo_splash::SIZE as u32, nodo_splash::SIZE as u32);
+    for (pixel, v) in buffer.make_mut_slice().iter_mut().zip(grid.iter().flatten()) {
+        let rgb = nodo_splash::PALETTE[usize::from(*v)];
+        let a = if *v == 0 { 0 } else { 255 };
+        *pixel = slint::Rgba8Pixel { r: (rgb >> 16) as u8, g: (rgb >> 8) as u8, b: rgb as u8, a };
+    }
+    slint::Image::from_rgba8(buffer)
+}
+
+/// The proposed "Manage" button, left of the top bar's other buttons (design only).
+fn add_manage_button(ui: &MainWindow) {
+    let model = ui.get_buttons();
+    let mut buttons: Vec<ButtonView> = model.iter().collect();
+    let Some(first) = buttons.iter().filter(|b| b.y < 140.0).min_by(|a, b| a.x.total_cmp(&b.x)).cloned() else { return };
+    for b in buttons.iter_mut().filter(|b| b.label == "Arrange") {
+        b.icon = 0;
+    }
+    let w = 236.0;
+    buttons.push(ButtonView { x: first.x - w - geometry::BUTTON_GAP, w, label: "Manage".into(), count: "".into(), sub: "".into(), kind: 2, icon: 1, ..first });
+    let left = first.x - w - geometry::BUTTON_GAP;
+    ui.set_header_text_width(left - geometry::PAD_X - geometry::BUTTON_GAP);
+    ui.set_buttons(slint::ModelRc::new(slint::VecModel::from(buttons)));
 }
 
 thread_local! {
@@ -237,5 +328,11 @@ mod tests {
             assert!(lit < buffer.len() / 3, "{name} keeps an OLED's pixels mostly off ({lit})");
         }
         assert!(scene("nothing", Instant::now()).is_err());
+        // The touch management design boards render too (mock data; they light more of the screen).
+        for name in DESIGN_SCENES.iter().copied().chain([NO_PIN_SCENE]).chain(G2_SCENES.iter().copied()) {
+            let buffer = pixels(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let lit = buffer.iter().filter(|p| p.r > 0 || p.g > 0 || p.b > 0).count();
+            assert!(lit > 1000, "{name} drew something");
+        }
     }
 }
