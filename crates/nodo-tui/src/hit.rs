@@ -24,6 +24,9 @@ pub enum Click {
     Ctrl(char),
     /// Moves the screen's selection or focus to `index`, then presses `then`, if any.
     Pick { index: usize, then: Option<KeyCode> },
+    /// Puts the cursor in the screen's text box without pressing anything. A box's own key (`/`
+    /// for a search) would be typed into it once the box has the cursor.
+    Focus,
 }
 
 /// How much of the screen around the found text counts as the target.
@@ -39,6 +42,9 @@ pub enum Area {
     /// The width of a card (the page less its margins) on the text's row: rows inside a card,
     /// so the hover fill stays on the card.
     Card,
+    /// The text and the cells after it up to this many columns from its start: a text box's
+    /// label with the box drawn beside it.
+    Field(u16),
 }
 
 /// A click target as a screen declares it.
@@ -66,6 +72,11 @@ impl Target {
 
     pub fn card_row(find: impl Into<String>, click: Click) -> Self {
         Self { find: find.into(), area: Area::Card, click, rows_below: 0 }
+    }
+
+    /// A text box: its label, found by `find`, and the box beside it, `cells` wide in all.
+    pub fn field(find: impl Into<String>, cells: u16) -> Self {
+        Self { find: find.into(), area: Area::Field(cells), click: Click::Focus, rows_below: 0 }
     }
 
     pub fn below(mut self, rows: u16) -> Self {
@@ -137,6 +148,10 @@ pub fn resolve(buffer: &Buffer, area: Rect, targets: &[Target]) -> Vec<Hit> {
         let rect = match target.area {
             Area::Text => Rect::new(x0, y, x1 - x0, 1 + below),
             Area::Row => Rect::new(area.x, y, area.width, 1 + below),
+            Area::Field(cells) => {
+                let right = x0.saturating_add(cells).max(x1).min(area.x + area.width);
+                Rect::new(x0, y, right - x0, 1 + below)
+            }
             Area::Card => {
                 let margin = (crate::view::v3::MARGIN.len() as u16).min(area.width / 4);
                 Rect::new(area.x + margin, y, area.width - 2 * margin, 1 + below)
@@ -231,5 +246,14 @@ mod tests {
         let b = buffer(&["only this"]);
         let hits = resolve(&b, b.area, &[Target::text("missing", Click::Key(KeyCode::Esc)), Target::text("this", Click::Key(KeyCode::Enter))]);
         assert_eq!(hits, vec![Hit { rect: Rect::new(5, 0, 4, 1), click: Click::Key(KeyCode::Enter) }]);
+    }
+
+    #[test]
+    fn a_field_takes_its_label_and_the_box_beside_it() {
+        let b = buffer(&["  Search   [ monero      ]   Sources ›"]);
+        let hits = resolve(&b, b.area, &[Target::field("Search", 23), Target::text("Sources ›", Click::Key(KeyCode::Char('s')))]);
+        assert_eq!(hits[0].rect, Rect::new(2, 0, 23, 1));
+        assert_eq!(at(&hits, 15, 0), Some(Click::Focus), "a click inside the box focuses it");
+        assert_eq!(at(&hits, 30, 0), Some(Click::Key(KeyCode::Char('s'))));
     }
 }

@@ -354,6 +354,9 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, APP_SECTIONS.len(), key.code == KeyCode::Down),
         KeyCode::Char('m') => state.more_open = true,
         KeyCode::Enter => match APP_SECTIONS[state.selected.min(APP_SECTIONS.len() - 1)] {
+            // An app without a web page shows Hosting as a dimmed row that says so; Enter on
+            // it stays put rather than flash a notice as if it had gone somewhere.
+            "Hosting" if !app.data.web.sites.iter().any(|site| site.package == name) => {}
             "Hosting" => return web::hosting_from_detail(app, &name),
             "Settings" => return vec![Effect::OpenSettings(name)],
             _ => return open_logs(app, &name),
@@ -2370,6 +2373,22 @@ fn pick(app: &mut App, index: usize) {
     }
 }
 
+/// A click on a text box: gives it the cursor, as `/` (or `w` for the update window) would from
+/// the rest of the screen, but presses nothing, so a box that already has the cursor keeps what
+/// was typed.
+fn focus_input_box(app: &mut App) -> Vec<Effect> {
+    match &mut app.screen {
+        Screen::Search(state) => state.list_focused = false,
+        Screen::Reference(state) => state.list_focused = false,
+        Screen::Logs(state) => state.finding = true,
+        Screen::AutoUpdate(state) if state.editing_window.is_none() => {
+            return on_key(app, KeyEvent::from(KeyCode::Char('w')));
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
 fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
     use crate::hit::Click;
     match click {
@@ -2382,6 +2401,13 @@ fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
         }
         Click::Key(code) => on_key(app, KeyEvent::from(code)),
         Click::Ctrl(c) => on_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)),
+        Click::Focus => {
+            if app.modal.is_some() || app.overlay.is_some() {
+                return Vec::new();
+            }
+            app.notice = None;
+            focus_input_box(app)
+        }
         Click::Pick { index, then } => {
             app.notice = None;
             match &mut app.modal {
