@@ -15,7 +15,7 @@ use slint::{ComponentHandle, PhysicalSize};
 use crate::geometry;
 use crate::state::{App, Button, Mode};
 use crate::view::Presenter;
-use crate::{ButtonView, DesignBoard, MainWindow};
+use crate::{ButtonView, DesignBoard, DesignBoard2, MainWindow};
 use slint::Model;
 
 pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "confirm", "progress", "failed", "off"];
@@ -29,6 +29,18 @@ pub const DESIGN_SCENES: [&str; 23] = [
 ];
 /// Also a design scene, kept out of the array above to keep its length readable in reviews.
 pub const NO_PIN_SCENE: &str = "u-no-pin";
+
+/// Touch screen GUI v2 (ui/design2.slint): every screen with proper Slint controls, mock data.
+pub const G2_SCENES: &[&str] = &[
+    "g-widgets", "g-wp-logo", "g-wp-logo-panels", "g-home", "g-unlock", "g-apps", "g-get-apps", "g-about",
+    "g-install", "g-installing", "g-app", "g-remove", "g-settings", "g-settings-pick", "g-settings-kbd",
+    "g-rolled-back", "g-sources", "g-add-source", "g-source-check", "g-source-errors", "g-key-changed",
+    "g-remove-builtin", "g-web", "g-hosting", "g-hosting-domain", "g-providers", "g-add-provider",
+    "g-provider-key", "g-provider-done", "g-checks", "g-confirm", "g-online", "g-blocked-isp", "g-system",
+    "g-updates", "g-auto", "g-undo", "g-update-rolled-back", "g-logs", "g-backups", "g-backing-up",
+    "g-restore", "g-network", "g-wifi-join", "g-ssh-keys", "g-screen", "g-rejected", "g-capability",
+    "g-no-drive", "g-pin", "g-pin-wrong", "g-lockout", "g-no-pin",
+];
 
 fn is_design(name: &str) -> bool {
     name == NO_PIN_SCENE || (DESIGN_SCENES.contains(&name) && name != "wp-panels")
@@ -206,6 +218,17 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
     });
     window.set_size(PhysicalSize::new(geometry::WIDTH as u32, geometry::HEIGHT as u32));
     let mut buffer = vec![Rgb8Pixel::default(); (geometry::WIDTH * geometry::HEIGHT) as usize];
+    if G2_SCENES.contains(&name) {
+        let board = DesignBoard2::new().map_err(|e| e.to_string())?;
+        board.set_scene(name.into());
+        board.show().map_err(|e| e.to_string())?;
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut buffer, geometry::WIDTH as usize);
+        });
+        board.hide().map_err(|e| e.to_string())?;
+        return Ok(buffer);
+    }
     if is_design(name) {
         let board = DesignBoard::new().map_err(|e| e.to_string())?;
         board.set_scene(name.into());
@@ -282,7 +305,7 @@ mod tests {
         }
         assert!(scene("nothing", Instant::now()).is_err());
         // The touch management design boards render too (mock data; they light more of the screen).
-        for name in DESIGN_SCENES.iter().copied().chain([NO_PIN_SCENE]) {
+        for name in DESIGN_SCENES.iter().copied().chain([NO_PIN_SCENE]).chain(G2_SCENES.iter().copied()) {
             let buffer = pixels(name).unwrap_or_else(|e| panic!("{name}: {e}"));
             let lit = buffer.iter().filter(|p| p.r > 0 || p.g > 0 || p.b > 0).count();
             assert!(lit > 1000, "{name} drew something");

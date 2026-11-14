@@ -1,0 +1,2679 @@
+// Touch screen GUI v2: the same features and look as the first touch boards, but with proper
+// Slint widgets instead of terminal idioms. Inter for the interface, JetBrains Mono only for
+// addresses, keys and logs. Mock data only; rendered by `nodo-gui --screenshot <scene> <png>`.
+
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+import "fonts/JetBrainsMono-Regular.ttf";
+
+global G {
+    out property <color> ground: #000000;
+    out property <color> surface: #0C0E10;
+    out property <color> card: #15181C;
+    out property <color> raised: #20252A;
+    out property <color> hover: #2A3036;
+    out property <color> pressed: #343B42;
+    out property <color> field: #0A0C0E;
+    out property <color> line: #2A3036;
+    out property <color> edge: #FFFFFF12;
+    out property <color> fg: #E4E6E8;
+    out property <color> bright: #F7F8F9;
+    out property <color> dim: #9AA2A9;
+    out property <color> faint: #656D74;
+    out property <color> accent: #F2A33A;
+    out property <color> accent-hover: #F6B358;
+    out property <color> accent-press: #D98D25;
+    out property <color> on-accent: #17130D;
+    out property <color> ok: #6FD6B3;
+    out property <color> ok-fill: #10251E;
+    out property <color> err: #FF8A7A;
+    out property <color> err-fill: #2C1613;
+    out property <color> info: #86BEFF;
+    out property <color> info-fill: #111D2B;
+    out property <string> mono: "JetBrains Mono";
+    // tone: 0 dim, 1 accent, 2 ok, 3 err, 4 fg, 5 info
+    public pure function tone-color(t: int) -> color {
+        t == 1 ? self.accent : t == 2 ? self.ok : t == 3 ? self.err : t == 4 ? self.fg : t == 5 ? self.info : self.dim
+    }
+}
+
+export struct GR {
+    t: string,
+    s: string,
+    v: string,
+    tone: int,
+    chev: bool,
+    hover: bool,
+    mono: bool,
+    sw: int,
+}
+
+component Tx inherits Text {
+    color: G.fg;
+    font-size: 26px;
+    vertical-alignment: center;
+}
+
+component Sym inherits Text {
+    font-family: G.mono;
+    color: G.fg;
+    font-size: 28px;
+    vertical-alignment: center;
+    horizontal-alignment: center;
+}
+
+// kind: 0 primary, 1 secondary, 2 destructive, 3 ghost (text). state: 0 rest, 1 hover, 2 pressed, 3 disabled
+component GButton inherits Rectangle {
+    in property <string> label;
+    in property <int> kind: 0;
+    in property <int> state: 0;
+    in property <string> icon;
+    in property <length> w: 240px;
+    in property <bool> lock: false;
+    width: w;
+    height: 80px;
+    border-radius: 20px;
+    background: state == 3 ? (kind == 0 ? #3A3226 : G.card)
+        : kind == 0 ? (state == 2 ? G.accent-press : state == 1 ? G.accent-hover : G.accent)
+        : kind == 1 ? (state == 2 ? G.pressed : state == 1 ? G.hover : G.raised)
+        : kind == 2 ? (state == 2 ? #4A2520 : state == 1 ? #3A1D19 : G.err-fill)
+        : (state >= 1 && state <= 2 ? G.raised : transparent);
+    border-width: kind == 2 ? 2px : kind == 1 ? 1px : 0px;
+    border-color: kind == 2 ? #A8574C : G.edge;
+    drop-shadow-blur: kind == 0 && state < 2 ? 18px : 0px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #F2A33A30;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 12px;
+        if lock: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 22px;
+                height: 26px;
+                Rectangle {
+                    x: 4px;
+                    y: 0;
+                    width: 14px;
+                    height: 16px;
+                    border-radius: 7px;
+                    border-width: 3px;
+                    border-color: kind == 0 ? G.on-accent : G.dim;
+                }
+                Rectangle {
+                    x: 0;
+                    y: 10px;
+                    width: 22px;
+                    height: 16px;
+                    border-radius: 4px;
+                    background: kind == 0 ? G.on-accent : G.dim;
+                }
+            }
+        }
+        if icon != "": Sym {
+            text: icon;
+            font-size: 26px;
+            color: kind == 0 ? G.on-accent : kind == 2 ? G.err : G.bright;
+        }
+        Tx {
+            text: label;
+            font-size: 26px;
+            font-weight: 600;
+            color: state == 3 ? G.faint : kind == 0 ? G.on-accent : kind == 2 ? G.err : kind == 3 ? G.accent : G.bright;
+        }
+    }
+}
+
+component GCard inherits Rectangle {
+    background: G.card;
+    border-radius: 28px;
+    border-width: 1px;
+    border-color: G.edge;
+}
+
+component GSwitch inherits Rectangle {
+    in property <bool> on;
+    width: 92px;
+    height: 52px;
+    border-radius: 26px;
+    background: on ? G.accent : G.raised;
+    border-width: on ? 0px : 1px;
+    border-color: G.line;
+    Rectangle {
+        x: on ? parent.width - 48px : 4px;
+        y: 4px;
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        background: on ? #FFFFFF : G.dim;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000060;
+        drop-shadow-offset-y: 2px;
+    }
+}
+
+// A list row: title over subtitle on the left, value, then a chevron or a switch (sw 1 off, 2 on).
+component GRow inherits Rectangle {
+    in property <GR> r;
+    in property <bool> last;
+    height: 104px;
+    background: r.hover ? G.hover : transparent;
+    border-radius: 18px;
+    HorizontalLayout {
+        padding-left: 28px;
+        padding-right: 24px;
+        spacing: 24px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            horizontal-stretch: 1;
+            Tx {
+                text: r.t;
+                font-size: 27px;
+                font-weight: 600;
+                color: G.bright;
+            }
+            if r.s != "": Tx {
+                text: r.s;
+                font-size: 22px;
+                color: G.dim;
+                font-family: r.mono ? G.mono : "Inter";
+                overflow: elide;
+            }
+        }
+        if r.v != "": Tx {
+            text: r.v;
+            font-size: 24px;
+            font-weight: 500;
+            color: G.tone-color(r.tone);
+        }
+        if r.sw > 0: VerticalLayout {
+            alignment: center;
+            GSwitch {
+                on: r.sw == 2;
+            }
+        }
+        if r.chev: Sym {
+            text: "›";
+            font-size: 40px;
+            color: G.faint;
+            width: 28px;
+        }
+    }
+    if !last: Rectangle {
+        x: 28px;
+        y: parent.height - 1px;
+        width: parent.width - 56px;
+        height: 1px;
+        background: G.line;
+    }
+}
+
+component GList inherits GCard {
+    in property <[GR]> rows;
+    height: rows.length * 104px + 16px;
+    VerticalLayout {
+        padding: 8px;
+        for r[i] in rows: GRow {
+            r: r;
+            last: i == rows.length - 1;
+        }
+    }
+}
+
+// A text input: label above, focus ring and glow, placeholder, inline error, mono for addresses.
+component GInput inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    in property <bool> focused;
+    in property <string> error;
+    in property <string> help;
+    in property <bool> mono;
+    in property <bool> secret;
+    in property <string> suffix;
+    in property <string> trailing;
+    spacing: 10px;
+    if label != "": Tx {
+        text: label;
+        font-size: 22px;
+        font-weight: 500;
+        color: G.dim;
+        height: 30px;
+    }
+    Rectangle {
+        height: 80px;
+        border-radius: 18px;
+        background: G.field;
+        border-width: focused || error != "" ? 3px : 1px;
+        border-color: error != "" ? G.err : focused ? G.accent : G.line;
+        drop-shadow-blur: focused ? 16px : 0px;
+        drop-shadow-color: error != "" ? #FF8A7A30 : #F2A33A38;
+        HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 20px;
+            spacing: 4px;
+            Tx {
+                text: value != "" ? (secret ? "••••••••••" : value) : placeholder;
+                color: value != "" ? G.bright : G.faint;
+                font-family: mono && value != "" ? G.mono : "Inter";
+                font-size: mono && value != "" ? 24px : 26px;
+                overflow: elide;
+            }
+            if focused: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 3px;
+                    height: 36px;
+                    background: G.accent;
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if suffix != "": Tx {
+                text: suffix;
+                color: G.dim;
+                font-family: G.mono;
+                font-size: 24px;
+            }
+            if trailing != "": Tx {
+                text: trailing;
+                color: G.accent;
+                font-size: 24px;
+                font-weight: 600;
+            }
+        }
+    }
+    if error != "" || help != "": Tx {
+        text: error != "" ? "✕  " + error : help;
+        font-size: 21px;
+        color: error != "" ? G.err : G.dim;
+        height: 28px;
+    }
+}
+
+// A dropdown's closed state.
+component GCombo inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> sub;
+    in property <bool> open;
+    spacing: 10px;
+    if label != "": Tx {
+        text: label;
+        font-size: 22px;
+        font-weight: 500;
+        color: G.dim;
+        height: 30px;
+    }
+    Rectangle {
+        height: 80px;
+        border-radius: 18px;
+        background: open ? G.raised : G.surface;
+        border-width: open ? 3px : 1px;
+        border-color: open ? G.accent : G.line;
+        HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            spacing: 14px;
+            Tx {
+                text: value;
+                color: G.bright;
+                font-weight: 500;
+            }
+            if sub != "": Tx {
+                text: sub;
+                color: G.dim;
+                font-size: 22px;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            Sym {
+                text: open ? "▴" : "▾";
+                color: G.dim;
+                font-size: 26px;
+            }
+        }
+    }
+}
+
+// An open dropdown's popup, drawn over everything at its absolute place.
+component GMenu inherits Rectangle {
+    in property <[GR]> items;
+    in property <int> selected;
+    height: items.length * 88px + 16px;
+    border-radius: 20px;
+    background: G.raised;
+    border-width: 1px;
+    border-color: #FFFFFF1E;
+    drop-shadow-blur: 40px;
+    drop-shadow-offset-y: 16px;
+    drop-shadow-color: #000000C0;
+    VerticalLayout {
+        padding: 8px;
+        for it[i] in items: Rectangle {
+            height: 88px;
+            border-radius: 14px;
+            background: it.hover ? G.hover : transparent;
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 16px;
+                Sym {
+                    text: i == selected ? "✓" : "";
+                    color: G.accent;
+                    width: 32px;
+                }
+                Tx {
+                    text: it.t;
+                    color: it.tone == 0 ? G.bright : G.tone-color(it.tone);
+                    font-weight: 500;
+                }
+                Tx {
+                    text: it.s;
+                    color: G.dim;
+                    font-size: 22px;
+                    horizontal-stretch: 1;
+                }
+                Tx {
+                    text: it.v;
+                    color: G.faint;
+                    font-size: 22px;
+                }
+            }
+        }
+    }
+}
+
+component GSegmented inherits Rectangle {
+    in property <[string]> options;
+    in property <int> selected;
+    height: 72px;
+    border-radius: 20px;
+    background: G.field;
+    border-width: 1px;
+    border-color: G.line;
+    HorizontalLayout {
+        padding: 6px;
+        spacing: 6px;
+        for o[i] in options: Rectangle {
+            border-radius: 15px;
+            background: i == selected ? G.raised : transparent;
+            border-width: i == selected ? 1px : 0px;
+            border-color: #FFFFFF1E;
+            Tx {
+                text: o;
+                horizontal-alignment: center;
+                font-size: 24px;
+                font-weight: i == selected ? 600 : 500;
+                color: i == selected ? G.bright : G.dim;
+            }
+        }
+    }
+}
+
+component GStepper inherits Rectangle {
+    in property <string> value;
+    width: 300px;
+    height: 80px;
+    border-radius: 18px;
+    background: G.field;
+    border-width: 1px;
+    border-color: G.line;
+    HorizontalLayout {
+        Rectangle {
+            width: 88px;
+            Sym {
+                text: "−";
+                font-size: 34px;
+                color: G.bright;
+            }
+        }
+        Rectangle {
+            width: 1px;
+            background: G.line;
+        }
+        Tx {
+            text: value;
+            horizontal-alignment: center;
+            font-weight: 600;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 1px;
+            background: G.line;
+        }
+        Rectangle {
+            width: 88px;
+            Sym {
+                text: "+";
+                font-size: 34px;
+                color: G.bright;
+            }
+        }
+    }
+}
+
+component GSlider inherits Rectangle {
+    in property <float> value;
+    height: 56px;
+    Rectangle {
+        y: (parent.height - 10px) / 2;
+        height: 10px;
+        border-radius: 5px;
+        background: G.raised;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - 10px) / 2;
+        width: parent.width * value;
+        height: 10px;
+        border-radius: 5px;
+        background: G.accent;
+    }
+    Rectangle {
+        x: parent.width * value - 26px;
+        y: (parent.height - 52px) / 2;
+        width: 52px;
+        height: 52px;
+        border-radius: 26px;
+        background: #FFFFFF;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000080;
+        drop-shadow-offset-y: 3px;
+    }
+}
+
+component GRadioCard inherits Rectangle {
+    in property <string> title;
+    in property <string> sub;
+    in property <bool> selected;
+    border-radius: 24px;
+    background: selected ? #2A2116 : G.surface;
+    border-width: selected ? 3px : 1px;
+    border-color: selected ? G.accent : G.line;
+    @children
+    HorizontalLayout {
+        x: 24px;
+        y: parent.height - 92px;
+        width: parent.width - 48px;
+        height: 72px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                border-width: 3px;
+                border-color: selected ? G.accent : G.dim;
+                if selected: Rectangle {
+                    x: 8px;
+                    y: 8px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: G.accent;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Tx {
+                text: title;
+                font-weight: 600;
+                color: G.bright;
+            }
+            Tx {
+                text: sub;
+                font-size: 21px;
+                color: G.dim;
+            }
+        }
+    }
+}
+
+component GProgress inherits Rectangle {
+    in property <float> value;
+    height: 12px;
+    border-radius: 6px;
+    background: G.raised;
+    Rectangle {
+        x: 0;
+        width: parent.width * value;
+        border-radius: 6px;
+        background: G.accent;
+    }
+}
+
+component GSpinner inherits Rectangle {
+    width: 44px;
+    height: 44px;
+    Path {
+        width: 44px;
+        height: 44px;
+        viewbox-width: 44;
+        viewbox-height: 44;
+        stroke: G.raised;
+        stroke-width: 5px;
+        commands: "M 22 3 A 19 19 0 1 1 21.9 3";
+    }
+    Path {
+        width: 44px;
+        height: 44px;
+        viewbox-width: 44;
+        viewbox-height: 44;
+        stroke: G.accent;
+        stroke-width: 5px;
+        commands: "M 22 3 A 19 19 0 0 1 41 22";
+    }
+}
+
+component GToast inherits Rectangle {
+    in property <string> text;
+    in property <int> tone: 2;
+    in property <string> action;
+    x: (1920px - self.width) / 2;
+    y: 940px;
+    width: 900px;
+    height: 88px;
+    border-radius: 24px;
+    background: G.raised;
+    border-width: 1px;
+    border-color: #FFFFFF1E;
+    drop-shadow-blur: 36px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #000000D0;
+    HorizontalLayout {
+        padding-left: 28px;
+        padding-right: 20px;
+        spacing: 18px;
+        Sym {
+            text: tone == 3 ? "✕" : "✓";
+            color: G.tone-color(tone);
+            width: 32px;
+        }
+        Tx {
+            text: root.text;
+            color: G.bright;
+            font-weight: 500;
+            horizontal-stretch: 1;
+        }
+        if action != "": Tx {
+            text: action;
+            color: G.accent;
+            font-weight: 600;
+        }
+    }
+}
+
+// The dimmed backdrop under a sheet or dialog.
+component GScrim inherits Rectangle {
+    x: 0;
+    y: 0;
+    width: 1920px;
+    height: 1080px;
+    background: #000000B8;
+}
+
+component GDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> body;
+    in property <int> tone: 4;
+    in property <string> primary;
+    in property <string> secondary;
+    in property <bool> destructive;
+    in property <length> h: 520px;
+    x: (1920px - 1040px) / 2;
+    y: (1080px - h) / 2;
+    width: 1040px;
+    height: h;
+    border-radius: 32px;
+    background: G.card;
+    border-width: 1px;
+    border-color: #FFFFFF1E;
+    drop-shadow-blur: 60px;
+    drop-shadow-offset-y: 20px;
+    drop-shadow-color: #000000E0;
+    VerticalLayout {
+        padding: 52px;
+        spacing: 22px;
+        Tx {
+            text: title;
+            font-size: 38px;
+            font-weight: 700;
+            color: tone == 4 ? G.bright : G.tone-color(tone);
+        }
+        Tx {
+            text: body;
+            color: G.dim;
+            wrap: word-wrap;
+            vertical-alignment: top;
+        }
+        @children
+        Rectangle {
+            vertical-stretch: 1;
+        }
+        HorizontalLayout {
+            spacing: 20px;
+            alignment: end;
+            if secondary != "": GButton {
+                label: secondary;
+                kind: 1;
+                w: 240px;
+            }
+            if primary != "": GButton {
+                label: primary;
+                kind: destructive ? 2 : 0;
+                w: destructive ? 300px : 280px;
+            }
+        }
+    }
+}
+
+component GKey inherits Rectangle {
+    in property <string> label;
+    in property <length> kw: 140px;
+    in property <bool> dark;
+    in property <bool> down;
+    width: kw;
+    height: 86px;
+    border-radius: 16px;
+    background: down ? G.accent : dark ? #191D21 : #2B3137;
+    drop-shadow-blur: 0px;
+    border-width: 1px;
+    border-color: #FFFFFF10;
+    Tx {
+        text: label;
+        horizontal-alignment: center;
+        font-size: label.character-count > 1 ? 24px : 32px;
+        font-weight: 500;
+        color: down ? G.on-accent : G.bright;
+    }
+}
+
+component GKeyboard inherits Rectangle {
+    x: 0;
+    y: 1080px - 420px;
+    width: 1920px;
+    height: 420px;
+    background: #0B0D0F;
+    drop-shadow-blur: 40px;
+    drop-shadow-color: #000000;
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: #FFFFFF14;
+    }
+    VerticalLayout {
+        padding: 22px;
+        spacing: 12px;
+        alignment: center;
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            for k in ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]: GKey {
+                label: k;
+                down: k == "e";
+            }
+            GKey {
+                label: "⌫";
+                kw: 180px;
+                dark: true;
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            for k in ["a", "s", "d", "f", "g", "h", "j", "k", "l"]: GKey {
+                label: k;
+            }
+            GKey {
+                label: "Done";
+                kw: 250px;
+                dark: true;
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            GKey {
+                label: "⇧";
+                kw: 180px;
+                dark: true;
+            }
+            for k in ["z", "x", "c", "v", "b", "n", "m", ".", "/"]: GKey {
+                label: k;
+            }
+            GKey {
+                label: "-";
+                kw: 110px;
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            GKey {
+                label: "123";
+                kw: 180px;
+                dark: true;
+            }
+            GKey {
+                label: ":";
+                kw: 110px;
+            }
+            GKey {
+                label: "space";
+                kw: 800px;
+            }
+            GKey {
+                label: "Paste";
+                kw: 200px;
+                dark: true;
+            }
+            GKey {
+                label: "‹  ›";
+                kw: 180px;
+                dark: true;
+            }
+        }
+    }
+}
+
+// The top bar: back to the wallpaper, the four tabs as one segmented control, lock chip, power.
+// lock: 0 locked, 1 unlocked, 2 no PIN
+component GNav inherits Rectangle {
+    in property <int> tab;
+    in property <int> lock;
+    x: 0;
+    y: 0;
+    width: 1920px;
+    height: 128px;
+    background: G.surface;
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: G.line;
+    }
+    HorizontalLayout {
+        padding-left: 40px;
+        padding-right: 40px;
+        padding-top: 24px;
+        padding-bottom: 24px;
+        spacing: 20px;
+        Rectangle {
+            width: 200px;
+            border-radius: 20px;
+            background: G.raised;
+            border-width: 1px;
+            border-color: G.edge;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 10px;
+                Sym {
+                    text: "‹";
+                    font-size: 36px;
+                    color: G.bright;
+                }
+                Tx {
+                    text: "Screen";
+                    font-weight: 600;
+                    color: G.bright;
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 880px;
+            border-radius: 22px;
+            background: G.field;
+            border-width: 1px;
+            border-color: G.line;
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 6px;
+                for name[i] in ["Home", "Apps", "Web", "System"]: Rectangle {
+                    border-radius: 17px;
+                    background: i == tab ? G.accent : transparent;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        Tx {
+                            text: name;
+                            font-size: 27px;
+                            font-weight: 600;
+                            color: i == tab ? G.on-accent : G.fg;
+                        }
+                        if i == 1: VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 34px;
+                                height: 34px;
+                                border-radius: 17px;
+                                background: i == tab ? G.on-accent : G.accent;
+                                Tx {
+                                    text: "2";
+                                    horizontal-alignment: center;
+                                    font-size: 20px;
+                                    font-weight: 700;
+                                    color: i == tab ? G.accent : G.on-accent;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 300px;
+            border-radius: 20px;
+            background: lock == 1 ? G.ok-fill : G.raised;
+            border-width: 1px;
+            border-color: lock == 1 ? #6FD6B355 : G.edge;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 22px;
+                        height: 26px;
+                        Rectangle {
+                            x: lock == 1 ? 8px : 4px;
+                            y: 0;
+                            width: 14px;
+                            height: 16px;
+                            border-radius: 7px;
+                            border-width: 3px;
+                            border-color: lock == 1 ? G.ok : G.dim;
+                        }
+                        Rectangle {
+                            x: 0;
+                            y: 10px;
+                            width: 22px;
+                            height: 16px;
+                            border-radius: 4px;
+                            background: lock == 1 ? G.ok : G.dim;
+                        }
+                    }
+                }
+                Tx {
+                    text: lock == 0 ? "Locked" : lock == 1 ? "Unlocked · 4:12" : "No screen PIN";
+                    font-size: 24px;
+                    font-weight: 600;
+                    color: lock == 1 ? G.ok : G.dim;
+                }
+            }
+        }
+        Rectangle {
+            width: 80px;
+            border-radius: 20px;
+            background: G.err-fill;
+            border-width: 1px;
+            border-color: #A8574C;
+            Sym {
+                text: "⏻";
+                font-size: 32px;
+                color: G.err;
+            }
+        }
+    }
+}
+
+// The page header under the bar: crumbs, a big title, a line of description, actions on the right.
+component GHeader inherits Rectangle {
+    in property <[string]> crumbs;
+    in property <string> title;
+    in property <string> sub;
+    x: 64px;
+    y: 152px;
+    width: 1792px;
+    height: sub != "" ? 150px : 116px;
+    VerticalLayout {
+        spacing: 4px;
+        alignment: start;
+        if crumbs.length > 0: HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            height: 34px;
+            for c[i] in crumbs: HorizontalLayout {
+                spacing: 10px;
+                Tx {
+                    text: c;
+                    font-size: 22px;
+                    font-weight: 500;
+                    color: G.accent;
+                }
+                Tx {
+                    text: "›";
+                    font-size: 22px;
+                    color: G.faint;
+                }
+            }
+        }
+        Tx {
+            text: title;
+            font-size: 46px;
+            font-weight: 700;
+            color: G.bright;
+            height: 60px;
+        }
+        if sub != "": Tx {
+            text: sub;
+            font-size: 24px;
+            color: G.dim;
+            height: 36px;
+        }
+    }
+    HorizontalLayout {
+        alignment: end;
+        spacing: 16px;
+        height: parent.height;
+        VerticalLayout {
+            alignment: end;
+            padding-bottom: 6px;
+            HorizontalLayout {
+                spacing: 16px;
+                @children
+            }
+        }
+    }
+}
+
+// The area under the header, for cards.
+component GBody inherits VerticalLayout {
+    in property <length> top: 300px;
+    x: 64px;
+    y: top;
+    width: 1792px;
+    spacing: 24px;
+    alignment: start;
+}
+
+// A card with a title, body text and buttons inside it.
+component GInfo inherits GCard {
+    in property <string> title;
+    in property <string> body;
+    in property <int> tone: 4;
+    in property <string> icon;
+    in property <string> primary;
+    in property <string> secondary;
+    in property <bool> destructive;
+    in property <bool> lock;
+    in property <length> h: 200px;
+    height: h;
+    HorizontalLayout {
+        padding: 36px;
+        padding-left: 40px;
+        spacing: 28px;
+        if icon != "": VerticalLayout {
+            alignment: start;
+            Rectangle {
+                width: 64px;
+                height: 64px;
+                border-radius: 32px;
+                background: tone == 3 ? G.err-fill : tone == 1 ? #2A2116 : tone == 2 ? G.ok-fill : G.info-fill;
+                Sym {
+                    text: icon;
+                    font-size: 30px;
+                    color: G.tone-color(tone);
+                }
+            }
+        }
+        VerticalLayout {
+            spacing: 10px;
+            alignment: center;
+            horizontal-stretch: 1;
+            Tx {
+                text: title;
+                font-size: 32px;
+                font-weight: 700;
+                color: tone == 4 ? G.bright : G.tone-color(tone);
+            }
+            if body != "": Tx {
+                text: body;
+                font-size: 24px;
+                color: G.dim;
+                wrap: word-wrap;
+            }
+            @children
+        }
+        if primary != "" || secondary != "": VerticalLayout {
+            alignment: end;
+            HorizontalLayout {
+                spacing: 16px;
+                if secondary != "": GButton {
+                    label: secondary;
+                    kind: 1;
+                    w: 230px;
+                }
+                if primary != "": GButton {
+                    label: primary;
+                    kind: destructive ? 2 : 0;
+                    lock: lock;
+                    w: primary.character-count > 12 ? 340px : 240px;
+                }
+            }
+        }
+    }
+}
+
+component Note inherits Text {
+    x: 64px;
+    y: 1040px;
+    width: 1792px;
+    height: 30px;
+    font-size: 20px;
+    color: G.faint;
+    vertical-alignment: center;
+}
+
+component Logo2 inherits Image {
+    source: @image-url("logo.svg");
+    image-fit: contain;
+}
+
+component PinPad inherits Rectangle {
+    in property <int> state;
+    GScrim { }
+    Rectangle {
+        x: (1920px - 760px) / 2;
+        y: 70px;
+        width: 760px;
+        height: 940px;
+        border-radius: 36px;
+        background: G.card;
+        border-width: 1px;
+        border-color: #FFFFFF1E;
+        drop-shadow-blur: 60px;
+        drop-shadow-offset-y: 20px;
+        drop-shadow-color: #000000E0;
+        VerticalLayout {
+            padding: 44px;
+            spacing: 18px;
+            Tx {
+                horizontal-alignment: center;
+                height: 54px;
+                text: state == 2 ? "Too many tries" : "Enter the screen PIN";
+                font-size: 36px;
+                font-weight: 700;
+                color: state == 2 ? G.err : G.bright;
+            }
+            Tx {
+                horizontal-alignment: center;
+                height: 34px;
+                text: state == 0 ? "to update mk-pay" : state == 1 ? "That PIN isn't right · 4 tries left" : "Try again in 4:51, or unlock from SSH";
+                font-size: 24px;
+                color: state == 1 ? G.err : G.dim;
+            }
+            HorizontalLayout {
+                height: 64px;
+                alignment: center;
+                spacing: 24px;
+                for d[i] in [0, 1, 2, 3, 4, 5]: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 26px;
+                        height: 26px;
+                        border-radius: 13px;
+                        background: state == 0 && i < 4 ? G.accent : transparent;
+                        border-width: 3px;
+                        border-color: state == 1 ? G.err : state == 0 && i < 4 ? G.accent : G.faint;
+                    }
+                }
+            }
+            if state < 2: HorizontalLayout {
+                alignment: center;
+                VerticalLayout {
+                    spacing: 16px;
+                    for row in [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]]: HorizontalLayout {
+                        spacing: 16px;
+                        for k in row: Rectangle {
+                            width: 180px;
+                            height: 132px;
+                            border-radius: 66px;
+                            background: k == "5" && state == 0 ? G.pressed : G.raised;
+                            Tx {
+                                text: k;
+                                horizontal-alignment: center;
+                                font-size: 48px;
+                                font-weight: 500;
+                                color: G.bright;
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        Rectangle {
+                            width: 180px;
+                            height: 132px;
+                            Tx {
+                                text: "Cancel";
+                                horizontal-alignment: center;
+                                font-size: 26px;
+                                font-weight: 600;
+                                color: G.accent;
+                            }
+                        }
+                        Rectangle {
+                            width: 180px;
+                            height: 132px;
+                            border-radius: 66px;
+                            background: G.raised;
+                            Tx {
+                                text: "0";
+                                horizontal-alignment: center;
+                                font-size: 48px;
+                                font-weight: 500;
+                                color: G.bright;
+                            }
+                        }
+                        Rectangle {
+                            width: 180px;
+                            height: 132px;
+                            Sym {
+                                text: "⌫";
+                                font-size: 40px;
+                                color: G.dim;
+                            }
+                        }
+                    }
+                }
+            }
+            if state == 2: VerticalLayout {
+                padding-top: 80px;
+                spacing: 50px;
+                Tx {
+                    horizontal-alignment: center;
+                    text: "Looking around still works; only changes wait.";
+                    color: G.dim;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    GButton {
+                        label: "OK";
+                        kind: 1;
+                        w: 240px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ wallpapers
+
+component WpLogo inherits Rectangle {
+    in property <bool> panels;
+    background: G.ground;
+    HorizontalLayout {
+        x: 40px;
+        y: 28px;
+        width: 1840px;
+        height: 80px;
+        spacing: 18px;
+        Tx {
+            text: "monokulo-nodo";
+            font-size: 26px;
+            font-weight: 600;
+            color: G.fg;
+        }
+        Tx {
+            text: "Thu 13 Nov · 14:32";
+            font-size: 26px;
+            color: G.dim;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        GButton {
+            label: "Manage";
+            icon: "☰";
+            kind: 1;
+            w: 230px;
+        }
+        GButton {
+            label: "Shut down";
+            icon: "⏻";
+            kind: 2;
+            w: 250px;
+        }
+    }
+    if !panels: Rectangle {
+        Logo2 {
+            x: (1920px - 540px) / 2;
+            y: 210px;
+            width: 540px;
+            height: 540px;
+        }
+        Tx {
+            x: 0;
+            y: 790px;
+            width: 1920px;
+            height: 70px;
+            horizontal-alignment: center;
+            text: "nodo";
+            font-size: 56px;
+            font-weight: 700;
+            letter-spacing: 14px;
+            color: #FF6600;
+        }
+        Rectangle {
+            x: (1920px - 760px) / 2;
+            y: 890px;
+            width: 760px;
+            height: 64px;
+            border-radius: 32px;
+            background: G.card;
+            border-width: 1px;
+            border-color: G.edge;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 18px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: G.ok;
+                    }
+                }
+                Tx {
+                    text: "All 4 apps running · node 63% synced · 48 °C";
+                    font-size: 24px;
+                    color: G.dim;
+                }
+            }
+        }
+    }
+    if panels: Rectangle {
+        Logo2 {
+            x: 140px;
+            y: 230px;
+            width: 600px;
+            height: 600px;
+        }
+        Tx {
+            x: 140px;
+            y: 860px;
+            width: 600px;
+            height: 70px;
+            horizontal-alignment: center;
+            text: "nodo";
+            font-size: 56px;
+            font-weight: 700;
+            letter-spacing: 14px;
+            color: #FF6600;
+        }
+        for p[i] in [
+            { t: "Monero node", big: "63%", unit: "synced", note: "2,190,400 of 3,478,000 · about 7 h", c: #F2A33A, bar: 0.63 },
+            { t: "Payments today", big: "4.82", unit: "XMR", note: "37 paid · 2 waiting", c: #6FD6B3, bar: -1 },
+            { t: "Device", big: "48", unit: "°C", note: "SSD 27% · up 3 days", c: #6FD6B3, bar: 0.27 }
+        ]: GCard {
+            x: 900px;
+            y: 170px + i * 285px;
+            width: 900px;
+            height: 255px;
+            background: #0B0D0F;
+            VerticalLayout {
+                padding: 32px;
+                spacing: 8px;
+                Tx {
+                    text: p.t;
+                    font-size: 22px;
+                    font-weight: 600;
+                    color: G.dim;
+                }
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    Tx {
+                        text: p.big;
+                        font-size: 72px;
+                        font-weight: 700;
+                        color: p.c;
+                    }
+                    Tx {
+                        text: p.unit;
+                        font-size: 28px;
+                        color: G.dim;
+                        vertical-alignment: bottom;
+                    }
+                }
+                if p.bar >= 0: GProgress {
+                    value: p.bar;
+                    height: 10px;
+                }
+                Tx {
+                    text: p.note;
+                    font-size: 22px;
+                    color: G.dim;
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ the board
+
+export component DesignBoard2 inherits Window {
+    width: 1920px;
+    height: 1080px;
+    background: G.ground;
+    default-font-family: "Inter";
+    in property <string> scene;
+
+    // ---- wallpapers
+    if scene == "g-wp-logo": WpLogo { panels: false; }
+    if scene == "g-wp-logo-panels": WpLogo { panels: true; }
+
+    // ---- Home
+    if scene == "g-home": Rectangle {
+        GNav { tab: 0; lock: 0; }
+        GHeader { crumbs: []; title: "Good afternoon"; sub: "Thursday 13 November"; }
+        GBody {
+            top: 330px;
+            GInfo {
+                title: "2 app updates are ready";
+                body: "mk-pay and kringle. Each keeps its settings and can be undone.";
+                tone: 1;
+                icon: "↑";
+                primary: "Review updates";
+                h: 180px;
+            }
+            GList {
+                rows: [
+                    { t: "cuprated", s: "Syncing the Monero chain", v: "63%", tone: 1, chev: true, hover: true },
+                    { t: "mk-pay", s: "Open at https://pay.example.com", v: "Running", tone: 2, chev: true },
+                    { t: "mk-lws", s: "Light wallet server", v: "Running", tone: 2, chev: true }
+                ];
+            }
+            HorizontalLayout {
+                spacing: 24px;
+                height: 120px;
+                for m in [{ t: "Storage", v: "27% of 2 TB" }, { t: "Temperature", v: "48 °C" }, { t: "Up", v: "3 days" }, { t: "Network", v: "192.168.1.155" }]: GCard {
+                    VerticalLayout {
+                        padding-left: 28px;
+                        alignment: center;
+                        spacing: 4px;
+                        Tx { text: m.t; font-size: 22px; color: G.dim; }
+                        Tx { text: m.v; font-size: 30px; font-weight: 600; color: G.bright; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-unlock": Rectangle {
+        background: G.ground;
+        Logo2 { x: (1920px - 220px) / 2; y: 120px; width: 220px; height: 220px; }
+        GCard {
+            x: (1920px - 900px) / 2;
+            y: 380px;
+            width: 900px;
+            height: 470px;
+            VerticalLayout {
+                padding: 52px;
+                spacing: 24px;
+                Tx { text: "Unlock this Nodo"; font-size: 40px; font-weight: 700; color: G.bright; }
+                Tx { text: "It restarted. Your apps' data is locked until you enter the device passphrase."; color: G.dim; wrap: word-wrap; }
+                GInput { label: "Device passphrase"; value: "x"; secret: true; focused: true; trailing: "Show"; }
+                HorizontalLayout { alignment: end; GButton { label: "Unlock"; w: 240px; } }
+            }
+        }
+        Note { text: "The keyboard slides up when the box is tapped (200 ms, ease-out)."; }
+    }
+
+    // ---- Apps
+    if scene == "g-apps": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader {
+            crumbs: [];
+            title: "Apps";
+            sub: "5 installed · 2 updates ready";
+            GButton { label: "Get apps"; icon: "+"; kind: 1; w: 250px; }
+        }
+        GBody {
+            top: 330px;
+            GList {
+                rows: [
+                    { t: "cuprated", s: "Monero node", v: "Syncing · 63%", tone: 1, chev: true },
+                    { t: "mk-pay", s: "Payments for your shop", v: "Update ready", tone: 1, chev: true, hover: true },
+                    { t: "mk-lws", s: "Light wallet server", v: "Running", tone: 2, chev: true },
+                    { t: "mk-bell", s: "Payment alerts", v: "Running", tone: 2, chev: true },
+                    { t: "kringle", s: "Tip jar", v: "Update ready", tone: 1, chev: true }
+                ];
+            }
+        }
+    }
+    if scene == "g-get-apps": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader {
+            crumbs: ["Apps"];
+            title: "Get apps";
+            GButton { label: "Sources"; kind: 1; w: 220px; }
+        }
+        GBody {
+            top: 300px;
+            GInput { value: "wallet"; placeholder: "Search apps"; focused: true; trailing: "Clear"; }
+            GSegmented { options: ["All", "Monero", "Shop", "Tools"]; selected: 1; width: 700px; }
+            GList {
+                rows: [
+                    { t: "feather-ws", s: "Server for Feather Wallet · from monokulo · 18 MB", v: "", chev: true, hover: true },
+                    { t: "mk-lws", s: "Light wallet server for Monero wallets", v: "Installed", tone: 2, chev: true },
+                    { t: "mk-pay", s: "Accept Monero in your shop", v: "Installed", tone: 2, chev: true }
+                ];
+            }
+            Tx { text: "3 of 14 apps from your sources match."; color: G.dim; font-size: 24px; height: 40px; }
+        }
+    }
+    if scene == "g-about": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader { crumbs: ["Apps", "Get apps"]; title: "feather-ws"; sub: "Server for Feather Wallet · from monokulo · 18 MB"; }
+        GBody {
+            top: 340px;
+            GInfo {
+                title: "Use your own Monero node from Feather Wallet";
+                body: "Lets Feather Wallet on your phone or computer use your own node instead of a stranger's, so nobody else sees which wallet is yours.";
+                tone: 4;
+                h: 230px;
+            }
+            GList {
+                rows: [
+                    { t: "Reads from your Monero node", s: "cuprated, on this Nodo", chev: false },
+                    { t: "Uses the internet", s: "to reach other Monero nodes", chev: false },
+                    { t: "Keeps 2 GB on the drive", s: "locked with your device passphrase", chev: false }
+                ];
+            }
+            HorizontalLayout { alignment: end; GButton { label: "Install"; w: 260px; lock: true; } }
+        }
+    }
+    if scene == "g-install": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "feather-ws"]; title: "Install feather-ws?"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 600px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 18px;
+                    Tx { text: "It will be able to"; font-size: 24px; color: G.dim; }
+                    for l in ["Read from your Monero node", "Use the internet to reach other Monero nodes", "Keep 2 GB on the drive, locked with your device passphrase"]: HorizontalLayout {
+                        spacing: 18px;
+                        height: 52px;
+                        Rectangle {
+                            width: 40px;
+                            height: 40px;
+                            y: 6px;
+                            border-radius: 20px;
+                            background: G.ok-fill;
+                            Sym { text: "✓"; font-size: 22px; color: G.ok; }
+                        }
+                        Tx { text: l; }
+                    }
+                    Tx { text: "It can't see your other apps or their data. You can remove it at any time."; color: G.dim; font-size: 24px; }
+                    Tx { text: "Show details"; color: G.accent; font-weight: 600; font-size: 24px; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        alignment: end;
+                        GButton { label: "Cancel"; kind: 1; w: 220px; }
+                        GButton { label: "Install"; w: 240px; state: 1; }
+                    }
+                }
+            }
+        }
+        Note { text: "Primary shown in its hover state. Buttons press darker; disabled ones fade (see the button sheet)."; }
+    }
+    if scene == "g-installing": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "feather-ws"]; title: "Installing feather-ws"; sub: "You can leave this screen; it carries on."; }
+        GBody {
+            top: 340px;
+            GCard {
+                height: 520px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 20px;
+                    GProgress { value: 0.55; height: 14px; }
+                    for s[i] in [
+                        { t: "Checked the signature", st: 2 },
+                        { t: "Downloaded 18 MB", st: 2 },
+                        { t: "Creating its sandbox and firewall rules", st: 1 },
+                        { t: "Setting up its encrypted storage", st: 0 },
+                        { t: "Starting it", st: 0 }
+                    ]: HorizontalLayout {
+                        spacing: 20px;
+                        height: 64px;
+                        if s.st == 1: VerticalLayout { alignment: center; GSpinner { } }
+                        if s.st != 1: Rectangle {
+                            width: 44px;
+                            Sym { text: s.st == 2 ? "✓" : "○"; color: s.st == 2 ? G.ok : G.faint; }
+                        }
+                        Tx { text: s.t; color: s.st == 0 ? G.dim : G.bright; font-weight: s.st == 1 ? 600 : 400; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-app": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader {
+            crumbs: ["Apps"];
+            title: "mk-pay";
+            sub: "Payments for your shop";
+            GButton { label: "Restart"; kind: 1; w: 200px; lock: true; }
+            GButton { label: "Stop"; kind: 1; w: 170px; lock: true; }
+            GButton { label: "Remove"; kind: 2; w: 210px; lock: true; }
+        }
+        GBody {
+            top: 340px;
+            GInfo {
+                title: "Version 0.2 is ready";
+                body: "Fixes receipts in some currencies. Keeps your settings; you can undo it.";
+                tone: 1;
+                icon: "↑";
+                primary: "Update";
+                lock: true;
+                h: 170px;
+            }
+            HorizontalLayout {
+                spacing: 24px;
+                height: 120px;
+                for m in [{ t: "Status", v: "Running for 3 days", c: #6FD6B3 }, { t: "Open at", v: "pay.example.com", c: #E4E6E8 }, { t: "Version", v: "0.1.4", c: #E4E6E8 }]: GCard {
+                    VerticalLayout {
+                        padding-left: 28px;
+                        alignment: center;
+                        spacing: 4px;
+                        Tx { text: m.t; font-size: 22px; color: G.dim; }
+                        Tx { text: m.v; font-size: 28px; font-weight: 600; color: m.c; }
+                    }
+                }
+            }
+            GList {
+                rows: [
+                    { t: "Hosting", s: "Home network and internet", chev: true },
+                    { t: "Settings", s: "Store name, currency, 4 more", chev: true, hover: true },
+                    { t: "Logs", s: "Last problem: none", chev: true }
+                ];
+            }
+        }
+    }
+    if scene == "g-remove": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps"]; title: "mk-pay"; sub: "Payments for your shop"; }
+        GScrim { }
+        GDialog {
+            title: "Remove mk-pay?";
+            body: "Its settings, its 1.4 GB of data and its web address on this Nodo are deleted. Payments already received stay in your wallet. Back up first if you might want it again.";
+            tone: 3;
+            primary: "Remove mk-pay";
+            secondary: "Cancel";
+            destructive: true;
+            h: 470px;
+        }
+        Note { text: "Dialogs fade the screen behind and rise in (180 ms). Remove is red and never the default."; }
+    }
+    if scene == "g-settings" || scene == "g-settings-pick" || scene == "g-settings-kbd": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
+        GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: scene == "g-settings-kbd" ? 340px : 730px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 20px;
+                HorizontalLayout {
+                    spacing: 32px;
+                    GInput { label: "Store name"; value: scene == "g-settings-kbd" ? "Corner Café" : "Corner Cafe"; focused: scene == "g-settings-kbd"; horizontal-stretch: 1; }
+                    if scene != "g-settings-kbd": GCombo { label: "Currency"; value: "EUR"; sub: "Euro"; width: 520px; }
+                }
+                if scene != "g-settings-kbd": GInput { label: "Wallet address"; value: "48daf1rG3hEQb7…tUvb"; mono: true; error: "That isn't a Monero address. It starts with 4 or 8 and is 95 characters long."; }
+                if scene != "g-settings-kbd": HorizontalLayout {
+                    spacing: 32px;
+                    GCombo { label: "Monero node"; value: "cuprated"; sub: "on this Nodo"; open: scene == "g-settings-pick"; horizontal-stretch: 1; }
+                    VerticalLayout {
+                        spacing: 10px;
+                        Tx { text: "Confirmations"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+                        GStepper { value: "10"; }
+                    }
+                    VerticalLayout {
+                        spacing: 10px;
+                        Tx { text: "Email receipts"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+                        Rectangle { height: 80px; width: 120px; GSwitch { on: true; } }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Save"; w: 220px; state: scene == "g-settings" ? 3 : 0; }
+                }
+            }
+        }
+        if scene == "g-settings-pick": GMenu {
+            x: 104px;
+            y: 400px;
+            width: 900px;
+            selected: 0;
+            items: [
+                { t: "cuprated", s: "on this Nodo", v: "recommended" },
+                { t: "monerod", s: "on this Nodo", v: "stopped", tone: 0, hover: true },
+                { t: "Another node…", s: "type its address", v: "" }
+            ];
+        }
+        if scene == "g-settings-kbd": GKeyboard { }
+        if scene == "g-settings": Note { text: "Save stays disabled while a field has an error. Errors appear under the field as you type."; }
+        if scene == "g-settings-pick": Note { text: "A dropdown opens as a raised menu next to its box, upward near the bottom edge (120 ms); the current choice is ticked; tapping outside closes it."; }
+    }
+    if scene == "g-rolled-back": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "mk-pay didn't start with the new settings, so they were undone";
+                body: "Confirmations changed from 10 to 0. mk-pay said: \"confirmations must be at least 1\". Everything is as it was before you saved.";
+                tone: 1;
+                icon: "!";
+                primary: "Edit again";
+                secondary: "Show log";
+                h: 230px;
+            }
+        }
+        GToast { text: "Settings undone · mk-pay is running again"; tone: 2; }
+    }
+
+    // ---- Sources
+    if scene == "g-sources": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader {
+            crumbs: ["Apps", "Get apps"];
+            title: "Sources";
+            sub: "Where the Nodo finds apps. It only installs what a source's key signed.";
+            GButton { label: "Add a source"; icon: "+"; w: 300px; lock: true; }
+        }
+        GBody {
+            top: 340px;
+            for s[i] in [
+                { name: "monokulo", tag: "Built in", addr: "nodo.monokulo.com/feed", n: "5 apps", on: true, problem: "" },
+                { name: "Alice's apps", tag: "", addr: "apps.alice.example/feed", n: "2 apps", on: true, problem: "Couldn't reach it since yesterday" },
+                { name: "Test builds", tag: "", addr: "192.168.1.40:8080/feed", n: "1 app", on: false, problem: "" }
+            ]: GCard {
+                height: s.problem != "" ? 210px : 150px;
+                background: i == 1 ? G.raised : G.card;
+                HorizontalLayout {
+                    padding-left: 40px;
+                    padding-right: 32px;
+                    spacing: 24px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            alignment: start;
+                            Tx { text: s.name; font-size: 30px; font-weight: 700; color: G.bright; }
+                            if s.tag != "": VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 120px;
+                                    height: 36px;
+                                    border-radius: 18px;
+                                    background: G.info-fill;
+                                    Tx { text: s.tag; font-size: 20px; font-weight: 600; color: G.info; horizontal-alignment: center; }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 14px;
+                            alignment: start;
+                            Tx { text: s.addr; font-family: G.mono; font-size: 22px; color: G.dim; }
+                            Tx { text: "· " + s.n; font-size: 22px; color: G.dim; }
+                        }
+                        if s.problem != "": HorizontalLayout {
+                            spacing: 16px;
+                            alignment: start;
+                            Tx { text: "✕  " + s.problem; font-size: 22px; color: G.err; }
+                            Tx { text: "Try again"; font-size: 22px; font-weight: 600; color: G.accent; }
+                        }
+                    }
+                    VerticalLayout { alignment: center; GSwitch { on: s.on; } }
+                    VerticalLayout { alignment: center; GButton { label: "Remove"; kind: 1; w: 190px; lock: true; } }
+                }
+            }
+        }
+    }
+    if scene == "g-add-source": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "Sources"]; title: "Add a source"; }
+        GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 330px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 18px;
+                GInput { label: "Address"; value: "https://apps.bob.example/feed"; mono: true; focused: true; help: "Paste the address the publisher gave you. Nothing is installed yet."; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Check"; w: 220px; }
+                }
+            }
+        }
+        GKeyboard { }
+    }
+    if scene == "g-source-check": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "Sources"]; title: "Add a source"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 560px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 20px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        Sym { text: "✓"; color: G.ok; }
+                        Tx { text: "Bob's apps"; font-size: 34px; font-weight: 700; color: G.bright; }
+                        Tx { text: "apps.bob.example/feed"; font-family: G.mono; font-size: 22px; color: G.dim; }
+                    }
+                    Tx { text: "Offers 3 apps: bob-notes, bob-photos, bob-backup"; color: G.fg; }
+                    Rectangle {
+                        height: 120px;
+                        border-radius: 20px;
+                        background: #2A2116;
+                        border-width: 2px;
+                        border-color: #F2A33A80;
+                        HorizontalLayout {
+                            padding-left: 32px;
+                            spacing: 32px;
+                            Tx { text: "Its key"; color: G.dim; font-size: 24px; width: 120px; }
+                            Tx { text: "3c8e510a  d726f49b  e0126da8  47c3b519"; font-family: G.mono; font-size: 34px; color: G.accent; letter-spacing: 1px; }
+                        }
+                    }
+                    Tx { text: "Check this matches what the publisher gave you, by a way you trust (in person, their site, a message you know is from them). If it doesn't match, don't add it."; color: G.dim; wrap: word-wrap; font-size: 24px; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        alignment: end;
+                        GButton { label: "Cancel"; kind: 1; w: 220px; }
+                        GButton { label: "Add source"; w: 260px; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-source-errors": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "Sources"]; title: "Add a source"; sub: "Three ways it can fail, each shown in place of what the source offers."; }
+        GBody {
+            top: 340px;
+            GInfo { title: "That address isn't a source"; body: "It answered with a web page, not a list of apps. Check you copied the whole address."; tone: 3; icon: "✕"; h: 160px; }
+            GInfo { title: "Couldn't reach it"; body: "Nothing answered at apps.bob.example. It may be offline, or the address may be wrong."; tone: 3; icon: "✕"; secondary: "Try again"; h: 160px; }
+            GInfo { title: "Its signature doesn't check out"; body: "The list wasn't signed by the key it claims. Someone may have tampered with it; the Nodo won't use it."; tone: 3; icon: "✕"; h: 160px; }
+        }
+    }
+    if scene == "g-key-changed": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps", "Sources"]; title: "Alice's apps"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 660px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 20px;
+                    Tx { text: "▲  Alice's apps is now signed with a different key"; font-size: 32px; font-weight: 700; color: G.accent; }
+                    Tx { text: "This happens when a publisher replaces a lost key, and also when someone else takes over their address. Until you decide, the Nodo installs nothing new from Alice's apps."; color: G.dim; wrap: word-wrap; font-size: 24px; }
+                    for k in [{ l: "Key you trust", v: "9f036eb1  44d27a10  c85be391  0d762aff", c: #9AA2A9 }, { l: "New key", v: "17c4902e  aa5f6388  b9d14e77  301ce542", c: #F2A33A }]: HorizontalLayout {
+                        height: 64px;
+                        spacing: 24px;
+                        Tx { text: k.l; color: G.dim; font-size: 24px; width: 200px; }
+                        Tx { text: k.v; font-family: G.mono; font-size: 30px; color: k.c; }
+                    }
+                    GInput { label: "To trust the new key, ask Alice by a way you trust, then type the source's name"; value: ""; placeholder: "Alice's apps"; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        alignment: end;
+                        GButton { label: "Trust the new key"; kind: 1; w: 320px; state: 3; }
+                        GButton { label: "Keep the old key"; w: 320px; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-remove-builtin": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "Get apps"]; title: "Sources"; }
+        GScrim { }
+        GDialog {
+            title: "Remove the monokulo source?";
+            body: "It's built in, but yours to remove. Apps you installed from it keep running, but get no more updates. You can add it back at any time from nodo.monokulo.com/feed.";
+            primary: "Remove";
+            secondary: "Keep it";
+            destructive: true;
+            h: 460px;
+        }
+    }
+
+    // ---- Web
+    if scene == "g-web": Rectangle {
+        GNav { tab: 2; lock: 0; }
+        GHeader {
+            crumbs: [];
+            title: "Sites online";
+            sub: "Tap a site to change who can open it.";
+            GButton { label: "Domain providers"; kind: 1; w: 330px; }
+        }
+        GBody {
+            top: 340px;
+            GList {
+                rows: [
+                    { t: "mk-pay", s: "https://pay.example.com", v: "Home and internet", tone: 4, chev: true, hover: true, mono: true },
+                    { t: "mk-lws", s: "https://mk-lws.local", v: "Home network", tone: 4, chev: true, mono: true },
+                    { t: "kringle", s: "http://kringlqx3v7…ylpd7qd.onion", v: "Tor", tone: 4, chev: true, mono: true }
+                ];
+            }
+            Tx { text: "To put another app online, open it in Apps."; color: G.dim; font-size: 24px; height: 40px; }
+        }
+    }
+    if scene == "g-hosting" || scene == "g-hosting-domain": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Hosting"; sub: "Choose who can open mk-pay. Any combination works."; }
+        GCard {
+            x: 64px;
+            y: 330px;
+            width: 1792px;
+            height: 690px;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 0px;
+                for c in [
+                    { t: "Home network", s: "Phones and computers on your Wi-Fi", a: "https://mk-pay.local", on: true },
+                    { t: "Tor", s: "A private link for Tor Browser. It doesn't reveal your home.", a: "", on: false },
+                    { t: "Internet", s: "Anyone, at a web address you own", a: "", on: true }
+                ]: HorizontalLayout {
+                    height: 108px;
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    spacing: 24px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Tx { text: c.t; font-size: 28px; font-weight: 600; color: G.bright; }
+                        Tx { text: c.s; font-size: 22px; color: G.dim; }
+                    }
+                    if c.a != "": Tx { text: c.a; font-family: G.mono; font-size: 22px; color: G.fg; }
+                    VerticalLayout { alignment: center; GSwitch { on: c.on; } }
+                }
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    spacing: 28px;
+                    GCombo { label: "Domain"; value: "example.com"; sub: "Porkbun"; open: scene == "g-hosting-domain"; horizontal-stretch: 1; }
+                    GInput { label: "Address"; value: "pay"; mono: true; suffix: ".example.com"; width: 700px; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    padding-right: 20px;
+                    padding-bottom: 12px;
+                    alignment: end;
+                    GButton { label: "Check and save"; w: 320px; }
+                }
+            }
+        }
+        if scene == "g-hosting-domain": GMenu {
+            x: 108px;
+            y: 338px;
+            width: 980px;
+            selected: 0;
+            items: [
+                { t: "example.com", s: "Porkbun", v: "" },
+                { t: "shop-example.org", s: "Porkbun", v: "", hover: true },
+                { t: "myshop.net", s: "Cloudflare", v: "" },
+                { t: "+ Add a provider", s: "", v: "", tone: 1 }
+            ];
+        }
+    }
+    if scene == "g-providers": Rectangle {
+        GNav { tab: 2; lock: 0; }
+        GHeader {
+            crumbs: ["Web"];
+            title: "Domain providers";
+            sub: "Each connected account and the domains it controls.";
+            GButton { label: "Add a provider"; icon: "+"; w: 320px; lock: true; }
+        }
+        GBody {
+            top: 340px;
+            for p in [{ n: "Porkbun", d: "example.com · shop-example.org", u: "Used by mk-pay" }, { n: "Cloudflare", d: "myshop.net", u: "Not used yet" }]: GCard {
+                height: 150px;
+                HorizontalLayout {
+                    padding-left: 40px;
+                    padding-right: 32px;
+                    spacing: 24px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Tx { text: p.n; font-size: 30px; font-weight: 700; color: G.bright; }
+                        Tx { text: p.d; font-family: G.mono; font-size: 22px; color: G.dim; }
+                    }
+                    Tx { text: p.u; font-size: 22px; color: G.dim; }
+                    VerticalLayout { alignment: center; GButton { label: "Look again"; kind: 1; w: 220px; } }
+                    VerticalLayout { alignment: center; GButton { label: "Remove"; kind: 1; w: 190px; lock: true; } }
+                }
+            }
+        }
+    }
+    if scene == "g-add-provider": Rectangle {
+        GNav { tab: 2; lock: 1; }
+        GHeader { crumbs: ["Web", "Domain providers"]; title: "Add a provider"; sub: "Which company did you buy your domain from?"; }
+        GBody {
+            top: 340px;
+            HorizontalLayout {
+                spacing: 24px;
+                height: 200px;
+                for c[i] in ["Porkbun", "Cloudflare", "Gandi", "Name.com"]: GRadioCard {
+                    title: c;
+                    sub: i == 1 ? "lists your domains" : "lists your domains";
+                    selected: i == 1;
+                }
+            }
+            HorizontalLayout {
+                spacing: 24px;
+                height: 200px;
+                for c[i] in ["Alibaba Cloud", "Hostinger", "GoDaddy", "Another…"]: GRadioCard {
+                    title: c;
+                    sub: i == 2 ? "you type the domain" : i == 3 ? "not supported yet" : "lists your domains";
+                    selected: false;
+                }
+            }
+            HorizontalLayout { alignment: end; GButton { label: "Next"; w: 220px; } }
+        }
+    }
+    if scene == "g-provider-key": Rectangle {
+        GNav { tab: 2; lock: 1; }
+        GHeader { crumbs: ["Web", "Domain providers"]; title: "Connect Cloudflare"; }
+        GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 340px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 18px;
+                GInput { label: "API token"; value: "x"; secret: true; focused: true; trailing: "Paste"; help: "Create one in Cloudflare › My Profile › API Tokens with \"Edit zone DNS\". It's stored sealed and never shown again."; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Connect"; w: 240px; }
+                }
+            }
+        }
+        GKeyboard { }
+    }
+    if scene == "g-provider-done": Rectangle {
+        GNav { tab: 2; lock: 1; }
+        GHeader { crumbs: ["Web", "Domain providers"]; title: "Cloudflare is connected"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 470px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 16px;
+                    Tx { text: "The key works. It controls these domains:"; color: G.dim; }
+                    for d in [{ n: "myshop.net", s: "ready" }, { n: "myshop.org", s: "ready" }]: HorizontalLayout {
+                        height: 72px;
+                        spacing: 18px;
+                        Sym { text: "✓"; color: G.ok; width: 40px; }
+                        Tx { text: d.n; font-family: G.mono; font-size: 28px; color: G.bright; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout { alignment: end; GButton { label: "Back to mk-pay"; w: 320px; } }
+                }
+            }
+        }
+        GToast { text: "Cloudflare added · 2 domains"; tone: 2; }
+    }
+    if scene == "g-checks": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay", "Hosting"]; title: "Checking pay.example.com"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 520px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 14px;
+                    for c in [
+                        { t: "Porkbun accepted the key", st: 2 },
+                        { t: "pay.example.com points to your home", st: 2 },
+                        { t: "The internet can reach your Nodo", st: 1 },
+                        { t: "Getting a secure connection", st: 0 }
+                    ]: HorizontalLayout {
+                        spacing: 20px;
+                        height: 80px;
+                        if c.st == 1: VerticalLayout { alignment: center; GSpinner { } }
+                        if c.st != 1: Rectangle { width: 44px; Sym { text: c.st == 2 ? "✓" : "○"; color: c.st == 2 ? G.ok : G.faint; } }
+                        Tx { text: c.t; color: c.st == 0 ? G.dim : G.bright; font-weight: c.st == 1 ? 600 : 400; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout { alignment: end; GButton { label: "Cancel"; kind: 1; w: 220px; } }
+                }
+            }
+        }
+    }
+    if scene == "g-confirm": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay", "Hosting"]; title: "Ready to put mk-pay on the internet"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 560px;
+                VerticalLayout {
+                    padding: 44px;
+                    spacing: 18px;
+                    Tx { text: "Anyone will be able to open"; color: G.dim; }
+                    Tx { text: "https://pay.example.com"; font-family: G.mono; font-size: 36px; color: G.bright; }
+                    for l in ["Visitors can see your home's internet address.", "The address is listed in public certificate logs, permanently.", "The Nodo keeps the address and the secure connection up to date itself."]: HorizontalLayout {
+                        spacing: 16px;
+                        height: 48px;
+                        Sym { text: "•"; color: G.accent; width: 24px; }
+                        Tx { text: l; font-size: 24px; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        alignment: end;
+                        GButton { label: "Cancel"; kind: 1; w: 220px; }
+                        GButton { label: "Put mk-pay online"; w: 340px; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-online": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Hosting"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "mk-pay is online";
+                body: "https://pay.example.com and https://mk-pay.local. The Nodo renews the secure connection and follows your home's address by itself.";
+                tone: 2;
+                icon: "✓";
+                primary: "Done";
+                h: 220px;
+            }
+        }
+        GToast { text: "mk-pay is online at pay.example.com"; tone: 2; action: "Copy"; }
+    }
+    if scene == "g-blocked-isp": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay", "Hosting"]; title: "The internet can't reach your Nodo"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "Your internet provider shares one address between many homes";
+                body: "Visitors stop at the provider and never reach you; router settings can't change this. A private Tor link still works on this connection.";
+                tone: 1;
+                icon: "▲";
+                primary: "Use Tor instead";
+                secondary: "Check again";
+                h: 240px;
+            }
+        }
+    }
+
+    // ---- System
+    if scene == "g-system": Rectangle {
+        GNav { tab: 3; lock: 0; }
+        GHeader { crumbs: []; title: "This Nodo"; sub: "monokulo-nodo · NanoPC-T6 · 2026.11.13"; }
+        GBody {
+            top: 340px;
+            GInfo {
+                title: "A Nodo update is ready";
+                body: "2026.11.14 · faster syncing for cuprated · needs a restart, about 2 minutes";
+                tone: 1;
+                icon: "↑";
+                primary: "Review";
+                h: 160px;
+            }
+            HorizontalLayout {
+                spacing: 24px;
+                alignment: start;
+                GList {
+                    width: 884px;
+                    rows: [
+                        { t: "Updates", s: "2 for apps, 1 for the Nodo", chev: true },
+                        { t: "Backups", s: "2 days ago, to the USB drive", chev: true },
+                        { t: "Network", s: "Cable · 192.168.1.155", chev: true, hover: true }
+                    ];
+                }
+                GList {
+                    width: 884px;
+                    rows: [
+                        { t: "Screen", s: "Logo wallpaper · PIN on", chev: true },
+                        { t: "SSH keys", s: "2 keys can log in", chev: true },
+                        { t: "Device logs", s: "No problems today", chev: true }
+                    ];
+                }
+            }
+        }
+    }
+    if scene == "g-updates": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader {
+            crumbs: ["System"];
+            title: "Updates";
+            GButton { label: "Automatic"; kind: 1; w: 230px; }
+            GButton { label: "Undo an update"; kind: 1; w: 300px; }
+        }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "The Nodo · 2026.11.14";
+                body: "Faster syncing for cuprated; gentler temperature limits. Needs a restart, about 2 minutes.";
+                tone: 4;
+                primary: "Update and restart";
+                h: 190px;
+            }
+            GCard {
+                height: 380px;
+                VerticalLayout {
+                    padding: 8px;
+                    padding-top: 24px;
+                    HorizontalLayout {
+                        padding-left: 32px;
+                        padding-right: 28px;
+                        height: 56px;
+                        Tx { text: "Apps"; font-size: 30px; font-weight: 700; color: G.bright; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    GRow { r: { t: "mk-pay  0.1 → 0.2", s: "Fixes receipts in some currencies", sw: 2 }; }
+                    GRow { r: { t: "kringle  0.4.1 → 0.4.2", s: "Smaller tip page", sw: 2 }; last: true; }
+                    HorizontalLayout {
+                        padding-right: 28px;
+                        alignment: end;
+                        GButton { label: "Update 2 apps"; kind: 1; w: 300px; }
+                    }
+                }
+            }
+        }
+    }
+    if scene == "g-auto": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System", "Updates"]; title: "Automatic updates"; }
+        GBody {
+            top: 300px;
+            GList {
+                rows: [
+                    { t: "Apps", s: "Install app updates by themselves", sw: 2 },
+                    { t: "The Nodo", s: "Updates that need a restart always wait for you", sw: 1 }
+                ];
+            }
+            GCard {
+                height: 230px;
+                VerticalLayout {
+                    padding: 36px;
+                    spacing: 18px;
+                    Tx { text: "When"; font-size: 28px; font-weight: 600; color: G.bright; }
+                    GSegmented { options: ["Overnight 02:00–05:00", "Midday", "Any time"]; selected: 0; }
+                }
+            }
+            HorizontalLayout { alignment: end; GButton { label: "Save"; w: 220px; } }
+        }
+    }
+    if scene == "g-undo": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System", "Updates"]; title: "Undo an update"; sub: "Go back to what ran before. Settings and data stay."; }
+        GBody {
+            top: 340px;
+            for u[i] in [{ t: "mk-pay 0.1.4 → 0.2", w: "Yesterday 03:12" }, { t: "The Nodo 2026.11.12 → 2026.11.13", w: "2 days ago · needs a restart" }, { t: "kringle 0.4.0 → 0.4.1", w: "Last week" }]: GCard {
+                height: 130px;
+                HorizontalLayout {
+                    padding-left: 40px;
+                    padding-right: 32px;
+                    spacing: 24px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Tx { text: u.t; font-size: 28px; font-weight: 600; color: G.bright; }
+                        Tx { text: u.w; font-size: 22px; color: G.dim; }
+                    }
+                    VerticalLayout { alignment: center; GButton { label: "Undo"; kind: 1; w: 180px; lock: true; } }
+                }
+            }
+        }
+    }
+    if scene == "g-update-rolled-back": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System"]; title: "Updates"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "mk-pay 0.2 didn't start, so it was undone";
+                body: "mk-pay is back on 0.1.4 with your settings and data, and running. The update stays offered; it won't install by itself again.";
+                tone: 1;
+                icon: "!";
+                primary: "Show log";
+                h: 220px;
+            }
+        }
+        GToast { text: "Undone · mk-pay 0.1.4 is running"; tone: 2; }
+    }
+    if scene == "g-logs": Rectangle {
+        GNav { tab: 3; lock: 0; }
+        GHeader { crumbs: ["System"]; title: "Device logs"; sub: "Problems first, in plain words."; }
+        GBody {
+            top: 340px;
+            HorizontalLayout {
+                spacing: 24px;
+                height: 72px;
+                GSegmented { options: ["Problems", "Everything"]; selected: 0; width: 520px; }
+                GCombo { value: "All apps"; width: 380px; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            GCard {
+                height: 560px;
+                clip: true;
+                VerticalLayout {
+                    padding: 8px;
+                    for e[i] in [
+                        { t: "mk-pay restarted after it stopped answering", w: "Today 09:41", tone: 1 },
+                        { t: "Alice's apps couldn't be reached", w: "Yesterday 22:10", tone: 3 },
+                        { t: "The drive was 81% full; old snapshots were removed", w: "Tuesday", tone: 1 },
+                        { t: "cuprated fell behind by 40 blocks and caught up", w: "Monday", tone: 0 },
+                        { t: "A Wi-Fi network rejected the password", w: "Sunday", tone: 3 }
+                    ]: GRow { r: { t: e.t, s: e.w, chev: true, hover: i == 0 }; last: i == 4; }
+                }
+                Rectangle {
+                    x: parent.width - 14px;
+                    y: 16px;
+                    width: 6px;
+                    height: 220px;
+                    border-radius: 3px;
+                    background: #FFFFFF30;
+                }
+            }
+        }
+        Note { text: "Lists scroll with momentum and a fading scroll bar. Full search and saving to a file stay in the TUI over SSH."; }
+    }
+    if scene == "g-backups" || scene == "g-backing-up": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System"]; title: "Backups"; }
+        GBody {
+            top: 300px;
+            if scene == "g-backups": GInfo {
+                title: "Last backup 2 days ago";
+                body: "To the USB drive \"NODO-BACKUP\" · 1.2 GB · locked with your passphrase";
+                tone: 2;
+                icon: "✓";
+                primary: "Back up now";
+                h: 170px;
+            }
+            if scene == "g-backing-up": GCard {
+                height: 170px;
+                VerticalLayout {
+                    padding: 40px;
+                    spacing: 16px;
+                    HorizontalLayout {
+                        spacing: 18px;
+                        GSpinner { }
+                        Tx { text: "Backing up · 640 MB of 1.2 GB"; font-size: 30px; font-weight: 600; color: G.bright; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Tx { text: "about 1 min"; color: G.dim; font-size: 24px; }
+                    }
+                    GProgress { value: 0.53; }
+                }
+            }
+            GList {
+                rows: [
+                    { t: "Automatically", s: "Every night at 03:00, when the drive is in", sw: 2 },
+                    { t: "Keep", s: "The last 7 backups", v: "7", tone: 4, chev: true },
+                    { t: "What's in it", s: "Apps' settings and data, sources, hosting · not the Monero chain", chev: true }
+                ];
+            }
+        }
+    }
+    if scene == "g-restore": Rectangle {
+        background: G.ground;
+        Logo2 { x: (1920px - 180px) / 2; y: 60px; width: 180px; height: 180px; }
+        GCard {
+            x: (1920px - 1100px) / 2;
+            y: 270px;
+            width: 1100px;
+            height: 700px;
+            VerticalLayout {
+                padding: 52px;
+                spacing: 22px;
+                Tx { text: "Restore onto this Nodo"; font-size: 40px; font-weight: 700; color: G.bright; }
+                Tx { text: "Found a backup on the USB drive: monokulo-nodo, 2 days ago, 1.2 GB."; color: G.dim; }
+                GInput { label: "The old Nodo's passphrase"; value: "x"; secret: true; trailing: "Show"; }
+                Tx { text: "Comes back: 5 apps with their settings and data, 3 sources, hosting for 3 sites. The Monero chain syncs again."; color: G.dim; font-size: 24px; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Start fresh instead"; kind: 3; w: 300px; }
+                    GButton { label: "Restore"; w: 240px; }
+                }
+            }
+        }
+    }
+    if scene == "g-network" || scene == "g-wifi-join": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System"]; title: "Network"; }
+        GBody {
+            top: 300px;
+            GList { rows: [{ t: "Cable", s: "Connected · 192.168.1.155 · fixed hardware address", v: "Connected", tone: 2 }]; }
+            GCard {
+                height: 440px;
+                VerticalLayout {
+                    padding: 8px;
+                    GRow { r: { t: "Wi-Fi", s: "Not needed while the cable is connected", sw: 2 }; }
+                    GRow { r: { t: "Home", s: "Strong · secured", v: "Joined", tone: 2 }; }
+                    GRow { r: { t: "Corner-Cafe", s: "Good · secured", v: "", chev: true, hover: scene == "g-network" }; }
+                    GRow { r: { t: "Neighbour-5G", s: "Weak · secured", chev: true }; last: true; }
+                }
+            }
+            GList { rows: [{ t: "Bluetooth", s: "Lets a phone set the Nodo up without a cable", sw: 1 }]; }
+        }
+        if scene == "g-wifi-join": GScrim { }
+        if scene == "g-wifi-join": Rectangle {
+            x: (1920px - 1040px) / 2;
+            y: 150px;
+            width: 1040px;
+            height: 440px;
+            border-radius: 32px;
+            background: G.card;
+            border-width: 1px;
+            border-color: #FFFFFF1E;
+            drop-shadow-blur: 60px;
+            drop-shadow-offset-y: 20px;
+            drop-shadow-color: #000000E0;
+            VerticalLayout {
+                padding: 48px;
+                spacing: 20px;
+                Tx { text: "Join Corner-Cafe"; font-size: 36px; font-weight: 700; color: G.bright; }
+                GInput { label: "Password"; value: "x"; secret: true; focused: true; trailing: "Show"; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Join"; w: 200px; }
+                }
+            }
+        }
+        if scene == "g-wifi-join": GKeyboard { }
+    }
+    if scene == "g-ssh-keys": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader {
+            crumbs: ["System"];
+            title: "SSH keys";
+            sub: "Computers that can log in to the Nodo over SSH.";
+            GButton { label: "Add a key"; icon: "+"; w: 260px; lock: true; }
+        }
+        GBody {
+            top: 340px;
+            for k in [{ n: "henry@laptop", f: "SHA256:Qm4x…7Fd2 · ed25519", w: "Last used today" }, { n: "henry@desktop", f: "SHA256:9aKe…pL0c · ed25519", w: "Last used 3 days ago" }]: GCard {
+                height: 140px;
+                HorizontalLayout {
+                    padding-left: 40px;
+                    padding-right: 32px;
+                    spacing: 24px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Tx { text: k.n; font-size: 28px; font-weight: 600; color: G.bright; }
+                        Tx { text: k.f; font-family: G.mono; font-size: 22px; color: G.dim; }
+                    }
+                    Tx { text: k.w; font-size: 22px; color: G.dim; }
+                    VerticalLayout { alignment: center; GButton { label: "Remove"; kind: 1; w: 190px; lock: true; } }
+                }
+            }
+        }
+        Note { text: "A key is easiest to add from the computer itself (ssh-copy-id); here you can paste one."; }
+    }
+    if scene == "g-screen": Rectangle {
+        GNav { tab: 3; lock: 1; }
+        GHeader { crumbs: ["System"]; title: "Screen"; }
+        GBody {
+            top: 300px;
+            GCard {
+                height: 400px;
+                VerticalLayout {
+                    padding: 36px;
+                    spacing: 20px;
+                    Tx { text: "Wallpaper"; font-size: 30px; font-weight: 700; color: G.bright; }
+                    HorizontalLayout {
+                        spacing: 24px;
+                        height: 280px;
+                        GRadioCard {
+                            title: "Panels";
+                            sub: "Your apps' tiles";
+                            for j in [0, 1, 2, 3]: Rectangle {
+                                x: 24px + Math.mod(j, 2) * 130px;
+                                y: 24px + Math.floor(j / 2) * 70px;
+                                width: 120px;
+                                height: 60px;
+                                border-radius: 10px;
+                                border-width: 2px;
+                                border-color: #3A4045;
+                            }
+                        }
+                        GRadioCard {
+                            title: "Logo";
+                            sub: "The Nodo and one status line";
+                            selected: true;
+                            Logo2 { x: 24px; y: 16px; width: 150px; height: 150px; }
+                        }
+                        GRadioCard {
+                            title: "Logo and panels";
+                            sub: "The logo beside three tiles";
+                            Logo2 { x: 24px; y: 24px; width: 130px; height: 130px; }
+                            for j in [0, 1, 2]: Rectangle {
+                                x: 170px;
+                                y: 24px + j * 46px;
+                                width: 140px;
+                                height: 38px;
+                                border-radius: 8px;
+                                border-width: 2px;
+                                border-color: #3A4045;
+                            }
+                        }
+                    }
+                }
+            }
+            GCard {
+                height: 330px;
+                VerticalLayout {
+                    padding: 36px;
+                    spacing: 18px;
+                    HorizontalLayout {
+                        height: 56px;
+                        Tx { text: "Brightness"; font-size: 26px; font-weight: 600; color: G.bright; width: 320px; }
+                        GSlider { value: 0.8; horizontal-stretch: 1; }
+                        Tx { text: "80%"; color: G.dim; width: 100px; horizontal-alignment: right; }
+                    }
+                    HorizontalLayout {
+                        height: 56px;
+                        Tx { text: "Dim when idle to"; font-size: 26px; font-weight: 600; color: G.bright; width: 320px; }
+                        GSlider { value: 0.2; horizontal-stretch: 1; }
+                        Tx { text: "20%"; color: G.dim; width: 100px; horizontal-alignment: right; }
+                    }
+                    HorizontalLayout {
+                        height: 80px;
+                        Tx { text: "Back to the wallpaper after"; font-size: 26px; font-weight: 600; color: G.bright; width: 420px; }
+                        GSegmented { options: ["1 min", "2 min", "5 min", "Never"]; selected: 1; horizontal-stretch: 1; }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- blocking states
+    if scene == "g-rejected": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader { crumbs: ["Apps", "Get apps"]; title: "bob-photos"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "bob-photos can't be installed";
+                body: "It asks to read every other app's data, which no app on the Nodo may do. Tell its publisher; nothing was changed.";
+                tone: 3;
+                icon: "✕";
+                secondary: "Back";
+                h: 210px;
+            }
+        }
+    }
+    if scene == "g-capability": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader { crumbs: ["Apps", "Get apps"]; title: "feather-ws"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "feather-ws needs a Monero node first";
+                body: "It reads from a Monero node on this Nodo. Install cuprated, then come back to feather-ws.";
+                tone: 5;
+                icon: "i";
+                primary: "Install cuprated";
+                secondary: "Back";
+                lock: true;
+                h: 210px;
+            }
+        }
+    }
+    if scene == "g-no-drive": Rectangle {
+        GNav { tab: 0; lock: 0; }
+        GHeader { crumbs: []; title: "Good afternoon"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "The data drive isn't connected";
+                body: "Your apps keep their data on the SSD, so they can't start without it. Check the drive is seated in the Nodo, then check again. Nothing has been lost.";
+                tone: 1;
+                icon: "▲";
+                primary: "Check again";
+                h: 230px;
+            }
+        }
+    }
+
+    // ---- unlocking changes
+    if scene == "g-pin" || scene == "g-pin-wrong" || scene == "g-lockout": Rectangle {
+        GNav { tab: 1; lock: 0; }
+        GHeader { crumbs: ["Apps"]; title: "mk-pay"; sub: "Payments for your shop"; }
+        PinPad { state: scene == "g-pin" ? 0 : scene == "g-pin-wrong" ? 1 : 2; }
+    }
+    if scene == "g-no-pin": Rectangle {
+        GNav { tab: 3; lock: 2; }
+        GHeader { crumbs: ["System", "Screen"]; title: "Screen PIN"; }
+        GBody {
+            top: 300px;
+            GInfo {
+                title: "Changes from this screen are off";
+                body: "Anyone near the Nodo can touch its screen, so it shows everything but changes nothing until you choose a screen PIN. Choose one from a computer: ssh into the Nodo, then System › Screen › Screen PIN (needs the device passphrase).";
+                tone: 5;
+                icon: "i";
+                h: 260px;
+            }
+            GInfo {
+                title: "How it protects you";
+                body: "After 5 wrong tries the screen waits 5 minutes, then longer. Changes lock again 5 minutes after the last touch. Shut down always works.";
+                tone: 4;
+                h: 170px;
+            }
+        }
+    }
+
+    // ---- the widget sheet: every control and its states
+    if scene == "g-widgets": Rectangle {
+        Tx { x: 64px; y: 40px; height: 60px; text: "Controls and their states"; font-size: 44px; font-weight: 700; color: G.bright; }
+        GridLayout {
+            x: 64px;
+            y: 140px;
+            width: 1792px;
+            spacing: 28px;
+            Row {
+                GButton { label: "Primary"; }
+                GButton { label: "Hover"; state: 1; }
+                GButton { label: "Pressed"; state: 2; }
+                GButton { label: "Disabled"; state: 3; }
+                GButton { label: "Remove"; kind: 2; }
+                GButton { label: "Secondary"; kind: 1; }
+            }
+            Row {
+                GButton { label: "Locked"; lock: true; }
+                GButton { label: "Back"; kind: 3; }
+                GButton { label: "Manage"; icon: "☰"; kind: 1; }
+                Rectangle { VerticalLayout { alignment: center; GSwitch { on: true; } } }
+                Rectangle { VerticalLayout { alignment: center; GSwitch { on: false; } } }
+                GStepper { value: "10"; }
+            }
+        }
+        HorizontalLayout {
+            x: 64px;
+            y: 400px;
+            width: 1792px;
+            height: 160px;
+            spacing: 28px;
+            GInput { label: "Text"; value: ""; placeholder: "Placeholder"; }
+            GInput { label: "Focused"; value: "Corner Café"; focused: true; }
+            GInput { label: "Error"; value: "48daf1r…"; mono: true; error: "Not a Monero address"; }
+        }
+        HorizontalLayout {
+            x: 64px;
+            y: 600px;
+            width: 1792px;
+            height: 120px;
+            spacing: 28px;
+            GCombo { label: "Dropdown"; value: "EUR"; sub: "Euro"; }
+            GCombo { label: "Open"; value: "cuprated"; open: true; }
+            VerticalLayout {
+                spacing: 10px;
+                Tx { text: "Segmented"; font-size: 22px; color: G.dim; height: 30px; }
+                GSegmented { options: ["1 min", "2 min", "5 min"]; selected: 1; }
+            }
+        }
+        HorizontalLayout {
+            x: 64px;
+            y: 780px;
+            width: 1792px;
+            height: 80px;
+            spacing: 40px;
+            VerticalLayout { alignment: center; GSlider { value: 0.6; width: 500px; } }
+            VerticalLayout { alignment: center; GProgress { value: 0.45; width: 500px; } }
+            VerticalLayout { alignment: center; GSpinner { } }
+        }
+        GToast { y: 900px; text: "Saved · mk-pay restarted with the new settings"; tone: 2; action: "Undo"; }
+    }
+}
