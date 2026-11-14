@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  Add
+
+
+       Add a source
+
+       Paste the address the publisher gave you.
+
+       Address    https://apps.bob.example/feed
+
+       Nothing is installed yet: the Nodo first shows you what the source offers and its key.
+
+                                                                                     Cancel         Check    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: paste the address  ↵ check  Esc cancel

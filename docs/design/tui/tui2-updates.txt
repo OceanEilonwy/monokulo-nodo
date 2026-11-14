@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Updates
+
+
+       The Nodo   2026.11.13  →  2026.11.14
+         ·  Faster syncing for cuprated
+         ·  The fan curve no longer chatters
+         ·  Security fixes for the system base
+
+       Needs a restart, about 2 minutes. Apps stop safely first.                          Update and restart   
+
+
+
+       Apps
+       [x]  mk-pay      0.1  →  0.2       fixes receipts in some currencies
+       [x]  kringle     0.4.1  →  0.4.2   smaller pages
+
+       Each app keeps its settings and can be undone.                                          Update 2 apps   
+
+
+    Automatic updates ›     Undo an update ›
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  Space tick  ↵ update  Esc back

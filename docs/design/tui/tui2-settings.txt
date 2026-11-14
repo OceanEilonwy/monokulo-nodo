@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  mk-pay  ›  Settings
+
+    Settings
+    mk-pay restarts with the new settings. If it doesn't start, they're undone by themselves.
+
+
+
+       Store name               Corner Café
+
+       Currency                 EUR — euro                   ▾
+
+       Payment address          48ZqC7…x3
+                               ✕ That isn't a Monero address: it should be 95 characters starting with 4 or 8
+
+       View key                 ••••••••••••••••                  Show
+                               Lets mk-pay see payments arrive, but not spend them.
+
+       Confirmations to wait     10     −   +
+                               0 to 30. More is safer but slower; 10 takes about 20 minutes.
+
+       Email receipts          [x] On
+
+       Monero node              cuprated  · Monero node on this Nodo ▾
+                               Picked from your apps, so it follows cuprated if its address changes.
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+    Keys: Tab move  ↵ save  Esc cancel

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources
+
+    Sources                                                                                        Add a source   
+    Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed.
+
+
+
+       monokulo   built in                             [x] On                                            Remove
+       nodo.monokulo.com/feed   ·   5 apps
+
+       Key             6254a257  c2579d7e  118f4c30  a9329307
+
+
+
+       Alice's apps                                    [x] On                                            Remove
+       apps.alice.example/feed   ·   2 apps
+
+       ✕  Couldn't reach it since yesterday   Try again
+
+       Key             9f036eb1  44d27a10  c85be391  0d762aff
+
+
+
+       Test builds                                     [ ] Off                                           Remove
+       192.168.1.40:8080/feed   ·   1 app
+
+       Key             4a110e93  5c28b7f0  62d9138e  a4075bc1
+
+
+    Hide keys ‹
+
+    Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  Esc back

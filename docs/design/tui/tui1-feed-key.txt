@@ -1,0 +1,36 @@
+Feeds › old-tools                                                                                      ✕ Updates blocked
+┌ This feed's signing key changed ─────────────────────────────────────────────────────────────────────────────────────┐
+│ Publishers sometimes rotate keys. It can also mean the feed was taken over. Nothing new from this feed will install  │
+│ until you decide.                                                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Keys ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Trusted                                                               SHA256:08bd 42f1 a7c3 91de 66e0 d214 f8a9 03c7 │
+│ Now signing                                                           SHA256:e93a 17c0 5bd2 80f4 1a6c 39e7 42db a106 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Affected ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ hash-tools 1.3.0                                                                          Keeps running. No updates. │
+│ peer-map 0.9.1                                                                            Keeps running. No updates. │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Check the publisher's announcement through a channel other than this feed.
+┌ Your choice ─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸Keep the old key and stay blocked (safe default)                                                                    │
+│  Trust the new key  you must type the feed name to confirm                                                           │
+│  Remove this feed                                                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ choose  ↵ confirm  Esc decide later

@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Updates
+
+
+       ▲  mk-pay 0.2 didn't start, so 0.1 was put back
+
+       mk-pay is running again as before, with its data as it was. Nothing was lost.
+       mk-pay said: "database version 7 needs migration"
+
+       Show log ›
+
+                                                                               Try again            OK       
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ OK  t try again  l log

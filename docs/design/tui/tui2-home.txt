@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Good afternoon
+
+
+       2 app updates are ready
+       mk-pay and kringle. Each keeps its settings and can be rolled back.
+
+                                                                                              Review updates   
+
+
+
+       ✓  Everything else is running
+
+       cuprated    Syncing the Monero chain · 63%
+       mk-pay      Running · open at https://pay.example.com
+       mk-lws      Running
+       kringle     Running
+
+       Storage 27% used of 2 TB   ·   Temperature 48 °C   ·   Up 3 days
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ review updates  Tab move  1-4 tabs

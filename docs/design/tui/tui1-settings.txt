@@ -1,0 +1,36 @@
+moneropay › Settings                                                                                 ● 2 unsaved changes
+┌ Connection ──────────────────────────────────────────────────────────┐┌ Payment address ─────────────────────────────┐
+│  Daemon RPC        $(monero-daemon.public_rpc_url)                   ││ Where received funds are sent.               │
+│                    Resolves to http://127.0.0.1:18081                ││ Required. Provided by the package.           │
+│                                                                      ││                                              │
+│  API port          5000                                              ││ Saving will                                  │
+│                                                                      ││ Restart moneropay                            │
+│  Log level         ‹ info ›                                          ││ Run its health check                         │
+│                                                                      ││ Restore these values if it fails             │
+│ ▸Payment address   48edfHu7V9Z84Y                                    ││                                              │
+│                    ✕ Address is too short. A Monero address has 95   ││ Others can read                              │
+│                    characters.                                       ││ moneropay.api_url                            │
+│                                                                      ││                                              │
+│  Webhook secret    ••••••••••••                                      ││                                              │
+│                    secret, private to this package                   ││                                              │
+│                                                                      ││                                              │
+│  Allow LAN access  [x] on                                            ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+│                                                                      ││                                              │
+└──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────┘
+↑↓ field  ↵ edit  $ use a reference  ctrl-s save  z undo  Esc back

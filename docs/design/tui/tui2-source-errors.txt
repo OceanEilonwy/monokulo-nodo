@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  Add
+
+    When a source can't be added (three cases, shown in the Add card)
+
+
+       ✕  That address isn't a source
+          It answered, but with a web page, not a list of apps. Check you copied the whole address.
+
+
+
+       ✕  Couldn't reach it
+          Nothing answered at apps.bob.example. It may be offline, or the address may be wrong.
+          Try again later, or check the address with the publisher.
+
+
+
+       ✕  Its signature doesn't check out
+          The list of apps wasn't signed by the key it claims. Someone may have tampered with it,
+          so the Nodo won't use it. Tell the publisher.
+
+
+
+
+
+
+
+
+
+
+
+
+    Each case appears in place of the source's details; the address stays filled in to fix and Check again.

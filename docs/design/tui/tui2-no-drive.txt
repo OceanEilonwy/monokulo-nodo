@@ -1,0 +1,36 @@
+
+    Home     Apps     Web     System                                                                   monokulo-nodo
+
+
+
+
+       ▲  The data drive isn't connected
+
+       Your apps keep their data on the SSD, so they're stopped until it's back. Nothing on it has
+       been touched. Check the cable, or plug it back in; the Nodo notices by itself.
+
+       Stopped: cuprated, mk-pay, mk-lws, kringle
+
+                                                                                                 Check again   
+
+
+    Use a new drive instead ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ check again

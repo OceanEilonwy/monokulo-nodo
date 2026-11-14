@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  monokulo
+
+
+       Remove monokulo?
+
+       It came with the Nodo, but you don't have to keep it. Apps you installed from it keep
+       running; they just won't get updates until you add it back.
+
+       To add it back later: Sources › Show details › Restore built-in sources.
+
+                                                                                     Cancel         Remove   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ remove  Esc cancel

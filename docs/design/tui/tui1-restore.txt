@@ -1,0 +1,36 @@
+Set up this device › Restore from a USB backup › Drive
+┌ USB drives ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸sda1    SanDisk Ultra Fit, BACKUP                                                                          32.0 GB  │
+│  sdb     Generic Flash Disk                                                                  ▲ it has no filesystem  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Steps ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸ Choose the drive                                                                                                   │
+│ ○ Choose the backup                                                                                                  │
+│ ○ Open it with the backup passphrase                                                                                 │
+│ ○ Confirm and restore                                                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Restoring sets up this device ───────────────────────────────────────────────────────────────────────────────────────┐
+│ ● Packages come back from the verified copies in the backup, without their feeds.                                    │
+│ ● Storage, secrets, certificates, onion keys, feeds and approvals come back.                                         │
+│ ● The system disk and the blockchain drive are never listed or written.                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ move  ↵ choose  g look again  Esc back to setup

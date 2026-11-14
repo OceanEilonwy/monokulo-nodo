@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Updates  ›  Automatic
+
+    Automatic updates
+    The Nodo checks every 6 hours. You can always see and undo what it did.
+
+
+
+       Update apps by themselves           [x] On
+       Only apps whose new version asks for nothing new. Anything else waits for you.
+
+       When                                 Overnight, 2–5 am      ▾
+
+       Update the Nodo by itself           [ ] Off
+       Updates that need a restart always wait for you, whatever this says.
+
+                                                                                     Cancel          Save    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: Tab move  Space on/off  ↵ save  Esc cancel

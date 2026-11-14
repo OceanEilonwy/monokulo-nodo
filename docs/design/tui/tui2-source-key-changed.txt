@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  Sources  ›  Alice's apps
+
+    Check before you trust
+
+
+       ▲  Alice's apps is now signed with a different key
+
+       This happens when a publisher replaces a lost key, and also when someone else takes over their address.
+       Until you decide, the Nodo installs nothing new from Alice's apps.
+
+       Key you trust   9f036eb1  44d27a10  c85be391  0d762aff
+       New key         17c4902e  aa5f6308  b9d14e77  301ce542
+
+       Ask Alice, by a way you trust, whether the new key is hers. To trust it, type the source's name:
+       Name                                              Alice's apps
+
+                                                               Trust the new key         Keep the old key    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↵ keep the old key  Tab move  Esc back
