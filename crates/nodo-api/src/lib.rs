@@ -24,8 +24,8 @@ pub use secret::Secret;
 pub use system::*;
 
 /// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
-/// rollbacks and confirmed exposure changes.
-pub const PROTOCOL_VERSION: u8 = 2;
+/// rollbacks and confirmed exposure changes. Version 3 added [`ServiceStatus::uptime_secs`].
+pub const PROTOCOL_VERSION: u8 = 3;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -58,6 +58,9 @@ pub struct ServiceStatus {
     /// Roles the package provides, such as `monero-daemon`.
     pub roles: Vec<String>,
     pub origin: Origin,
+    /// How long a running service has been up, in seconds, when the supervisor reports it. The
+    /// interface words it, so `detail` does not repeat it.
+    pub uptime_secs: Option<u64>,
 }
 
 /// Exposures are independent, so a site can use any combination.

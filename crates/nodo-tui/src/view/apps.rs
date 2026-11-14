@@ -43,11 +43,11 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
         let has_update = app.data.updates.iter().any(|u| &u.name == name && !u.held);
         let (state, bad) = app_state(app, name);
         let status = if has_update {
-            t.a(pad("Update ready", 16))
+            t.a(pad("Update ready", 20))
         } else if bad {
-            t.e(pad(&state, 16))
+            t.e(pad(&state, 20))
         } else {
-            t.d(pad(&truncate(&state, 15), 16))
+            t.d(pad(&truncate(&state, 19), 20))
         };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
         let what = truncate(&tagline(app, name), what_width - 2);
