@@ -6,6 +6,7 @@
     Logs and Feeds stop being tabs; an app's settings, hosting, logs and updates live on its own page.
 
 
+
        Home     What needs you, and that everything else is fine.
                 was Home: same tab, much less on it
 
@@ -26,7 +27,6 @@
                 · Updates for the Nodo (system base, automatic updates, rollbacks)
                 · Backups  ·  Network (Wi-Fi, Bluetooth)  ·  Device logs
                 takes the Updates and Logs tabs' Nodo-wide parts
-
 
 
 

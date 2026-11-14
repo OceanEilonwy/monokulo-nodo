@@ -9,13 +9,13 @@
 
        It offers 3 apps: bob-notes, bob-photos, bob-backup
 
-       Its key
-         3c8e510a  d726f49b  e0126da8  47c3b519
+       Its key         3c8e510a  d726f49b  e0126da8  47c3b519
 
        Check this matches what the publisher gave you, by a way you trust (in person, their site,
        a message you know is from them). If it doesn't match, don't add it.
 
                                                                                Cancel           Add source   
+
 
 
 

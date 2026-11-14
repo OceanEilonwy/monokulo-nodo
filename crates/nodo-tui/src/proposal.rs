@@ -1903,16 +1903,36 @@ fn trail_actions(t: &Theme, parts: &[&str], actions: &[(&str, bool)], w: u16) ->
     Item::Row(left, Line::from(right))
 }
 
-/// A page of several cards stacked with a blank row between them.
-fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<Item>, keys: &str) -> Page {
-    let mut items = before;
+/// A page of several cards stacked with a blank row between them. When they don't all fit, the
+/// cards that would fall off the bottom are left out and a dim "↓ N more — scroll" row takes
+/// their place inside the scroll area, a row clear of the keys; the wheel or a click on it
+/// scrolls.
+#[allow(clippy::too_many_arguments)]
+fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<Item>, keys: &str, w: u16, h: u16) -> Page {
+    let avail = usize::from(h).saturating_sub(usize::from(STRIP_ROWS) + rows_of(&action_bar(t, keys), w) + rows_of(&before, w));
+    // The list as rows, each tagged with its card, so a scrolled list can cut a card part-way.
+    let total = cards.len();
+    let mut rows: Vec<(usize, Item)> = Vec::new();
     for (index, card) in cards.into_iter().enumerate() {
         if index > 0 {
-            items.push(Item::Blank);
+            rows.push((index, Item::Blank));
         }
-        items.extend(card.items(t));
+        rows.extend(card.items(t).into_iter().map(|item| (index, item)));
     }
-    items.extend(after);
+    let mut items = before;
+    if rows.len() + rows_of(&after, w) <= avail {
+        items.extend(rows.into_iter().map(|(_, item)| item));
+        items.extend(after);
+    } else {
+        // Leave room for a gap, the hint and a gap above the keys.
+        let visible = avail.saturating_sub(3);
+        // Sources not on screen at all; one cut part-way is visible, and scrolls into view.
+        let seen = rows.iter().take(visible).map(|(card, _)| *card).max().map_or(0, |c| c + 1);
+        items.extend(rows.into_iter().take(visible).map(|(_, item)| item));
+        items.push(Item::Blank);
+        items.push(line(vec![margin(t), t.d(format!("↓ {} more — scroll", total - seen))]));
+        items.push(Item::Blank);
+    }
     page.plain(items).footers(action_bar(t, keys))
 }
 
@@ -1927,20 +1947,20 @@ fn bar(t: &Theme, fraction: f32, width: usize) -> Vec<Span<'static>> {
 
 fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
     match scene {
-        Scene::T2Nav => t2_nav(t, w),
-        Scene::T2Home => t2_home(t, w),
-        Scene::T2Apps => t2_apps(t, w),
-        Scene::T2GetApps => t2_get_apps(t, w),
+        Scene::T2Nav => t2_nav(t, w, h),
+        Scene::T2Home => t2_home(t, w, h),
+        Scene::T2Apps => t2_apps(t, w, h),
+        Scene::T2GetApps => t2_get_apps(t, w, h),
         Scene::T2AppAbout => t2_app_about(t, w, h),
         Scene::T2Review => t2_review(t, w, h),
         Scene::T2Installing => t2_installing(t, w, h),
-        Scene::T2AppPage => t2_app_page(t, w),
+        Scene::T2AppPage => t2_app_page(t, w, h),
         Scene::T2Unlock => t2_unlock(t, w, h),
         Scene::T2Sources => t2_sources(t, w, h, false),
         Scene::T2SourcesDetails => t2_sources(t, w, h, true),
         Scene::T2SourceAdd => t2_source_add(t, w, h),
         Scene::T2SourceCheck => t2_source_check(t, w, h),
-        Scene::T2SourceErrors => t2_source_errors(t, w),
+        Scene::T2SourceErrors => t2_source_errors(t, w, h),
         Scene::T2SourceKeyChanged => t2_source_key_changed(t, w, h),
         Scene::T2SourceRemoveBuiltin => t2_source_remove_builtin(t, w, h),
         Scene::T2AppRemove => t2_app_remove(t, w, h),
@@ -1951,7 +1971,7 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
     }
 }
 
-fn t2_nav(t: &Theme, w: u16) -> Page {
+fn t2_nav(t: &Theme, w: u16, h: u16) -> Page {
     let section = |title: &str, now: &str, holds: &[&str], from: &str| {
         let mut card = Card::new(w);
         card.blank(t);
@@ -1986,11 +2006,12 @@ fn t2_nav(t: &Theme, w: u16) -> Page {
         heading(t, "Four tabs instead of six"),
         quiet(t, "Logs and Feeds stop being tabs; an app's settings, hosting, logs and updates live on its own page."),
         Item::Blank,
+        Item::Blank,
     ];
-    stack(t, top2(t, "Home", None, w), before, cards, Vec::new(), "Click a tab, or press 1 2 3 4.")
+    stack(t, top2(t, "Home", None, w), before, cards, Vec::new(), "Click a tab, or press 1 2 3 4.", w, h)
 }
 
-fn t2_home(t: &Theme, w: u16) -> Page {
+fn t2_home(t: &Theme, w: u16, h: u16) -> Page {
     let mut needs = Card::new(w);
     needs.blank(t);
     needs.row(t, vec![t.b("2 app updates are ready")]);
@@ -2017,10 +2038,10 @@ fn t2_home(t: &Theme, w: u16) -> Page {
     fine.row(t, vec![t.d("Storage 27% used of 2 TB   ·   Temperature 48 °C   ·   Up 3 days")]);
     fine.blank(t);
     let before = vec![Item::Blank, heading(t, "Good afternoon"), Item::Blank];
-    stack(t, top2(t, "Home", Some(("Apps", 2)), w), before, vec![needs, fine], Vec::new(), "Keys: ↵ review updates  Tab move  1-4 tabs")
+    stack(t, top2(t, "Home", Some(("Apps", 2)), w), before, vec![needs, fine], Vec::new(), "Keys: ↵ review updates  Tab move  1-4 tabs", w, h)
 }
 
-fn t2_apps(t: &Theme, w: u16) -> Page {
+fn t2_apps(t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     for (index, (name, what, state)) in [
@@ -2050,10 +2071,10 @@ fn t2_apps(t: &Theme, w: u16) -> Page {
         Item::Row(Line::from(vec![margin(t), t.b("Installed")]), Line::from(vec![t.a("Get apps ›"), t.n(MARGIN)])),
         Item::Blank,
     ];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], Vec::new(), "Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], Vec::new(), "Click an app to open it.   Keys: ↑↓ choose  ↵ open  g get apps", w, h)
 }
 
-fn t2_get_apps(t: &Theme, w: u16) -> Page {
+fn t2_get_apps(t: &Theme, w: u16, h: u16) -> Page {
     let mut search = vec![t.d(pad("Search", 9))];
     search.extend(inset(t, "wallet", 40, None));
     let mut card = Card::new(w);
@@ -2085,7 +2106,7 @@ fn t2_get_apps(t: &Theme, w: u16) -> Page {
         Item::Blank,
     ];
     let after = vec![Item::Blank, quiet(t, "3 of 14 apps from your sources match. Click one to see what it does before installing.")];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], after, "Type to search.   Keys: ↑↓ choose  ↵ open  s sources  Esc back")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![card], after, "Type to search.   Keys: ↑↓ choose  ↵ open  s sources  Esc back", w, h)
 }
 
 fn t2_app_about(t: &Theme, w: u16, h: u16) -> Page {
@@ -2159,7 +2180,7 @@ fn t2_installing(t: &Theme, w: u16, h: u16) -> Page {
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Esc back (installing continues)", w, h)
 }
 
-fn t2_app_page(t: &Theme, w: u16) -> Page {
+fn t2_app_page(t: &Theme, w: u16, h: u16) -> Page {
     let mut status = Card::new(w);
     status.blank(t);
     status.row(t, vec![t.b("mk-pay"), t.d("   Payments for your shop")]);
@@ -2189,7 +2210,7 @@ fn t2_app_page(t: &Theme, w: u16) -> Page {
     }
     sections.blank(t);
     let before = vec![Item::Blank, trail_actions(t, &["Apps", "mk-pay"], &[("Restart", false), ("Stop", false), ("!Remove…", false)], w), Item::Blank];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, vec![status, sections], Vec::new(), "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back", w, h)
 }
 
 fn t2_app_remove(t: &Theme, w: u16, h: u16) -> Page {
@@ -2258,6 +2279,7 @@ fn t2_settings(t: &Theme, w: u16, h: u16, picking: bool) -> Page {
     before.push(heading(t, "Settings"));
     before.push(quiet(t, "mk-pay restarts with the new settings. If it doesn't start, they're undone by themselves."));
     before.push(Item::Blank);
+    before.push(Item::Blank);
     let keys = if picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  ↵ save  Esc cancel" };
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), before, card, Vec::new(), keys, w, h)
 }
@@ -2308,6 +2330,23 @@ const MONOKULO_FP: &str = "62:54:a2:57:c2:57:9d:7e:11:8f:4c:30:a9:32:93:07";
 const ALICE_FP: &str = "9f:03:6e:b1:44:d2:7a:10:c8:5b:e3:91:0d:76:2a:ff";
 const ALICE_NEW_FP: &str = "17:c4:90:2e:aa:5f:63:08:b9:d1:4e:77:30:1c:e5:42";
 
+/// A key with its label on one row, the value as four groups (highlighted when it's the one to
+/// check). When both don't fit, the value goes on the next row under the label, kept whole.
+fn key_row(card: &mut Card, t: &Theme, label: &str, fp: &str, highlight: bool) {
+    let value = if highlight {
+        Span::styled(format!(" {} ", fingerprint_groups(fp)), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled(format!(" {} ", fingerprint_groups(fp)), Style::new().fg(t.fg))
+    };
+    let label = t.d(pad(label, 15));
+    if 15 + width_of(std::slice::from_ref(&value)) + 4 <= card.width.saturating_sub(4) {
+        card.row(t, vec![label, value]);
+    } else {
+        card.row(t, vec![label]);
+        card.row(t, vec![t.n("  "), value]);
+    }
+}
+
 fn sources_trail(t: &Theme, last: &[&str]) -> Vec<Item> {
     let mut parts = vec!["Apps", "Get apps", "Sources"];
     parts.extend_from_slice(last);
@@ -2322,7 +2361,7 @@ fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
     }
 }
 
-fn t2_sources(t: &Theme, w: u16, _h: u16, details: bool) -> Page {
+fn t2_sources(t: &Theme, w: u16, h: u16, details: bool) -> Page {
     // name, address, apps, enabled, problem, key, built in
     type SourceRow<'a> = (&'a str, &'a str, &'a str, bool, Option<&'a str>, &'a str, bool);
     let rows: [SourceRow; 3] = [
@@ -2357,7 +2396,7 @@ fn t2_sources(t: &Theme, w: u16, _h: u16, details: bool) -> Page {
         }
         if details {
             card.blank(t);
-            card.row(t, vec![t.d(format!("Key   {}", fingerprint_groups(fp)))]);
+            key_row(&mut card, t, "Key", fp, false);
         }
         card.blank(t);
         cards.push(card);
@@ -2371,8 +2410,9 @@ fn t2_sources(t: &Theme, w: u16, _h: u16, details: bool) -> Page {
     let mut before = vec![Item::Blank, trail(t, &["Apps", "Get apps", "Sources"]), Item::Blank, heading_row];
     before.push(quiet(t, "Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed."));
     before.push(Item::Blank);
+    before.push(Item::Blank);
     let after = vec![Item::Blank, line(vec![margin(t), t.a(if details { "Hide keys ‹" } else { "Show keys ›" })])];
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, after, "Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  Esc back")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, after, "Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  Esc back", w, h)
 }
 
 fn t2_source_add(t: &Theme, w: u16, h: u16) -> Page {
@@ -2399,8 +2439,7 @@ fn t2_source_check(t: &Theme, w: u16, h: u16) -> Page {
     card.blank(t);
     card.row(t, vec![t.n("It offers 3 apps: "), t.b("bob-notes"), t.n(", "), t.b("bob-photos"), t.n(", "), t.b("bob-backup")]);
     card.blank(t);
-    card.row(t, vec![t.n("Its key")]);
-    card.row(t, vec![Span::styled(format!("  {}  ", fingerprint_groups("3c:8e:51:0a:d7:26:f4:9b:e0:12:6d:a8:47:c3:b5:19")), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))]);
+    key_row(&mut card, t, "Its key", "3c:8e:51:0a:d7:26:f4:9b:e0:12:6d:a8:47:c3:b5:19", true);
     card.blank(t);
     card.row(t, vec![t.n("Check this matches what the publisher gave you, by a way you trust (in person, their site,")]);
     card.row(t, vec![t.n("a message you know is from them). If it doesn't match, don't add it.")]);
@@ -2409,7 +2448,7 @@ fn t2_source_check(t: &Theme, w: u16, h: u16) -> Page {
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["Add"]), card, Vec::new(), "Keys: ↵ add source  Esc cancel", w, h)
 }
 
-fn t2_source_errors(t: &Theme, w: u16) -> Page {
+fn t2_source_errors(t: &Theme, w: u16, h: u16) -> Page {
     let make = |title: &str, body: &[&str]| {
         let mut card = Card::new(w);
         card.blank(t);
@@ -2428,7 +2467,7 @@ fn t2_source_errors(t: &Theme, w: u16) -> Page {
     let mut before = sources_trail(t, &["Add"]);
     before.push(heading(t, "When a source can't be added (three cases, shown in the Add card)"));
     before.push(Item::Blank);
-    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, Vec::new(), "Each case appears in place of the source's details; the address stays filled in to fix and Check again.")
+    stack(t, top2(t, "Apps", Some(("Apps", 2)), w), before, cards, Vec::new(), "Each case appears in place of the source's details; the address stays filled in to fix and Check again.", w, h)
 }
 
 fn t2_source_key_changed(t: &Theme, w: u16, h: u16) -> Page {
@@ -2438,8 +2477,8 @@ fn t2_source_key_changed(t: &Theme, w: u16, h: u16) -> Page {
     card.blank(t);
     card.row(t, vec![t.n("This happens when a publisher replaces a lost key, and also when someone else takes over their address. Until you decide, the Nodo installs nothing new from Alice's apps.")]);
     card.blank(t);
-    card.row(t, vec![t.d(pad("Key you trust", 15)), t.n(fingerprint_groups(ALICE_FP))]);
-    card.row(t, vec![t.d(pad("New key", 15)), Span::styled(format!(" {} ", fingerprint_groups(ALICE_NEW_FP)), Style::new().fg(t.accent).bg(S.field).add_modifier(Modifier::BOLD))]);
+    key_row(&mut card, t, "Key you trust", ALICE_FP, false);
+    key_row(&mut card, t, "New key", ALICE_NEW_FP, true);
     card.blank(t);
     card.row(t, vec![t.n("Ask Alice, by a way you trust, whether the new key is hers. To trust it, type the source's name:")]);
     let mut typed = vec![t.d(pad("Name", 15))];
@@ -2548,6 +2587,35 @@ mod tests {
                     }
                 }
                 assert!(edges.len() <= 1, "{} at {w}x{h}: card rows span different columns {edges:?}", scene.slug());
+            }
+        }
+    }
+
+    #[test]
+    fn buttons_stay_whole_and_inside_their_surface() {
+        // A rounded cap must touch its button's fill on the inner side and sit on the same
+        // surface as the cell on its outer side: a button pushed past a card's edge, or a cap
+        // wrapped onto the next row, breaks one of the two.
+        let t = Theme::truecolor();
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
+            for (w, h) in [(120u16, 36u16), (80, 24)] {
+                let b = render(scene, w, h, &t);
+                for y in 0..h {
+                    for x in 0..w {
+                        let cell = &b[(x, y)];
+                        let (inner, outer) = match cell.symbol() {
+                            "\u{E0B6}" => (x.checked_add(1).filter(|&n| n < w), x.checked_sub(1)),
+                            "\u{E0B4}" => (x.checked_sub(1), x.checked_add(1).filter(|&n| n < w)),
+                            _ => continue,
+                        };
+                        let at = format!("{} at {w}x{h}, cell {x},{y}", scene.slug());
+                        let inner = inner.unwrap_or_else(|| panic!("{at}: cap at the screen's edge"));
+                        assert_eq!(b[(inner, y)].bg, cell.fg, "{at}: cap not joined to its button");
+                        if let Some(outer) = outer {
+                            assert_eq!(b[(outer, y)].bg, cell.bg, "{at}: button sticks out of its surface");
+                        }
+                    }
+                }
             }
         }
     }

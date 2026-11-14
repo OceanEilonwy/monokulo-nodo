@@ -8,6 +8,7 @@
     mk-pay restarts with the new settings. If it doesn't start, they're undone by themselves.
 
 
+
        Store name               Corner Café
 
        Currency                 EUR — euro                   ▾
@@ -29,7 +30,6 @@
                                   Another node… type its address
 
                                                                                      Cancel          Save    
-
 
 
 
