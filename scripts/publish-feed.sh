@@ -30,21 +30,30 @@ shift
 site=${FEED_SITE:-$root/out/site}
 mkdir -p "$site"
 site=$(cd "$site" && pwd)
-apps=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$root/feed/packages")
+# Another project's feed (such as Pingers', built from NODO_EXTRA_PACKAGES) sets these:
+#   FEED_PACKAGES     the package list, one name per line (default feed/packages); a subpackage is
+#                     listed beside its recipe and built with it
+#   FEED_SIGNER       the signer name in the index (default "monokulo-nodo feed")
+#   FEED_FINGERPRINT  the key fingerprint `check` requires (default: the one images pin)
+apps=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "${FEED_PACKAGES:-$root/feed/packages}")
 defaults=$root/packages/nodo-tools/files/default-feeds.toml
 # The image pins the feed to this fingerprint, so the feed must be signed with that key.
-fingerprint=$(sed -n 's/^fingerprint *= *"\([0-9a-fA-F:]*\)".*/\1/p' "$defaults" | head -n 1)
+fingerprint=${FEED_FINGERPRINT:-$(sed -n 's/^fingerprint *= *"\([0-9a-fA-F:]*\)".*/\1/p' "$defaults" | head -n 1)}
+case $fingerprint in *[!0-9a-fA-F:]* | '') echo "bad FEED_FINGERPRINT: $fingerprint" >&2; exit 2 ;; esac
 address=$(sed -n 's/^address *= *"\(.*\)".*/\1/p' "$defaults" | head -n 1)
 host=${address#https://}; host=${host%%/*}
-signer="monokulo-nodo feed"
+signer=${FEED_SIGNER:-monokulo-nodo feed}
+case $signer in *[!A-Za-z0-9\ ._-]* | '') echo "bad FEED_SIGNER: $signer" >&2; exit 2 ;; esac
 plain() { case $1 in *[!A-Za-z0-9._-]* | .* | -* | '') echo "bad $2: $1" >&2; exit 2 ;; esac; }
 archs() { if [ $# -gt 0 ]; then for a in "$@"; do plain "$a" architecture; done; echo "$@"; else echo aarch64; fi; }
 
 case $cmd in
 build)
+	recipes=
+	for app in $apps; do is_subpackage "$app" || recipes="$recipes $app"; done
 	for arch in $(archs "$@"); do
 		# shellcheck disable=SC2086 # one word per package
-		"$root/scripts/build-packages.sh" "$arch" $apps
+		"$root/scripts/build-packages.sh" "$arch" $recipes
 	done
 	;;
 sign)
@@ -91,7 +100,7 @@ check)
 site)
 	list=$(archs "$@")
 	esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
-	field() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$root/packages/$1/template" | head -n 1; }
+	field() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$(recipe_dir "$1")/template" | head -n 1; }
 	shown=$(printf '%s' "$fingerprint" | tr -d : | sed 's/../&:/g; s/:$//')
 	printf '%s\n' "$host" > "$site/CNAME"
 	# GitHub Pages answered a missing file inside a directory with HTTP 503 while the site had no

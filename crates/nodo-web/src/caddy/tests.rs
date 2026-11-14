@@ -12,6 +12,7 @@ fn service(name: &str, upstream: &str) -> WebService {
         suggested_subdomain: None,
         admin_paths: vec!["/admin".to_owned()],
         multi_address: true,
+        upstream_protocol: UpstreamProtocol::H1,
     }
 }
 
@@ -87,7 +88,7 @@ fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
                 Handler::RateLimit { .. } | Handler::Headers { .. } => {}
                 Handler::FileServer { root, .. } => return Outcome::File(root.clone()),
                 Handler::Subroute { routes } => return walk(routes, host, path, client),
-                Handler::ReverseProxy { upstreams } => return Outcome::Proxy(upstreams[0].dial.clone()),
+                Handler::ReverseProxy { upstreams, .. } => return Outcome::Proxy(upstreams[0].dial.clone()),
                 Handler::StaticResponse { abort: true, .. } => return Outcome::Dropped,
                 Handler::StaticResponse { status_code, .. } => return Outcome::Status(status_code.clone().unwrap()),
             }
@@ -107,6 +108,37 @@ fn onion_server_for<'a>(plan: &'a WebPlan, host: &str) -> &'a str {
 
 fn json(plan: &WebPlan) -> serde_json::Value {
     serde_json::to_value(&plan.caddy).unwrap()
+}
+
+#[test]
+fn an_h2c_upstream_gets_http2_prior_knowledge_and_immediate_flushing() {
+    let public = Exposure { public: true, ..Exposure::default() };
+    let mut relay = site("relay", "relay", 9473, public);
+    relay.service.upstream_protocol = UpstreamProtocol::H2c;
+    let shop = site("shop", "shop", 8080, public);
+    let value = json(&generate(&[relay.clone(), shop], &settings()).unwrap());
+    let routes = value["apps"]["http"]["servers"]["public"]["routes"].as_array().unwrap();
+    let proxy_for = |host: &str| {
+        let route = routes.iter().find(|r| r["match"][0]["host"][0] == host).unwrap();
+        let inner = route["handle"][0]["routes"].as_array().unwrap();
+        inner.last().unwrap()["handle"][0].clone()
+    };
+
+    let h2c = proxy_for("relay.example.com");
+    assert_eq!(h2c["handler"], "reverse_proxy");
+    assert_eq!(h2c["upstreams"][0]["dial"], "127.0.0.1:9473");
+    assert_eq!(h2c["transport"], serde_json::json!({"protocol": "http", "versions": ["h2c"]}));
+    assert_eq!(h2c["flush_interval"], -1);
+
+    // An HTTP/1.1 site is exactly as before: no transport, Caddy's default buffering.
+    let h1 = proxy_for("shop.example.com");
+    assert_eq!(h1["handler"], "reverse_proxy");
+    assert!(h1.get("transport").is_none() && h1.get("flush_interval").is_none(), "{h1}");
+
+    // A stopped h2c site answers like any other stopped site.
+    relay.state = ServiceState::Stopped;
+    let plan = generate(&[relay], &settings()).unwrap();
+    assert!(!serde_json::to_string(&plan.caddy).unwrap().contains("h2c"));
 }
 
 #[test]

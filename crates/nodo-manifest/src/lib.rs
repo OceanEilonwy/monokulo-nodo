@@ -240,6 +240,28 @@ pub struct WebService {
     /// False when the app is tied to a single base URL.
     #[serde(default)]
     pub multi_address: bool,
+    /// How the proxy speaks to the upstream. Most apps speak HTTP/1.1; an app that speaks only
+    /// HTTP/2 with prior knowledge (no TLS, no upgrade) declares `h2c`.
+    #[serde(default, skip_serializing_if = "UpstreamProtocol::is_default")]
+    pub upstream_protocol: UpstreamProtocol,
+}
+
+/// The HTTP version the proxy uses towards a web upstream.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpstreamProtocol {
+    /// HTTP/1.1, the default.
+    #[default]
+    H1,
+    /// HTTP/2 over cleartext with prior knowledge. The proxy also passes every chunk on as soon
+    /// as it arrives, in both directions, since apps that need HTTP/2 often stream.
+    H2c,
+}
+
+impl UpstreamProtocol {
+    fn is_default(&self) -> bool {
+        *self == UpstreamProtocol::H1
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -431,6 +453,7 @@ mod tests {
             suggested_subdomain: None,
             admin_paths: vec![],
             multi_address: false,
+            upstream_protocol: UpstreamProtocol::H1,
         }
     }
 
@@ -670,6 +693,26 @@ mod tests {
             m.web[0].admin_paths = vec![path.into()];
             assert_eq!(fields(&m), ["web[0].admin_paths[0]"], "admin path {path:?} should be rejected");
         }
+    }
+
+    #[test]
+    fn web_upstreams_speak_http1_unless_they_ask_for_h2c() {
+        let parse = |extra: &str| {
+            Manifest::parse(&format!(
+                "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n\
+                 [[web]]\nname = \"api\"\nupstream = \"127.0.0.1:8080\"\n{extra}"
+            ))
+        };
+        assert_eq!(parse("").unwrap().web[0].upstream_protocol, UpstreamProtocol::H1);
+        assert_eq!(parse("upstream_protocol = \"h1\"\n").unwrap().web[0].upstream_protocol, UpstreamProtocol::H1);
+        let h2c = parse("upstream_protocol = \"h2c\"\n").unwrap();
+        assert_eq!(h2c.web[0].upstream_protocol, UpstreamProtocol::H2c);
+        for bad in ["\"h2\"", "\"h3\"", "\"H2C\"", "true"] {
+            assert!(parse(&format!("upstream_protocol = {bad}\n")).is_err(), "{bad}");
+        }
+        // Stored manifests round-trip, and an h1 site serializes exactly as before this field.
+        assert_eq!(Manifest::parse(&toml::to_string(&h2c).unwrap()).unwrap(), h2c);
+        assert!(!toml::to_string(&parse("").unwrap()).unwrap().contains("upstream_protocol"));
     }
 
     #[test]
