@@ -1421,8 +1421,8 @@ component Chip inherits Rectangle {
     in property <int> state;
     in property <bool> selected;
     height: 56px;
-    min-width: row.preferred-width + 40px;
-    preferred-width: row.preferred-width + 40px;
+    min-width: row.preferred-width + 44px;
+    preferred-width: row.preferred-width + 44px;
     horizontal-stretch: 0;
     border-radius: 14px;
     background: state == 1 ? G.err-fill : selected ? #3A2C18 : #2A2116;
@@ -1430,11 +1430,12 @@ component Chip inherits Rectangle {
     border-color: state == 1 ? #A8574C : selected ? G.accent : #F2A33A66;
     row := HorizontalLayout {
         x: 14px;
+        width: self.preferred-width;
         spacing: 8px;
         Tx { text: app; font-family: G.mono; font-size: 21px; font-weight: 700; color: state == 1 ? G.err : G.accent; }
         Tx { text: "·"; font-size: 21px; color: G.faint; }
         Tx { text: setting; font-family: G.mono; font-size: 21px; color: state == 1 ? G.err : G.bright; }
-        if value != "": Tx { text: state == 1 ? "  " + value : "→ " + value; font-family: state == 1 ? "Inter" : G.mono; font-size: 20px; color: state == 1 ? G.err : G.dim; }
+        if value != "": Tx { text: state == 1 ? "  " + value : "→ " + value + " "; font-family: state == 1 ? "Inter" : G.mono; font-size: 20px; color: state == 1 ? G.err : G.dim; }
     }
 }
 
@@ -1554,7 +1555,6 @@ component RefPicker inherits Rectangle {
             }
             for r in secrets: PickRow { r: r; }
         }
-        Tx { text: "Get more apps that provide values ›"; font-size: 22px; color: G.accent; height: 44px; }
     }
 }
 
@@ -1567,7 +1567,7 @@ component RefFieldShell inherits VerticalLayout {
     spacing: 10px;
     Tx { text: label; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
     Rectangle {
-        height: 84px;
+        height: 80px;
         border-radius: 18px;
         background: G.field;
         border-width: focused || error ? 3px : 1px;
@@ -1577,7 +1577,7 @@ component RefFieldShell inherits VerticalLayout {
             padding-right: 12px;
             spacing: 6px;
             HorizontalLayout {
-                spacing: 6px;
+                spacing: 12px;
                 alignment: start;
                 horizontal-stretch: 1;
                 @children
@@ -1593,6 +1593,45 @@ component MonoT inherits Text {
     font-size: 24px;
     color: G.bright;
     vertical-alignment: center;
+}
+
+
+// A pencil (Material "edit", Apache 2.0): Type a value instead.
+component PencilIcon inherits Path {
+    in property <color> tint: G.accent;
+    width: 26px;
+    height: 26px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    fill: tint;
+    commands: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c0.39-0.39 0.39-1.02 0-1.41l-2.34-2.34c-0.39-0.39-1.02-0.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z";
+}
+
+// A long value (an address) in full: monospace, wrapping inside the field, which grows only for it.
+component GLongInput inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> error;
+    spacing: 10px;
+    Tx { text: label; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
+    Rectangle {
+        height: max(80px, longtext.preferred-height + 36px);
+        border-radius: 18px;
+        background: G.field;
+        border-width: error != "" ? 3px : 1px;
+        border-color: error != "" ? G.err : G.line;
+        longtext := Text {
+            x: 24px;
+            y: 18px;
+            width: parent.width - 48px;
+            text: value;
+            font-family: G.mono;
+            font-size: 24px;
+            color: G.bright;
+            wrap: char-wrap;
+        }
+    }
+    if error != "": Tx { text: "✕  " + error; font-size: 21px; color: G.err; height: 28px; }
 }
 
 // ------------------------------------------------------------------ the tile screen (everything is tiles)
@@ -2204,10 +2243,15 @@ export component DesignBoard2 inherits Window {
                     GInput { label: "Store name"; value: "Corner Cafe"; horizontal-stretch: 1; }
                     GCombo { label: "Currency"; value: "EUR"; sub: "Euro"; width: 520px; open: scene == "g-combo-open"; }
                 }
-                GInput { label: "Wallet address"; value: "48daf1rG3hEQb7…tUvb"; mono: true; error: "That isn't a Monero address. It starts with 4 or 8 and is 95 characters long."; }
+                GLongInput { label: "Wallet address"; value: "48daf1rG3hEQb7LmV6ycqT9QW8rXJw2Hk5RZ3UuNpY4oBfK8sDtE1gAcLvMxS6nJqP2zW9eRbT7yUkH3iGf5oVdtU"; error: "That isn't a Monero address: it has 94 characters, not 95."; }
                 HorizontalLayout {
                     spacing: 32px;
-                    RefField { label: "Monero node"; state: scene == "g-ref-open" ? 1 : scene == "g-ref-empty" ? 3 : 0; horizontal-stretch: 1; }
+                    if scene != "g-settings": RefField { label: "Monero node"; state: scene == "g-ref-open" ? 1 : scene == "g-ref-empty" ? 3 : 0; horizontal-stretch: 1; }
+                    if scene == "g-settings": RefFieldShell {
+                        label: "Monero node";
+                        horizontal-stretch: 1;
+                        VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_address"; value: "127.0.0.1:18081"; } }
+                    }
                     VerticalLayout {
                         spacing: 10px;
                         Tx { text: "Confirmations"; font-size: 22px; font-weight: 500; color: G.dim; height: 30px; }
@@ -2273,7 +2317,7 @@ export component DesignBoard2 inherits Window {
                 { t: "XMR", s: "Prices in Monero" }
             ];
         }
-        if scene == "g-settings": Note { text: "Save stays disabled while a field has an error. Monero node is a reference: it takes its value from another app."; }
+        if scene == "g-settings": Note { text: "Every field is the same height. Monero node holds a reference to cuprated's setting (see References). Save waits while a field has an error."; }
         if scene == "g-ref-open": Note { text: "Grouped: on this Nodo (recommended first, a stopped one greyed with why), not installed yet, or an address you type."; }
         if scene == "g-combo-open": Note { text: "A plain dropdown: a raised menu under its box (120 ms), the current choice ticked, the one under the finger lit."; }
         if scene == "g-ref-empty": Note { text: "Nothing on this Nodo offers it yet: get an app that does, or type a node's address."; }
@@ -2299,7 +2343,7 @@ export component DesignBoard2 inherits Window {
 
 
     // ---- generic references
-    if scene == "g-refs-field" || scene == "g-refs-invalid" || scene == "g-refs-save" || scene == "g-refs-picker" || scene == "g-refs-search" || scene == "g-refs-typed" || scene == "g-refs-grant": Rectangle {
+    if scene == "g-refs-field" || scene == "g-refs-invalid" || scene == "g-refs-invalid-popover" || scene == "g-refs-save" || scene == "g-refs-picker" || scene == "g-refs-search" || scene == "g-refs-typed" || scene == "g-refs-grant": Rectangle {
         GNav { tab: 1; lock: 1; }
         GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
         GCard {
@@ -2312,7 +2356,6 @@ export component DesignBoard2 inherits Window {
                 spacing: 18px;
                 RefFieldShell {
                     label: "Monero node address";
-                    help: "Text and references together. Each chip shows what it resolves to now.";
                     MonoT { text: "http://"; }
                     VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_host"; value: "127.0.0.1"; } }
                     MonoT { text: ":"; }
@@ -2323,35 +2366,33 @@ export component DesignBoard2 inherits Window {
                     spacing: 32px;
                     RefFieldShell {
                         label: "Payout address";
-                        help: "One reference: the address follows the wallet app.";
-                        horizontal-stretch: 1;
-                        VerticalLayout { alignment: center; Chip { app: "mk-wallet"; setting: "primary_address"; value: "48daf1r…tUvb"; } }
+                            horizontal-stretch: 1;
+                        VerticalLayout { alignment: center; Chip { app: "mk-wallet"; setting: "primary_address"; value: ""; } }
                     }
                     RefFieldShell {
                         label: "Confirmations";
                         width: 560px;
-                        help: "A plain value.";
-                        MonoT { text: "10"; }
+                            MonoT { text: "10"; }
                     }
                 }
                 RefFieldShell {
                     label: "Order webhook";
-                    error: true;
-                    help: "✕ old-shop was removed, so this reference has no value. Tap it to replace or remove it.";
-                    VerticalLayout { alignment: center; Chip { app: "old-shop"; setting: "webhook_url"; value: "app removed"; state: 1; selected: scene == "g-refs-invalid"; } }
+                    VerticalLayout { alignment: center; Chip { app: "old-shop"; setting: "webhook_url"; value: ""; state: 1; selected: scene == "g-refs-invalid" || scene == "g-refs-invalid-popover"; } }
                     MonoT { text: "/orders"; }
                 }
                 Rectangle { vertical-stretch: 1; }
                 HorizontalLayout {
                     spacing: 20px;
                     alignment: end;
+                    if scene == "g-refs-field" || scene == "g-refs-invalid" || scene == "g-refs-invalid-popover": Tx { text: "Fix 1 broken reference to save"; font-size: 22px; color: G.err; }
                     GButton { label: "Cancel"; kind: 1; w: 220px; }
-                    GButton { label: "Save"; w: 220px; state: scene == "g-refs-field" || scene == "g-refs-invalid" ? 3 : 0; }
+                    GButton { label: "Save"; w: 220px; state: scene == "g-refs-field" || scene == "g-refs-invalid" || scene == "g-refs-invalid-popover" ? 3 : 0; }
                 }
             }
         }
-        if scene == "g-refs-field": Note { text: "Any text, number or address setting can hold references. The { } button (or typing $( ) inserts one. Save waits while a reference is broken."; }
-        if scene == "g-refs-invalid": Rectangle {
+        if scene == "g-refs-field": Note { text: "Any text, number or address setting can hold references. The { } button (or typing $( ) inserts one. A broken one is just red: tap it to see why."; }
+        if scene == "g-refs-invalid": Note { text: "The broken chip under the finger: tapping it opens the popover (next board)."; }
+        if scene == "g-refs-invalid-popover": Rectangle {
             x: 104px;
             y: 826px;
             width: 1100px;
@@ -2373,7 +2414,7 @@ export component DesignBoard2 inherits Window {
                     spacing: 16px;
                     GButton { label: "Replace…"; w: 200px; }
                     GButton { label: "Remove"; kind: 1; w: 190px; }
-                    GButton { label: "Type a value instead"; kind: 3; w: 330px; }
+                    GButton { label: "Type a value instead"; icon: "✎"; kind: 3; w: 350px; }
                 }
             }
         }
@@ -2472,6 +2513,116 @@ export component DesignBoard2 inherits Window {
         }
         GKeyboard { }
         Note { text: "Typing $( suggests references as you type; Enter or a tap inserts the chip at the cursor."; }
+    }
+
+
+    // ---- a reference and a typed value: switching both ways, and changing your mind
+    if scene == "g-refs-seq1" || scene == "g-refs-seq2" || scene == "g-refs-seq3" || scene == "g-refs-seq4": Rectangle {
+        GNav { tab: 1; lock: 1; }
+        GHeader { crumbs: ["Apps", "mk-pay"]; title: "Settings"; }
+        GCard {
+            x: 64px;
+            y: 290px;
+            width: 1792px;
+            height: 740px;
+            VerticalLayout {
+                padding: 40px;
+                spacing: 18px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    height: 30px;
+                    alignment: start;
+                    Tx { text: "Monero node address"; font-size: 22px; font-weight: 500; color: G.dim; }
+                    if scene == "g-refs-seq3" || scene == "g-refs-seq4": Tx { text: "· changed"; font-size: 22px; font-weight: 600; color: G.accent; }
+                }
+                Rectangle {
+                    height: 80px;
+                    border-radius: 18px;
+                    background: G.field;
+                    border-width: scene == "g-refs-seq3" || scene == "g-refs-seq4" ? 3px : 1px;
+                    border-color: scene == "g-refs-seq3" || scene == "g-refs-seq4" ? G.accent : G.line;
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 10px;
+                            horizontal-stretch: 1;
+                            if scene == "g-refs-seq1" || scene == "g-refs-seq2": VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_address"; value: "127.0.0.1:18081"; selected: scene == "g-refs-seq2"; } }
+                            if scene == "g-refs-seq3": MonoT { text: "127.0.0.1:18081"; }
+                            if scene == "g-refs-seq3": VerticalLayout { alignment: center; Rectangle { width: 3px; height: 36px; background: G.accent; } }
+                            if scene == "g-refs-seq4": MonoT { text: "http://"; }
+                            if scene == "g-refs-seq4": VerticalLayout { alignment: center; Chip { app: "cuprated"; setting: "rpc_address"; value: "127.0.0.1:18081"; selected: true; } }
+                            if scene == "g-refs-seq4": MonoT { text: "/json_rpc"; }
+                        }
+                        VerticalLayout { alignment: center; InsertRef { } }
+                    }
+                }
+                if scene == "g-refs-seq3": HorizontalLayout {
+                    height: 40px;
+                    spacing: 10px;
+                    alignment: start;
+                    Sym { text: "↺"; color: G.accent; font-size: 26px; }
+                    Tx { text: "Use cuprated.rpc_address again"; font-size: 23px; font-weight: 600; color: G.accent; }
+                }
+                if scene == "g-refs-seq4": HorizontalLayout {
+                    height: 40px;
+                    spacing: 10px;
+                    alignment: start;
+                    Sym { text: "↺"; color: G.accent; font-size: 26px; }
+                    Tx { text: "Undo: back to 192.168.1.50:18081"; font-size: 23px; font-weight: 600; color: G.accent; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 20px;
+                    alignment: end;
+                    if scene == "g-refs-seq3" || scene == "g-refs-seq4": Tx { text: "Cancel discards every unsaved change"; font-size: 22px; color: G.dim; }
+                    GButton { label: "Cancel"; kind: 1; w: 220px; }
+                    GButton { label: "Save"; w: 220px; state: scene == "g-refs-seq3" || scene == "g-refs-seq4" ? 0 : 3; }
+                }
+            }
+        }
+        if scene == "g-refs-seq2": Rectangle {
+            x: 104px;
+            y: 500px;
+            width: 1000px;
+            height: 372px;
+            border-radius: 24px;
+            background: G.raised;
+            border-width: 1px;
+            border-color: #FFFFFF1E;
+            drop-shadow-blur: 48px;
+            drop-shadow-offset-y: 16px;
+            drop-shadow-color: #000000D0;
+            VerticalLayout {
+                padding: 28px;
+                spacing: 10px;
+                Tx { text: "cuprated · rpc_address"; font-family: G.mono; font-size: 26px; font-weight: 700; color: G.accent; }
+                Tx { text: "Where cuprated answers RPC. Now: 127.0.0.1:18081 (text, public)"; font-size: 22px; color: G.dim; }
+                Rectangle { vertical-stretch: 1; }
+                for a[i] in [{ l: "Replace…", k: 0 }, { l: "Type a value instead", k: 1 }, { l: "Remove", k: 2 }]: Rectangle {
+                    height: 64px;
+                    border-radius: 14px;
+                    background: i == 1 ? G.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        spacing: 16px;
+                        VerticalLayout {
+                            alignment: center;
+                            if a.k == 1: HorizontalLayout { width: 40px; alignment: center; PencilIcon { } }
+                            if a.k == 0: Sym { text: "{ }"; font-size: 22px; color: G.accent; width: 40px; }
+                            if a.k == 2: Sym { text: "✕"; font-size: 22px; color: G.dim; width: 40px; }
+                        }
+                        Tx { text: a.l; font-size: 25px; font-weight: 600; color: a.k == 2 ? G.fg : G.bright; }
+                    }
+                }
+            }
+        }
+        if scene == "g-refs-seq1": Note { text: "1 · A field holding a reference. Tap the chip for what it is and what you can do."; }
+        if scene == "g-refs-seq2": Note { text: "2 · The chip's popover: Replace…, Type a value instead (pencil), Remove. It shows the full current value."; }
+        if scene == "g-refs-seq3": Note { text: "3 · Typed instead: the chip became its value, editable, caret at the end. ↺ puts the reference back exactly; Cancel drops every unsaved edit."; }
+        if scene == "g-refs-seq4": Note { text: "4 · The reverse: a typed value, { } picks a reference that replaces the selection (or goes in at the caret), with the same undo."; }
     }
 
     // ---- Sources
