@@ -502,7 +502,7 @@ impl Scene {
             Scene::T2SettingsRolledBack => "Clickable: Edit again (primary), Keep as it is, \"Show log\".",
             Scene::T2RefsField => "Clickable: each chip (opens Replace, Remove, Type a value instead), + reference on each field, Save (disabled while a reference is broken), Cancel.",
             Scene::T2RefsAuto => "Clickable: each suggestion (inserts the chip), All references….",
-            Scene::T2RefsPicker => "Clickable: the search box, each setting row (inserts it), the secret row (opens the grant), Get more apps, Close.",
+            Scene::T2RefsPicker => "Clickable: the search box, each setting row (inserts it), the secret row (opens the grant), Close.",
             Scene::T2RefsSearch => "Clickable: the search box, each result.",
             Scene::T2RefsTyped => "Clickable: each compatible row; dimmed rows say why they can't be used.",
             Scene::T2RefsGrant => "Clickable: Grant (primary), Cancel.",
