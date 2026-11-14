@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings
+
+
+       Save moneropay's settings?
+
+       These references change what moneropay can reach:
+       •  moneropay will be able to reach cuprated (port 18081/tcp).
+       •  cuprated becomes a dependency: it can't be removed while
+       moneropay uses it.
+       •  moneropay follows cuprated's rpc_host when it changes.
+       •  moneropay follows cuprated's rpc_port when it changes.
+
+                                             Cancel          Save    
+
+
+
+
+
+
+    Keys: ↵ save  Esc back to the form

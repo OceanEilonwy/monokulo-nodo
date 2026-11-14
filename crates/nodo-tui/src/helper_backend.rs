@@ -60,37 +60,9 @@ fn state_label(state: ServiceState) -> &'static str {
     }
 }
 
-fn reference_path(text: &str) -> Option<&str> {
-    text.strip_prefix("$(")?.strip_suffix(')')
-}
-
-/// Whether a setting of kind `target` can refer to one of kind `source`, as nodo-settings resolves
-/// it: an exact reference keeps its type, and anything but a secret widens into text.
-fn reference_fits(target: &SettingKind, source: &SettingKind) -> bool {
-    match (target, source) {
-        (_, SettingKind::Secret) => false,
-        (SettingKind::Text, _) => true,
-        (SettingKind::Int { .. }, SettingKind::Int { .. }) => true,
-        _ => std::mem::discriminant(target) == std::mem::discriminant(source),
-    }
-}
-
-/// What the picker says a field expects.
-fn expects(kind: &SettingKind) -> &'static str {
+/// The TUI's kind for the helper's.
+pub fn kind_of(kind: SettingKind) -> FieldKind {
     match kind {
-        SettingKind::Text => "any text",
-        SettingKind::Int { .. } => "a number",
-        SettingKind::Bool => "on or off",
-        SettingKind::Choice(_) => "one of its choices",
-        SettingKind::MoneroAddress => "a Monero address",
-        SettingKind::Url => "a URL",
-        SettingKind::Secret => "a secret",
-    }
-}
-
-/// Maps the helper's form field to the TUI's. Secrets only ever arrive as set or unset.
-pub fn field(f: SettingField) -> Field {
-    let kind = match f.kind {
         SettingKind::Text => FieldKind::Text,
         SettingKind::Int { min, max } => FieldKind::Number { min, max },
         SettingKind::Bool => FieldKind::Toggle,
@@ -98,7 +70,99 @@ pub fn field(f: SettingField) -> Field {
         SettingKind::MoneroAddress => FieldKind::MoneroAddress,
         SettingKind::Url => FieldKind::Url,
         SettingKind::Secret => FieldKind::Secret,
-    };
+    }
+}
+
+/// The helper's pieces as the TUI's.
+pub fn pieces_of(parts: Vec<nodo_api::TemplatePart>) -> Vec<Piece> {
+    parts
+        .into_iter()
+        .map(|part| match part {
+            nodo_api::TemplatePart::Text(text) => Piece::Text(text),
+            nodo_api::TemplatePart::Reference { target, setting } => Piece::Ref { app: target, setting },
+        })
+        .collect()
+}
+
+/// Pieces parsed from a default the helper reports as the package's own text, where the
+/// reference syntax applies: `$(app.setting)` is a reference and `$$(` a literal `$(`.
+fn default_pieces(text: &str) -> Vec<Piece> {
+    let mut pieces = Vec::new();
+    let mut literal = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("$(") {
+        if rest[..at].ends_with('$') {
+            literal.push_str(&rest[..at - 1]);
+            literal.push_str("$(");
+            rest = &rest[at + 2..];
+            continue;
+        }
+        let Some(close) = rest[at..].find(')') else { break };
+        let inner = &rest[at + 2..at + close];
+        match inner.split_once('.') {
+            Some((app, setting)) if !app.is_empty() && !setting.is_empty() => {
+                literal.push_str(&rest[..at]);
+                pieces.push(Piece::Text(std::mem::take(&mut literal)));
+                pieces.push(Piece::Ref { app: app.to_owned(), setting: setting.to_owned() });
+            }
+            _ => literal.push_str(&rest[..at + close + 1]),
+        }
+        rest = &rest[at + close + 1..];
+    }
+    literal.push_str(rest);
+    pieces.push(Piece::Text(literal));
+    tidy(pieces)
+}
+
+/// The helper's reference list as the TUI's.
+pub fn reference_list(options: Vec<nodo_api::ReferenceOption>) -> ReferenceList {
+    ReferenceList {
+        options: options
+            .into_iter()
+            .map(|o| {
+                let (value, locked) = match o.access {
+                    nodo_api::ReferenceAccess::Public { value } => (value, None),
+                    nodo_api::ReferenceAccess::NeedsGrant { secret, granted } => (None, Some(Locked { secret, granted })),
+                };
+                ReferenceOption { app: o.package, setting: o.reference, label: o.label, help: o.help, kind: kind_of(o.kind), value, locked }
+            })
+            .collect(),
+    }
+}
+
+/// The helper's preview as the TUI's, with each broken reference's reason in words.
+pub fn field_preview(for_value: &FieldValue, p: nodo_api::SettingPreview) -> FieldPreview {
+    FieldPreview {
+        for_value: Some(for_value.clone()),
+        resolved: p.resolved,
+        problem: p.problem,
+        chips: p
+            .references
+            .into_iter()
+            .map(|check| match check.status {
+                nodo_api::ReferenceStatus::Ok { value, .. } => Ok(value),
+                nodo_api::ReferenceStatus::NotInstalled => Err(format!("{} isn't installed.", check.target)),
+                nodo_api::ReferenceStatus::NoSuchSetting { provider } => {
+                    Err(format!("{provider} has no setting called {}.", check.setting))
+                }
+                nodo_api::ReferenceStatus::NeedsGrant { provider, setting, secret } => Err(format!(
+                    "{provider}.{setting} is {}: it needs your approval first.",
+                    if secret { "a secret" } else { "not public" }
+                )),
+                nodo_api::ReferenceStatus::TypeMismatch { expected, found } => {
+                    Err(format!("It holds {found}, and this setting takes {expected}."))
+                }
+                nodo_api::ReferenceStatus::Problem(problem) => Err(problem),
+            })
+            .collect(),
+        new_dependencies: p.new_dependencies,
+        new_access: p.new_access.into_iter().map(|a| (a.provider, a.what)).collect(),
+    }
+}
+
+/// Maps the helper's form field to the TUI's. Secrets only ever arrive as set or unset.
+pub fn field(f: SettingField) -> Field {
+    let kind = kind_of(f.kind);
     let toggle = kind == FieldKind::Toggle;
     let value = match f.current {
         SettingCurrent::SecretSet => FieldValue::SecretSet,
@@ -107,26 +171,11 @@ pub fn field(f: SettingField) -> Field {
         SettingCurrent::Literal(SettingLiteral::Int(n)) => FieldValue::Text(n.to_string()),
         SettingCurrent::Literal(SettingLiteral::Text(text)) if toggle => FieldValue::Bool(text == "true"),
         SettingCurrent::Literal(SettingLiteral::Text(text)) => FieldValue::Text(text),
-        SettingCurrent::Reference { target, setting, resolved } => FieldValue::Reference {
-            path: format!("{target}.{setting}"),
-            resolved: resolved.unwrap_or_else(|| "does not resolve".to_owned()),
-        },
-        // Mixed text and references: shown as text until the editor learns pieces.
-        SettingCurrent::Template { parts, .. } => FieldValue::Text(
-            parts
-                .into_iter()
-                .map(|p| match p {
-                    nodo_api::TemplatePart::Text(t) => t,
-                    nodo_api::TemplatePart::Reference { target, setting } => format!("$({target}.{setting})"),
-                })
-                .collect(),
-        ),
+        SettingCurrent::Reference { target, setting, .. } => FieldValue::reference(&target, &setting),
+        SettingCurrent::Template { parts, .. } => FieldValue::from_pieces(pieces_of(parts)),
         SettingCurrent::Default => match f.default.as_deref() {
-            Some(text) => match reference_path(text) {
-                Some(path) => FieldValue::Reference { path: path.to_owned(), resolved: String::new() },
-                None if toggle => FieldValue::Bool(text == "true"),
-                None => FieldValue::Text(text.to_owned()),
-            },
+            Some(text) if toggle => FieldValue::Bool(text == "true"),
+            Some(text) => FieldValue::from_pieces(default_pieces(text)),
             None if kind == FieldKind::Secret => FieldValue::SecretUnset,
             None if toggle => FieldValue::Bool(false),
             None => FieldValue::Text(String::new()),
@@ -490,51 +539,6 @@ impl ScreenData for HelperBackend {
             fields: form.fields.into_iter().map(field).collect(),
             public_settings,
         })
-    }
-
-    /// Public settings of every other package with settings, by package id and by each role it
-    /// provides, that fit the field being set. Secrets are never public, so none appear.
-    fn references(&self, package: &str, field_key: &str) -> ReferenceList {
-        let target = match self.ask(Request::SettingsForm { package: package.to_owned() }) {
-            Ok(Response::SettingsForm(form)) => form.fields.into_iter().find(|f| f.name == field_key).map(|f| f.kind),
-            _ => None,
-        };
-        let mut options = Vec::new();
-        let mut hidden_wrong_type = 0;
-        for p in self.packages().into_iter().filter(|p| p.has_settings && p.id != package) {
-            let Ok(Response::SettingsForm(form)) = self.ask(Request::SettingsForm { package: p.id.clone() }) else {
-                continue;
-            };
-            for f in form.fields {
-                let Some(public) = f.public_name.clone() else { continue };
-                if target.as_ref().is_some_and(|target| !reference_fits(target, &f.kind)) {
-                    hidden_wrong_type += 1;
-                    continue;
-                }
-                let value = match &field(f).value {
-                    FieldValue::Text(text) => text.clone(),
-                    FieldValue::Bool(b) => b.to_string(),
-                    FieldValue::Reference { resolved, .. } => resolved.clone(),
-                    _ => String::new(),
-                };
-                for role in &p.roles {
-                    options.push(ReferenceOption {
-                        path: format!("{role}.{public}"),
-                        value: value.clone(),
-                        role_note: Some((role.clone(), p.id.clone())),
-                        consequences: vec![format!("{package} will depend on whichever package provides {role}.")],
-                    });
-                }
-                options.push(ReferenceOption {
-                    path: format!("{}.{public}", p.id),
-                    value,
-                    role_note: None,
-                    consequences: vec![format!("{package} will depend on {}.", p.id)],
-                });
-            }
-        }
-        let expects = target.as_ref().map_or_else(String::new, |kind| expects(kind).to_owned());
-        ReferenceList { expects, options, hidden_wrong_type, hidden_secrets: 0 }
     }
 
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
@@ -1107,16 +1111,18 @@ mod tests {
     }
 
     #[test]
-    fn references_offered_are_those_the_settings_resolver_accepts() {
-        let int = || SettingKind::Int { min: None, max: None };
-        assert!(reference_fits(&SettingKind::Url, &SettingKind::Url));
-        assert!(!reference_fits(&SettingKind::Url, &SettingKind::Text), "text does not narrow into a URL");
-        assert!(reference_fits(&int(), &SettingKind::Int { min: Some(1), max: Some(65535) }));
-        assert!(!reference_fits(&int(), &SettingKind::Url));
-        assert!(reference_fits(&SettingKind::Text, &int()), "anything widens into text");
-        assert!(reference_fits(&SettingKind::Text, &SettingKind::Url));
-        assert!(!reference_fits(&SettingKind::Text, &SettingKind::Secret));
-        assert!(reference_fits(&SettingKind::MoneroAddress, &SettingKind::MoneroAddress));
+    fn defaults_with_references_become_pieces() {
+        assert_eq!(default_pieces("$(a.b)"), vec![Piece::Ref { app: "a".into(), setting: "b".into() }]);
+        assert_eq!(
+            default_pieces("http://$(cuprated.rpc-host):1/x"),
+            vec![
+                Piece::Text("http://".into()),
+                Piece::Ref { app: "cuprated".into(), setting: "rpc-host".into() },
+                Piece::Text(":1/x".into()),
+            ]
+        );
+        assert_eq!(default_pieces("cost $$(5)"), vec![Piece::Text("cost $(5)".into())]);
+        assert_eq!(default_pieces("$(broken"), vec![Piece::Text("$(broken".into())]);
     }
 
     #[test]
@@ -1154,7 +1160,7 @@ mod tests {
         let f = field(form_field(SettingKind::Bool, SettingCurrent::Default, Some("true")));
         assert_eq!(f.value, FieldValue::Bool(true));
         let f = field(form_field(SettingKind::Int { min: Some(1), max: None }, SettingCurrent::Default, Some("$(a.b)")));
-        assert_eq!(f.value, FieldValue::Reference { path: "a.b".into(), resolved: String::new() });
+        assert_eq!(f.value, FieldValue::reference("a", "b"));
         assert_eq!(f.requirement, "Default $(a.b)");
         let f = field(form_field(
             SettingKind::Text,

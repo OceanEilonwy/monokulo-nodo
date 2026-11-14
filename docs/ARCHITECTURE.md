@@ -216,6 +216,19 @@ codebase, and signed xbps packages from user-added feeds.
   Powerline caps) where `[tui] rounded_buttons` in `~/.config/nodo/tui.toml` or `/etc/nodo/tui.toml`
   says `"on"`, or with `"auto"` (the default) in kitty, WezTerm and Ghostty, which bundle the symbols;
   elsewhere they are flat with plain ends.
+- **References in the TUI:** App › Settings fields that take text, a number, a URL or an address hold
+  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-tui/src/refs.rs`):
+  a chip is one cursor step and is only ever made by the picker or a suggestion, so typed `$(` stays text.
+  Typing `$(` suggests fitting references at the cursor; Ctrl+R, F4 or a field's "+ reference" link opens
+  the one picker, which searches every other app's settings (`ListReferences`) by app, name,
+  description and value, lists those that fit the field first, dims the rest with why, and puts
+  secrets and non-public settings last, locked, with Grant… (`SetGrant`, after a confirmation that
+  never shows the value). Each change is previewed (`PreviewSetting`): a chip that does not resolve is
+  drawn in the error colour, Enter on the field opens its menu with the reason and Replace…, Type a
+  value instead and Remove, and Save is refused with "Fix N broken references to save". Replacing or
+  removing leaves a "↺ …" link that puts the value back while the field still holds it, and Save asks
+  first when the changed references open access or add a dependency, listing them in plain words.
+  Secret settings do not take references in the TUI.
 - **Node onion address:** The node is not a site, so it has its own switch (`SetNodeOnion`, the TUI's
   Web › Onion screen). Tor forwards the onion address straight to the node's restricted RPC on
   loopback, never to a full RPC: to the port the node exports as its public `restricted-rpc-port`

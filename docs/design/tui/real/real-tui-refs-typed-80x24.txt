@@ -1,0 +1,24 @@
+
+    Home     Apps 2     Web     System 1
+
+
+    Apps  ›  moneropay  ›  Settings  ›  Insert a reference
+
+
+       Insert a reference   into moneropay · API port (number)
+
+       Search    ▏
+
+       Numbers first; the others are dimmed because a number field can't
+       hold them.
+
+       CUPRATED
+         cuprated.rpc_port      number   18081
+           RPC port
+
+       WALLET-RPC
+         wallet-rpc.port        number   34512
+           Port the wallet answers on
+         cuprated.rpc_url       url      http://127.0.0.1:18081
+       ↓ 12 more — scroll or make the window taller
+    Keys: type to search  ↓ list  ↵ insert  Esc close

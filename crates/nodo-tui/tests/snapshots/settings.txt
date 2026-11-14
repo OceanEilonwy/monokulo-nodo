@@ -9,24 +9,24 @@
 
 
 
-         Daemon RPC                                 monero-daemon · http://127.0.0.1:18081 ▾
-         Picked from your apps, so it follows
-         daemon rpc if it changes.
+         Daemon RPC                                             cuprated·rpc_url
+                                                                                  + reference
 
          API port                                                            5000       −   +
-         Port for the local payment API.
+         Port for the local payment API.                                          + reference
 
          Log level                                            info                         ▾
          How much the service writes to its log.
 
        ▸ Payment address                                      48edfHu7V9Z84Y
-         ✕ Address is too short. A Monero address has 95                   ▾ Pick from an app
+         ✕ Address is too short. A Monero address has 95                          + reference
          characters.
 
          Webhook secret                              ••••••••••••                      Change
          Signs the webhooks this package sends.
 
-       ↓ 3 more — scroll or make the window taller
+         Allow LAN access                                                             [x] On
+       ↓ 2 more — scroll or make the window taller
                                                                   Cancel            Save
 
-    Keys: ↑↓ choose  ↵ edit  F4 pick from an app  ctrl-s save  z undo  Esc back
+    Keys: ↑↓ choose  ↵ edit  Ctrl+R reference  ctrl-s save  z undo  Esc back

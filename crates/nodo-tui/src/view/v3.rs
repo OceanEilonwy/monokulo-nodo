@@ -179,6 +179,15 @@ impl Card {
         self.blank(t);
     }
 
+    /// A right-aligned note right above the card's buttons, such as why Save can't be used yet.
+    /// Fitting a short terminal keeps it with the buttons.
+    pub fn note_then_buttons(&mut self, t: &Theme, note: Vec<Span<'static>>, list: &[(&str, bool, Click)], targets: &mut Vec<Target>) {
+        let at = self.rows.len();
+        self.row_end(t, Vec::new(), note);
+        self.buttons(t, list, targets);
+        self.buttons_at = Some(at);
+    }
+
     /// One button at a given indent inside the card, for a button that belongs to a part of the
     /// card rather than to the whole of it.
     pub fn inline_button(&mut self, t: &Theme, label: &str, indent: usize, click: Click, targets: &mut Vec<Target>) {

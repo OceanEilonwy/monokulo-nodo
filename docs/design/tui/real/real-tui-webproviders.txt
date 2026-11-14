@@ -1,6 +1,7 @@
 
     Home     Apps 2     Web     System 1                                                               monokulo-nodo
 
+
     Web  ›  Domain providers  ›  Add
 
     Where did you buy your web address?
@@ -20,7 +21,6 @@
 
 
     Somewhere else? It can't be connected yet, but Tor works without a web address.
-
 
 
 

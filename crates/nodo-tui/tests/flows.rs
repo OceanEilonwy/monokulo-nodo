@@ -792,11 +792,14 @@ fn secrets_cannot_be_given_a_reference() {
 }
 
 #[test]
-fn the_reference_picker_never_lists_a_secret() {
+fn the_reference_picker_lists_secrets_locked_and_never_their_value() {
     let (app, _) = fixture(ScreenId::Reference);
     let Screen::Reference(state) = &app.screen else { panic!("expected reference") };
-    assert_eq!(state.list.hidden_secrets, 2);
-    assert!(state.list.options.iter().all(|option| !option.path.contains("secret")));
+    let secret = state.list.options.iter().find(|o| o.setting == "rpc_password").expect("listed");
+    assert!(secret.locked.is_some_and(|l| l.secret && !l.granted));
+    assert_eq!(secret.value, None);
+    let screen = screen_text(&app);
+    assert!(screen.contains("SECRETS · NOT PUBLIC") && screen.contains("Grant…"), "{screen}");
 }
 
 // Unlock
@@ -995,84 +998,197 @@ fn leaving_unsaved_settings_asks_first() {
     assert_eq!(app.screen.id(), ScreenId::Main);
 }
 
+/// Saves, confirming what the references allow when the form asks.
+fn save_and_confirm(app: &mut App, mock: &mut MockBackend) {
+    dispatch(app, mock, ctrl('s'));
+    if matches!(&app.screen, Screen::Settings(state) if state.confirm.is_some()) {
+        key(app, mock, ENTER);
+    }
+}
+
 #[test]
-fn using_a_reference_writes_a_reference_and_shows_what_it_resolves_to() {
+fn using_a_reference_writes_a_reference_and_confirms_what_it_allows() {
     let (mut app, mut mock) = settings_app();
     key(&mut app, &mut mock, KeyCode::Char('$'));
     assert_eq!(app.screen.id(), ScreenId::Reference);
-    type_text(&mut app, &mut mock, "restricted");
+    type_text(&mut app, &mut mock, "rpc_url");
     key(&mut app, &mut mock, ENTER);
     let screen = screen_text(&app);
-    assert!(screen.contains("monero-daemon · http://127.0.0.1:18089"), "{screen}");
-    assert!(screen.contains("Picked from your apps"), "{screen}");
+    assert!(screen.contains("cuprated·rpc_url"), "{screen}");
     dispatch(&mut app, &mut mock, ctrl('s'));
-    assert!(mock.calls.iter().any(|call| sent_values(call)
-        .contains(&("daemon_rpc".to_owned(), "$(monero-daemon.restricted_rpc_url)".to_owned()))));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Save moneropay's settings?"), "{screen}");
+    assert!(screen.contains("moneropay will be able to reach cuprated (port 18081/tcp)."), "{screen}");
+    assert!(screen.contains("cuprated becomes a dependency"), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    assert!(mock.calls.iter().any(|call| sent_values(call).contains(&("daemon_rpc".to_owned(), "$(cuprated.rpc_url)".to_owned()))));
 }
 
 #[test]
-fn the_reference_picker_can_fall_back_to_typing_a_value() {
+fn esc_from_the_picker_goes_back_to_what_was_being_typed() {
     let (mut app, mut mock) = settings_app();
-    key(&mut app, &mut mock, KeyCode::Char('$'));
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "/x");
+    dispatch(&mut app, &mut mock, ctrl('r'));
     type_text(&mut app, &mut mock, "t");
     let Screen::Reference(state) = &app.screen else { panic!("expected reference") };
     assert_eq!(state.query.text(), "t", "t types while the search has focus");
-    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('t')]);
+    key(&mut app, &mut mock, ESC);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
-    assert!(state.editing.is_some());
+    let editor = state.editor.as_ref().expect("still typing");
+    assert_eq!(editor.pieces(), vec![Piece::Text("http://127.0.0.1:18081/x".into())]);
 }
 
 #[test]
-fn the_pick_link_beside_a_field_opens_the_picker_with_the_search_focused() {
+fn the_reference_link_on_a_field_opens_the_picker_with_the_search_focused() {
     let (mut app, mut mock) = settings_app();
-    assert!(screen_text(&app).contains("F4 pick from an app"));
-    click(&mut app, &mut mock, "Pick from an app");
+    assert!(screen_text(&app).contains("+ reference"));
+    click(&mut app, &mut mock, "+ reference");
     let Screen::Reference(state) = &app.screen else { panic!("the link opens the picker") };
     assert!(!state.list_focused, "typing filters straight away");
-    type_text(&mut app, &mut mock, "18089");
+    type_text(&mut app, &mut mock, "34512");
     let Screen::Reference(state) = &app.screen else { panic!("expected reference") };
-    assert_eq!(state.visible().len(), 1, "the search matches values too");
+    assert_eq!(state.visible().iter().filter(|(_, fit)| fit.is_ok()).count(), 1, "the search matches values too");
+    key(&mut app, &mut mock, ENTER);
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert_eq!(state.draft[0], FieldValue::reference("wallet-rpc", "url"));
+    assert!(screen_text(&app).contains("↺ Undo: back to http://127.0.0.1:18081"));
+    key(&mut app, &mut mock, KeyCode::Char('u'));
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert_eq!(state.draft[0], FieldValue::Text("http://127.0.0.1:18081".into()));
+}
+
+#[test]
+fn typing_dollar_paren_suggests_references_and_mixes_them_with_text() {
+    let (mut app, mut mock) = settings_app();
+    key(&mut app, &mut mock, ENTER);
+    dispatch(&mut app, &mut mock, ctrl('u'));
+    type_text(&mut app, &mut mock, "http://$(cu");
+    let screen = screen_text(&app);
+    assert!(screen.contains("Typing $( suggests references at the cursor."), "{screen}");
+    assert!(screen.contains("cuprated.rpc_host") && screen.contains("All references…"), "{screen}");
+    // rpc_url is first for an address field; the host is text, which mixes into an address.
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    type_text(&mut app, &mut mock, ":");
+    keys(&mut app, &mut mock, &[KeyCode::F(4)]);
+    type_text(&mut app, &mut mock, "rpc_port");
+    keys(&mut app, &mut mock, &[ENTER]);
+    type_text(&mut app, &mut mock, "/json_rpc");
     key(&mut app, &mut mock, ENTER);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
     assert_eq!(
         state.draft[0],
-        FieldValue::Reference { path: "monero-daemon.restricted_rpc_url".to_owned(), resolved: "http://127.0.0.1:18089".to_owned() }
+        FieldValue::Pieces(vec![
+            Piece::Text("http://".into()),
+            Piece::Ref { app: "cuprated".into(), setting: "rpc_host".into() },
+            Piece::Text(":".into()),
+            Piece::Ref { app: "cuprated".into(), setting: "rpc_port".into() },
+            Piece::Text("/json_rpc".into()),
+        ])
     );
+    assert!(screen_text(&app).contains("Now: http://127.0.0.1:18081/json_rpc"));
+    save_and_confirm(&mut app, &mut mock);
+    assert!(mock.calls.iter().any(|call| sent_values(call).contains(&(
+        "daemon_rpc".to_owned(),
+        "http://$(cuprated.rpc_host):$(cuprated.rpc_port)/json_rpc".to_owned()
+    ))));
 }
 
 #[test]
-fn f4_opens_the_picker_while_typing_and_a_pick_ends_the_typing() {
+fn a_broken_reference_is_red_explained_on_enter_and_blocks_saving() {
     let (mut app, mut mock) = settings_app();
+    if let Screen::Settings(state) = &mut app.screen {
+        state.draft[0] = FieldValue::Pieces(vec![
+            Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
+            Piece::Text("/orders".into()),
+        ]);
+    }
+    key(&mut app, &mut mock, KeyCode::Char('z'));
+    if let Screen::Settings(state) = &mut app.screen {
+        state.draft[0] = FieldValue::Pieces(vec![
+            Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
+            Piece::Text("/orders".into()),
+        ]);
+    }
+    let effects = {
+        let Screen::Settings(state) = &app.screen else { panic!() };
+        vec![Effect::PreviewSetting { package: "moneropay".into(), field_index: 0, key: "daemon_rpc".into(), value: state.draft[0].clone() }]
+    };
+    for effect in effects {
+        for event in nodo_tui::runtime::execute_effect(&mut mock, effect) {
+            dispatch(&mut app, &mut mock, event);
+        }
+    }
+    let screen = screen_text(&app);
+    assert!(screen.contains("old-shop·webhook_url"), "{screen}");
+    assert!(screen.contains("Fix 1 broken reference to save"), "{screen}");
+    assert!(!screen.contains("isn't installed"), "the reason is not inline: {screen}");
+    dispatch(&mut app, &mut mock, ctrl('s'));
+    assert!(!mock.calls.iter().any(|call| matches!(call, Request::ApplySettings { .. })));
     key(&mut app, &mut mock, ENTER);
-    type_text(&mut app, &mut mock, "$");
+    let screen = screen_text(&app);
+    assert!(screen.contains("old-shop isn't installed."), "{screen}");
+    assert!(screen.contains("Type a value instead"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('x'));
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
-    assert!(state.editing.as_ref().is_some_and(|input| input.text().ends_with('$')), "$ types while editing");
-    assert!(screen_text(&app).contains("F4 pick from an app"));
-    key(&mut app, &mut mock, KeyCode::F(4));
-    assert_eq!(app.screen.id(), ScreenId::Reference);
-    key(&mut app, &mut mock, ESC);
-    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
-    assert!(state.editing.is_some(), "Esc goes back to what was being typed");
+    assert_eq!(state.draft[0], FieldValue::Text("/orders".into()));
+    assert!(screen_text(&app).contains("↺ Put old-shop.webhook_url back"));
+}
 
-    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL)));
-    assert_eq!(app.screen.id(), ScreenId::Reference, "Ctrl-. does the same where the terminal reports it");
-    type_text(&mut app, &mut mock, "wallet");
+#[test]
+fn type_a_value_instead_turns_a_chip_into_its_value_with_a_way_back() {
+    let (mut app, mut mock) = settings_app();
+    key(&mut app, &mut mock, KeyCode::Char('$'));
+    type_text(&mut app, &mut mock, "rpc_url");
     key(&mut app, &mut mock, ENTER);
+    keys(&mut app, &mut mock, &[KeyCode::Char('c'), KeyCode::Char('t')]);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
-    assert!(state.editing.is_none());
-    assert!(matches!(&state.draft[0], FieldValue::Reference { path, .. } if path == "wallet-rpc.url"));
+    assert!(state.editor.is_some(), "ready to edit");
+    assert_eq!(state.draft[0], FieldValue::Text("http://127.0.0.1:18081".into()));
+    assert!(screen_text(&app).contains("↺ Use cuprated.rpc_url again"));
+    key(&mut app, &mut mock, ENTER);
+    key(&mut app, &mut mock, KeyCode::Char('u'));
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert_eq!(state.draft[0], FieldValue::reference("cuprated", "rpc_url"));
+}
+
+#[test]
+fn a_locked_setting_asks_for_approval_before_it_can_be_used() {
+    let (mut app, mut mock) = settings_app();
+    if let Some(option) = mock.references.iter_mut().find(|o| o.reference == "rpc_password") {
+        option.kind = nodo_api::SettingKind::Url;
+        option.access = nodo_api::ReferenceAccess::NeedsGrant { secret: false, granted: false };
+        option.reference = "admin_url".into();
+        option.label = "Admin address".into();
+    }
+    if let Screen::Settings(state) = &mut app.screen {
+        state.catalog = None;
+    }
+    focus_field(&mut app, 0);
+    dispatch(&mut app, &mut mock, ctrl('r'));
+    type_text(&mut app, &mut mock, "admin_url");
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Let moneropay use cuprated's admin address?"), "{screen}");
+    key(&mut app, &mut mock, ENTER);
+    assert!(mock.calls.iter().any(|call| matches!(call, Request::SetGrant { approved: true, .. })));
+    let Screen::Settings(state) = &app.screen else { panic!("back to the form") };
+    assert_eq!(state.draft[0], FieldValue::reference("cuprated", "admin_url"));
 }
 
 #[test]
 fn a_port_field_can_take_a_number_from_another_app() {
     let (mut app, mut mock) = settings_app();
     focus_field(&mut app, API_PORT);
-    click(&mut app, &mut mock, "Pick from an app");
+    key(&mut app, &mut mock, KeyCode::F(4));
     let Screen::Reference(state) = &app.screen else { panic!("a port offers the picker") };
-    assert_eq!(state.list.expects, "a number");
+    assert_eq!(state.field_kind, FieldKind::Port);
+    let (first, fit) = &state.visible()[0];
+    assert!(fit.is_ok() && first.setting == "rpc_port", "numbers first");
+    assert!(screen_text(&app).contains("Numbers first"));
     key(&mut app, &mut mock, ENTER);
-    dispatch(&mut app, &mut mock, ctrl('s'));
-    assert!(mock.calls.iter().any(|call| sent_values(call).contains(&("api_port".to_owned(), "$(wallet-rpc.port)".to_owned()))));
+    save_and_confirm(&mut app, &mut mock);
+    assert!(mock.calls.iter().any(|call| sent_values(call).contains(&("api_port".to_owned(), "$(cuprated.rpc_port)".to_owned()))));
 }
 
 #[test]
@@ -1080,7 +1196,6 @@ fn toggles_choices_and_secrets_offer_no_picker() {
     let (mut app, mut mock) = settings_app();
     for index in [2, WEBHOOK, 5] {
         focus_field(&mut app, index);
-        assert!(!screen_text(&app).contains("Pick from an app"));
         key(&mut app, &mut mock, KeyCode::F(4));
         assert_eq!(app.screen.id(), ScreenId::Settings);
     }
