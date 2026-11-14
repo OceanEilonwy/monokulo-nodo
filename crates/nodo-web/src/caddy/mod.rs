@@ -37,7 +37,7 @@ use crate::local::{LocalAddress, LocalUnavailable};
 use crate::names::{self, quoted};
 use crate::secret::Secret;
 use nodo_api::{Exposure, ServiceState};
-use nodo_manifest::WebService;
+use nodo_manifest::{UpstreamProtocol, WebService};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::{IpAddr, Ipv4Addr};
@@ -1093,13 +1093,28 @@ fn site_handlers(item: &Resolved<'_>, hide_admin: bool, limit: Option<RateLimit>
         });
     }
     let last = match item.site.state {
-        ServiceState::Running => Handler::ReverseProxy { upstreams: vec![Upstream { dial: item.dial.clone() }] },
+        ServiceState::Running => reverse_proxy(&item.dial, item.site.service.upstream_protocol),
         ServiceState::Stopped | ServiceState::Failed | ServiceState::Locked | ServiceState::Waiting => {
             unavailable_response("503")
         }
     };
     routes.push(Route { handle: vec![last], terminal: true, ..Route::default() });
     routes
+}
+
+/// Proxies to a running upstream. An h2c upstream gets HTTP/2 with prior knowledge and immediate
+/// flushing: apps that need HTTP/2 stream request and response bodies (full duplex), and Caddy's
+/// default buffering would hold chunks back.
+fn reverse_proxy(dial: &str, protocol: UpstreamProtocol) -> Handler {
+    let upstreams = vec![Upstream { dial: dial.to_owned() }];
+    match protocol {
+        UpstreamProtocol::H1 => Handler::ReverseProxy { upstreams, transport: None, flush_interval: None },
+        UpstreamProtocol::H2c => Handler::ReverseProxy {
+            upstreams,
+            transport: Some(ProxyTransport { protocol: "http".to_owned(), versions: vec!["h2c".to_owned()] }),
+            flush_interval: Some(-1),
+        },
+    }
 }
 
 /// One generic page for every state. Saying "device locked" to the internet would reveal device state,

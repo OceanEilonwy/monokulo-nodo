@@ -147,6 +147,11 @@ pub enum Handler {
     },
     ReverseProxy {
         upstreams: Vec<Upstream>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        transport: Option<ProxyTransport>,
+        /// `-1` passes every chunk on as soon as it arrives, in both directions.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        flush_interval: Option<i64>,
     },
     StaticResponse {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +194,15 @@ pub struct RateLimitZone {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Upstream {
     pub dial: String,
+}
+
+/// How Caddy speaks to an upstream. Absent means HTTP/1.1.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProxyTransport {
+    /// Always `http`.
+    pub protocol: String,
+    /// `["h2c"]`: HTTP/2 over cleartext with prior knowledge.
+    pub versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
