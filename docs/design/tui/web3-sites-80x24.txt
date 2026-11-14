@@ -1,20 +1,20 @@
-                              ▗▄▄▄▄▄▖
-      Home       Packages       Web       Feeds       Updates 3       Logs
-                              ▝▀▀▀▀▀▘
+
+    Home     Packages     Web     Feeds     Updates 3     Logs
+
 
     Sites online                                          Domain providers ›
 
-    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-       mk-pay     https://pay.example.com           Home network and internet ›
+       mk-pay     https://pay.example.com           Home and internet   ›
 
-       mk-lws     https://mk-lws.local              Home network              ›
+       mk-lws     https://mk-lws.local              Home network        ›
 
-       kringle    http://kringlqx3v7…ylpd7qd.onion  Tor                       ›
+       kringle    http://kringlqx3v7…ylpd7qd.onion  Tor                 ›
 
-    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
     To put another app online, open it in Packages.
+
+
 
 
 

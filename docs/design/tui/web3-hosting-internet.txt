@@ -1,13 +1,12 @@
-               ▗▄▄▄▄▄▄▄▄▄▄▖
-      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
-               ▝▀▀▀▀▀▀▀▀▀▀▘
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
 
     Packages  ›  mk-pay  ›  Hosting
 
     Hosting
     Choose who can open mk-pay. Any combination works.
 
-    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
        [x]  Home network
             Phones and computers on your Wi-Fi.   https://mk-pay.local
@@ -19,18 +18,19 @@
             Anyone, at a web address you own.
 
             Provider     Porkbun                      ▾
+
             Domain       example.com                  ▾
+
             Address      pay         .example.com
 
             Visitors will be able to see your home's internet address.
 
        Show details ›
 
-    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
-                                                                                              ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-                                                                                                  Check and save
-                                                                                              ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
+                                                                                                 Check and save   
+
     Keys: Tab move  Space tick  ↵ check and save  Esc back

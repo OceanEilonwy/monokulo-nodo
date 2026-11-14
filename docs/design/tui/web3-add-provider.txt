@@ -1,12 +1,11 @@
-                              ▗▄▄▄▄▄▖
-      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
-                              ▝▀▀▀▀▀▘
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
 
     Web  ›  Domain providers  ›  Add
 
     Where did you buy your web address?
 
-    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
        Porkbun
 
@@ -18,9 +17,10 @@
 
        deSEC
 
-    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
     Somewhere else? It can't be connected yet, but Tor works without a web address.
+
+
 
 
 

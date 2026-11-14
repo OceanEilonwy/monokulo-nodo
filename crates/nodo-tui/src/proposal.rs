@@ -163,7 +163,7 @@ impl Scene {
             Scene::V3AddProvider => "8 · Add a provider: pick the company",
             Scene::V3ProviderKey => "9 · Add a provider: paste the key",
             Scene::V3ProviderDone => "10 · Added: the domains this key controls",
-            Scene::V3Buttons => "Button styles: choose one (A recommended)",
+            Scene::V3Buttons => "Buttons: rounded flat fill, and the fallback",
         }
     }
 
@@ -187,7 +187,7 @@ impl Scene {
             Scene::V3AddProvider => "Clickable: each company row. Scroll wheel scrolls the list.",
             Scene::V3ProviderKey => "Clickable: the two key boxes (focus to type or paste), Connect.",
             Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
-            Scene::V3Buttons => "Four ways to draw the same two buttons; all are three rows tall and click anywhere inside.",
+            Scene::V3Buttons => "The chosen rounded buttons, the no-Nerd-Font fallback, and the first v3 blocks for comparison.",
             _ => "",
         }
     }
@@ -930,10 +930,12 @@ fn advanced(t: &Theme) -> Page {
 // keys are one dim line at the bottom. One accent colour, one primary action.
 //
 // Areas are separated by surfaces, not lines: the tab bar and the action bar are strips of their
-// own, content sits on raised cards, text boxes are inset, and half blocks (▄ ▀ with quadrant
-// corners) soften the edges. On a 256-colour terminal each surface has an indexed fallback; on a
-// 16-colour console (the Linux console) the surfaces all become black and only the accent, the
-// spacing and the button shapes remain, which still reads but is flat.
+// own, content sits on cards, text boxes are inset. Every surface is a plain rectangle of whole
+// cells. Buttons are flat fills whose ends are the Powerline rounded caps U+E0B6 and U+E0B4 drawn
+// in the button's colour; those need a Nerd Font, so `rounded` can be off (config or detection),
+// and the ends are then plain padding. On a 256-colour terminal each surface has an indexed
+// fallback; on a 16-colour console (the Linux console) the surfaces all become black and only
+// the accent, the spacing and the button shapes remain.
 
 const MARGIN: &str = "    ";
 
@@ -1015,8 +1017,8 @@ fn trail(t: &Theme, parts: &[&str]) -> Item {
     line(spans)
 }
 
-/// A card: a raised rectangle the width of the page less its margins, one cell of padding left
-/// and right, a half-block row above and below for soft edges. Each row may be clicked.
+/// A card: a filled rectangle the width of the page less its margins, every row the same width,
+/// three cells of padding on the left. Each row may be clicked.
 struct Card {
     width: usize,
     rows: Vec<Item>,
@@ -1028,30 +1030,49 @@ impl Card {
         Card { width, rows: Vec::new() }
     }
 
-    fn cap(&self, t: &Theme, top: bool) -> Item {
-        let (corner_l, fill, corner_r) = if top { ("▗", "▄", "▖") } else { ("▝", "▀", "▘") };
-        let edge = Style::new().fg(S.card).bg(t.ground);
-        line(vec![margin(t), Span::styled(format!("{corner_l}{}{corner_r}", fill.repeat(self.width - 2)), edge)])
-    }
-
+    /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
+    /// keeping its indent, so the fill always stays a rectangle.
     fn row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
-        let mut out = vec![margin(t), on(t.n("   "), S.card)];
-        let used = 3 + width_of(&spans);
-        out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, S.card) } else { s }));
-        out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), S.card));
-        self.rows.push(line(out));
+        let room = self.width.saturating_sub(4);
+        let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+        if width_of(&spans) <= room {
+            lines[0] = spans;
+        } else {
+            let indent = spans.first().map_or(0, |s| s.content.len() - s.content.trim_start().len());
+            let mut used = 0;
+            for span in spans {
+                let style = span.style;
+                for (index, word) in span.content.split(' ').enumerate() {
+                    let piece = if index == 0 { word.to_owned() } else { format!(" {word}") };
+                    let w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+                    if used + w > room && used > indent {
+                        lines.push(vec![Span::styled(" ".repeat(indent), style)]);
+                        used = indent;
+                        let trimmed = piece.trim_start().to_owned();
+                        used += unicode_width::UnicodeWidthStr::width(trimmed.as_str());
+                        lines.last_mut().expect("just pushed").push(Span::styled(trimmed, style));
+                    } else {
+                        used += w;
+                        lines.last_mut().expect("not empty").push(Span::styled(piece, style));
+                    }
+                }
+            }
+        }
+        for spans in lines {
+            let mut out = vec![margin(t), on(t.n("   "), S.card)];
+            let used = 3 + width_of(&spans);
+            out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, S.card) } else { s }));
+            out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), S.card));
+            self.rows.push(line(out));
+        }
     }
 
     fn blank(&mut self, t: &Theme) {
         self.row(t, Vec::new());
     }
 
-    fn items(self, t: &Theme) -> Vec<Item> {
-        let mut items = vec![self.cap(t, true)];
-        let width = self.width;
-        items.extend(self.rows);
-        items.push(Card { width, rows: Vec::new() }.cap(t, false));
-        items
+    fn items(self, _t: &Theme) -> Vec<Item> {
+        self.rows
     }
 }
 
@@ -1065,21 +1086,22 @@ fn inset(t: &Theme, value: &str, width: usize, arrow: Option<&str>) -> Vec<Span<
     vec![Span::styled(text, inset)]
 }
 
-/// How a button is drawn. Each is three rows tall, so it is an easy target for a click.
+/// How a button is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonStyle {
-    /// A filled block whose top and bottom rows are half blocks with quadrant corners: it reads
-    /// as a rounded rectangle about two rows tall.
-    Pill,
-    /// A thin rounded outline (╭─╮ │ ╰─╯) around the label.
-    Outline,
+    /// A flat fill, one row tall, with rounded ends: the Powerline caps U+E0B6 and U+E0B4 in the
+    /// button's colour. Needs a Nerd Font in the terminal.
+    Rounded,
+    /// The same without the caps, for terminals without a Nerd Font: the fill with a cell of
+    /// padding each side. `[tui] rounded_buttons = "auto" | "on" | "off"` picks between them.
+    Plain,
     /// A plain filled block, three full rows (the first v3 boards).
     Flat,
 }
 
 /// Every button in a bar has the same width: the longest label plus padding.
 fn button_width(list: &[(&str, bool)]) -> usize {
-    list.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0) + 8
+    list.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0) + 6
 }
 
 fn centred(label: &str, width: usize) -> String {
@@ -1088,45 +1110,44 @@ fn centred(label: &str, width: usize) -> String {
     format!("{}{label}{}", " ".repeat(left), " ".repeat(width - len - left))
 }
 
-/// One button's three rows, drawn on the surface `under`.
+const CAP_LEFT: &str = "\u{E0B6}";
+const CAP_RIGHT: &str = "\u{E0B4}";
+
+/// One button's three rows, drawn on the surface `under`. Rounded and plain buttons are one row
+/// tall with the rows above and below left empty: those still count for a click.
 fn button_rows(t: &Theme, label: &str, is_primary: bool, style: ButtonStyle, width: usize, under: Color) -> [Vec<Span<'static>>; 3] {
     let colour = if is_primary { t.accent } else { S.raised };
     let ink = if is_primary { t.ground } else { t.fg };
     let weight = if is_primary { Modifier::BOLD } else { Modifier::empty() };
     let fill = Style::new().fg(ink).bg(colour).add_modifier(weight);
-    let edge = Style::new().fg(colour).bg(under);
+    let cap = Style::new().fg(colour).bg(under);
+    let space = |n: usize| Span::styled(" ".repeat(n), Style::new().bg(under));
     match style {
-        ButtonStyle::Pill => [
-            vec![Span::styled(format!("▗{}▖", "▄".repeat(width - 2)), edge)],
-            vec![Span::styled(centred(label, width), fill)],
-            vec![Span::styled(format!("▝{}▘", "▀".repeat(width - 2)), edge)],
+        ButtonStyle::Rounded => [
+            vec![space(width + 2)],
+            vec![Span::styled(CAP_LEFT, cap), Span::styled(centred(label, width), fill), Span::styled(CAP_RIGHT, cap)],
+            vec![space(width + 2)],
         ],
-        ButtonStyle::Outline => {
-            let line_colour = if is_primary { t.accent } else { t.border };
-            let rule = Style::new().fg(line_colour).bg(under);
-            let text = Style::new().fg(if is_primary { t.accent } else { t.fg }).bg(under).add_modifier(weight);
-            [
-                vec![Span::styled(format!("╭{}╮", "─".repeat(width - 2)), rule)],
-                vec![Span::styled("│", rule), Span::styled(centred(label, width - 2), text), Span::styled("│", rule)],
-                vec![Span::styled(format!("╰{}╯", "─".repeat(width - 2)), rule)],
-            ]
-        }
+        ButtonStyle::Plain => [
+            vec![space(width + 2)],
+            vec![Span::styled(centred(label, width + 2), fill)],
+            vec![space(width + 2)],
+        ],
         ButtonStyle::Flat => [
-            vec![Span::styled(" ".repeat(width), fill)],
-            vec![Span::styled(centred(label, width), fill)],
-            vec![Span::styled(" ".repeat(width), fill)],
+            vec![Span::styled(" ".repeat(width + 2), fill)],
+            vec![Span::styled(centred(label, width + 2), fill)],
+            vec![Span::styled(" ".repeat(width + 2), fill)],
         ],
     }
 }
 
 /// A bar of buttons, right-aligned on the page margin, three cells apart, primary rightmost.
-fn button_bar(t: &Theme, list: &[(&str, bool)], primary_style: ButtonStyle, secondary_style: ButtonStyle, under: Color) -> Vec<Item> {
+fn button_bar(t: &Theme, list: &[(&str, bool)], style: ButtonStyle, under: Color) -> Vec<Item> {
     let width = button_width(list);
     let mut rows: [Vec<Span<'static>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut ordered: Vec<&(&str, bool)> = list.iter().filter(|(_, p)| !p).collect();
     ordered.extend(list.iter().filter(|(_, p)| *p));
     for (index, (label, is_primary)) in ordered.into_iter().enumerate() {
-        let style = if *is_primary { primary_style } else { secondary_style };
         if index > 0 {
             for row in rows.iter_mut() {
                 row.push(on(t.n("   "), under));
@@ -1144,57 +1165,43 @@ fn button_bar(t: &Theme, list: &[(&str, bool)], primary_style: ButtonStyle, seco
         .collect()
 }
 
-/// The action bar: a blank row, the buttons (a filled pill for the one primary action, a quiet
-/// outline for the rest), and the keys in one dim line. Painted as its own surface by `draw_v3`.
+/// The action bar: a blank row, the buttons (rounded flat fills; the primary in the accent), and
+/// the keys in one dim line. Painted as its own surface by `draw_v3`.
 fn action_bar(t: &Theme, list: &[(&str, bool)], keys: &str) -> Vec<Item> {
     let mut items = vec![Item::Blank];
     if !list.is_empty() {
-        items.extend(button_bar(t, list, ButtonStyle::Pill, ButtonStyle::Outline, S.bar));
+        items.extend(button_bar(t, list, ButtonStyle::Rounded, S.bar));
     }
     items.push(Item::Text(Line::from(t.d(format!("{MARGIN}{keys}")))));
     items
 }
 
-/// The tab bar: a strip of its own, the tabs on the page margin five cells apart, the current one
-/// a raised pill. Each tab is a click target.
+/// The tab bar: a strip of its own with an empty row above and below, the tabs on the page margin
+/// with room between them, the current one a flat filled rectangle padded two cells each side.
+/// Each tab is a click target.
 fn top(app: &App, t: &Theme, tab: Tab, w: u16) -> Page {
-    let mut caps_top = vec![t.n(MARGIN)];
-    let mut tabs = vec![margin(t)];
-    let mut caps_bottom = vec![t.n(MARGIN)];
-    let pill_edge = Style::new().fg(S.raised).bg(S.bar);
-    for (index, each) in Tab::ALL.into_iter().enumerate() {
-        if index > 0 {
-            for row in [&mut caps_top, &mut tabs, &mut caps_bottom] {
-                row.push(t.n("   "));
-            }
-        }
+    let mut tabs = vec![t.n("  ")];
+    for each in Tab::ALL {
         let pending = app.pending_updates();
         let extra = if each == Tab::Updates && pending > 0 { format!(" {pending}") } else { String::new() };
-        let text = format!("  {}{extra}  ", each.label());
-        let width = text.chars().count();
         if each == tab {
-            caps_top.push(Span::styled(format!("▗{}▖", "▄".repeat(width - 2)), pill_edge));
-            tabs.push(Span::styled(text, Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
-            caps_bottom.push(Span::styled(format!("▝{}▘", "▀".repeat(width - 2)), pill_edge));
+            tabs.push(Span::styled(format!("  {}{extra}  ", each.label()), Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
         } else {
-            caps_top.push(t.n(" ".repeat(width)));
             tabs.push(t.n(format!("  {}", each.label())));
             if !extra.is_empty() {
                 tabs.push(t.d(extra));
             }
             tabs.push(t.n("  "));
-            caps_bottom.push(t.n(" ".repeat(width)));
         }
+        tabs.push(t.n(" "));
     }
-    Page::new(Line::from(caps_top), Line::default()).plain(vec![
-        // The device name only where it fits beside the tabs without crowding them.
-        if w >= 100 {
-            Item::Row(Line::from(tabs), Line::from(vec![t.d("monokulo-nodo"), t.n(MARGIN)]))
-        } else {
-            Item::Text(Line::from(tabs))
-        },
-        Item::Text(Line::from(caps_bottom)),
-    ])
+    // The device name only where it fits beside the tabs without crowding them.
+    let row = if w >= 100 {
+        Item::Row(Line::from(tabs), Line::from(vec![t.d("monokulo-nodo"), t.n(MARGIN)]))
+    } else {
+        Item::Text(Line::from(tabs))
+    };
+    Page::new(Line::default(), Line::default()).plain(vec![row, Item::Blank])
 }
 
 /// Rows from the top that belong to the tab strip.
@@ -1245,7 +1252,7 @@ fn v3_web(app: &App, t: &Theme, w: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     let sites = [
-        ("mk-pay", "https://pay.example.com", "Home network and internet"),
+        ("mk-pay", "https://pay.example.com", "Home and internet"),
         ("mk-lws", "https://mk-lws.local", "Home network"),
         ("kringle", "http://kringlqx3v7…ylpd7qd.onion", "Tor"),
     ];
@@ -1253,7 +1260,7 @@ fn v3_web(app: &App, t: &Theme, w: u16) -> Page {
         if index > 0 {
             card.blank(t);
         }
-        card.row(t, vec![t.b(pad(name, 11)), t.n(pad(address, 34)), t.d(pad(who, 26)), t.d("›")]);
+        card.row(t, vec![t.b(pad(name, 11)), t.n(pad(address, 34)), t.d(pad(who, 20)), t.d("›")]);
     }
     card.blank(t);
     let mut items = vec![
@@ -1303,6 +1310,7 @@ fn v3_hosting(app: &App, t: &Theme, w: u16, internet: Internet) -> Page {
             let mut provider = vec![label("Provider")];
             provider.extend(inset(t, "Porkbun", 28, Some("▾")));
             card.row(t, provider);
+            card.blank(t);
             let mut domain = vec![label("Domain")];
             domain.extend(inset(t, "example.com", 28, Some(if internet == Internet::Picking { "▴" } else { "▾" })));
             card.row(t, domain);
@@ -1312,10 +1320,11 @@ fn v3_hosting(app: &App, t: &Theme, w: u16, internet: Internet) -> Page {
                     [("example.com", "Porkbun", true), ("shop-example.org", "Porkbun", false), ("myshop.net", "Cloudflare", false)]
                 {
                     let mark = if current { "✓" } else { " " };
-                    card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {mark} {} {} ", pad(domain, 17), pad(provider, 11)), list)]);
+                    card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {mark} {} {} ", pad(domain, 16), pad(provider, 11)), list)]);
                 }
-                card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {} ", pad("+ Add a provider…", 32)), Style::new().fg(t.accent).bg(S.raised))]);
+                card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {} ", pad("+ Add a provider…", 30)), Style::new().fg(t.accent).bg(S.raised))]);
             } else {
+                card.blank(t);
                 let mut address = vec![label("Address")];
                 address.extend(inset(t, "pay", 10, None));
                 address.push(t.n(" .example.com"));
@@ -1481,17 +1490,17 @@ fn v3_provider_done(app: &App, t: &Theme, w: u16) -> Page {
 /// The button styles side by side on the action bar's surface, for choosing.
 fn v3_buttons(app: &App, t: &Theme, w: u16) -> Page {
     let list: &[(&str, bool)] = &[("Cancel", false), ("Put mk-pay online", true)];
-    let mut items = vec![Item::Blank, heading(t, "Button styles: the same two buttons, four ways")];
-    for (name, note, p, s) in [
-        ("A · Pill + outline (recommended)", "Filled rounded pill for the one primary action; a quiet outline for the rest.", ButtonStyle::Pill, ButtonStyle::Outline),
-        ("B · Pills", "Both filled; the secondary in the raised grey.", ButtonStyle::Pill, ButtonStyle::Pill),
-        ("C · Outlines", "Both outlined; the primary's line and label in the accent.", ButtonStyle::Outline, ButtonStyle::Outline),
-        ("D · Flat blocks (first v3)", "Three full rows of fill.", ButtonStyle::Flat, ButtonStyle::Flat),
+    let mut items = vec![Item::Blank, heading(t, "Buttons: flat fills with rounded ends")];
+    for (name, note, style) in [
+        ("Rounded (chosen)", "Powerline rounded caps in the button colour; needs a Nerd Font.", ButtonStyle::Rounded),
+        ("Without a Nerd Font", "The automatic fallback: the same fill with plain ends.", ButtonStyle::Plain),
+        ("Flat, three rows (first v3)", "For comparison.", ButtonStyle::Flat),
     ] {
         let mut card = Card::new(w);
+        card.blank(t);
         card.row(t, vec![t.b(name.to_owned()), t.d(format!("   {note}"))]);
         let inner = card.width - 6;
-        for row in button_bar(t, list, p, s, S.card) {
+        for row in button_bar(t, list, style, S.card) {
             if let Item::Row(_, right) = row {
                 let spans: Vec<Span<'static>> = right.spans;
                 let used = width_of(&spans);
@@ -1503,7 +1512,7 @@ fn v3_buttons(app: &App, t: &Theme, w: u16) -> Page {
         items.push(Item::Blank);
         items.extend(card.items(t));
     }
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[], "All four are three rows tall; a click anywhere inside counts."))
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[], "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
 }
 
 #[cfg(test)]
@@ -1540,6 +1549,25 @@ mod tests {
                 (h - rows..h).flat_map(|y| (0..b.area.width).map(move |x| (x, y))).map(|p| b[p].symbol().to_owned()).collect()
             };
             assert_eq!(footer(&small, 24).split_whitespace().collect::<Vec<_>>(), footer(&big, 36).split_whitespace().collect::<Vec<_>>(), "{}: the action bar differs at 80x24", scene.slug());
+        }
+    }
+
+    #[test]
+    fn v3_surfaces_are_rectangles_at_both_sizes() {
+        // Every row of a card is filled from the same first to the same last column: no steps.
+        let t = Theme::truecolor();
+        for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
+            for (w, h) in [(120u16, 36u16), (80, 24)] {
+                let b = render(scene, w, h, &t);
+                let mut edges = std::collections::BTreeSet::new();
+                for y in 0..h {
+                    let xs: Vec<u16> = (0..w).filter(|&x| b[(x, y)].bg == S.card).collect();
+                    if let (Some(first), Some(last)) = (xs.first(), xs.last()) {
+                        edges.insert((*first, *last));
+                    }
+                }
+                assert!(edges.len() <= 1, "{} at {w}x{h}: card rows span different columns {edges:?}", scene.slug());
+            }
         }
     }
 

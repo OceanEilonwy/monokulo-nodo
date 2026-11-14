@@ -1,12 +1,11 @@
-               ▗▄▄▄▄▄▄▄▄▄▄▖
-      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
-               ▝▀▀▀▀▀▀▀▀▀▀▘
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
 
     Packages  ›  mk-pay  ›  Hosting
 
     Ready to put mk-pay on the internet
 
-    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
        ✓  Porkbun accepted the key
        ✓  pay.example.com points to your home
@@ -18,7 +17,6 @@
 
        Show details ›
 
-    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
@@ -30,7 +28,9 @@
 
 
 
-                                                               ╭───────────────────────╮   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-                                                               │        Cancel         │       Put mk-pay online
-                                                               ╰───────────────────────╯   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
+
+
+                                                                       Cancel               Put mk-pay online   
+
     Keys: ↵ put online  Esc cancel

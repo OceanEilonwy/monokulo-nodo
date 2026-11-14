@@ -17,8 +17,12 @@ use ratatui::style::{Color, Modifier};
 use unicode_width::UnicodeWidthStr;
 
 /// Cell size on the board, in CSS pixels. JetBrains Mono's advance is 0.6 em.
-const FONT_PX: f32 = 14.0;
-const ROW_PX: f32 = 18.0;
+/// 15 px makes JetBrains Mono's 0.6 em advance a whole 9 px, so cells meet without seams.
+const FONT_PX: f32 = 15.0;
+const ROW_PX: f32 = 19.0;
+/// The Powerline caps are drawn from the embedded Symbols Nerd Font subset, sized so they span
+/// the whole cell like a terminal draws them.
+const CAP_PX: f32 = 19.0;
 const PAD_PX: u32 = 24;
 const CAPTION_PX: u32 = 104;
 
@@ -55,6 +59,11 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
                 if (c.fg, c.bg, c.modifier) != style {
                     break;
                 }
+                // A symbol the font may draw wider stays in a cell of its own, so it can't push
+                // the rest of the run out of line.
+                if !text.is_empty() && (!c.symbol().is_ascii() || !text.is_ascii()) {
+                    break;
+                }
                 let symbol = c.symbol();
                 let width = UnicodeWidthStr::width(symbol).max(1) as u16;
                 text.push_str(symbol);
@@ -65,7 +74,7 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
             if style.2.contains(Modifier::REVERSED) {
                 std::mem::swap(&mut fg, &mut bg);
             }
-            let mut css = format!("width:{cells}ch;color:{fg};background:{bg}");
+            let mut css = format!("width:{}px;color:{fg};background:{bg}", (f32::from(cells) * FONT_PX * 0.6).round());
             if style.2.contains(Modifier::BOLD) {
                 css.push_str(";font-weight:700");
             }
@@ -75,9 +84,28 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
             if style.2.contains(Modifier::DIM) {
                 css.push_str(";opacity:.6");
             }
-            let _ = write!(out, "<span style=\"{css}\">{}</span>", escape(&text));
+            // A terminal fits each glyph into its cell. The Symbols Nerd Font caps are 1 em wide
+            // with their ink in one half (x 951..2171 for U+E0B6, -122..1097 for U+E0B4, of 2048),
+            // so they are scaled and shifted to fill exactly one cell, as a terminal draws them.
+            // The flat side reaches 1 px into the fill so anti-aliasing leaves no seam; the round
+            // side ends exactly on the cell's edge.
+            let cap = |ink_left: f32, ink_right: f32| {
+                let cell = FONT_PX * 0.6;
+                let k = (cell + 1.0) / ((ink_right - ink_left) / 2048.0 * CAP_PX);
+                let bleed_left = if ink_left < 0.0 { 1.0 } else { 0.0 };
+                let shift = -(ink_left / 2048.0 * CAP_PX) * k - bleed_left;
+                format!("<b style=\"transform:translateX({shift:.2}px) scaleX({k:.4})\">{}</b>", escape(&text))
+            };
+            let (class, inner) = if text == "\u{E0B6}" {
+                (" class=\"cap\"", cap(951.0, 2171.0))
+            } else if text == "\u{E0B4}" {
+                (" class=\"cap\"", cap(-122.0, 1097.0))
+            } else {
+                ("", escape(&text))
+            };
+            let _ = write!(out, "<span{class} style=\"{css}\">{inner}</span>");
         }
-        out.push_str("</div>\n");
+        out.push_str("</div>");
     }
     out
 }
@@ -103,9 +131,13 @@ fn board(scene: Scene, width: u16, height: u16, theme: &Theme) -> (String, u32, 
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
 <style>
 body{{margin:0}}
-.term{{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:{FONT_PX}px;line-height:{ROW_PX}px;white-space:pre}}
-.row{{height:{ROW_PX}px;overflow:hidden}}
-.row span{{display:inline-block;overflow:hidden;vertical-align:top}}
+@font-face{{font-family:'NodoCaps';src:url('{caps_font}') format('woff2')}}
+.term{{font-family:'JetBrains Mono','NodoCaps',ui-monospace,monospace;font-size:{FONT_PX}px;line-height:{ROW_PX}px;white-space:normal}}
+.row{{display:block;height:{ROW_PX}px;margin:0;padding:0;overflow:hidden}}
+.row span{{display:inline-block;height:{ROW_PX}px;overflow:visible;vertical-align:top;white-space:pre}}
+.cap{{overflow:visible;position:relative;z-index:1}}
+.cap{{font-family:'NodoCaps';font-size:{CAP_PX}px;line-height:{ROW_PX}px}}
+.cap b{{display:inline-block;transform-origin:0 0;font-weight:400}}
 </style>
 </helmet>
 <div style="width:{w}px;height:{h}px;box-sizing:border-box;padding:{PAD_PX}px;background:#0B0C0D;color:#D7DADC;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;gap:12px">
@@ -129,6 +161,7 @@ renderVals() {{ return {{}}; }}
         slug = scene.slug(),
         ground = hex(theme.ground, "#101214"),
         grid = grid(&buffer, theme),
+        caps_font = std::env::var("NODO_BOARD_CAPS_FONT").unwrap_or_else(|_| "fonts/nodo-caps.woff2".into()),
         clickable = if scene.clickable().is_empty() {
             String::new()
         } else {

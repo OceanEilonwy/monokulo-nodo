@@ -1,13 +1,12 @@
-               ▗▄▄▄▄▄▄▄▄▄▄▖
-      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
-               ▝▀▀▀▀▀▀▀▀▀▀▘
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
 
     Packages  ›  mk-pay  ›  Hosting
 
     Hosting
     Choose who can open mk-pay. Any combination works.
 
-    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
        [x]  Home network
             Phones and computers on your Wi-Fi.   https://mk-pay.local
@@ -23,14 +22,15 @@
 
        Show details ›
 
-    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
 
 
 
-                                                                                              ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-                                                                                                  Add a provider
-                                                                                              ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
+
+
+                                                                                                 Add a provider   
+
     Keys: Tab move  Space tick  ↵ add a provider  Esc back
