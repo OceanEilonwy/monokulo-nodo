@@ -16,9 +16,9 @@
             your home.
 
        [x]  Internet
-↓ 12 more, enlarge the terminal to see them
+            Anyone, at a web address you own.
 
-
-                                                         Check and save   
+       ↓ 10 more — scroll
+                                                      Check and save   
 
     Keys: Tab move  Space tick  ↵ check and save  Esc back

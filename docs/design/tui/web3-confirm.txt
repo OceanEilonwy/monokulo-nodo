@@ -17,6 +17,7 @@
 
        Show details ›
 
+                                                                    Cancel               Put mk-pay online   
 
 
 
@@ -31,6 +32,5 @@
 
 
 
-                                                                       Cancel               Put mk-pay online   
 
     Keys: ↵ put online  Esc cancel

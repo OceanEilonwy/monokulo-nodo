@@ -20,6 +20,8 @@
             To use a web address you own, first add the company you bought it from.
             You'll come back here when it's added.
 
+               Add a provider   
+
        Show details ›
 
 
@@ -30,7 +32,5 @@
 
 
 
-
-                                                                                                 Add a provider   
 
     Keys: Tab move  Space tick  ↵ add a provider  Esc back

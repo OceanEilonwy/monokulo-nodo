@@ -19,6 +19,7 @@
 
        Show details ›
 
+                                                                                                        Save   
 
 
 
@@ -31,6 +32,5 @@
 
 
 
-                                                                                                           Save   
 
     Keys: Tab move  Space tick  ↵ save  Esc back

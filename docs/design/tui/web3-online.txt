@@ -13,6 +13,7 @@
 
           The Nodo renews the secure connection and follows your home's address by itself.
 
+                                                                                                        Done   
 
 
 
@@ -31,6 +32,5 @@
 
 
 
-                                                                                                           Done   
 
     Keys: ↵ done

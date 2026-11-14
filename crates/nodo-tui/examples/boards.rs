@@ -96,6 +96,27 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
                 let shift = -(ink_left / 2048.0 * CAP_PX) * k - bleed_left;
                 format!("<b style=\"transform:translateX({shift:.2}px) scaleX({k:.4})\">{}</b>", escape(&text))
             };
+            // Terminals draw the block elements as exact cell geometry rather than from the font
+            // (alacritty, kitty, foot, wezterm all do), so they are drawn here as filled quarters.
+            let quarters: Option<&[(&str, &str)]> = match text.as_str() {
+                "▘" => Some(&[("left top", "50% 50%")]),
+                "▝" => Some(&[("right top", "50% 50%")]),
+                "▖" => Some(&[("left bottom", "50% 50%")]),
+                "▗" => Some(&[("right bottom", "50% 50%")]),
+                "▀" => Some(&[("left top", "100% 50%")]),
+                "▄" => Some(&[("left bottom", "100% 50%")]),
+                "▌" => Some(&[("left top", "50% 100%")]),
+                "▐" => Some(&[("right top", "50% 100%")]),
+                "█" => Some(&[("left top", "100% 100%")]),
+                _ => None,
+            };
+            if let Some(parts) = quarters {
+                let layers: Vec<String> =
+                    parts.iter().map(|(pos, size)| format!("linear-gradient({fg},{fg}) {pos} / {size} no-repeat")).collect();
+                let css = format!("width:{}px;background:{},{bg}", (f32::from(cells) * FONT_PX * 0.6).round(), layers.join(","));
+                let _ = write!(out, "<span style=\"{css}\"></span>");
+                continue;
+            }
             let (class, inner) = if text == "\u{E0B6}" {
                 (" class=\"cap\"", cap(951.0, 2171.0))
             } else if text == "\u{E0B4}" {

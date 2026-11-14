@@ -203,7 +203,8 @@ pub fn render(scene: Scene, width: u16, height: u16, theme: &Theme) -> Buffer {
                 view::render(frame, &app, theme);
             } else if scene.is_v3() {
                 let w = frame.area().width;
-                draw_v3(frame, theme, v3_page(&app, theme, scene, w));
+                let h = frame.area().height;
+                draw_v3(frame, theme, v3_page(&app, theme, scene, w, h));
             } else {
                 let area = frame.area();
                 frame.buffer_mut().set_style(area, theme.base());
@@ -233,7 +234,8 @@ pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
                     view::render(frame, &app, &theme);
                 } else if scene.is_v3() {
                     let w = frame.area().width;
-                    draw_v3(frame, &theme, v3_page(&app, &theme, scene, w));
+                    let h = frame.area().height;
+                    draw_v3(frame, &theme, v3_page(&app, &theme, scene, w, h));
                 } else {
                     let area = frame.area();
                     frame.buffer_mut().set_style(area, theme.base());
@@ -1022,12 +1024,14 @@ fn trail(t: &Theme, parts: &[&str]) -> Item {
 struct Card {
     width: usize,
     rows: Vec<Item>,
+    /// Where the card's own button row starts, so fitting a short terminal keeps it.
+    buttons_at: Option<usize>,
 }
 
 impl Card {
     fn new(page_width: u16) -> Self {
         let width = usize::from(page_width).saturating_sub(2 * MARGIN.len());
-        Card { width, rows: Vec::new() }
+        Card { width, rows: Vec::new(), buttons_at: None }
     }
 
     /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
@@ -1069,6 +1073,58 @@ impl Card {
 
     fn blank(&mut self, t: &Theme) {
         self.row(t, Vec::new());
+    }
+
+    /// The card's buttons, after the content they act on: right-aligned on the card's inner
+    /// padding, the primary rightmost, three cells apart, followed by the card's bottom padding.
+    fn buttons(&mut self, t: &Theme, list: &[(&str, bool)]) {
+        if list.is_empty() {
+            return;
+        }
+        self.buttons_at = Some(self.rows.len());
+        let room = self.width.saturating_sub(6);
+        let bar = button_bar(t, list, ButtonStyle::Rounded, S.card);
+        // `button_bar` gives three rows (padding, buttons, padding); the card already has its own
+        // padding rows, so only the middle one is used, without the bar's right margin.
+        if let Some(Item::Row(_, right)) = bar.into_iter().nth(1) {
+            let mut spans = right.spans;
+            spans.pop();
+            let used = width_of(&spans);
+            let mut out = vec![t.n(" ".repeat(room.saturating_sub(used)))];
+            out.extend(spans);
+            self.row(t, out);
+        }
+        self.blank(t);
+    }
+
+    /// One button at a given indent inside the card, for a button that belongs to a part of the
+    /// card rather than to the whole of it.
+    fn inline_button(&mut self, t: &Theme, label: &str, indent: usize) {
+        let width = label.chars().count() + 6;
+        let [_, middle, _] = button_rows(t, label, true, ButtonStyle::Rounded, width, S.card);
+        let mut out = vec![t.n(" ".repeat(indent))];
+        out.extend(middle);
+        self.row(t, out);
+        if self.buttons_at.is_none() {
+            self.buttons_at = Some(self.rows.len() - 1);
+        }
+    }
+
+    /// Fits the card into `max` rows: when it is taller, the rows above its buttons are cut and a
+    /// line says how many scroll, so the buttons stay on screen.
+    fn fit(&mut self, t: &Theme, max: usize) {
+        if self.rows.len() <= max {
+            return;
+        }
+        let tail = self.buttons_at.map_or(0, |at| self.rows.len() - at);
+        let head = max.saturating_sub(tail + 1);
+        let hidden = self.rows.len() - tail - head;
+        let tail_rows: Vec<Item> = self.rows.split_off(self.rows.len() - tail);
+        self.rows.truncate(head);
+        let at = self.rows.len();
+        self.row(t, vec![t.d(format!("↓ {hidden} more — scroll"))]);
+        self.buttons_at = self.buttons_at.map(|_| at + 1);
+        self.rows.extend(tail_rows);
     }
 
     fn items(self, _t: &Theme) -> Vec<Item> {
@@ -1165,15 +1221,36 @@ fn button_bar(t: &Theme, list: &[(&str, bool)], style: ButtonStyle, under: Color
         .collect()
 }
 
-/// The action bar: a blank row, the buttons (rounded flat fills; the primary in the accent), and
-/// the keys in one dim line. Painted as its own surface by `draw_v3`.
-fn action_bar(t: &Theme, list: &[(&str, bool)], keys: &str) -> Vec<Item> {
-    let mut items = vec![Item::Blank];
-    if !list.is_empty() {
-        items.extend(button_bar(t, list, ButtonStyle::Rounded, S.bar));
-    }
-    items.push(Item::Text(Line::from(t.d(format!("{MARGIN}{keys}")))));
+/// The bottom line: only the keys, dim. Buttons live in the card they act on.
+fn action_bar(t: &Theme, keys: &str) -> Vec<Item> {
+    vec![Item::Text(Line::from(t.d(format!("{MARGIN}{keys}"))))]
+}
+
+/// How many screen rows items take at width `w`, as the layout wraps them.
+fn rows_of(items: &[Item], w: u16) -> usize {
+    let w = usize::from(w.max(1));
     items
+        .iter()
+        .map(|item| match item {
+            Item::Blank => 1,
+            Item::Text(line) => width_of(&line.spans).div_ceil(w).max(1),
+            Item::Row(left, right) | Item::Selected(left, right) => {
+                if width_of(&left.spans) + width_of(&right.spans) + 1 > w { 2 } else { 1 }
+            }
+        })
+        .sum()
+}
+
+/// Puts a page together: what comes before the card, the card fitted to the rows left, what
+/// comes after, and the one line of keys at the bottom.
+#[allow(clippy::too_many_arguments)]
+fn fit_page(t: &Theme, page: Page, before: Vec<Item>, mut card: Card, after: Vec<Item>, keys: &str, w: u16, h: u16) -> Page {
+    let used = usize::from(STRIP_ROWS) + 1 + rows_of(&before, w) + rows_of(&after, w);
+    card.fit(t, usize::from(h).saturating_sub(used));
+    let mut items = before;
+    items.extend(card.items(t));
+    items.extend(after);
+    page.plain(items).footers(action_bar(t, keys))
 }
 
 /// The tab bar: a strip of its own with an empty row above and below, the tabs on the page margin
@@ -1229,26 +1306,26 @@ fn draw_v3(frame: &mut ratatui::Frame, t: &Theme, page: Page) {
     paint(buffer, area.height.saturating_sub(footer_rows)..area.height);
 }
 
-fn v3_page(app: &App, t: &Theme, scene: Scene, w: u16) -> Page {
+fn v3_page(app: &App, t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
     match scene {
-        Scene::V3Web => v3_web(app, t, w),
-        Scene::V3Hosting => v3_hosting(app, t, w, Internet::Off),
-        Scene::V3HostingInternet => v3_hosting(app, t, w, Internet::Chosen),
-        Scene::V3PickDomain => v3_hosting(app, t, w, Internet::Picking),
-        Scene::V3NoProvider => v3_hosting(app, t, w, Internet::NoProvider),
-        Scene::V3Confirm => v3_confirm(app, t, w),
-        Scene::V3Online => v3_online(app, t, w),
-        Scene::V3Blocked => v3_blocked(app, t, w),
-        Scene::V3Providers => v3_providers(app, t, w),
-        Scene::V3AddProvider => v3_add_provider(app, t, w),
-        Scene::V3ProviderKey => v3_provider_key(app, t, w),
-        Scene::V3ProviderDone => v3_provider_done(app, t, w),
-        Scene::V3Buttons => v3_buttons(app, t, w),
+        Scene::V3Web => v3_web(app, t, w, h),
+        Scene::V3Hosting => v3_hosting(app, t, w, h, Internet::Off),
+        Scene::V3HostingInternet => v3_hosting(app, t, w, h, Internet::Chosen),
+        Scene::V3PickDomain => v3_hosting(app, t, w, h, Internet::Picking),
+        Scene::V3NoProvider => v3_hosting(app, t, w, h, Internet::NoProvider),
+        Scene::V3Confirm => v3_confirm(app, t, w, h),
+        Scene::V3Online => v3_online(app, t, w, h),
+        Scene::V3Blocked => v3_blocked(app, t, w, h),
+        Scene::V3Providers => v3_providers(app, t, w, h),
+        Scene::V3AddProvider => v3_add_provider(app, t, w, h),
+        Scene::V3ProviderKey => v3_provider_key(app, t, w, h),
+        Scene::V3ProviderDone => v3_provider_done(app, t, w, h),
+        Scene::V3Buttons => v3_buttons(app, t, w, h),
         _ => Page::new(Line::default(), Line::default()),
     }
 }
 
-fn v3_web(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_web(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     let sites = [
@@ -1263,15 +1340,13 @@ fn v3_web(app: &App, t: &Theme, w: u16) -> Page {
         card.row(t, vec![t.b(pad(name, 11)), t.n(pad(address, 34)), t.d(pad(who, 20)), t.d("›")]);
     }
     card.blank(t);
-    let mut items = vec![
+    let items = vec![
         Item::Blank,
         Item::Row(Line::from(vec![margin(t), t.b("Sites online")]), Line::from(vec![t.a("Domain providers ›"), t.n(MARGIN)])),
         Item::Blank,
     ];
-    items.extend(card.items(t));
-    items.push(Item::Blank);
-    items.push(quiet(t, "To put another app online, open it in Packages."));
-    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[], "Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers"))
+    let after = vec![Item::Blank, quiet(t, "To put another app online, open it in Packages.")];
+    fit_page(t, top(app, t, Tab::Web, w), items, card, after, "Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers", w, h)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1290,7 +1365,7 @@ fn tick(t: &Theme, on_: bool) -> Span<'static> {
     }
 }
 
-fn v3_hosting(app: &App, t: &Theme, w: u16, internet: Internet) -> Page {
+fn v3_hosting(app: &App, t: &Theme, w: u16, h: u16, internet: Internet) -> Page {
     let name = if internet == Internet::Off { "mk-lws" } else { "mk-pay" };
     let mut card = Card::new(w);
     card.blank(t);
@@ -1337,27 +1412,34 @@ fn v3_hosting(app: &App, t: &Theme, w: u16, internet: Internet) -> Page {
             card.blank(t);
             card.row(t, vec![t.n("     To use a web address you own, first add the company you bought it from.")]);
             card.row(t, vec![t.d("     You'll come back here when it's added.")]);
+            card.blank(t);
+            // The button belongs to the Internet choice, so it sits in that row's area, on its
+            // indent, rather than at the end of the card.
+            card.inline_button(t, "Add a provider", 5);
         }
     }
     card.blank(t);
     card.row(t, vec![t.a("Show details ›")]);
     card.blank(t);
-    let mut items = vec![Item::Blank, trail(t, &["Packages", name, "Hosting"]), Item::Blank];
-    items.push(line(vec![margin(t), t.b("Hosting")]));
-    items.push(quiet(t, &format!("Choose who can open {name}. Any combination works.")));
-    items.push(Item::Blank);
-    items.extend(card.items(t));
     let (buttons, keys): (&[(&str, bool)], &str) = match internet {
         Internet::Off => (&[("Save", true)], "Keys: Tab move  Space tick  ↵ save  Esc back"),
         Internet::Chosen => (&[("Check and save", true)], "Keys: Tab move  Space tick  ↵ check and save  Esc back"),
         Internet::Picking => (&[("Check and save", true)], "Keys: ↑↓ choose  ↵ pick  Esc close the list"),
-        Internet::NoProvider => (&[("Add a provider", true)], "Keys: Tab move  Space tick  ↵ add a provider  Esc back"),
+        Internet::NoProvider => (&[], "Keys: Tab move  Space tick  ↵ add a provider  Esc back"),
     };
-    let (app_tab, _) = (Tab::Packages, ());
-    top(app, t, app_tab, w).plain(items).footers(action_bar(t, buttons, keys))
+    card.buttons(t, buttons);
+    let items = vec![
+        Item::Blank,
+        trail(t, &["Packages", name, "Hosting"]),
+        Item::Blank,
+        line(vec![margin(t), t.b("Hosting")]),
+        quiet(t, &format!("Choose who can open {name}. Any combination works.")),
+        Item::Blank,
+    ];
+    fit_page(t, top(app, t, Tab::Packages, w), items, card, Vec::new(), keys, w, h)
 }
 
-fn v3_confirm(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_confirm(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     for check in ["Porkbun accepted the key", "pay.example.com points to your home", "The internet can reach your Nodo", "Secure connection ready"] {
@@ -1372,11 +1454,12 @@ fn v3_confirm(app: &App, t: &Theme, w: u16) -> Page {
     let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank];
     items.push(heading(t, "Ready to put mk-pay on the internet"));
     items.push(Item::Blank);
-    items.extend(card.items(t));
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Cancel", false), ("Put mk-pay online", true)], "Keys: ↵ put online  Esc cancel"))
+    card.buttons(t, &[("Cancel", false), ("Put mk-pay online", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ put online  Esc cancel", w, h)
 }
 
-fn v3_online(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_online(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     card.row(t, vec![t.o("✓  "), t.b("mk-pay is online")]);
@@ -1386,12 +1469,13 @@ fn v3_online(app: &App, t: &Theme, w: u16) -> Page {
     card.blank(t);
     card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]);
     card.blank(t);
-    let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank, Item::Blank];
-    items.extend(card.items(t));
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Done", true)], "Keys: ↵ done"))
+    let items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank, Item::Blank];
+    card.buttons(t, &[("Done", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ done", w, h)
 }
 
-fn v3_blocked(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_blocked(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     card.row(t, vec![t.n("Your internet provider shares one address between many homes, so visitors stop at the")]);
@@ -1404,11 +1488,12 @@ fn v3_blocked(app: &App, t: &Theme, w: u16) -> Page {
     let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank];
     items.push(heading(t, "The internet can't reach your Nodo"));
     items.push(Item::Blank);
-    items.extend(card.items(t));
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Check again", false), ("Use Tor instead", true)], "Keys: ↵ use Tor  c check again  Esc back"))
+    card.buttons(t, &[("Check again", false), ("Use Tor instead", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Packages, w), items, card, after, "Keys: ↵ use Tor  c check again  Esc back", w, h)
 }
 
-fn v3_providers(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_providers(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     for (index, (name, domains)) in [("Porkbun", "example.com   shop-example.org"), ("Cloudflare", "myshop.net")].into_iter().enumerate() {
@@ -1421,11 +1506,12 @@ fn v3_providers(app: &App, t: &Theme, w: u16) -> Page {
     let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers"]), Item::Blank, heading(t, "Domain providers")];
     items.push(quiet(t, "The companies where you bought your web addresses. Add one once; then any app can use its domains."));
     items.push(Item::Blank);
-    items.extend(card.items(t));
-    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Add a provider", true)], "Keys: ↑↓ choose  a add  x remove  Esc back"))
+    card.buttons(t, &[("Add a provider", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Web, w), items, card, after, "Keys: ↑↓ choose  a add  x remove  Esc back", w, h)
 }
 
-fn v3_add_provider(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_add_provider(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     for (index, (name, note)) in [
@@ -1444,14 +1530,12 @@ fn v3_add_provider(app: &App, t: &Theme, w: u16) -> Page {
         card.row(t, vec![t.b(pad(name, 14)), t.d(note.to_owned())]);
     }
     card.blank(t);
-    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add"]), Item::Blank, heading(t, "Where did you buy your web address?"), Item::Blank];
-    items.extend(card.items(t));
-    items.push(Item::Blank);
-    items.push(quiet(t, "Somewhere else? It can't be connected yet, but Tor works without a web address."));
-    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[], "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back"))
+    let items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add"]), Item::Blank, heading(t, "Where did you buy your web address?"), Item::Blank];
+    let after = vec![Item::Blank, quiet(t, "Somewhere else? It can't be connected yet, but Tor works without a web address.")];
+    fit_page(t, top(app, t, Tab::Web, w), items, card, after, "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back", w, h)
 }
 
-fn v3_provider_key(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_provider_key(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     let mut key = vec![t.d(pad("API key", 13))];
@@ -1467,11 +1551,12 @@ fn v3_provider_key(app: &App, t: &Theme, w: u16) -> Page {
     let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", "Porkbun"]), Item::Blank, heading(t, "Connect Porkbun")];
     items.push(quiet(t, "Make a key at porkbun.com › Account › API Access, then paste both parts here."));
     items.push(Item::Blank);
-    items.extend(card.items(t));
-    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Connect", true)], "Keys: Tab next box  ↵ connect  Esc back"))
+    card.buttons(t, &[("Connect", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Web, w), items, card, after, "Keys: Tab next box  ↵ connect  Esc back", w, h)
 }
 
-fn v3_provider_done(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_provider_done(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let mut card = Card::new(w);
     card.blank(t);
     card.row(t, vec![t.o("✓  "), t.b("Porkbun is connected")]);
@@ -1482,13 +1567,14 @@ fn v3_provider_done(app: &App, t: &Theme, w: u16) -> Page {
     card.blank(t);
     card.row(t, vec![t.d("   Missing one? Turn on API access for it at Porkbun, and it appears here.")]);
     card.blank(t);
-    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", "Porkbun"]), Item::Blank, Item::Blank];
-    items.extend(card.items(t));
-    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Back to mk-pay", true)], "Keys: ↵ back to mk-pay"))
+    let items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", "Porkbun"]), Item::Blank, Item::Blank];
+    card.buttons(t, &[("Back to mk-pay", true)]);
+    let after = Vec::new();
+    fit_page(t, top(app, t, Tab::Web, w), items, card, after, "Keys: ↵ back to mk-pay", w, h)
 }
 
 /// The button styles side by side on the action bar's surface, for choosing.
-fn v3_buttons(app: &App, t: &Theme, w: u16) -> Page {
+fn v3_buttons(app: &App, t: &Theme, w: u16, h: u16) -> Page {
     let list: &[(&str, bool)] = &[("Cancel", false), ("Put mk-pay online", true)];
     let mut items = vec![Item::Blank, heading(t, "Buttons: flat fills with rounded ends")];
     for (name, note, style) in [
@@ -1512,7 +1598,8 @@ fn v3_buttons(app: &App, t: &Theme, w: u16) -> Page {
         items.push(Item::Blank);
         items.extend(card.items(t));
     }
-    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[], "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
+    let _ = h;
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, "Rounded and plain buttons are one row tall; the rows above and below count for a click too."))
 }
 
 #[cfg(test)]
@@ -1537,18 +1624,32 @@ mod tests {
     }
 
     #[test]
-    fn every_v3_screen_names_what_is_clickable_and_keeps_its_button_on_a_small_terminal() {
+    fn every_v3_screen_names_what_is_clickable_and_keeps_its_main_button_on_a_small_terminal() {
+        // Buttons live in their card; when a small terminal can't show the whole card, the rows
+        // above the buttons scroll and the buttons stay. So the main button is on screen at 80x24.
         let t = Theme::truecolor();
+        let main = |scene: Scene| match scene {
+            Scene::V3Hosting => Some("Save"),
+            Scene::V3HostingInternet | Scene::V3PickDomain => Some("Check and save"),
+            Scene::V3NoProvider | Scene::V3Providers => Some("Add a provider"),
+            Scene::V3Confirm => Some("Put mk-pay online"),
+            Scene::V3Online => Some("Done"),
+            Scene::V3Blocked => Some("Use Tor instead"),
+            Scene::V3ProviderKey => Some("Connect"),
+            Scene::V3ProviderDone => Some("Back to mk-pay"),
+            _ => None,
+        };
         for scene in Scene::ALL.into_iter().filter(|s| s.is_v3()) {
             assert!(!scene.clickable().is_empty(), "{}", scene.slug());
-            let small = render(scene, 80, 24, &t);
-            let big = render(scene, 120, 36, &t);
             let (app, _) = fixture(ScreenId::WebSites);
-            let rows = v3_page(&app, &t, scene, 120).footer.len() as u16;
-            let footer = |b: &Buffer, h: u16| -> String {
-                (h - rows..h).flat_map(|y| (0..b.area.width).map(move |x| (x, y))).map(|p| b[p].symbol().to_owned()).collect()
-            };
-            assert_eq!(footer(&small, 24).split_whitespace().collect::<Vec<_>>(), footer(&big, 36).split_whitespace().collect::<Vec<_>>(), "{}: the action bar differs at 80x24", scene.slug());
+            assert_eq!(v3_page(&app, &t, scene, 120, 36).footer.len(), 1, "{}: the footer is only the keys", scene.slug());
+            if let Some(label) = main(scene) {
+                for (w, h) in [(120u16, 36u16), (80, 24)] {
+                    let b = render(scene, w, h, &t);
+                    let text: String = b.content().iter().map(|c| c.symbol()).collect();
+                    assert!(text.contains(label), "{} at {w}x{h}: \"{label}\" is off screen", scene.slug());
+                }
+            }
         }
     }
 

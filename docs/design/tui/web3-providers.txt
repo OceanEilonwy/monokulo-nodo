@@ -12,6 +12,7 @@
 
        Cloudflare    myshop.net                                Remove
 
+                                                                                              Add a provider   
 
 
 
@@ -31,6 +32,5 @@
 
 
 
-                                                                                                 Add a provider   
 
     Keys: ↑↓ choose  a add  x remove  Esc back
