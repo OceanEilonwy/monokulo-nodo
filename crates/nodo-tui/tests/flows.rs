@@ -385,7 +385,7 @@ fn without_a_provider() -> (App, MockBackend) {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     mock.web.provider.clear();
     mock.web.domain.clear();
-    mock.stored_provider = None;
+    mock.connected.clear();
     app.data = load_snapshot(&mut mock).unwrap();
     (app, mock)
 }
@@ -416,7 +416,7 @@ fn providers_without_an_api_cannot_be_connected_and_offer_no_guided_move() {
         }
         let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
         assert_eq!(state.stage, ProviderStage::Pick);
-        assert_eq!(mock.stored_provider.as_ref().unwrap().provider, "Porkbun");
+        assert_eq!(mock.connected.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Porkbun"]);
     }
 }
 
@@ -432,20 +432,22 @@ fn hosting_without_a_provider_adds_one_and_comes_back() {
     assert_eq!(state.return_to.as_deref(), Some("monokulo-pay"));
     select_provider(&mut app, &mut mock, "Cloudflare");
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("Connect Cloudflare"), "{}", screen_text(&app));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Connect Cloudflare"), "{screen}");
+    // Cloudflare lists the domains its key controls, so there is no web address to type.
+    assert!(!screen.contains("Web address"), "{screen}");
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("Type the web address you bought"), "{}", screen_text(&app));
-    type_text(&mut app, &mut mock, "example.org");
-    key(&mut app, &mut mock, TAB);
+    assert!(screen_text(&app).contains("Paste the key from Cloudflare"), "{}", screen_text(&app));
     type_text(&mut app, &mut mock, "api-value-123");
     key(&mut app, &mut mock, TAB);
     type_text(&mut app, &mut mock, "secret-value-456");
     let screen = screen_text(&app);
     assert!(!screen.contains("api-value-123") && !screen.contains("secret-value-456"), "{screen}");
     key(&mut app, &mut mock, ENTER);
-    assert_eq!(mock.stored_provider.as_ref().unwrap().provider, "Cloudflare");
+    assert_eq!(mock.connected.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Cloudflare"]);
     let screen = screen_text(&app);
     assert!(screen.contains("Cloudflare is connected") && screen.contains("Back to monokulo-pay"), "{screen}");
+    assert!(screen.contains("example.org") && screen.contains("myshop.net"), "the discovered domains are listed: {screen}");
     key(&mut app, &mut mock, ENTER);
     let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting again") };
     assert_eq!(state.site, "monokulo-pay");
@@ -454,11 +456,69 @@ fn hosting_without_a_provider_adds_one_and_comes_back() {
 }
 
 #[test]
+fn a_provider_that_cannot_list_asks_for_the_web_address() {
+    let (mut app, mut mock) = fixture(ScreenId::WebProviders);
+    select_provider(&mut app, &mut mock, "GoDaddy");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("Web address"), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("can't list your domains"), "{}", screen_text(&app));
+    type_text(&mut app, &mut mock, "example.net");
+    key(&mut app, &mut mock, TAB);
+    type_text(&mut app, &mut mock, "key");
+    key(&mut app, &mut mock, TAB);
+    type_text(&mut app, &mut mock, "secret");
+    key(&mut app, &mut mock, ENTER);
+    let godaddy = mock.connected.iter().find(|p| p.name == "GoDaddy").expect("connected");
+    assert_eq!(godaddy.domains[0].name, "example.net");
+}
+
+#[test]
+fn hosting_picks_a_domain_from_any_connected_provider() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    app.data = load_snapshot(&mut mock).unwrap();
+    let names: Vec<_> = app.domain_choices().into_iter().map(|(d, p)| format!("{d} {p}")).collect();
+    assert_eq!(names, ["example.com Porkbun", "example.org Gandi", "myshop.net Gandi"]);
+    let shop = app.data.web.sites.iter().find(|s| s.package == "shop").unwrap().clone();
+    let mut state = ExposureState::new("shop", shop.exposure, shop.public_host.as_deref(), &app.domain_choices());
+    assert_eq!(state.domain, "example.com", "the saved address's domain is chosen");
+    state.draft.public = true;
+    app.screen = Screen::WebExposure(state);
+    let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
+    state.selected = state.order().iter().position(|f| *f == HostingFocus::Domain).unwrap();
+    keys(&mut app, &mut mock, &[ENTER]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("myshop.net") && screen.contains("Gandi") && screen.contains("+ Add a provider"), "{screen}");
+    keys(&mut app, &mut mock, &[DOWN, DOWN, ENTER]);
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert_eq!(state.domain, "myshop.net");
+    assert!(state.host().ends_with(".myshop.net"));
+    assert!(screen_text(&app).contains(".myshop.net"));
+}
+
+#[test]
+fn the_providers_list_shows_every_provider_and_removes_one_after_a_confirm() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Porkbun") && screen.contains("Gandi") && screen.contains("myshop.net"), "{screen}");
+    assert_eq!(screen.matches("Remove").count(), 2, "one Remove per provider: {screen}");
+    keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('x')]);
+    assert!(app.modal.is_some(), "removing asks first");
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    assert_eq!(mock.connected.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Porkbun"]);
+    assert!(!screen_text(&app).contains("Gandi"), "{}", screen_text(&app));
+}
+
+#[test]
 fn a_refused_key_says_so_in_the_card() {
     let (mut app, _mock) = fixture(ScreenId::WebProviders);
     let Screen::WebProviders(state) = &mut app.screen else { panic!("expected providers") };
     state.stage = ProviderStage::Key;
-    update(&mut app, Event::ProviderTested(Err("invalid API key".to_owned())));
+    update(&mut app, Event::ProviderAdded(Err("Porkbun refused the key: invalid API key".to_owned())));
     assert!(screen_text(&app).contains("Porkbun refused the key: invalid API key"), "{}", screen_text(&app));
 }
 

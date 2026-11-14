@@ -141,15 +141,31 @@ codebase, and signed xbps packages from user-added feeds.
 - **Web screens (flow v3):** The TUI's Web tab lists only the sites that are online, each with who can
   open it in words; clicking one, or pressing `h` on an installed app's page in Packages, opens that
   app's Hosting. There the owner ticks Home network, Tor and Internet in any combination, and for the
-  internet uses the connected provider's domain with an address part (`pay` + `.example.com`). Home
+  internet picks a domain from any connected provider with an address part (`pay` + `.example.com`). Home
   network and Tor apply at once; the internet only turns on after the reachability checks pass and
   the owner presses "Put … online" on a screen that shows the address and what becomes public, with
   the focus starting on Cancel (the helper still requires the host quoted back, which the screen
-  sends). Domain providers are added once (Web › Domain providers): pick the company, type the web
-  address and paste the key; the TUI tests the key, then stores it as a secret, and returns to the
-  Hosting screen it came from. The helper keeps one provider and domain at a time, so "Add" replaces
-  it. Technical terms (records, ports, the challenge) are behind "Show details"; certificates and home
-  names live under Web › Domain providers › Certificates and home names.
+  sends). Domain providers are added once each (Web › Domain providers): pick the company and paste
+  the key; the helper asks the provider which domains the key controls, which also proves the key,
+  stores the key sealed, and the TUI returns to the Hosting screen it came from. A provider whose API
+  cannot list domains (GoDaddy's Personal Access Token API, as implemented) asks for the domain, which
+  the helper proves with a temporary record. The owner can connect several providers; the providers
+  screen lists each with its domains, with Remove (refused while an app's internet address is under
+  one of its domains) and "look again" (`r`). Technical terms (records, ports, the challenge) are
+  behind "Show details"; certificates and home names live under Web › Domain providers › Certificates
+  and home names.
+- **Domain providers (helper):** `ListDomainProviders`, `AddDomainProvider`, `RemoveDomainProvider`,
+  `RefreshDomainProvider` and `AddProviderDomain` manage them; credentials are sealed per field in the
+  root-only `/var/lib/nodo/secrets/web-dns.toml` and never returned to clients. A domain belongs to
+  the first provider that holds it, so one account publishes its records and answers its
+  certificates; another provider listing the same domain shows it as held there. A site's provider
+  follows from its address: the longest connected domain the host is under. nodo-ddns gets one zone
+  per domain with public records, each with its own state file
+  (`/var/lib/nodo-ddns/<domain>.json`), and Caddy gets one ACME policy per provider, each with that
+  provider's DNS-01 credentials. A device updated from the single-provider form keeps its provider as
+  the first one, converted on the helper's next apply without opening the sealed values, and its
+  dynamic DNS state moves to that domain's file. `SetDnsProvider` and `TestDnsProvider` still work on
+  the first provider.
 - **Mouse:** The TUI turns on mouse reporting (crossterm's `EnableMouseCapture`; it is turned off
   again on exit and from the panic hook). Screens declare click targets by the text they draw, which
   are found in the drawn frame (`crates/nodo-tui/src/hit.rs`), so a click lands on exactly what is

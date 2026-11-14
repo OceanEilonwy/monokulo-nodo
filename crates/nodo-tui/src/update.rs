@@ -365,6 +365,7 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
         | ModalAction::ForgetWifi(_)
         | ModalAction::WifiOff
         | ModalAction::RemoveBluetooth(_)) => net::modal_action(app, action),
+        ModalAction::RemoveProvider(id) => vec![Effect::RemoveProvider(id)],
         ModalAction::RemoveSshKey(fingerprint) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;
@@ -1714,8 +1715,9 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         Event::Reachability { site, going_public, result } => {
             web::on_reachability(app, site, going_public, result);
         }
-        Event::ProviderTested(result) => return web::on_provider_tested(app, result),
-        Event::ProviderSaved(result) => return web::on_provider_saved(app, result),
+        Event::ProviderAdded(result) => return web::on_provider_added(app, result),
+        Event::ProviderRemoved(result) => return web::on_provider_removed(app, result),
+        Event::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
         Event::AcmeSaved(result) => match result {
             Ok(()) => {
                 if let Screen::WebDomain(state) = &mut app.screen {

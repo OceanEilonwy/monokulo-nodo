@@ -48,7 +48,7 @@ pub struct WebPaths {
     pub nft_main: PathBuf,
     pub ddns_config: PathBuf,
     pub ddns_state: PathBuf,
-    /// Domain, provider and credentials. Root only.
+    /// The connected providers, their domains and sealed credentials. Root only. See `providers`.
     pub dns_credentials: PathBuf,
     pub mdns_names: PathBuf,
     pub localnet_state: PathBuf,
@@ -130,6 +130,8 @@ pub trait WebIo: Send + Sync {
     /// A GET on Caddy's admin API. `None` when Caddy is not running or answers with an error.
     fn caddy_get(&self, socket: &Path, path: &str) -> Option<Vec<u8>>;
     fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String>;
+    /// The domains the credentials control, or `None` when the provider cannot list them.
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String>;
     /// The home's public IPv4 address, as the IP echo services see it.
     fn detect_public_ip(&self) -> Option<IpAddr>;
 }
@@ -145,16 +147,21 @@ struct Credentials {
     dns01: BTreeMap<String, String>,
 }
 
-/// nodo-ddns's config file.
+/// nodo-ddns's config file: one zone per owned domain that has public records.
 #[derive(Serialize)]
-struct DdnsConfig<'a> {
-    domain: &'a str,
-    state_file: String,
-    records: Vec<String>,
+struct DdnsConfig {
     ttl: u32,
     ipv6: bool,
     interval_secs: u64,
-    dns: &'a BTreeMap<String, String>,
+    zones: Vec<DdnsZone>,
+}
+
+#[derive(Serialize)]
+struct DdnsZone {
+    domain: String,
+    state_file: String,
+    records: Vec<String>,
+    dns: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -207,9 +214,12 @@ impl<I: WebIo> NodoWeb<I> {
         NodoWeb { paths, io }
     }
 
+    /// The first connected provider with its first domain. The single-provider views (the
+    /// certificate settings, the local names and the older requests) address this one.
     fn credentials(&self) -> Option<Credentials> {
-        let bytes = self.io.read(&self.paths.dns_credentials)?;
-        toml::from_str(std::str::from_utf8(&bytes).ok()?).ok()
+        let (store, _) = self.provider_store();
+        let provider = store.providers.iter().find(|p| !p.domains.is_empty())?;
+        Some(Credentials { domain: provider.domains[0].clone(), dns: provider.dns.clone(), dns01: provider.dns01.clone() })
     }
 
     /// The provider table with every sealed value opened.
@@ -249,7 +259,7 @@ impl<I: WebIo> NodoWeb<I> {
             local_address: self.local_address(),
             tor_dir: self.paths.tor_dir.to_string_lossy().into_owned(),
             acme_email: stored.email.clone(),
-            dns_challenge: self.dns_challenge(key).0,
+            zone_challenges: self.zone_challenges(key),
             acme: self.acme_config(&stored),
             local_domain: stored.local_domain,
             trust_dir: self.paths.trust_dir.to_string_lossy().into_owned(),
@@ -280,12 +290,14 @@ impl<I: WebIo> NodoWeb<I> {
         Ok(plan)
     }
 
-    /// The DNS record names for public hosts under the stored domain.
-    fn ddns_records(&self, plan: &WebPlan, domain: &str) -> Vec<String> {
+    /// The DNS record names for public hosts in `domain`: the hosts whose longest connected domain
+    /// is this one.
+    fn ddns_records(&self, plan: &WebPlan, domain: &str, store: &providers::ProviderStore) -> Vec<String> {
         let mut records: Vec<String> = plan
             .addresses
             .iter()
             .filter(|a| a.kind == AddressKind::Public)
+            .filter(|a| store.zone_of(&a.host).is_some_and(|(_, d)| d == domain))
             .filter_map(|a| {
                 if a.host == domain {
                     Some("@".to_owned())
@@ -388,29 +400,35 @@ impl<I: WebIo> NodoWeb<I> {
     }
 
     fn apply_ddns(&self, plan: &WebPlan, key: Option<&SecretsKey>) -> Result<(), String> {
-        let any_public = plan.addresses.iter().any(|a| a.kind == AddressKind::Public);
-        let Some(credentials) = self.credentials().filter(|_| any_public) else {
+        let (store, _) = self.provider_store();
+        let wanted: Vec<(&providers::StoredProvider, &str, Vec<String>)> = store
+            .owned()
+            .into_iter()
+            .map(|(provider, domain)| (provider, domain, self.ddns_records(plan, domain, &store)))
+            .filter(|(_, _, records)| !records.is_empty())
+            .collect();
+        if wanted.is_empty() {
             // No public site, so the home IP has no business being looked up or published.
             if self.io.service_installed(DDNS) {
                 self.io.service(DDNS, false, false)?;
             }
             self.io.remove(&self.paths.ddns_config)?;
             return Ok(());
-        };
+        }
         let Some(key) = key else {
             // Locked: the credentials cannot be opened, so nodo-ddns waits for its config.
             return self.io.service(DDNS, true, false);
         };
-        let dns = self.opened(&credentials, key)?;
-        let config = DdnsConfig {
-            domain: &credentials.domain,
-            state_file: self.paths.ddns_state.to_string_lossy().into_owned(),
-            records: self.ddns_records(plan, &credentials.domain),
-            ttl: 600,
-            ipv6: false,
-            interval_secs: 300,
-            dns: &dns,
-        };
+        let mut zones = Vec::new();
+        for (provider, domain, records) in wanted {
+            zones.push(DdnsZone {
+                domain: domain.to_owned(),
+                state_file: self.zone_state(domain).to_string_lossy().into_owned(),
+                records,
+                dns: self.open_provider(provider, key)?,
+            });
+        }
+        let config = DdnsConfig { ttl: 600, ipv6: false, interval_secs: 300, zones };
         if let Some(dir) = self.paths.ddns_config.parent() {
             if let Some(parent) = dir.parent() {
                 self.io.ensure_dir(parent, SECRETS_DIR)?;
@@ -449,21 +467,30 @@ impl<I: WebIo> NodoWeb<I> {
             })
             .collect();
         let credentials = self.credentials();
-        let state: DdnsState = self
-            .io
-            .read(&self.paths.ddns_state)
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
-        let records = credentials.as_ref().map(|c| self.ddns_records(plan, &c.domain)).unwrap_or_default();
-        let stale_records = state
-            .published
-            .iter()
-            .filter(|(_, record)| {
-                record.get("name").and_then(|n| n.as_str()).is_none_or(|n| !records.iter().any(|r| r == n))
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        let changed = state.published.values().filter_map(|r| r.get("changed_at")?.as_u64()).max();
+        let (store, _) = self.provider_store();
+        // Every owned domain has its own state file. With several, stale keys name their domain, as
+        // nodo-ddns's own output does.
+        let owned = store.owned();
+        let single = owned.len() == 1;
+        let mut stale_records = Vec::new();
+        let mut changed = None;
+        let mut observed_v4 = None;
+        for (_, domain) in &owned {
+            let state: DdnsState = self
+                .io
+                .read(&self.zone_state(domain))
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+            let records = self.ddns_records(plan, domain, &store);
+            for (key, record) in &state.published {
+                let current = record.get("name").and_then(|n| n.as_str()).is_some_and(|n| records.iter().any(|r| r == n));
+                if !current {
+                    stale_records.push(if single { key.clone() } else { format!("{domain}: {key}") });
+                }
+            }
+            changed = changed.max(state.published.values().filter_map(|r| r.get("changed_at")?.as_u64()).max());
+            observed_v4 = observed_v4.or(state.observed_v4);
+        }
         let (local_address, local_unavailable) = match &plan.local.address {
             LocalAddress::Ready { address } => (Some(address.to_string()), plan.local.names_problem.map(str::to_owned)),
             LocalAddress::Unavailable { reason } => {
@@ -478,7 +505,7 @@ impl<I: WebIo> NodoWeb<I> {
             domain: credentials.as_ref().map(|c| c.domain.clone()),
             provider: credentials.and_then(|c| c.dns.get("provider").cloned()),
             ddns_running: self.io.service_running(DDNS),
-            public_ip: state.observed_v4,
+            public_ip: observed_v4,
             dns_changed_at: changed,
             stale_records,
         }
@@ -516,6 +543,7 @@ fn device_address(gateway: Ipv4Addr) -> Option<IpAddr> {
 
 impl<I: WebIo> ExposureApplier for NodoWeb<I> {
     fn apply(&self, input: &WebInput) -> Result<(), String> {
+        self.migrate_providers()?;
         let wants_local = input.sites.iter().any(|s| s.exposure.local);
         if self.io.service_installed(LOCALNET) {
             self.io.service(LOCALNET, wants_local, false)?;
@@ -543,6 +571,7 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
     }
 
     fn unlocked(&self, input: &WebInput) -> Result<(), String> {
+        self.migrate_providers()?;
         let plan = self.plan(input)?;
         // The config written while locked may lack DNS-01, which only now can be opened.
         let json = serde_json::to_vec_pretty(&plan.caddy).map_err(|e| e.to_string())?;
@@ -598,6 +627,7 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
                 caveat: p.caveat.map(str::to_owned),
                 fields: field_names(p.id),
                 configured: configured.as_deref() == Some(p.id),
+                lists_domains: p.lists_domains,
             })
             .collect())
     }
@@ -613,47 +643,58 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
             .secrets
             .as_deref()
             .ok_or_else(|| ApiError::Locked("unlock the device to store DNS credentials".to_owned()))?;
-        let info = catalog::lookup(provider)
-            .filter(|p| p.status == ProviderStatus::Implemented)
-            .ok_or_else(|| ApiError::Failed(format!("{} is not a supported provider", provider.escape_debug())))?;
-        Zone::new(domain).map_err(|e| ApiError::Failed(e.to_string()))?;
-        let expected = field_names(info.id);
-        let mut dns = BTreeMap::from([("provider".to_owned(), info.id.to_owned())]);
-        for (name, value) in fields {
-            if !expected.contains(name) {
-                return Err(ApiError::Failed(format!("{} is not a field of {}", name.escape_debug(), info.name)));
+        let domain = Zone::new(&domain.trim().to_ascii_lowercase()).map_err(|e| ApiError::Failed(e.to_string()))?.as_str().to_owned();
+        let (sealed, _) = self.seal_fields(provider, fields, key)?;
+        // The older single-provider request. It makes this the first provider, which the
+        // single-provider views address: the connected provider of this kind gets the new
+        // credentials and the domain first, or a new provider is connected in front. Others stay.
+        let (mut store, _) = self.provider_store();
+        let mut chosen = match store.providers.iter().position(|p| p.kind() == provider) {
+            Some(index) => {
+                let mut existing = store.providers.remove(index);
+                existing.dns = sealed;
+                existing.domains.retain(|d| d != &domain);
+                existing.domains.insert(0, domain);
+                existing
             }
-            dns.insert(name.clone(), value.expose().to_owned());
-        }
-        // Parsing it the way nodo-ddns will catches missing fields before anything is stored.
-        let text = toml::to_string(&dns).map_err(|e| ApiError::Failed(e.to_string()))?;
-        toml::from_str::<ProviderConfig>(&text)
-            .map_err(|_| ApiError::Failed(format!("{} needs: {}", info.name, expected.join(", "))))?;
-        let mut sealed = BTreeMap::new();
-        for (name, value) in &dns {
-            let stored = if name == "provider" {
-                value.clone()
-            } else {
-                let mut nonce = [0u8; 24];
-                self.io.random(&mut nonce).map_err(ApiError::Failed)?;
-                secrets::seal(key, SEAL_PACKAGE, name, value, &nonce).map_err(ApiError::Failed)?
-            };
-            sealed.insert(name.clone(), stored);
-        }
-        // DNS-01 credentials belong to the provider, so they survive only a change of domain.
-        let dns01 = self
-            .credentials()
-            .filter(|old| old.dns.get("provider").map(String::as_str) == Some(info.id))
-            .map(|old| old.dns01)
-            .unwrap_or_default();
-        let credentials = Credentials { domain: domain.to_owned(), dns: sealed, dns01 };
-        let stored = toml::to_string(&credentials).map_err(|e| ApiError::Failed(e.to_string()))?;
-        if let Some(dir) = self.paths.dns_credentials.parent() {
-            self.io.ensure_dir(dir, (0o700, "root", "root")).map_err(ApiError::Failed)?;
-        }
-        self.io.write(&self.paths.dns_credentials, stored.as_bytes(), ROOT_ONLY).map_err(ApiError::Failed)?;
+            None => providers::StoredProvider {
+                id: store.next_id(provider),
+                dns: sealed,
+                domains: vec![domain],
+                ..providers::StoredProvider::default()
+            },
+        };
+        chosen.problem = None;
+        store.providers.insert(0, chosen);
+        self.save_store(&store).map_err(ApiError::Failed)?;
         // The challenge may change with the provider, so the proxy is applied in full.
         ExposureApplier::apply(self, input).map_err(ApiError::Failed)
+    }
+
+    fn domain_providers(&self, input: &WebInput) -> Result<Vec<nodo_api::DomainProvider>, ApiError> {
+        Ok(self.list_domain_providers(input))
+    }
+
+    fn add_domain_provider(
+        &self,
+        kind: &str,
+        fields: &[(String, Secret)],
+        domain: Option<&str>,
+        input: &WebInput,
+    ) -> Result<nodo_api::DomainProvider, ApiError> {
+        NodoWeb::add_domain_provider(self, kind, fields, domain, input)
+    }
+
+    fn remove_domain_provider(&self, id: &str, input: &WebInput) -> Result<(), ApiError> {
+        NodoWeb::remove_domain_provider(self, id, input)
+    }
+
+    fn refresh_domain_provider(&self, id: &str, input: &WebInput) -> Result<nodo_api::DomainProvider, ApiError> {
+        NodoWeb::refresh_domain_provider(self, id, input)
+    }
+
+    fn add_provider_domain(&self, id: &str, domain: &str, input: &WebInput) -> Result<nodo_api::DomainProvider, ApiError> {
+        NodoWeb::add_provider_domain(self, id, domain, input)
     }
 
     fn test_provider(&self, input: &WebInput) -> Result<String, ApiError> {
@@ -695,7 +736,18 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         if !input.sites.iter().any(|s| s.package == site.package && s.service.name == site.site) {
             return Err(ApiError::NotFound(format!("{}/{}", site.package, site.site)));
         }
-        let provider = match self.provider(input.secrets.as_deref()) {
+        // The site's own domain decides the provider; a site with no address yet uses the first.
+        let (store, _) = self.provider_store();
+        let host = input
+            .sites
+            .iter()
+            .find(|s| s.package == site.package && s.service.name == site.site)
+            .and_then(|s| s.public_host.clone());
+        let chosen = match host.as_deref().and_then(|h| store.zone_of(h)) {
+            Some((provider, domain)) => self.provider_for(provider, domain, input.secrets.as_deref()),
+            None => self.provider(input.secrets.as_deref()),
+        };
+        let provider = match chosen {
             Ok(provider) => provider,
             Err(e) => {
                 return Ok(ReachabilityDetail {
@@ -1013,6 +1065,10 @@ impl WebIo for RealWebIo {
         config.build(self.http(), domain).map_err(|e| e.to_string())
     }
 
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String> {
+        config.list_domains(self.http()).map_err(|e| e.to_string())
+    }
+
     fn detect_public_ip(&self) -> Option<IpAddr> {
         let http = self.http();
         nodo_web::detect::detect(http.as_ref(), &nodo_web::detect::default_sources(), nodo_web::detect::Family::V4)
@@ -1023,6 +1079,7 @@ impl WebIo for RealWebIo {
 mod certs;
 mod localsite;
 mod onion;
+mod providers;
 
 #[cfg(test)]
 mod tests;

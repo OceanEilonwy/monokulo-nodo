@@ -3,7 +3,7 @@
 //! The domain must have API access switched on in the Porkbun account. Keys go in headers rather than
 //! the JSON body, so reads can use GET and bodies never hold a credential.
 
-use super::{
+use super::{tidy_domains, MAX_DOMAIN_PAGES, 
     clean_warnings, decode, send, status_error, DnsError, ExistingRecord, IdBacked, IdRecords, ProviderMessage,
     RecordName, RecordType, Zone,
 };
@@ -85,6 +85,20 @@ struct Record {
     content: String,
 }
 
+/// Porkbun returns domains in chunks of up to 1000, paged with `start`.
+const DOMAIN_PAGE: usize = 1000;
+
+#[derive(Deserialize)]
+struct ListAllResponse {
+    #[serde(default)]
+    domains: Vec<ListedDomain>,
+}
+
+#[derive(Deserialize)]
+struct ListedDomain {
+    domain: String,
+}
+
 #[derive(Deserialize)]
 struct WriteResponse {
     #[serde(default)]
@@ -132,6 +146,22 @@ impl IdRecords for Porkbun {
         let path = format!("/dns/delete/{}/{}", self.zone, crate::http::encode_component(id));
         self.call(Method::Post, &path, None).map(|_| ())
     }
+
+    /// `domain/listAll`, filtered to the domains this key may use through the API (`apiAccess`).
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let mut names = Vec::new();
+        for page in 0..MAX_DOMAIN_PAGES {
+            let body = json!({ "start": (page * DOMAIN_PAGE).to_string(), "apiAccess": "yes" });
+            let response = self.call(Method::Post, "/domain/listAll", Some(body))?;
+            let parsed: ListAllResponse = decode(&response, "Porkbun domain list")?;
+            let count = parsed.domains.len();
+            names.extend(parsed.domains.into_iter().map(|d| d.domain));
+            if count < DOMAIN_PAGE {
+                break;
+            }
+        }
+        Ok(Some(tidy_domains(names)))
+    }
 }
 
 #[cfg(test)]
@@ -143,6 +173,26 @@ mod tests {
     const RECORDS: &str = include_str!("../../tests/fixtures/porkbun_records.json");
     const EMPTY: &str = r#"{"status":"SUCCESS","cloudflare":"disabled","records":[]}"#;
     const OK: &str = r#"{"status":"SUCCESS"}"#;
+
+    #[test]
+    fn lists_the_domains_the_key_may_use() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"{"status":"SUCCESS","domains":[{"domain":"example.com","status":"ACTIVE"},{"domain":"Shop.Example.org"}]}"#);
+        let provider = Porkbun::new(http.clone(), Zone::new("example.com").unwrap(), Secret::new("pk1"), Secret::new("sk1"));
+        assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.com".to_owned(), "shop.example.org".to_owned()]));
+        let request = http.request(0);
+        assert_eq!(request.url, "https://api.porkbun.com/api/json/v3/domain/listAll");
+        assert_eq!(body_json(&request)["apiAccess"], "yes");
+        assert_eq!(body_json(&request)["start"], "0");
+    }
+
+    #[test]
+    fn a_refused_listing_is_an_error() {
+        let http = FakeHttp::new();
+        http.respond(400, r#"{"status":"ERROR","message":"Invalid API key. (002)"}"#);
+        let provider = Porkbun::new(http, Zone::new("example.com").unwrap(), Secret::new("pk1"), Secret::new("sk1"));
+        assert!(provider.list_domains().is_err());
+    }
 
     fn provider(http: std::sync::Arc<FakeHttp>) -> IdBacked<Porkbun> {
         Porkbun::new(http, Zone::new("example.com").unwrap(), Secret::new("pk1_key"), Secret::new("sk1_key"))

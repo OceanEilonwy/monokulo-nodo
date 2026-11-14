@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use nodo_api::{
-    AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, DnsProviderDetail, Exposure,
+    AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, DnsProviderDetail, DomainProvider, Exposure,
     LocalNameCheck, LocalSiteStatus, ProviderInfo, PublicConfirmation, ReachabilityCheck, ReachabilityDetail,
     ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo, WebStatus,
 };
@@ -70,6 +70,27 @@ pub trait ExposureApplier: Send + Sync {
         Err(not_connected())
     }
     fn test_provider(&self, _input: &WebInput) -> Result<String, ApiError> {
+        Err(not_connected())
+    }
+    fn domain_providers(&self, _input: &WebInput) -> Result<Vec<DomainProvider>, ApiError> {
+        Err(not_connected())
+    }
+    fn add_domain_provider(
+        &self,
+        _kind: &str,
+        _fields: &[(String, Secret)],
+        _domain: Option<&str>,
+        _input: &WebInput,
+    ) -> Result<DomainProvider, ApiError> {
+        Err(not_connected())
+    }
+    fn remove_domain_provider(&self, _id: &str, _input: &WebInput) -> Result<(), ApiError> {
+        Err(not_connected())
+    }
+    fn refresh_domain_provider(&self, _id: &str, _input: &WebInput) -> Result<DomainProvider, ApiError> {
+        Err(not_connected())
+    }
+    fn add_provider_domain(&self, _id: &str, _domain: &str, _input: &WebInput) -> Result<DomainProvider, ApiError> {
         Err(not_connected())
     }
     fn retire_stale(&self) -> Result<Vec<String>, ApiError> {
@@ -257,6 +278,29 @@ impl<S: System> Helper<S> {
             }
             Request::TestDnsProvider => {
                 Ok(Response::ProviderTest(self.exposure.test_provider(&self.current_web_input()?)?))
+            }
+            Request::ListDomainProviders => {
+                Ok(Response::DomainProviders(self.exposure.domain_providers(&self.current_web_input()?)?))
+            }
+            Request::AddDomainProvider { kind, fields, domain } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                Ok(Response::DomainProvider(self.exposure.add_domain_provider(&kind, &fields, domain.as_deref(), &input)?))
+            }
+            Request::RemoveDomainProvider { id } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                self.exposure.remove_domain_provider(&id, &input).map(|()| Response::Ok)
+            }
+            Request::RefreshDomainProvider { id } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                Ok(Response::DomainProvider(self.exposure.refresh_domain_provider(&id, &input)?))
+            }
+            Request::AddProviderDomain { id, domain } => {
+                let _guard = lock(&self.service_lock);
+                let input = self.current_web_input()?;
+                Ok(Response::DomainProvider(self.exposure.add_provider_domain(&id, &domain, &input)?))
             }
             Request::RetireStaleRecords => {
                 let _guard = lock(&self.service_lock);

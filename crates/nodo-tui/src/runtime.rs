@@ -42,6 +42,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         updates: backend.updates(),
         web: backend.web(),
         providers: backend.providers(),
+        connected: backend.connected_providers(),
         log_sources: backend.log_sources(),
         auto_update: backend.auto_update(),
         unavailable: backend.unavailable(),
@@ -175,13 +176,12 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             let result = backend.reachability(&site);
             vec![Event::Reachability { site, going_public, result }]
         }
-        Effect::TestProvider { provider, domain, api_key, secret_key } => {
-            vec![Event::ProviderTested(backend.test_provider(&provider, &domain, &api_key, &secret_key))]
+        Effect::AddProvider { provider, domain, api_key, secret_key } => {
+            let result = backend.add_provider(&provider, domain.as_deref(), &api_key, &secret_key);
+            vec![Event::ProviderAdded(result), refresh(backend)]
         }
-        Effect::SaveProvider { provider, domain, api_key, secret_key } => {
-            let result = backend.save_provider(&provider, &domain, &api_key, &secret_key);
-            vec![Event::ProviderSaved(result), refresh(backend)]
-        }
+        Effect::RemoveProvider(id) => vec![Event::ProviderRemoved(backend.remove_provider(&id)), refresh(backend)],
+        Effect::RefreshProvider(id) => vec![Event::ProviderRefreshed(backend.refresh_provider(&id)), refresh(backend)],
         Effect::SaveAcme { settings, dns01 } => {
             // The credentials go first, since local names under the domain need DNS-01.
             let stored = match dns01 {

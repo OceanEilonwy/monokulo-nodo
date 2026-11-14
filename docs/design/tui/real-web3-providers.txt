@@ -1,0 +1,36 @@
+
+    Home     Packages     Web     Feeds     Updates 3     Logs                                         monokulo-nodo
+
+    Web  ›  Domain providers
+
+    Domain providers
+    The companies that hold your web addresses. Add each once; then any app can use their domains.
+
+
+         Porkbun       example.com                                                                       Remove  
+
+       ▸ Gandi         example.org   myshop.net                                                          Remove  
+
+                                                                                              Add a provider   
+
+
+    Certificates and home names ›
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  a add  r look again  x remove  c certificates  Esc back

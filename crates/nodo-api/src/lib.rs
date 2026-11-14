@@ -400,6 +400,37 @@ pub enum Dns01Support {
     Unavailable,
 }
 
+/// A DNS provider account the owner connected. The owner can connect several, and each site's
+/// public address is under one of their domains. Credentials stay sealed in the helper and are never
+/// sent to clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainProvider {
+    /// Stable for the life of the connection, such as `cloudflare` or `cloudflare-2`.
+    pub id: String,
+    /// The catalog id, see [`DnsProviderDetail::id`].
+    pub kind: String,
+    pub name: String,
+    pub domains: Vec<ProviderDomain>,
+    /// Whether the provider's API lists the domains a key controls. When it cannot, the owner adds
+    /// each domain by name and the helper proves the key works for it.
+    pub lists_domains: bool,
+    /// Unix seconds of the last successful listing.
+    pub checked_at: Option<u64>,
+    /// Why the last listing failed, already scrubbed of credentials.
+    pub problem: Option<String>,
+    pub dns01: Dns01Support,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderDomain {
+    pub name: String,
+    /// The sites whose public address is under this domain.
+    pub used_by: Vec<SiteId>,
+    /// Another connected provider that holds this domain too. Records and certificates go through the
+    /// provider that was connected first, so here the domain is shown but cannot be picked.
+    pub held_by: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsProviderDetail {
     pub id: String,
@@ -412,6 +443,9 @@ pub struct DnsProviderDetail {
     /// The credential fields `SetDnsProvider` expects, in order.
     pub fields: Vec<String>,
     pub configured: bool,
+    /// The provider's API lists the domains a key controls, so `AddDomainProvider` needs no domain.
+    #[serde(default)]
+    pub lists_domains: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -834,6 +868,31 @@ pub enum Request {
     },
     /// Reads and writes a temporary record with the stored credentials, then removes it.
     TestDnsProvider,
+    /// Every connected provider with its domains.
+    ListDomainProviders,
+    /// Connects one more provider account. The helper lists the domains the key controls, which
+    /// also proves the key works. A provider that cannot list needs `domain`, which the helper
+    /// checks with a temporary record. Credentials are sealed, root-only. `fields` follow
+    /// [`DnsProviderDetail::fields`].
+    AddDomainProvider {
+        kind: String,
+        fields: Vec<(String, Secret)>,
+        domain: Option<String>,
+    },
+    /// Disconnects a provider. Refused while a public site's address is under one of its domains.
+    RemoveDomainProvider {
+        id: String,
+    },
+    /// Lists the provider's domains again.
+    RefreshDomainProvider {
+        id: String,
+    },
+    /// Adds a domain by name to a provider that cannot list them, after a temporary record proves
+    /// the key can manage it.
+    AddProviderDomain {
+        id: String,
+        domain: String,
+    },
     /// Deletes DNS records that dynamic DNS published for names no longer in use. Never automatic.
     RetireStaleRecords,
     /// Like `CheckReachability`, with unknown results kept apart from passes and the manual check.
@@ -1016,6 +1075,8 @@ pub enum Response {
     Restored(RestoreReport),
     WebStatus(WebStatus),
     DnsProviders(Vec<DnsProviderDetail>),
+    DomainProviders(Vec<DomainProvider>),
+    DomainProvider(DomainProvider),
     /// What a provider test did, for the screen.
     ProviderTest(String),
     RetiredRecords(Vec<String>),
@@ -1134,6 +1195,11 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::ListDnsProviders => "list-dns-providers",
         Request::SetDnsProvider { .. } => "set-dns-provider",
         Request::TestDnsProvider => "test-dns-provider",
+        Request::ListDomainProviders => "list-domain-providers",
+        Request::AddDomainProvider { .. } => "add-domain-provider",
+        Request::RemoveDomainProvider { .. } => "remove-domain-provider",
+        Request::RefreshDomainProvider { .. } => "refresh-domain-provider",
+        Request::AddProviderDomain { .. } => "add-provider-domain",
         Request::RetireStaleRecords => "retire-stale-records",
         Request::CheckReachabilityDetail { .. } => "check-reachability-detail",
         Request::AcmeSettings => "acme-settings",
@@ -1219,6 +1285,11 @@ mod tests {
             },
             Request::SetDns01Credentials {
                 fields: vec![("api_secret".into(), Secret::new("hunter2"))],
+            },
+            Request::AddDomainProvider {
+                kind: "cloudflare".into(),
+                fields: vec![("api_token".into(), Secret::new("hunter2"))],
+                domain: None,
             },
             Request::CreateUsbBackup {
                 device: "sdb1".into(),

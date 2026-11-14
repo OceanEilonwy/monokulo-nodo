@@ -6,6 +6,9 @@ real-web3-no-provider.dc.html 1128 836
 real-web3-add-provider.dc.html 1128 836
 real-web3-provider-key.dc.html 1128 836
 real-web3-provider-done.dc.html 1128 836
+real-web3-pick-domain.dc.html 1128 836
+real-web3-providers.dc.html 1128 836
+real-web3-providers-80x24.dc.html 768 608
 real-web3-check.dc.html 1128 836
 real-web3-confirm.dc.html 1128 836
 real-web3-confirm-80x24.dc.html 768 608

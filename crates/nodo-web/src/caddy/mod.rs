@@ -165,6 +165,26 @@ pub enum DnsChallenge {
     Kept(KeptProvider),
 }
 
+/// A DNS-01 challenge for every name under one domain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneChallenge {
+    pub zone: String,
+    pub challenge: DnsChallenge,
+}
+
+impl DomainSettings {
+    /// The challenge a certificate for `host` uses: its zone's, or the general one.
+    pub fn challenge_for(&self, host: &str) -> Option<&DnsChallenge> {
+        let host = host.to_ascii_lowercase();
+        self.zone_challenges
+            .iter()
+            .filter(|z| host == z.zone || host.ends_with(&format!(".{}", z.zone)))
+            .max_by_key(|z| z.zone.len())
+            .map(|z| &z.challenge)
+            .or(self.dns_challenge.as_ref())
+    }
+}
+
 /// A provider block copied from a config this crate generated earlier. It holds credentials.
 #[derive(Clone, PartialEq)]
 pub struct KeptProvider(pub serde_json::Value);
@@ -208,6 +228,28 @@ impl DnsChallenge {
             .flat_map(|policy| policy["issuers"].as_array().into_iter().flatten())
             .find_map(|issuer| issuer["challenges"]["dns"]["provider"].as_object().cloned())
             .map(|provider| DnsChallenge::Kept(KeptProvider(serde_json::Value::Object(provider))))
+    }
+
+    /// Every subject of a config generated earlier with the DNS-01 provider block its policy used.
+    /// While the device is locked, this keeps each domain's renewals at the provider it already used.
+    pub fn kept_by_subject(config: &serde_json::Value) -> Vec<(String, DnsChallenge)> {
+        let Some(policies) = config["apps"]["tls"]["automation"]["policies"].as_array() else {
+            return Vec::new();
+        };
+        policies
+            .iter()
+            .filter_map(|policy| {
+                let provider = policy["issuers"]
+                    .as_array()?
+                    .iter()
+                    .find_map(|issuer| issuer["challenges"]["dns"]["provider"].as_object().cloned())?;
+                let subjects = policy["subjects"].as_array()?;
+                Some(subjects.iter().filter_map(|s| s.as_str()).map(move |subject| {
+                    (subject.to_owned(), DnsChallenge::Kept(KeptProvider(serde_json::Value::Object(provider.clone()))))
+                }).collect::<Vec<_>>())
+            })
+            .flatten()
+            .collect()
     }
 
     /// Whether these credentials can go into a config: no placeholders, and in a form the module
@@ -299,8 +341,13 @@ pub struct DomainSettings {
     /// `None` for a Caddy build without the rate limit module. Sites that asked for rate limiting are
     /// then listed in [`WebPlan::rate_limit_unenforced`], so the screens do not claim protection.
     pub rate_limit: Option<RateLimit>,
-    /// `None` uses the HTTP and TLS-ALPN challenges, which need ports 80 and 443 forwarded.
+    /// `None` uses the HTTP and TLS-ALPN challenges, which need ports 80 and 443 forwarded. With
+    /// [`Self::zone_challenges`] set, it covers only names under none of those zones.
     pub dns_challenge: Option<DnsChallenge>,
+    /// The DNS-01 challenge for each of the owner's domains, one per provider that holds it. A name
+    /// uses the challenge of the longest zone it is under, so each certificate is answered at the
+    /// provider that serves its domain.
+    pub zone_challenges: Vec<ZoneChallenge>,
     pub acme: AcmeConfig,
     /// Names local sites `<label>.<local_domain>` with a public certificate through DNS-01, instead
     /// of `<label>.local` with the internal CA. The names still resolve only to the local address.
@@ -322,6 +369,7 @@ impl Default for DomainSettings {
             admin_listen: "unix//run/nodo-web/caddy-admin.sock".to_owned(),
             rate_limit: Some(RateLimit::default()),
             dns_challenge: None,
+            zone_challenges: Vec::new(),
             acme: AcmeConfig::default(),
             local_domain: None,
             trust_dir: crate::trust::TRUST_DIR.to_owned(),
@@ -513,7 +561,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
 
         // A name under the owner's domain can only get its certificate through DNS-01.
         let needs_dns01 = item.local.as_ref().is_some_and(|host| !names::is_local_name(host));
-        let names_blocked = needs_dns01 && settings.dns_challenge.is_none();
+        let names_blocked = needs_dns01 && item.local.as_ref().is_some_and(|host| settings.challenge_for(host).is_none());
         if item.local.is_some() && (local_ip.is_none() || names_blocked) {
             local_waiting.push(site_ref());
             if local_ip.is_some() {
@@ -587,11 +635,11 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     if !internal_subjects.is_empty() {
         policies.push(AutomationPolicy { subjects: internal_subjects.clone(), issuers: vec![Issuer::Internal] });
     }
-    let acme_issuer = || Issuer::Acme {
+    let acme_issuer = |challenge: Option<&DnsChallenge>| Issuer::Acme {
         ca: settings.acme.directory.clone(),
         email: settings.acme_email.clone(),
         // Caddy uses only DNS-01 when it is configured, so no inbound port is needed then.
-        challenges: settings.dns_challenge.as_ref().map(|challenge| AcmeChallenges {
+        challenges: challenge.map(|challenge| AcmeChallenges {
             dns: DnsChallengeConfig {
                 provider: challenge.provider_json(),
                 propagation_timeout: (!settings.acme.dns_propagation_check).then_some(-1),
@@ -599,12 +647,26 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             },
         }),
     };
-    if !local_dns_names.is_empty() {
-        policies.push(AutomationPolicy { subjects: local_dns_names.clone(), issuers: vec![acme_issuer()] });
-    }
+    // One policy per challenge, in a fixed order, so names at different providers each get theirs.
+    let mut acme_policies = |subjects: Vec<String>| {
+        let mut groups: Vec<(Option<&DnsChallenge>, Vec<String>)> = Vec::new();
+        for subject in subjects {
+            let challenge = settings.challenge_for(&subject);
+            match groups.iter_mut().find(|(c, _)| *c == challenge) {
+                Some((_, list)) => list.push(subject),
+                None => groups.push((challenge, vec![subject])),
+            }
+        }
+        for (challenge, subjects) in groups {
+            policies.push(AutomationPolicy { subjects, issuers: vec![acme_issuer(challenge)] });
+        }
+    };
     let any_acme = !public_subjects.is_empty() || !local_dns_names.is_empty();
+    if !local_dns_names.is_empty() {
+        acme_policies(local_dns_names.clone());
+    }
     if !public_subjects.is_empty() {
-        policies.push(AutomationPolicy { subjects: public_subjects, issuers: vec![acme_issuer()] });
+        acme_policies(public_subjects);
     }
 
     let firewall = FirewallPlan {
@@ -790,6 +852,14 @@ fn validate_settings(settings: &DomainSettings) -> Result<(), WebConfigError> {
     if let Some(challenge) = &settings.dns_challenge {
         if !challenge.usable() {
             return Err(WebConfigError::InvalidSetting { field: "dns_challenge", value: "(credential not shown)".to_owned() });
+        }
+    }
+    for zone in &settings.zone_challenges {
+        if !names::is_public_name(&zone.zone) {
+            return Err(WebConfigError::InvalidName { field: "zone_challenges", value: quoted(&zone.zone) });
+        }
+        if !zone.challenge.usable() {
+            return Err(WebConfigError::InvalidSetting { field: "zone_challenges", value: "(credential not shown)".to_owned() });
         }
     }
     let admin_ok = settings.admin_listen.strip_prefix("unix/").is_some_and(is_safe_path);

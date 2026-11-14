@@ -126,7 +126,7 @@ impl<I: WebIo> NodoWeb<I> {
         }
     }
 
-    fn open_challenge(&self, id: &str, credentials: &Credentials, key: &SecretsKey) -> Option<DnsChallenge> {
+    pub(super) fn open_challenge(&self, id: &str, credentials: &Credentials, key: &SecretsKey) -> Option<DnsChallenge> {
         let dns = self.opened(credentials, key).ok()?;
         let dns01: BTreeMap<String, String> = credentials
             .dns01
@@ -263,8 +263,7 @@ impl<I: WebIo> NodoWeb<I> {
             }
         }
         credentials.dns01 = sealed;
-        let text = toml::to_string(&credentials).map_err(|e| ApiError::Failed(e.to_string()))?;
-        self.io.write(&self.paths.dns_credentials, text.as_bytes(), ROOT_ONLY).map_err(ApiError::Failed)?;
+        self.save_primary(&credentials).map_err(ApiError::Failed)?;
         ExposureApplier::apply(self, input).map_err(ApiError::Failed)
     }
 
@@ -407,9 +406,9 @@ impl<I: WebIo> NodoWeb<I> {
         };
         let mut errors = Vec::new();
         let mut kept = Vec::new();
-        match (self.credentials(), self.provider(Some(key))) {
-            (Some(credentials), Ok(provider)) => {
-                let zone = credentials.domain.as_str();
+        match self.local_provider(Some(key)) {
+            Ok((zone, provider)) => {
+                let zone = zone.as_str();
                 for old in record.names.iter().filter(|n| !current.contains(n)) {
                     let removed = Self::local_record_name(zone, old)
                         .map(|name| provider.delete(&name, RecordType::A).map_err(|e| e.to_string()));
@@ -430,8 +429,7 @@ impl<I: WebIo> NodoWeb<I> {
                 }
                 record.domain = zone.to_owned();
             }
-            (_, Err(e)) => errors.push(e.to_string()),
-            (None, _) => errors.push("no DNS provider is connected".to_owned()),
+            Err(e) => errors.push(e.to_string()),
         }
         let mut names = current.clone();
         names.extend(kept);
@@ -449,13 +447,25 @@ impl<I: WebIo> NodoWeb<I> {
         }
     }
 
+    /// The domain and provider local names are published under: the provider that holds the
+    /// chosen local domain, or the first provider.
+    fn local_provider(&self, key: Option<&SecretsKey>) -> Result<(String, Box<dyn DnsProvider>), ApiError> {
+        let (store, _) = self.provider_store();
+        if let Some(local_domain) = self.acme_stored().local_domain {
+            if let Some((provider, domain)) = store.zone_of(&local_domain) {
+                return Ok((domain.to_owned(), self.provider_for(provider, domain, key)?));
+            }
+        }
+        let credentials = self.credentials().ok_or_else(|| ApiError::Failed("no DNS provider is connected".to_owned()))?;
+        Ok((credentials.domain, self.provider(key)?))
+    }
+
     pub(super) fn local_name_checks(&self, plan: &WebPlan, key: Option<&SecretsKey>) -> Result<Vec<LocalNameCheck>, ApiError> {
         if plan.local.dns_names.is_empty() {
             return Ok(Vec::new());
         }
-        let provider = self.provider(key)?;
-        let credentials = self.credentials().ok_or_else(|| ApiError::Failed("no DNS provider is set up".to_owned()))?;
-        let zone = credentials.domain.as_str();
+        let (zone, provider) = self.local_provider(key)?;
+        let zone = zone.as_str();
         let local_domain = self.acme_stored().local_domain.unwrap_or_else(|| zone.to_owned());
         let address = match plan.local.address {
             LocalAddress::Ready { address } => IpAddr::V4(address),

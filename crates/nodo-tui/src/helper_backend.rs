@@ -734,34 +734,63 @@ impl ScreenData for HelperBackend {
                     (None, Some(caveat)) => format!("Create an API key in your {} account. {caveat}", p.name),
                     (None, None) => format!("Create an API key in your {} account.", p.name),
                 };
-                Provider { name: p.name, dynamic_dns: ddns, https_without_ports: https, instructions, fields: p.fields, dns01_note }
+                Provider {
+                    name: p.name,
+                    dynamic_dns: ddns,
+                    https_without_ports: https,
+                    instructions,
+                    fields: p.fields,
+                    dns01_note,
+                    lists_domains: p.lists_domains,
+                }
             })
             .collect()
     }
 
-    fn test_provider(&mut self, provider: &str, domain: &str, api_key: &Secret, secret_key: &Secret) -> Result<String, String> {
-        self.save_provider(provider, domain, api_key, secret_key)?;
-        match self.ask(Request::TestDnsProvider) {
-            Ok(Response::ProviderTest(text)) => Ok(text),
-            Ok(_) => Err("unexpected reply".to_owned()),
-            Err(e) => Err(e.to_string()),
+    fn connected_providers(&self) -> Vec<ConnectedProvider> {
+        match self.ask(Request::ListDomainProviders) {
+            Ok(Response::DomainProviders(list)) => list.into_iter().map(connected).collect(),
+            _ => Vec::new(),
         }
     }
 
-    fn save_provider(&mut self, provider: &str, domain: &str, api_key: &Secret, secret_key: &Secret) -> Result<(), String> {
+    fn add_provider(
+        &mut self,
+        provider: &str,
+        domain: Option<&str>,
+        api_key: &Secret,
+        secret_key: &Secret,
+    ) -> Result<ConnectedProvider, String> {
         let detail = self
             .dns_providers()
             .into_iter()
             .find(|p| p.name == provider)
             .ok_or_else(|| format!("{provider} is not a known provider"))?;
+        // Each typed value goes only to the field of the provider it was typed for.
         let fields = detail
             .fields
             .iter()
             .zip([api_key, secret_key])
             .map(|(name, value)| (name.clone(), nodo_api::Secret::new(value.expose())))
             .collect();
-        let request = Request::SetDnsProvider { domain: domain.to_owned(), provider: detail.id, fields };
-        self.ask(request).map(|_| ()).map_err(|e| e.to_string())
+        let request = Request::AddDomainProvider { kind: detail.id, fields, domain: domain.map(str::to_owned) };
+        match self.ask(request) {
+            Ok(Response::DomainProvider(added)) => Ok(connected(added)),
+            Ok(_) => Err("unexpected reply".to_owned()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn remove_provider(&mut self, id: &str) -> Result<(), String> {
+        self.ask(Request::RemoveDomainProvider { id: id.to_owned() }).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String> {
+        match self.ask(Request::RefreshDomainProvider { id: id.to_owned() }) {
+            Ok(Response::DomainProvider(provider)) => Ok(connected(provider)),
+            Ok(_) => Err("unexpected reply".to_owned()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     fn reachability(&mut self, site: &str) -> Reachability {
@@ -992,6 +1021,25 @@ fn node_rows(status: &NodeStatus) -> (String, String) {
 
 fn unknown_node(reason: String) -> (String, String) {
     (format!("unknown: {reason}"), "unknown".to_owned())
+}
+
+/// A connected provider as the screens show it. Sites are named by package, as elsewhere here.
+fn connected(provider: nodo_api::DomainProvider) -> ConnectedProvider {
+    ConnectedProvider {
+        id: provider.id,
+        name: provider.name,
+        domains: provider
+            .domains
+            .into_iter()
+            .map(|d| ConnectedDomain {
+                name: d.name,
+                used_by: d.used_by.into_iter().map(|site| site.package).collect(),
+                held_by: d.held_by,
+            })
+            .collect(),
+        lists_domains: provider.lists_domains,
+        problem: provider.problem,
+    }
 }
 
 #[cfg(test)]

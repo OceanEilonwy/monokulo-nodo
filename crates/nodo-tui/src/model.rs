@@ -605,6 +605,29 @@ pub struct Provider {
     pub fields: Vec<String>,
     /// A note on certificates without open ports, such as different credentials.
     pub dns01_note: Option<String>,
+    /// The provider's API lists the domains a key controls, so the owner never types the domain.
+    pub lists_domains: bool,
+}
+
+/// A provider account the owner connected, with the domains its key controls.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConnectedProvider {
+    /// The helper's id, such as `cloudflare` or `cloudflare-2`.
+    pub id: String,
+    pub name: String,
+    pub domains: Vec<ConnectedDomain>,
+    pub lists_domains: bool,
+    /// Why the last look at its domains failed, or a domain a site uses that it no longer lists.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConnectedDomain {
+    pub name: String,
+    /// The apps whose internet address is under this domain.
+    pub used_by: Vec<String>,
+    /// Another connected provider that holds this domain and is used for it instead.
+    pub held_by: Option<String>,
 }
 
 impl Provider {
@@ -674,6 +697,8 @@ pub struct Snapshot {
     pub updates: Vec<UpdateItem>,
     pub web: WebOverview,
     pub providers: Vec<Provider>,
+    /// The provider accounts the owner connected.
+    pub connected: Vec<ConnectedProvider>,
     pub log_sources: Vec<String>,
     pub auto_update: AutoUpdatePrefs,
     /// Areas whose backing system does not exist yet, with the reason. Their screens say so
@@ -764,20 +789,21 @@ pub trait ScreenData {
 
     fn web(&self) -> WebOverview;
     fn providers(&self) -> Vec<Provider>;
-    fn test_provider(
+    /// The provider accounts connected, with their domains.
+    fn connected_providers(&self) -> Vec<ConnectedProvider>;
+    /// Connects one more provider account. The helper lists the domains the key controls, which also
+    /// proves the key works; `domain` is only for a provider that cannot list them.
+    fn add_provider(
         &mut self,
         provider: &str,
-        domain: &str,
+        domain: Option<&str>,
         api_key: &Secret,
         secret_key: &Secret,
-    ) -> Result<String, String>;
-    fn save_provider(
-        &mut self,
-        provider: &str,
-        domain: &str,
-        api_key: &Secret,
-        secret_key: &Secret,
-    ) -> Result<(), String>;
+    ) -> Result<ConnectedProvider, String>;
+    /// Refused by the helper while an app's internet address is under one of its domains.
+    fn remove_provider(&mut self, id: &str) -> Result<(), String>;
+    /// Looks at the provider's domains again.
+    fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String>;
     fn reachability(&mut self, site: &str) -> Reachability;
     fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String>;
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;

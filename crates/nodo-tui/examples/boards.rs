@@ -287,10 +287,34 @@ pub fn real_screens(out: &std::path::Path) {
     scenes.push(("real-web3-provider-key", "Connect Porkbun (real)", app));
     let (mut app, _) = fixture(ScreenId::WebProviders);
     if let Screen::WebProviders(state) = &mut app.screen {
-        state.stage = ProviderStage::Done { provider: "Porkbun".to_owned(), domain: "example.com".to_owned() };
+        state.stage = ProviderStage::Done { provider: "Porkbun".to_owned(), domains: vec!["example.com".to_owned(), "example.org".to_owned()] };
         state.return_to = Some("shop".to_owned());
     }
     scenes.push(("real-web3-provider-done", "Provider connected (real)", app));
+    // Two connected providers: Porkbun with example.com, Gandi with the domains its key lists.
+    let with_gandi = |id: ScreenId| {
+        use nodo_tui::model::ScreenData;
+        let (mut app, mut mock) = fixture(id);
+        let key = nodo_tui::secret::Secret::new("k");
+        mock.add_provider("Gandi", None, &key, &key).expect("mock provider");
+        app.data = nodo_tui::runtime::load_snapshot(&mut mock).expect("snapshot");
+        app
+    };
+    let mut app = with_gandi(ScreenId::WebExposure);
+    if let Screen::WebExposure(state) = &mut app.screen {
+        state.draft.onion = false;
+        state.has_provider = true;
+        state.picking = true;
+        state.pick = 1;
+    }
+    scenes.push(("real-web3-pick-domain", "Choosing a domain from every provider (real)", app));
+    let mut app = with_gandi(ScreenId::WebProviders);
+    if let Screen::WebProviders(state) = &mut app.screen {
+        state.stage = ProviderStage::List;
+        state.selected = 1;
+        state.test = None;
+    }
+    scenes.push(("real-web3-providers", "Domain providers: every account and its domains (real)", app));
     scenes.push(("real-web3-check", "Checks found a problem (real)", fixture(ScreenId::WebCheck).0));
     scenes.push(("real-web3-confirm", "One confirm, starting on Cancel (real)", fixture(ScreenId::WebConfirm).0));
     scenes.push(("real-web3-blocked", "The internet can't reach your Nodo (real)", fixture(ScreenId::WebCgnat).0));
@@ -298,7 +322,7 @@ pub fn real_screens(out: &std::path::Path) {
     let mut index = Vec::new();
     for (slug, title, app) in &scenes {
         for (width, height, suffix) in [(120u16, 36u16, ""), (80, 24, "-80x24")] {
-            if !suffix.is_empty() && !matches!(*slug, "real-web3-sites" | "real-web3-hosting-internet" | "real-web3-confirm") {
+            if !suffix.is_empty() && !matches!(*slug, "real-web3-sites" | "real-web3-hosting-internet" | "real-web3-confirm" | "real-web3-providers") {
                 continue;
             }
             let buffer = render(app, width, height);

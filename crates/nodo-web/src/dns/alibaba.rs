@@ -7,7 +7,7 @@
 //!
 //! Only records on the `default` resolution line are managed, so a user's line-specific records survive.
 
-use super::{
+use super::{tidy_domains, MAX_DOMAIN_PAGES, 
     decode, send, status_error, DnsError, ExistingRecord, IdBacked, IdRecords, ProviderMessage, RecordName,
     RecordType, Zone,
 };
@@ -141,6 +141,27 @@ struct Record {
     line: Option<String>,
 }
 
+/// `DescribeDomains`: the domains in the account, paged with `PageNumber` and `PageSize`.
+#[derive(Deserialize)]
+struct DomainsResponse {
+    #[serde(rename = "TotalCount", default)]
+    total_count: usize,
+    #[serde(rename = "Domains")]
+    domains: DomainList,
+}
+
+#[derive(Deserialize)]
+struct DomainList {
+    #[serde(rename = "Domain", default)]
+    domain: Vec<ListedDomain>,
+}
+
+#[derive(Deserialize)]
+struct ListedDomain {
+    #[serde(rename = "DomainName")]
+    domain_name: String,
+}
+
 impl IdRecords for Alibaba {
     fn min_ttl(&self) -> u32 {
         MIN_TTL
@@ -204,6 +225,21 @@ impl IdRecords for Alibaba {
 
     fn remove(&self, id: &str) -> Result<(), DnsError> {
         self.call("DeleteDomainRecord", &[("RecordId", id)]).map(|_| ())
+    }
+
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let mut names = Vec::new();
+        for page in 1..=MAX_DOMAIN_PAGES {
+            let number = page.to_string();
+            let response = self.call("DescribeDomains", &[("PageNumber", &number), ("PageSize", PAGE_SIZE)])?;
+            let parsed: DomainsResponse = decode(&response, "Alibaba domain list")?;
+            let count = parsed.domains.domain.len();
+            names.extend(parsed.domains.domain.into_iter().map(|d| d.domain_name));
+            if count == 0 || names.len() >= parsed.total_count {
+                break;
+            }
+        }
+        Ok(Some(tidy_domains(names)))
     }
 }
 
@@ -310,6 +346,16 @@ mod tests {
 
     fn name(value: &str) -> RecordName {
         RecordName::new(value).unwrap()
+    }
+
+    #[test]
+    fn lists_domains_with_describe_domains() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"{"TotalCount":2,"PageNumber":1,"PageSize":100,"Domains":{"Domain":[{"DomainName":"example.com"},{"DomainName":"example.cn"}]}}"#);
+        let listed = provider(http.clone()).list_domains().unwrap();
+        assert_eq!(listed, Some(vec!["example.cn".to_owned(), "example.com".to_owned()]));
+        assert_eq!(http.requests().len(), 1);
+        assert_eq!(header(&http.request(0), "x-acs-action"), Some("DescribeDomains"));
     }
 
     /// The worked example from Alibaba's V3 signature documentation.

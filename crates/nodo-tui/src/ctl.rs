@@ -56,6 +56,9 @@ nodo-tui --ctl COMMAND [ARGS]
   system-run                       (root only, sent by the nodo-systemupdate schedule)
   web-status | dns-providers | test-dns | retire-stale | reach PACKAGE SITE
   set-dns DOMAIN PROVIDER FIELD...  (one value per field on stdin)
+  domain-providers | refresh-provider ID | remove-provider ID | provider-domain ID DOMAIN
+  add-provider KIND FIELD...  (one value per field on stdin; lists the key's domains)
+  add-provider-for DOMAIN KIND FIELD...  (for a provider that cannot list domains)
   acme | certs | local-names | local-status
   local-address-changed            (root only, sent by nodo-localnet)
   acme-set EMAIL|- 0|1 [LOCAL_DOMAIN]   (1 is Let's Encrypt staging)
@@ -311,6 +314,20 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             domain: id(domain),
             provider: id(provider),
             fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
+        },
+        ["domain-providers"] => Request::ListDomainProviders,
+        ["refresh-provider", provider] => Request::RefreshDomainProvider { id: id(provider) },
+        ["remove-provider", provider] => Request::RemoveDomainProvider { id: id(provider) },
+        ["provider-domain", provider, domain] => Request::AddProviderDomain { id: id(provider), domain: id(domain) },
+        ["add-provider", kind, fields @ ..] if !fields.is_empty() => Request::AddDomainProvider {
+            kind: id(kind),
+            fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
+            domain: None,
+        },
+        ["add-provider-for", domain, kind, fields @ ..] if !fields.is_empty() => Request::AddDomainProvider {
+            kind: id(kind),
+            fields: fields.iter().map(|f| Ok((id(f), secret_line()?))).collect::<Result<_, String>>()?,
+            domain: Some(id(domain)),
         },
         ["acme"] => Request::AcmeSettings,
         ["certs"] => Request::CertificateStatus,

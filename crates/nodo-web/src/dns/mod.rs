@@ -210,6 +210,14 @@ pub trait DnsProvider: Send + Sync {
     /// Removes all records of this type at this name. A missing record is success.
     fn delete(&self, name: &RecordName, record_type: RecordType) -> Result<(), DnsError>;
 
+    /// The domains these credentials control, valid names only, sorted and without repeats. `None`
+    /// for a provider whose API cannot list them (or whose listing call could not be verified against
+    /// its documentation): the owner then types the domain, and [`Self::test`] proves the key works for
+    /// it. Listing never needs the zone the provider was built for.
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        Ok(None)
+    }
+
     /// Writes, reads back and removes a temporary record, proving the credentials can do real work.
     fn test(&self) -> Result<TestReport, DnsError> {
         let mut nonce = [0u8; 4];
@@ -256,6 +264,10 @@ pub trait IdRecords: Send + Sync {
     fn create(&self, name: &RecordName, ip: IpAddr, ttl: u32) -> Result<Vec<String>, DnsError>;
     fn update(&self, id: &str, name: &RecordName, ip: IpAddr, ttl: u32) -> Result<Vec<String>, DnsError>;
     fn remove(&self, id: &str) -> Result<(), DnsError>;
+    /// See [`DnsProvider::list_domains`].
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug)]
@@ -299,6 +311,26 @@ impl<S: IdRecords> DnsProvider for IdBacked<S> {
         }
         Ok(())
     }
+
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        self.0.list_domains()
+    }
+}
+
+/// The most pages any domain listing follows, so a provider that keeps saying "more" cannot loop forever.
+pub(crate) const MAX_DOMAIN_PAGES: usize = 20;
+
+/// Keeps the names that are valid public domains, lowercased, sorted and without repeats. Names a
+/// provider sends are untrusted, and they end up in file names, URLs and screens.
+pub(crate) fn tidy_domains(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut domains: Vec<String> = names
+        .into_iter()
+        .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|name| Zone::new(name).is_ok())
+        .collect();
+    domains.sort();
+    domains.dedup();
+    domains
 }
 
 /// A non-address value in an A or AAAA record means the response is not what the docs describe.
@@ -456,6 +488,17 @@ mod tests {
         let error = provider.test_with_label(&name("monokulo-test-1")).unwrap_err();
         assert!(matches!(error, DnsError::TestCleanup { .. }));
         assert!(error.to_string().contains("monokulo-test-1"));
+    }
+
+    #[test]
+    fn providers_without_a_listing_say_so() {
+        assert_eq!(seeded(&[]).list_domains().unwrap(), None);
+    }
+
+    #[test]
+    fn listed_domains_are_tidied() {
+        let raw = ["Example.COM.", "a b.com", "shop.local", "example.com", "z.example.org", "{x}.com"];
+        assert_eq!(tidy_domains(raw.map(str::to_owned)), ["example.com", "z.example.org"]);
     }
 
     #[test]
