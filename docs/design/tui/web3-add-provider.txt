@@ -1,26 +1,26 @@
-Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+                              ▗▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+                              ▝▀▀▀▀▀▘
 
     Web  ›  Domain providers  ›  Add
 
     Where did you buy your web address?
 
-      Porkbun
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-      Cloudflare
+       Porkbun
 
-      Namecheap
-      Needs your home's address on an allow list; we'll show you how.
+       Cloudflare
 
-      Gandi
+       Namecheap     Needs your home's address on an allow list; we'll show you how.
 
-      deSEC
+       Gandi
 
-      Somewhere else? It can't be connected yet, but Tor works without a web address.
+       deSEC
 
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
-
-
-
+    Somewhere else? It can't be connected yet, but Tor works without a web address.
 
 
 
@@ -33,4 +33,4 @@ Home  Packages   Web   Feeds  Updates (3)  Logs                                 
 
 
 
- Click the company.   Keys: ↑↓ choose  ↵ next  Esc back
+    Click the company.   Keys: ↑↓ choose  ↵ next  Esc back

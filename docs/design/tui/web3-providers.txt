@@ -1,19 +1,19 @@
-Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+                              ▗▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+                              ▝▀▀▀▀▀▘
 
     Web  ›  Domain providers
 
     Domain providers
     The companies where you bought your web addresses. Add one once; then any app can use its domains.
 
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-    Porkbun       example.com   shop-example.org                Remove
+       Porkbun       example.com   shop-example.org            Remove
 
-    Cloudflare    myshop.net                                    Remove
+       Cloudflare    myshop.net                                Remove
 
-
-
-
-
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
@@ -30,7 +30,7 @@ Home  Packages   Web   Feeds  Updates (3)  Logs                                 
 
 
 
-
-        Add a provider
-
- Keys: ↑↓ choose  a add  x remove  Esc back
+                                                                                              ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+                                                                                                  Add a provider
+                                                                                              ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+    Keys: ↑↓ choose  a add  x remove  Esc back

@@ -1,21 +1,21 @@
-Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+                              ▗▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+                              ▝▀▀▀▀▀▘
 
     Web  ›  Domain providers  ›  Add  ›  Porkbun
 
-    ✓  Porkbun is connected
 
-       This key can set up these web addresses:
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-       example.com
-       shop-example.org
+       ✓  Porkbun is connected
 
-       Missing one? Turn on API access for it at Porkbun, and it appears here.
+          This key can set up these web addresses:
+          example.com
+          shop-example.org
 
+          Missing one? Turn on API access for it at Porkbun, and it appears here.
 
-
-
-
-
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
@@ -30,7 +30,7 @@ Home  Packages   Web   Feeds  Updates (3)  Logs                                 
 
 
 
-
-           Back to mk-pay
-
- Keys: ↵ back to mk-pay
+                                                                                              ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+                                                                                                  Back to mk-pay
+                                                                                              ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+    Keys: ↵ back to mk-pay

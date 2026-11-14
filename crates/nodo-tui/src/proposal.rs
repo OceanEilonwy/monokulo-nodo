@@ -58,10 +58,11 @@ pub enum Scene {
     V3AddProvider,
     V3ProviderKey,
     V3ProviderDone,
+    V3Buttons,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 28] = [
+    pub const ALL: [Scene; 29] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -90,6 +91,7 @@ impl Scene {
         Scene::V3AddProvider,
         Scene::V3ProviderKey,
         Scene::V3ProviderDone,
+        Scene::V3Buttons,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -122,6 +124,7 @@ impl Scene {
             Scene::V3AddProvider => "web3-add-provider",
             Scene::V3ProviderKey => "web3-provider-key",
             Scene::V3ProviderDone => "web3-provider-done",
+            Scene::V3Buttons => "web3-buttons",
         }
     }
 
@@ -160,6 +163,7 @@ impl Scene {
             Scene::V3AddProvider => "8 · Add a provider: pick the company",
             Scene::V3ProviderKey => "9 · Add a provider: paste the key",
             Scene::V3ProviderDone => "10 · Added: the domains this key controls",
+            Scene::V3Buttons => "Button styles: choose one (A recommended)",
         }
     }
 
@@ -183,6 +187,7 @@ impl Scene {
             Scene::V3AddProvider => "Clickable: each company row. Scroll wheel scrolls the list.",
             Scene::V3ProviderKey => "Clickable: the two key boxes (focus to type or paste), Connect.",
             Scene::V3ProviderDone => "Clickable: Done (returns to the app that asked, or to Domain providers).",
+            Scene::V3Buttons => "Four ways to draw the same two buttons; all are three rows tall and click anywhere inside.",
             _ => "",
         }
     }
@@ -196,6 +201,9 @@ pub fn render(scene: Scene, width: u16, height: u16, theme: &Theme) -> Buffer {
         .draw(|frame| {
             if scene == Scene::V1Overview {
                 view::render(frame, &app, theme);
+            } else if scene.is_v3() {
+                let w = frame.area().width;
+                draw_v3(frame, theme, v3_page(&app, theme, scene, w));
             } else {
                 let area = frame.area();
                 frame.buffer_mut().set_style(area, theme.base());
@@ -223,6 +231,9 @@ pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
             terminal.draw(|frame| {
                 if scene == Scene::V1Overview {
                     view::render(frame, &app, &theme);
+                } else if scene.is_v3() {
+                    let w = frame.area().width;
+                    draw_v3(frame, &theme, v3_page(&app, &theme, scene, w));
                 } else {
                     let area = frame.area();
                     frame.buffer_mut().set_style(area, theme.base());
@@ -325,18 +336,7 @@ pub fn page(app: &App, t: &Theme, scene: Scene) -> Page {
         Scene::FailIsp => fail_isp(t),
         Scene::FailCertificate => fail_certificate(t),
         Scene::Advanced => advanced(t),
-        Scene::V3Web => v3_web(app, t),
-        Scene::V3Hosting => v3_hosting(t, false),
-        Scene::V3HostingInternet => v3_hosting(t, true),
-        Scene::V3PickDomain => v3_pick_domain(t),
-        Scene::V3NoProvider => v3_no_provider(t),
-        Scene::V3Confirm => v3_confirm(t),
-        Scene::V3Online => v3_online(t),
-        Scene::V3Blocked => v3_blocked(t),
-        Scene::V3Providers => v3_providers(app, t),
-        Scene::V3AddProvider => v3_add_provider(t),
-        Scene::V3ProviderKey => v3_provider_key(t),
-        Scene::V3ProviderDone => v3_provider_done(t),
+        _ => Page::new(Line::default(), Line::default()),
     }
 }
 
@@ -926,10 +926,45 @@ fn advanced(t: &Theme) -> Page {
 
 // ---------------------------------------------------------------------------------------------
 // Web flow v3: providers are added once; the Web tab lists only sites that are online; hosting is
-// chosen in each app. Mouse first: every action is a block at least three rows tall or a whole
-// row, and the keys are one dim line at the bottom. One accent colour, one primary action.
+// chosen in each app. Mouse first: every action is a whole row or a block three rows tall, and the
+// keys are one dim line at the bottom. One accent colour, one primary action.
+//
+// Areas are separated by surfaces, not lines: the tab bar and the action bar are strips of their
+// own, content sits on raised cards, text boxes are inset, and half blocks (▄ ▀ with quadrant
+// corners) soften the edges. On a 256-colour terminal each surface has an indexed fallback; on a
+// 16-colour console (the Linux console) the surfaces all become black and only the accent, the
+// spacing and the button shapes remain, which still reads but is flat.
 
 const MARGIN: &str = "    ";
+
+/// The surfaces, darkest to lightest: inset fields sit below the app background, cards and bars
+/// rise above it, and selected or open things are raised further. Steps are small to stay calm;
+/// body text keeps at least 7:1 and dim text at least 4.5:1 on every one of them.
+#[derive(Debug, Clone, Copy)]
+pub struct Surfaces {
+    pub field: Color,
+    pub bar: Color,
+    pub card: Color,
+    pub raised: Color,
+}
+
+impl Surfaces {
+    pub const fn truecolor() -> Self {
+        Self {
+            field: Color::Rgb(0x0B, 0x0D, 0x0F),
+            bar: Color::Rgb(0x17, 0x1A, 0x1D),
+            card: Color::Rgb(0x1D, 0x21, 0x25),
+            raised: Color::Rgb(0x2C, 0x32, 0x38),
+        }
+    }
+
+    /// For terminals without RGB: the nearest grays of the 256-colour cube.
+    pub const fn ansi256() -> Self {
+        Self { field: Color::Indexed(232), bar: Color::Indexed(234), card: Color::Indexed(235), raised: Color::Indexed(237) }
+    }
+}
+
+const S: Surfaces = Surfaces::truecolor();
 
 /// Adds several footer items: the action bar is pinned to the bottom, so the main button is
 /// always on screen, even when a small terminal hides part of the page.
@@ -943,23 +978,14 @@ impl Footers for Page {
         self
     }
 }
-/// The fill behind text boxes and open lists: a step above the ground, below the border grey.
-const FIELD_BG: Color = Color::Rgb(0x24, 0x28, 0x2C);
 
-fn primary(t: &Theme) -> Style {
-    Style::new().fg(t.ground).bg(t.accent).add_modifier(Modifier::BOLD)
+fn on(span: Span<'static>, bg: Color) -> Span<'static> {
+    let style = span.style.bg(bg);
+    span.style(style)
 }
 
-fn secondary(t: &Theme) -> Style {
-    Style::new().fg(t.fg).bg(t.border)
-}
-
-fn field_bg(t: &Theme) -> Style {
-    Style::new().fg(t.fg).bg(FIELD_BG)
-}
-
-fn blank_item() -> Item {
-    Item::Blank
+fn width_of(spans: &[Span<'static>]) -> usize {
+    spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum()
 }
 
 fn line(spans: Vec<Span<'static>>) -> Item {
@@ -970,66 +996,12 @@ fn margin(t: &Theme) -> Span<'static> {
     t.n(MARGIN)
 }
 
-/// Buttons as solid blocks, three rows tall, side by side.
-fn buttons(t: &Theme, indent: &str, list: &[(&str, bool)]) -> Vec<Item> {
-    let mut rows: [Vec<Span<'static>>; 3] = [vec![t.n(format!("{MARGIN}{indent}"))], vec![t.n(format!("{MARGIN}{indent}"))], vec![t.n(format!("{MARGIN}{indent}"))]];
-    for (index, (label, is_primary)) in list.iter().enumerate() {
-        let style = if *is_primary { primary(t) } else { secondary(t) };
-        let width = label.chars().count() + 8;
-        if index > 0 {
-            for row in rows.iter_mut() {
-                row.push(t.n("   "));
-            }
-        }
-        rows[0].push(Span::styled(" ".repeat(width), style));
-        rows[1].push(Span::styled(format!("    {label}    "), style));
-        rows[2].push(Span::styled(" ".repeat(width), style));
-    }
-    rows.into_iter().map(line).collect()
-}
-
-/// A whole-row choice: tick box, name, and a quiet line under it. Clicking anywhere toggles it.
-fn choice(t: &Theme, on: bool, title: &str, note: &str) -> Vec<Item> {
-    let tick = if on { t.a("[x]") } else { t.d("[ ]") };
-    vec![
-        line(vec![margin(t), tick, t.n("  "), t.b(title.to_owned())]),
-        line(vec![margin(t), t.d(format!("     {note}"))]),
-        blank_item(),
-    ]
-}
-
-/// A label and a click-to-open box; `▾` marks a list.
-fn select(t: &Theme, indent: &str, label: &str, value: &str, open: bool) -> Item {
-    let arrow = if open { "▴" } else { "▾" };
-    line(vec![
-        margin(t),
-        t.n(indent.to_owned()),
-        t.d(pad(label, 12)),
-        Span::styled(format!(" {} {arrow} ", pad(value, 30)), field_bg(t)),
-    ])
-}
-
-fn input(t: &Theme, indent: &str, label: &str, value: &str, suffix: &str) -> Item {
-    let width = if suffix.is_empty() { 34 } else { 12 };
-    line(vec![
-        margin(t),
-        t.n(indent.to_owned()),
-        t.d(pad(label, 12)),
-        Span::styled(format!(" {} ", pad(value, width)), field_bg(t)),
-        t.n(suffix.to_owned()),
-    ])
-}
-
-fn heading(t: &Theme, text: &str) -> Item {
-    line(vec![margin(t), t.b(text.to_owned())])
-}
-
 fn quiet(t: &Theme, text: &str) -> Item {
     line(vec![margin(t), t.d(text.to_owned())])
 }
 
-fn link(t: &Theme, text: &str) -> Item {
-    line(vec![margin(t), t.a(text.to_owned())])
+fn heading(t: &Theme, text: &str) -> Item {
+    line(vec![margin(t), t.b(text.to_owned())])
 }
 
 fn trail(t: &Theme, parts: &[&str]) -> Item {
@@ -1043,251 +1015,495 @@ fn trail(t: &Theme, parts: &[&str]) -> Item {
     line(spans)
 }
 
-fn keys(t: &Theme, text: &str) -> Item {
-    Item::Text(Line::from(t.d(format!(" {text}"))))
+/// A card: a raised rectangle the width of the page less its margins, one cell of padding left
+/// and right, a half-block row above and below for soft edges. Each row may be clicked.
+struct Card {
+    width: usize,
+    rows: Vec<Item>,
 }
 
-fn top(app: &App, t: &Theme, tab: Tab) -> Page {
-    Page::new(tab_bar(app, t, tab), Line::from(t.d("monokulo-nodo")))
+impl Card {
+    fn new(page_width: u16) -> Self {
+        let width = usize::from(page_width).saturating_sub(2 * MARGIN.len());
+        Card { width, rows: Vec::new() }
+    }
+
+    fn cap(&self, t: &Theme, top: bool) -> Item {
+        let (corner_l, fill, corner_r) = if top { ("▗", "▄", "▖") } else { ("▝", "▀", "▘") };
+        let edge = Style::new().fg(S.card).bg(t.ground);
+        line(vec![margin(t), Span::styled(format!("{corner_l}{}{corner_r}", fill.repeat(self.width - 2)), edge)])
+    }
+
+    fn row(&mut self, t: &Theme, spans: Vec<Span<'static>>) {
+        let mut out = vec![margin(t), on(t.n("   "), S.card)];
+        let used = 3 + width_of(&spans);
+        out.extend(spans.into_iter().map(|s| if s.style.bg.is_none() { on(s, S.card) } else { s }));
+        out.push(on(t.n(" ".repeat(self.width.saturating_sub(used))), S.card));
+        self.rows.push(line(out));
+    }
+
+    fn blank(&mut self, t: &Theme) {
+        self.row(t, Vec::new());
+    }
+
+    fn items(self, t: &Theme) -> Vec<Item> {
+        let mut items = vec![self.cap(t, true)];
+        let width = self.width;
+        items.extend(self.rows);
+        items.push(Card { width, rows: Vec::new() }.cap(t, false));
+        items
+    }
 }
 
-fn v3_web(app: &App, t: &Theme) -> Page {
-    let mut items = vec![
-        blank_item(),
-        line(vec![margin(t), t.b(pad("Sites online", 92)), t.a("Domain providers ›")]),
-        blank_item(),
-    ];
-    for (name, address, who) in [
+/// An inset box for typing or picking, on a card.
+fn inset(t: &Theme, value: &str, width: usize, arrow: Option<&str>) -> Vec<Span<'static>> {
+    let inset = Style::new().fg(t.fg).bg(S.field);
+    let mut text = format!(" {} ", pad(value, width));
+    if let Some(arrow) = arrow {
+        text = format!(" {} {arrow} ", pad(value, width));
+    }
+    vec![Span::styled(text, inset)]
+}
+
+/// How a button is drawn. Each is three rows tall, so it is an easy target for a click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonStyle {
+    /// A filled block whose top and bottom rows are half blocks with quadrant corners: it reads
+    /// as a rounded rectangle about two rows tall.
+    Pill,
+    /// A thin rounded outline (╭─╮ │ ╰─╯) around the label.
+    Outline,
+    /// A plain filled block, three full rows (the first v3 boards).
+    Flat,
+}
+
+/// Every button in a bar has the same width: the longest label plus padding.
+fn button_width(list: &[(&str, bool)]) -> usize {
+    list.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0) + 8
+}
+
+fn centred(label: &str, width: usize) -> String {
+    let len = label.chars().count();
+    let left = (width - len) / 2;
+    format!("{}{label}{}", " ".repeat(left), " ".repeat(width - len - left))
+}
+
+/// One button's three rows, drawn on the surface `under`.
+fn button_rows(t: &Theme, label: &str, is_primary: bool, style: ButtonStyle, width: usize, under: Color) -> [Vec<Span<'static>>; 3] {
+    let colour = if is_primary { t.accent } else { S.raised };
+    let ink = if is_primary { t.ground } else { t.fg };
+    let weight = if is_primary { Modifier::BOLD } else { Modifier::empty() };
+    let fill = Style::new().fg(ink).bg(colour).add_modifier(weight);
+    let edge = Style::new().fg(colour).bg(under);
+    match style {
+        ButtonStyle::Pill => [
+            vec![Span::styled(format!("▗{}▖", "▄".repeat(width - 2)), edge)],
+            vec![Span::styled(centred(label, width), fill)],
+            vec![Span::styled(format!("▝{}▘", "▀".repeat(width - 2)), edge)],
+        ],
+        ButtonStyle::Outline => {
+            let line_colour = if is_primary { t.accent } else { t.border };
+            let rule = Style::new().fg(line_colour).bg(under);
+            let text = Style::new().fg(if is_primary { t.accent } else { t.fg }).bg(under).add_modifier(weight);
+            [
+                vec![Span::styled(format!("╭{}╮", "─".repeat(width - 2)), rule)],
+                vec![Span::styled("│", rule), Span::styled(centred(label, width - 2), text), Span::styled("│", rule)],
+                vec![Span::styled(format!("╰{}╯", "─".repeat(width - 2)), rule)],
+            ]
+        }
+        ButtonStyle::Flat => [
+            vec![Span::styled(" ".repeat(width), fill)],
+            vec![Span::styled(centred(label, width), fill)],
+            vec![Span::styled(" ".repeat(width), fill)],
+        ],
+    }
+}
+
+/// A bar of buttons, right-aligned on the page margin, three cells apart, primary rightmost.
+fn button_bar(t: &Theme, list: &[(&str, bool)], primary_style: ButtonStyle, secondary_style: ButtonStyle, under: Color) -> Vec<Item> {
+    let width = button_width(list);
+    let mut rows: [Vec<Span<'static>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut ordered: Vec<&(&str, bool)> = list.iter().filter(|(_, p)| !p).collect();
+    ordered.extend(list.iter().filter(|(_, p)| *p));
+    for (index, (label, is_primary)) in ordered.into_iter().enumerate() {
+        let style = if *is_primary { primary_style } else { secondary_style };
+        if index > 0 {
+            for row in rows.iter_mut() {
+                row.push(on(t.n("   "), under));
+            }
+        }
+        for (row, part) in rows.iter_mut().zip(button_rows(t, label, *is_primary, style, width, under)) {
+            row.extend(part);
+        }
+    }
+    rows.into_iter()
+        .map(|mut spans| {
+            spans.push(on(t.n(MARGIN), under));
+            Item::Row(Line::default(), Line::from(spans))
+        })
+        .collect()
+}
+
+/// The action bar: a blank row, the buttons (a filled pill for the one primary action, a quiet
+/// outline for the rest), and the keys in one dim line. Painted as its own surface by `draw_v3`.
+fn action_bar(t: &Theme, list: &[(&str, bool)], keys: &str) -> Vec<Item> {
+    let mut items = vec![Item::Blank];
+    if !list.is_empty() {
+        items.extend(button_bar(t, list, ButtonStyle::Pill, ButtonStyle::Outline, S.bar));
+    }
+    items.push(Item::Text(Line::from(t.d(format!("{MARGIN}{keys}")))));
+    items
+}
+
+/// The tab bar: a strip of its own, the tabs on the page margin five cells apart, the current one
+/// a raised pill. Each tab is a click target.
+fn top(app: &App, t: &Theme, tab: Tab, w: u16) -> Page {
+    let mut caps_top = vec![t.n(MARGIN)];
+    let mut tabs = vec![margin(t)];
+    let mut caps_bottom = vec![t.n(MARGIN)];
+    let pill_edge = Style::new().fg(S.raised).bg(S.bar);
+    for (index, each) in Tab::ALL.into_iter().enumerate() {
+        if index > 0 {
+            for row in [&mut caps_top, &mut tabs, &mut caps_bottom] {
+                row.push(t.n("   "));
+            }
+        }
+        let pending = app.pending_updates();
+        let extra = if each == Tab::Updates && pending > 0 { format!(" {pending}") } else { String::new() };
+        let text = format!("  {}{extra}  ", each.label());
+        let width = text.chars().count();
+        if each == tab {
+            caps_top.push(Span::styled(format!("▗{}▖", "▄".repeat(width - 2)), pill_edge));
+            tabs.push(Span::styled(text, Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD)));
+            caps_bottom.push(Span::styled(format!("▝{}▘", "▀".repeat(width - 2)), pill_edge));
+        } else {
+            caps_top.push(t.n(" ".repeat(width)));
+            tabs.push(t.n(format!("  {}", each.label())));
+            if !extra.is_empty() {
+                tabs.push(t.d(extra));
+            }
+            tabs.push(t.n("  "));
+            caps_bottom.push(t.n(" ".repeat(width)));
+        }
+    }
+    Page::new(Line::from(caps_top), Line::default()).plain(vec![
+        // The device name only where it fits beside the tabs without crowding them.
+        if w >= 100 {
+            Item::Row(Line::from(tabs), Line::from(vec![t.d("monokulo-nodo"), t.n(MARGIN)]))
+        } else {
+            Item::Text(Line::from(tabs))
+        },
+        Item::Text(Line::from(caps_bottom)),
+    ])
+}
+
+/// Rows from the top that belong to the tab strip.
+const STRIP_ROWS: u16 = 3;
+
+/// Draws a v3 page and paints its surfaces: the tab strip and the action bar. Cards and fields
+/// carry their own fills.
+fn draw_v3(frame: &mut ratatui::Frame, t: &Theme, page: Page) {
+    let area = frame.area();
+    let footer_rows = page.footer.len() as u16;
+    frame.buffer_mut().set_style(area, t.base());
+    draw_page(frame, area, t, page);
+    let buffer = frame.buffer_mut();
+    let paint = |buffer: &mut Buffer, rows: std::ops::Range<u16>| {
+        for y in rows {
+            for x in 0..area.width {
+                let cell = &mut buffer[(x, y)];
+                if cell.bg == t.ground {
+                    cell.set_bg(S.bar);
+                }
+            }
+        }
+    };
+    paint(buffer, 0..STRIP_ROWS.min(area.height));
+    paint(buffer, area.height.saturating_sub(footer_rows)..area.height);
+}
+
+fn v3_page(app: &App, t: &Theme, scene: Scene, w: u16) -> Page {
+    match scene {
+        Scene::V3Web => v3_web(app, t, w),
+        Scene::V3Hosting => v3_hosting(app, t, w, Internet::Off),
+        Scene::V3HostingInternet => v3_hosting(app, t, w, Internet::Chosen),
+        Scene::V3PickDomain => v3_hosting(app, t, w, Internet::Picking),
+        Scene::V3NoProvider => v3_hosting(app, t, w, Internet::NoProvider),
+        Scene::V3Confirm => v3_confirm(app, t, w),
+        Scene::V3Online => v3_online(app, t, w),
+        Scene::V3Blocked => v3_blocked(app, t, w),
+        Scene::V3Providers => v3_providers(app, t, w),
+        Scene::V3AddProvider => v3_add_provider(app, t, w),
+        Scene::V3ProviderKey => v3_provider_key(app, t, w),
+        Scene::V3ProviderDone => v3_provider_done(app, t, w),
+        Scene::V3Buttons => v3_buttons(app, t, w),
+        _ => Page::new(Line::default(), Line::default()),
+    }
+}
+
+fn v3_web(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let sites = [
         ("mk-pay", "https://pay.example.com", "Home network and internet"),
         ("mk-lws", "https://mk-lws.local", "Home network"),
         ("kringle", "http://kringlqx3v7…ylpd7qd.onion", "Tor"),
-    ] {
-        items.push(line(vec![margin(t), t.b(pad(name, 12)), t.n(pad(address, 34)), t.d(format!("{who}   ›"))]));
-        items.push(blank_item());
+    ];
+    for (index, (name, address, who)) in sites.into_iter().enumerate() {
+        if index > 0 {
+            card.blank(t);
+        }
+        card.row(t, vec![t.b(pad(name, 11)), t.n(pad(address, 34)), t.d(pad(who, 26)), t.d("›")]);
     }
-    items.push(blank_item());
+    card.blank(t);
+    let mut items = vec![
+        Item::Blank,
+        Item::Row(Line::from(vec![margin(t), t.b("Sites online")]), Line::from(vec![t.a("Domain providers ›"), t.n(MARGIN)])),
+        Item::Blank,
+    ];
+    items.extend(card.items(t));
+    items.push(Item::Blank);
     items.push(quiet(t, "To put another app online, open it in Packages."));
-    top(app, t, Tab::Web).plain(items).footer(keys(t, "Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers"))
+    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[], "Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers"))
 }
 
-fn hosting_intro(t: &Theme, app_name: &str) -> Vec<Item> {
-    vec![
-        blank_item(),
-        trail(t, &["Packages", app_name, "Hosting"]),
-        blank_item(),
-        heading(t, "Hosting"),
-        quiet(t, &format!("Choose who can open {app_name}. Any combination works.")),
-        blank_item(),
-    ]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Internet {
+    Off,
+    Chosen,
+    Picking,
+    NoProvider,
 }
 
-fn v3_hosting(t: &Theme, internet: bool) -> Page {
-    let (name, home_note) = if internet {
-        ("mk-pay", "Phones and computers on your Wi-Fi.   https://mk-pay.local")
+fn tick(t: &Theme, on_: bool) -> Span<'static> {
+    if on_ {
+        t.a("[x]")
     } else {
-        ("mk-lws", "Phones and computers on your Wi-Fi.   https://mk-lws.local")
+        t.d("[ ]")
+    }
+}
+
+fn v3_hosting(app: &App, t: &Theme, w: u16, internet: Internet) -> Page {
+    let name = if internet == Internet::Off { "mk-lws" } else { "mk-pay" };
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![tick(t, true), t.n("  "), t.b("Home network")]);
+    card.row(t, vec![t.d(format!("     Phones and computers on your Wi-Fi.   https://{name}.local"))]);
+    card.blank(t);
+    card.row(t, vec![tick(t, false), t.n("  "), t.b("Tor")]);
+    card.row(t, vec![t.d("     A private link that opens in Tor Browser. It doesn't reveal your home.")]);
+    card.blank(t);
+    card.row(t, vec![tick(t, internet != Internet::Off), t.n("  "), t.b("Internet")]);
+    card.row(t, vec![t.d("     Anyone, at a web address you own.")]);
+    let label = |text: &str| t.d(format!("     {}", pad(text, 12)));
+    match internet {
+        Internet::Off => {}
+        Internet::Chosen | Internet::Picking => {
+            card.blank(t);
+            let mut provider = vec![label("Provider")];
+            provider.extend(inset(t, "Porkbun", 28, Some("▾")));
+            card.row(t, provider);
+            let mut domain = vec![label("Domain")];
+            domain.extend(inset(t, "example.com", 28, Some(if internet == Internet::Picking { "▴" } else { "▾" })));
+            card.row(t, domain);
+            if internet == Internet::Picking {
+                let list = Style::new().fg(t.fg).bg(S.raised);
+                for (domain, provider, current) in
+                    [("example.com", "Porkbun", true), ("shop-example.org", "Porkbun", false), ("myshop.net", "Cloudflare", false)]
+                {
+                    let mark = if current { "✓" } else { " " };
+                    card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {mark} {} {} ", pad(domain, 17), pad(provider, 11)), list)]);
+                }
+                card.row(t, vec![t.n(" ".repeat(17)), Span::styled(format!(" {} ", pad("+ Add a provider…", 32)), Style::new().fg(t.accent).bg(S.raised))]);
+            } else {
+                let mut address = vec![label("Address")];
+                address.extend(inset(t, "pay", 10, None));
+                address.push(t.n(" .example.com"));
+                card.row(t, address);
+                card.blank(t);
+                card.row(t, vec![t.d("     Visitors will be able to see your home's internet address.")]);
+            }
+        }
+        Internet::NoProvider => {
+            card.blank(t);
+            card.row(t, vec![t.n("     To use a web address you own, first add the company you bought it from.")]);
+            card.row(t, vec![t.d("     You'll come back here when it's added.")]);
+        }
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Packages", name, "Hosting"]), Item::Blank];
+    items.push(line(vec![margin(t), t.b("Hosting")]));
+    items.push(quiet(t, &format!("Choose who can open {name}. Any combination works.")));
+    items.push(Item::Blank);
+    items.extend(card.items(t));
+    let (buttons, keys): (&[(&str, bool)], &str) = match internet {
+        Internet::Off => (&[("Save", true)], "Keys: Tab move  Space tick  ↵ save  Esc back"),
+        Internet::Chosen => (&[("Check and save", true)], "Keys: Tab move  Space tick  ↵ check and save  Esc back"),
+        Internet::Picking => (&[("Check and save", true)], "Keys: ↑↓ choose  ↵ pick  Esc close the list"),
+        Internet::NoProvider => (&[("Add a provider", true)], "Keys: Tab move  Space tick  ↵ add a provider  Esc back"),
     };
-    let mut items = hosting_intro(t, name);
-    items.extend(choice(t, true, "Home network", home_note));
-    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
-    let mut internet_rows = choice(t, internet, "Internet", "Anyone, at a web address you own.");
-    if internet {
-        internet_rows.pop();
-        items.extend(internet_rows);
-        items.push(blank_item());
-        items.push(select(t, "     ", "Provider", "Porkbun", false));
-        items.push(select(t, "     ", "Domain", "example.com", false));
-        items.push(input(t, "     ", "Address", "pay", " .example.com"));
-        items.push(blank_item());
-        items.push(quiet(t, "     Visitors will be able to see your home's internet address."));
-        items.push(blank_item());
-    } else {
-        items.extend(internet_rows);
-    }
-    items.push(link(t, "Show details ›"));
-    items.push(blank_item());
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[(if internet { "Check and save" } else { "Save" }, true)])).footer(keys(t, "Keys: Tab move  Space tick  ↵ save  Esc back"))
+    let (app_tab, _) = (Tab::Packages, ());
+    top(app, t, app_tab, w).plain(items).footers(action_bar(t, buttons, keys))
 }
 
-fn top_tab(t: &Theme) -> Page {
-    let (app, _) = fixture(ScreenId::WebSites);
-    top(&app, t, Tab::Packages)
-}
-
-fn v3_pick_domain(t: &Theme) -> Page {
-    let mut items = hosting_intro(t, "mk-pay");
-    items.extend(choice(t, true, "Home network", "Phones and computers on your Wi-Fi.   https://mk-pay.local"));
-    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
-    let mut internet_rows = choice(t, true, "Internet", "Anyone, at a web address you own.");
-    internet_rows.pop();
-    items.extend(internet_rows);
-    items.push(blank_item());
-    items.push(select(t, "     ", "Provider", "Porkbun", false));
-    items.push(select(t, "     ", "Domain", "example.com", true));
-    let indent = format!("     {}", " ".repeat(12));
-    for (domain, provider, current) in
-        [("example.com", "Porkbun", true), ("shop-example.org", "Porkbun", false), ("myshop.net", "Cloudflare", false)]
-    {
-        let mark = if current { "✓" } else { " " };
-        items.push(line(vec![
-            margin(t),
-            t.n(indent.clone()),
-            Span::styled(format!(" {mark} {} {} ", pad(domain, 18), pad(provider, 12)), field_bg(t)),
-        ]));
-    }
-    items.push(line(vec![
-        margin(t),
-        t.n(indent.clone()),
-        Span::styled(format!(" {} ", pad("+ Add a provider…", 35)), Style::new().fg(t.accent).bg(FIELD_BG)),
-    ]));
-    items.push(blank_item());
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Check and save", true)])).footer(keys(t, "Keys: ↑↓ choose  ↵ pick  Esc close"))
-}
-
-fn v3_no_provider(t: &Theme) -> Page {
-    let mut items = hosting_intro(t, "mk-pay");
-    items.extend(choice(t, true, "Home network", "Phones and computers on your Wi-Fi.   https://mk-pay.local"));
-    items.extend(choice(t, false, "Tor", "A private link that opens in Tor Browser. It doesn't reveal your home."));
-    let mut internet_rows = choice(t, true, "Internet", "Anyone, at a web address you own.");
-    internet_rows.pop();
-    items.extend(internet_rows);
-    items.push(blank_item());
-    items.push(line(vec![margin(t), t.n("     To use a web address you own, first add the company you bought it from.")]));
-    items.push(blank_item());
-    items.push(quiet(t, "     You'll come back here when it's added."));
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "     ", &[("Add a provider", true)])).footer(keys(t, "Keys: Tab move  Space tick  ↵ add a provider  Esc back"))
-}
-
-fn v3_confirm(t: &Theme) -> Page {
-    let mut items = vec![blank_item(), trail(t, &["Packages", "mk-pay", "Hosting"]), blank_item(), heading(t, "Ready to put mk-pay on the internet"), blank_item()];
+fn v3_confirm(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
     for check in ["Porkbun accepted the key", "pay.example.com points to your home", "The internet can reach your Nodo", "Secure connection ready"] {
-        items.push(line(vec![margin(t), t.o("✓  "), t.n(check.to_owned())]));
+        card.row(t, vec![t.o("✓  "), t.n(check.to_owned())]);
     }
-    items.push(blank_item());
-    items.push(line(vec![margin(t), t.n("Anyone will be able to open "), t.b("https://pay.example.com")]));
-    items.push(quiet(t, "Visitors can see your home's internet address. The Nodo keeps everything up to date by itself."));
-    items.push(blank_item());
-    items.push(link(t, "Show details ›"));
-    items.push(blank_item());
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Put mk-pay online", true), ("Cancel", false)])).footer(keys(t, "Keys: ↵ put online  Esc cancel"))
+    card.blank(t);
+    card.row(t, vec![t.n("Anyone will be able to open "), t.b("https://pay.example.com")]);
+    card.row(t, vec![t.d("Visitors can see your home's internet address. The Nodo keeps everything up to date itself.")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank];
+    items.push(heading(t, "Ready to put mk-pay on the internet"));
+    items.push(Item::Blank);
+    items.extend(card.items(t));
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Cancel", false), ("Put mk-pay online", true)], "Keys: ↵ put online  Esc cancel"))
 }
 
-fn v3_online(t: &Theme) -> Page {
-    let items = vec![
-        blank_item(),
-        trail(t, &["Packages", "mk-pay", "Hosting"]),
-        blank_item(),
-        blank_item(),
-        line(vec![margin(t), t.o("✓  "), t.b("mk-pay is online")]),
-        blank_item(),
-        line(vec![margin(t), t.n("   https://pay.example.com")]),
-        line(vec![margin(t), t.n("   https://mk-pay.local")]),
-        blank_item(),
-        quiet(t, "   The Nodo renews the secure connection and follows your home's address by itself."),
-        blank_item(),
-        blank_item(),
-    ];
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "   ", &[("Done", true)])).footer(keys(t, "Keys: ↵ done"))
+fn v3_online(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.b("mk-pay is online")]);
+    card.blank(t);
+    card.row(t, vec![t.n("   https://pay.example.com")]);
+    card.row(t, vec![t.n("   https://mk-pay.local")]);
+    card.blank(t);
+    card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank, Item::Blank];
+    items.extend(card.items(t));
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Done", true)], "Keys: ↵ done"))
 }
 
-fn v3_blocked(t: &Theme) -> Page {
-    let items = vec![
-        blank_item(),
-        trail(t, &["Packages", "mk-pay", "Hosting"]),
-        blank_item(),
-        heading(t, "The internet can't reach your Nodo"),
-        blank_item(),
-        quiet(t, "Your internet provider shares one address between many homes, so visitors stop at the"),
-        quiet(t, "provider and never reach you. Router settings can't change this."),
-        blank_item(),
-        line(vec![margin(t), t.n("A private Tor link still works on this connection.")]),
-        blank_item(),
-        link(t, "Show details ›"),
-        blank_item(),
-    ];
-    top_tab(t).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Use Tor instead", true), ("Check again", false)])).footer(keys(t, "Keys: ↵ use Tor  c check again  Esc back"))
+fn v3_blocked(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.n("Your internet provider shares one address between many homes, so visitors stop at the")]);
+    card.row(t, vec![t.n("provider and never reach you. Router settings can't change this.")]);
+    card.blank(t);
+    card.row(t, vec![t.d("A private Tor link still works on this connection.")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show details ›")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Packages", "mk-pay", "Hosting"]), Item::Blank];
+    items.push(heading(t, "The internet can't reach your Nodo"));
+    items.push(Item::Blank);
+    items.extend(card.items(t));
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[("Check again", false), ("Use Tor instead", true)], "Keys: ↵ use Tor  c check again  Esc back"))
 }
 
-fn v3_providers(app: &App, t: &Theme) -> Page {
-    let mut items = vec![
-        blank_item(),
-        trail(t, &["Web", "Domain providers"]),
-        blank_item(),
-        heading(t, "Domain providers"),
-        quiet(t, "The companies where you bought your web addresses. Add one once; then any app can use its domains."),
-        blank_item(),
-        blank_item(),
-    ];
-    for (name, domains) in [("Porkbun", "example.com   shop-example.org"), ("Cloudflare", "myshop.net")] {
-        items.push(line(vec![margin(t), t.b(pad(name, 14)), t.n(pad(domains, 44)), Span::styled("  Remove  ", secondary(t))]));
-        items.push(blank_item());
+fn v3_providers(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, domains)) in [("Porkbun", "example.com   shop-example.org"), ("Cloudflare", "myshop.net")].into_iter().enumerate() {
+        if index > 0 {
+            card.blank(t);
+        }
+        card.row(t, vec![t.b(pad(name, 14)), t.n(pad(domains, 40)), Span::styled("  Remove  ", Style::new().fg(t.fg).bg(S.raised))]);
     }
-    items.push(blank_item());
-    top(app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Add a provider", true)])).footer(keys(t, "Keys: ↑↓ choose  a add  x remove  Esc back"))
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers"]), Item::Blank, heading(t, "Domain providers")];
+    items.push(quiet(t, "The companies where you bought your web addresses. Add one once; then any app can use its domains."));
+    items.push(Item::Blank);
+    items.extend(card.items(t));
+    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Add a provider", true)], "Keys: ↑↓ choose  a add  x remove  Esc back"))
 }
 
-fn v3_add_provider(t: &Theme) -> Page {
-    let (app, _) = fixture(ScreenId::WebSites);
-    let mut items = vec![
-        blank_item(),
-        trail(t, &["Web", "Domain providers", "Add"]),
-        blank_item(),
-        heading(t, "Where did you buy your web address?"),
-        blank_item(),
-    ];
-    for (name, note) in [
+fn v3_add_provider(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (name, note)) in [
         ("Porkbun", ""),
         ("Cloudflare", ""),
         ("Namecheap", "Needs your home's address on an allow list; we'll show you how."),
         ("Gandi", ""),
         ("deSEC", ""),
-    ] {
-        items.push(line(vec![margin(t), t.n("  "), t.b(name.to_owned())]));
-        if !note.is_empty() {
-            items.push(line(vec![margin(t), t.d(format!("  {note}"))]));
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            card.blank(t);
         }
-        items.push(blank_item());
+        card.row(t, vec![t.b(pad(name, 14)), t.d(note.to_owned())]);
     }
-    items.push(line(vec![margin(t), t.d("  Somewhere else? It can't be connected yet, but Tor works without a web address.")]));
-    top(&app, t, Tab::Web).plain(items).footer(keys(t, "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back"))
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add"]), Item::Blank, heading(t, "Where did you buy your web address?"), Item::Blank];
+    items.extend(card.items(t));
+    items.push(Item::Blank);
+    items.push(quiet(t, "Somewhere else? It can't be connected yet, but Tor works without a web address."));
+    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[], "Click the company.   Keys: ↑↓ choose  ↵ next  Esc back"))
 }
 
-fn v3_provider_key(t: &Theme) -> Page {
-    let (app, _) = fixture(ScreenId::WebSites);
-    let items = vec![
-        blank_item(),
-        trail(t, &["Web", "Domain providers", "Add", "Porkbun"]),
-        blank_item(),
-        heading(t, "Connect Porkbun"),
-        quiet(t, "Make a key at porkbun.com › Account › API Access, then paste both parts here."),
-        blank_item(),
-        input(t, "", "API key", "pk1_7f3a••••••••••••••••", ""),
-        blank_item(),
-        input(t, "", "Secret key", "", ""),
-        blank_item(),
-        quiet(t, "The key stays on this Nodo, locked with your device passphrase."),
-        blank_item(),
-    ];
-    top(&app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "", &[("Connect", true)])).footer(keys(t, "Keys: Tab next box  ↵ connect  Esc back"))
+fn v3_provider_key(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let mut key = vec![t.d(pad("API key", 13))];
+    key.extend(inset(t, "pk1_7f3a••••••••••••••••", 34, None));
+    card.row(t, key);
+    card.blank(t);
+    let mut secret = vec![t.d(pad("Secret key", 13))];
+    secret.extend(inset(t, "", 34, None));
+    card.row(t, secret);
+    card.blank(t);
+    card.row(t, vec![t.d("The key stays on this Nodo, locked with your device passphrase.")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", "Porkbun"]), Item::Blank, heading(t, "Connect Porkbun")];
+    items.push(quiet(t, "Make a key at porkbun.com › Account › API Access, then paste both parts here."));
+    items.push(Item::Blank);
+    items.extend(card.items(t));
+    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Connect", true)], "Keys: Tab next box  ↵ connect  Esc back"))
 }
 
-fn v3_provider_done(t: &Theme) -> Page {
-    let (app, _) = fixture(ScreenId::WebSites);
-    let items = vec![
-        blank_item(),
-        trail(t, &["Web", "Domain providers", "Add", "Porkbun"]),
-        blank_item(),
-        line(vec![margin(t), t.o("✓  "), t.b("Porkbun is connected")]),
-        blank_item(),
-        quiet(t, "   This key can set up these web addresses:"),
-        blank_item(),
-        line(vec![margin(t), t.n("   example.com")]),
-        line(vec![margin(t), t.n("   shop-example.org")]),
-        blank_item(),
-        quiet(t, "   Missing one? Turn on API access for it at Porkbun, and it appears here."),
-        blank_item(),
-    ];
-    top(&app, t, Tab::Web).plain(items).footer(Item::Blank).footers(buttons(t, "   ", &[("Back to mk-pay", true)])).footer(keys(t, "Keys: ↵ back to mk-pay"))
+fn v3_provider_done(app: &App, t: &Theme, w: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.o("✓  "), t.b("Porkbun is connected")]);
+    card.blank(t);
+    card.row(t, vec![t.d("   This key can set up these web addresses:")]);
+    card.row(t, vec![t.n("   example.com")]);
+    card.row(t, vec![t.n("   shop-example.org")]);
+    card.blank(t);
+    card.row(t, vec![t.d("   Missing one? Turn on API access for it at Porkbun, and it appears here.")]);
+    card.blank(t);
+    let mut items = vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", "Porkbun"]), Item::Blank, Item::Blank];
+    items.extend(card.items(t));
+    top(app, t, Tab::Web, w).plain(items).footers(action_bar(t, &[("Back to mk-pay", true)], "Keys: ↵ back to mk-pay"))
+}
+
+/// The button styles side by side on the action bar's surface, for choosing.
+fn v3_buttons(app: &App, t: &Theme, w: u16) -> Page {
+    let list: &[(&str, bool)] = &[("Cancel", false), ("Put mk-pay online", true)];
+    let mut items = vec![Item::Blank, heading(t, "Button styles: the same two buttons, four ways")];
+    for (name, note, p, s) in [
+        ("A · Pill + outline (recommended)", "Filled rounded pill for the one primary action; a quiet outline for the rest.", ButtonStyle::Pill, ButtonStyle::Outline),
+        ("B · Pills", "Both filled; the secondary in the raised grey.", ButtonStyle::Pill, ButtonStyle::Pill),
+        ("C · Outlines", "Both outlined; the primary's line and label in the accent.", ButtonStyle::Outline, ButtonStyle::Outline),
+        ("D · Flat blocks (first v3)", "Three full rows of fill.", ButtonStyle::Flat, ButtonStyle::Flat),
+    ] {
+        let mut card = Card::new(w);
+        card.row(t, vec![t.b(name.to_owned()), t.d(format!("   {note}"))]);
+        let inner = card.width - 6;
+        for row in button_bar(t, list, p, s, S.card) {
+            if let Item::Row(_, right) = row {
+                let spans: Vec<Span<'static>> = right.spans;
+                let used = width_of(&spans);
+                let mut out = vec![t.n(" ".repeat(inner.saturating_sub(used)))];
+                out.extend(spans);
+                card.row(t, out);
+            }
+        }
+        items.push(Item::Blank);
+        items.extend(card.items(t));
+    }
+    top(app, t, Tab::Packages, w).plain(items).footers(action_bar(t, &[], "All four are three rows tall; a click anywhere inside counts."))
 }
 
 #[cfg(test)]
@@ -1318,8 +1534,10 @@ mod tests {
             assert!(!scene.clickable().is_empty(), "{}", scene.slug());
             let small = render(scene, 80, 24, &t);
             let big = render(scene, 120, 36, &t);
+            let (app, _) = fixture(ScreenId::WebSites);
+            let rows = v3_page(&app, &t, scene, 120).footer.len() as u16;
             let footer = |b: &Buffer, h: u16| -> String {
-                (h - 5..h).flat_map(|y| (0..b.area.width).map(move |x| (x, y))).map(|p| b[p].symbol().to_owned()).collect()
+                (h - rows..h).flat_map(|y| (0..b.area.width).map(move |x| (x, y))).map(|p| b[p].symbol().to_owned()).collect()
             };
             assert_eq!(footer(&small, 24).split_whitespace().collect::<Vec<_>>(), footer(&big, 36).split_whitespace().collect::<Vec<_>>(), "{}: the action bar differs at 80x24", scene.slug());
         }

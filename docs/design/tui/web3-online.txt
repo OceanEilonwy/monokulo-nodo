@@ -1,20 +1,20 @@
-Home   Packages   Web  Feeds  Updates (3)  Logs                                                            monokulo-nodo
+               ▗▄▄▄▄▄▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+               ▝▀▀▀▀▀▀▀▀▀▀▘
 
     Packages  ›  mk-pay  ›  Hosting
 
 
-    ✓  mk-pay is online
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-       https://pay.example.com
-       https://mk-pay.local
+       ✓  mk-pay is online
 
-       The Nodo renews the secure connection and follows your home's address by itself.
+          https://pay.example.com
+          https://mk-pay.local
 
+          The Nodo renews the secure connection and follows your home's address by itself.
 
-
-
-
-
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
@@ -30,7 +30,7 @@ Home   Packages   Web  Feeds  Updates (3)  Logs                                 
 
 
 
-
-           Done
-
- Keys: ↵ done
+                                                                                                        ▗▄▄▄▄▄▄▄▄▄▄▖
+                                                                                                            Done
+                                                                                                        ▝▀▀▀▀▀▀▀▀▀▀▘
+    Keys: ↵ done

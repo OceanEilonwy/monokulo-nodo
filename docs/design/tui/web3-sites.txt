@@ -1,13 +1,18 @@
-Home  Packages   Web   Feeds  Updates (3)  Logs                                                            monokulo-nodo
+                              ▗▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+                              ▝▀▀▀▀▀▘
 
-    Sites online                                                                                Domain providers ›
+    Sites online                                                                                  Domain providers ›
 
-    mk-pay      https://pay.example.com           Home network and internet   ›
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-    mk-lws      https://mk-lws.local              Home network   ›
+       mk-pay     https://pay.example.com           Home network and internet ›
 
-    kringle     http://kringlqx3v7…ylpd7qd.onion  Tor   ›
+       mk-lws     https://mk-lws.local              Home network              ›
 
+       kringle    http://kringlqx3v7…ylpd7qd.onion  Tor                       ›
+
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
     To put another app online, open it in Packages.
 
@@ -28,9 +33,4 @@ Home  Packages   Web   Feeds  Updates (3)  Logs                                 
 
 
 
-
-
-
-
-
- Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers
+    Click a site to change its hosting.   Keys: ↑↓ choose  ↵ open  p providers

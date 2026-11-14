@@ -1,26 +1,26 @@
-Home   Packages   Web  Feeds  Updates (3)  Logs                                                            monokulo-nodo
+               ▗▄▄▄▄▄▄▄▄▄▄▖
+      Home       Packages       Web       Feeds       Updates 3       Logs                             monokulo-nodo
+               ▝▀▀▀▀▀▀▀▀▀▀▘
 
     Packages  ›  mk-lws  ›  Hosting
 
     Hosting
     Choose who can open mk-lws. Any combination works.
 
-    [x]  Home network
-         Phones and computers on your Wi-Fi.   https://mk-lws.local
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
 
-    [ ]  Tor
-         A private link that opens in Tor Browser. It doesn't reveal your home.
+       [x]  Home network
+            Phones and computers on your Wi-Fi.   https://mk-lws.local
 
-    [ ]  Internet
-         Anyone, at a web address you own.
+       [ ]  Tor
+            A private link that opens in Tor Browser. It doesn't reveal your home.
 
-    Show details ›
+       [ ]  Internet
+            Anyone, at a web address you own.
 
+       Show details ›
 
-
-
-
-
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 
@@ -30,7 +30,7 @@ Home   Packages   Web  Feeds  Updates (3)  Logs                                 
 
 
 
-
-        Save
-
- Keys: Tab move  Space tick  ↵ save  Esc back
+                                                                                                        ▗▄▄▄▄▄▄▄▄▄▄▖
+                                                                                                            Save
+                                                                                                        ▝▀▀▀▀▀▀▀▀▀▀▘
+    Keys: Tab move  Space tick  ↵ save  Esc back

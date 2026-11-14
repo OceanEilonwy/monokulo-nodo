@@ -26,6 +26,7 @@ web3-providers.dc.html 1057 800
 web3-add-provider.dc.html 1057 800
 web3-provider-key.dc.html 1057 800
 web3-provider-done.dc.html 1057 800
+web3-buttons.dc.html 1057 800
 web2-overview-80x24.dc.html 720 584
 web2-who-80x24.dc.html 720 584
 web2-net-checks-80x24.dc.html 720 584
