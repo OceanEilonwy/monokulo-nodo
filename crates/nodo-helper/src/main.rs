@@ -1,4 +1,10 @@
-//! `nodo-helper --allow-uid <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]
+//! `nodo-helper --allow-    // An account that is fully allowed gains nothing from the screen socket, and the helper must
+    // still start: the screen socket is then left out.
+    if options.screen_uid.is_some_and(|uid| options.allowed.contains(&uid)) {
+        eprintln!("nodo-helper: the screen account is fully allowed already; no screen socket");
+        options.screen_uid = None;
+    }
+ <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]
 //!  [--drive <device> --drive-mount <path>] [--screen-uid <uid> [--screen-socket <path>]]`
 //!
 //! `nodo-helper --settings-worker` is the unprivileged child that runs package settings code.
