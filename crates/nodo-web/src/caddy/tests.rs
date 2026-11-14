@@ -1089,3 +1089,77 @@ fn dot_local_stays_the_default_with_the_internal_ca() {
     assert_eq!(policies.len(), 1);
     assert_eq!(policies[0].issuers, vec![Issuer::Internal]);
 }
+
+#[test]
+fn each_domain_gets_the_challenge_of_its_own_provider() {
+    let public = Exposure { public: true, ..Exposure::default() };
+    let mut shop = site("shop", "shop", 8001, public);
+    shop.public_host = Some("shop.example.com".to_owned());
+    let mut blog = site("blog", "blog", 8002, public);
+    blog.public_host = Some("example.org".to_owned());
+    let mut other = site("other", "other", 8003, public);
+    other.public_host = Some("other.example.net".to_owned());
+    let cloudflare = DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") };
+    let gandi = DnsChallenge::Gandi { personal_access_token: Secret::new("pat_0123456789abcdef") };
+    let settings = DomainSettings {
+        zone_challenges: vec![
+            ZoneChallenge { zone: "example.com".to_owned(), challenge: cloudflare },
+            ZoneChallenge { zone: "example.org".to_owned(), challenge: gandi },
+        ],
+        ..settings()
+    };
+    let plan = generate(&[shop, blog, other], &settings).unwrap();
+    let value = json(&plan);
+    let policies = value["apps"]["tls"]["automation"]["policies"].as_array().unwrap();
+    let provider_of = |host: &str| {
+        let policy = policies.iter().find(|p| p["subjects"].as_array().unwrap().iter().any(|s| s == host)).unwrap();
+        policy["issuers"][0]["challenges"]["dns"]["provider"]["name"].as_str().map(str::to_owned)
+    };
+    assert_eq!(provider_of("shop.example.com").as_deref(), Some("cloudflare"));
+    assert_eq!(provider_of("example.org").as_deref(), Some("gandi"));
+    // A name under no connected domain falls back to the HTTP challenges.
+    assert_eq!(provider_of("other.example.net"), None);
+}
+
+#[test]
+fn the_longest_zone_wins_and_names_are_matched_whole() {
+    let a = DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") };
+    let b = DnsChallenge::Gandi { personal_access_token: Secret::new("pat_0123456789abcdef") };
+    let settings = DomainSettings {
+        zone_challenges: vec![
+            ZoneChallenge { zone: "example.com".to_owned(), challenge: a.clone() },
+            ZoneChallenge { zone: "shop.example.com".to_owned(), challenge: b.clone() },
+        ],
+        ..settings()
+    };
+    assert_eq!(settings.challenge_for("pay.shop.example.com"), Some(&b));
+    assert_eq!(settings.challenge_for("www.example.com"), Some(&a));
+    assert_eq!(settings.challenge_for("notexample.com"), None);
+}
+
+#[test]
+fn locked_configs_keep_each_subjects_provider() {
+    let public = Exposure { public: true, ..Exposure::default() };
+    let mut shop = site("shop", "shop", 8001, public);
+    shop.public_host = Some("shop.example.com".to_owned());
+    let challenge = DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") };
+    let settings = DomainSettings {
+        zone_challenges: vec![ZoneChallenge { zone: "example.com".to_owned(), challenge }],
+        ..settings()
+    };
+    let value = json(&generate(&[shop], &settings).unwrap());
+    let kept = DnsChallenge::kept_by_subject(&value);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].0, "shop.example.com");
+    assert_eq!(kept[0].1.module(), "cloudflare");
+}
+
+#[test]
+fn a_zone_challenge_with_a_bad_name_is_refused() {
+    let challenge = DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") };
+    let settings = DomainSettings {
+        zone_challenges: vec![ZoneChallenge { zone: "{env.X}.com".to_owned(), challenge }],
+        ..settings()
+    };
+    assert!(generate(&[], &settings).is_err());
+}

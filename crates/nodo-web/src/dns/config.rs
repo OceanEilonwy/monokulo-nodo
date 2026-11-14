@@ -18,7 +18,28 @@ pub enum ProviderConfig {
     Hostinger { api_token: Secret },
 }
 
+/// Listing needs no zone, but providers are built for one. This placeholder is never contacted.
+const LISTING_ZONE: &str = "example.com";
+
 impl ProviderConfig {
+    /// The catalog id, such as `cloudflare`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Porkbun { .. } => "porkbun",
+            Self::Cloudflare { .. } => "cloudflare",
+            Self::GoDaddy { .. } => "godaddy",
+            Self::Gandi { .. } => "gandi",
+            Self::NameCom { .. } => "namecom",
+            Self::Alibaba { .. } => "alibaba",
+            Self::Hostinger { .. } => "hostinger",
+        }
+    }
+
+    /// The domains these credentials control, or `None` when the provider cannot list them.
+    pub fn list_domains(self, http: SharedHttp) -> Result<Option<Vec<String>>, DnsError> {
+        self.build(http, LISTING_ZONE)?.list_domains()
+    }
+
     pub fn build(self, http: SharedHttp, domain: &str) -> Result<Box<dyn DnsProvider>, DnsError> {
         let zone = Zone::new(domain)?;
         Ok(match self {
@@ -63,6 +84,30 @@ mod tests {
     fn a_hostile_domain_is_rejected() {
         let config: ProviderConfig = toml::from_str("provider = \"cloudflare\"\napi_token = \"x\"\n").unwrap();
         assert!(matches!(config.build(FakeHttp::new(), "a/b.com\n"), Err(DnsError::InvalidName(_))));
+    }
+
+    #[test]
+    fn kinds_match_the_catalog_and_its_listing_flag() {
+        use crate::dns::catalog::lookup;
+        let forms = [
+            "provider = \"porkbun\"\napi_key = \"a\"\nsecret_key = \"b\"\n",
+            "provider = \"cloudflare\"\napi_token = \"a\"\n",
+            "provider = \"godaddy\"\npersonal_access_token = \"a\"\n",
+            "provider = \"gandi\"\npersonal_access_token = \"a\"\n",
+            "provider = \"namecom\"\nusername = \"u\"\napi_token = \"a\"\n",
+            "provider = \"alibaba\"\naccess_key_id = \"a\"\naccess_key_secret = \"b\"\n",
+            "provider = \"hostinger\"\napi_token = \"a\"\n",
+        ];
+        for form in forms {
+            let config: ProviderConfig = toml::from_str(form).unwrap();
+            let info = lookup(config.kind()).unwrap();
+            // A provider that cannot list answers None without contacting anyone.
+            let http = FakeHttp::new();
+            if !info.lists_domains {
+                assert_eq!(config.list_domains(http.clone()).unwrap(), None, "{}", info.id);
+                assert!(http.requests().is_empty());
+            }
+        }
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub struct ProviderInfo {
     pub caveat: Option<&'static str>,
     pub docs_url: Option<&'static str>,
     pub dns01: Dns01,
+    /// Whether the provider's API lists the domains a key controls, so the owner picks instead of typing.
+    pub lists_domains: bool,
 }
 
 pub const CATALOG: &[ProviderInfo] = &[
@@ -44,6 +46,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: Some("API access must be switched on for the domain in your Porkbun account."),
         docs_url: Some("https://porkbun.com/llms/dns"),
         dns01: Dns01::Bundled,
+        lists_domains: true,
     },
     ProviderInfo {
         id: "cloudflare",
@@ -52,6 +55,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: None,
         docs_url: Some("https://developers.cloudflare.com/api/resources/dns/subresources/records/"),
         dns01: Dns01::Bundled,
+        lists_domains: true,
     },
     ProviderInfo {
         id: "godaddy",
@@ -62,6 +66,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         dns01: Dns01::BundledSeparateCredentials(
             "The caddy-dns module uses an API key and secret, not a Personal Access Token.",
         ),
+        lists_domains: false,
     },
     ProviderInfo {
         id: "namecheap",
@@ -74,6 +79,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: Some("API access also needs 20 domains, a $50 balance, or $50 spent in two years."),
         docs_url: Some("https://www.namecheap.com/support/api/methods/domains-dns/set-hosts/"),
         dns01: Dns01::Unavailable,
+        lists_domains: false,
     },
     ProviderInfo {
         id: "ionos",
@@ -86,6 +92,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: None,
         docs_url: Some("https://developer.hosting.ionos.com/docs/dns"),
         dns01: Dns01::Unavailable,
+        lists_domains: false,
     },
     ProviderInfo {
         id: "gandi",
@@ -94,6 +101,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: None,
         docs_url: Some("https://api.gandi.net/docs/livedns/"),
         dns01: Dns01::Bundled,
+        lists_domains: true,
     },
     ProviderInfo {
         id: "namecom",
@@ -102,6 +110,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: None,
         docs_url: Some("https://docs.name.com/api/v1/reference/dns/list-records.md"),
         dns01: Dns01::Bundled,
+        lists_domains: true,
     },
     ProviderInfo {
         id: "alibaba",
@@ -110,6 +119,7 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: None,
         docs_url: Some("https://www.alibabacloud.com/help/en/dns/api-alidns-2015-01-09-overview"),
         dns01: Dns01::Bundled,
+        lists_domains: true,
     },
     ProviderInfo {
         id: "hostinger",
@@ -118,9 +128,10 @@ pub const CATALOG: &[ProviderInfo] = &[
         caveat: Some("Dynamic DNS only. Certificates still need ports 80 and 443 open."),
         docs_url: Some("https://docs.hostinger.com/api-reference/endpoints/dns/zone.md"),
         dns01: Dns01::Unavailable,
+        lists_domains: true,
     },
-    ProviderInfo { id: "hover", name: "Hover", status: ProviderStatus::NoApi, caveat: None, docs_url: None, dns01: Dns01::Unavailable },
-    ProviderInfo { id: "squarespace", name: "Squarespace", status: ProviderStatus::NoApi, caveat: None, docs_url: None, dns01: Dns01::Unavailable },
+    ProviderInfo { id: "hover", name: "Hover", status: ProviderStatus::NoApi, caveat: None, docs_url: None, dns01: Dns01::Unavailable, lists_domains: false },
+    ProviderInfo { id: "squarespace", name: "Squarespace", status: ProviderStatus::NoApi, caveat: None, docs_url: None, dns01: Dns01::Unavailable, lists_domains: false },
 ];
 
 pub fn lookup(id: &str) -> Option<&'static ProviderInfo> {
@@ -145,6 +156,13 @@ mod tests {
         let bundled: Vec<_> = CATALOG.iter().filter(|p| p.dns01 != Dns01::Unavailable).map(|p| p.id).collect();
         assert_eq!(bundled, ["porkbun", "cloudflare", "godaddy", "gandi", "namecom", "alibaba"]);
         assert!(matches!(lookup("godaddy").unwrap().dns01, Dns01::BundledSeparateCredentials(_)));
+    }
+
+    #[test]
+    fn only_implemented_providers_list_domains() {
+        let listing: Vec<_> = CATALOG.iter().filter(|p| p.lists_domains).map(|p| p.id).collect();
+        assert_eq!(listing, ["porkbun", "cloudflare", "gandi", "namecom", "alibaba", "hostinger"]);
+        assert!(CATALOG.iter().filter(|p| p.lists_domains).all(|p| p.status == ProviderStatus::Implemented));
     }
 
     #[test]

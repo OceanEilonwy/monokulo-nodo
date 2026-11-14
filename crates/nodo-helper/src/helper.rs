@@ -242,6 +242,11 @@ impl<S: System> Helper<S> {
             | Request::ListDnsProviders
             | Request::SetDnsProvider { .. }
             | Request::TestDnsProvider
+            | Request::ListDomainProviders
+            | Request::AddDomainProvider { .. }
+            | Request::RemoveDomainProvider { .. }
+            | Request::RefreshDomainProvider { .. }
+            | Request::AddProviderDomain { .. }
             | Request::RetireStaleRecords
             | Request::CheckReachabilityDetail { .. }
             | Request::AcmeSettings

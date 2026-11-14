@@ -45,12 +45,6 @@ struct InstallJob {
     fails_at_end: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredProvider {
-    pub provider: String,
-    pub domain: String,
-}
-
 pub struct MockBackend {
     /// Every `Backend` request received, so tests can assert what would reach the helper.
     pub calls: Vec<Request>,
@@ -62,7 +56,8 @@ pub struct MockBackend {
     pub drive: Option<DriveFailure>,
     pub forms: HashMap<String, SettingsForm>,
     pub public_access: BTreeMap<String, PublicAccess>,
-    pub stored_provider: Option<StoredProvider>,
+    /// The connected provider accounts, as the helper would report them.
+    pub connected: Vec<ConnectedProvider>,
     pub auto_update: AutoUpdatePrefs,
     /// Makes applying a site's protections fail, to exercise that failure path.
     pub fail_public_access: bool,
@@ -95,6 +90,21 @@ impl Default for MockBackend {
 }
 
 impl MockBackend {
+    /// The first connected domain is what the older single-provider fields show.
+    fn sync_web_domain(&mut self) {
+        let first = self.connected.iter().find_map(|p| p.domains.first().map(|d| (p.name.clone(), d.name.clone())));
+        let (provider, domain) = first.unwrap_or_default();
+        self.web.provider = provider;
+        self.web.domain = domain;
+    }
+
+    fn under_a_domain(&self, host: &str) -> bool {
+        self.connected
+            .iter()
+            .flat_map(|p| p.domains.iter())
+            .any(|d| d.held_by.is_none() && (host == d.name || host.ends_with(&format!(".{}", d.name))))
+    }
+
     pub fn new() -> Self {
         Self {
             calls: Vec::new(),
@@ -106,7 +116,13 @@ impl MockBackend {
             drive: None,
             forms: sample_forms(),
             public_access: BTreeMap::new(),
-            stored_provider: Some(StoredProvider { provider: s("Porkbun"), domain: s("example.com") }),
+            connected: vec![ConnectedProvider {
+                id: s("porkbun"),
+                name: s("Porkbun"),
+                domains: vec![ConnectedDomain { name: s("example.com"), used_by: Vec::new(), held_by: None }],
+                lists_domains: true,
+                problem: None,
+            }],
             auto_update: sample_auto_update(),
             fail_public_access: false,
             setup_needed: false,
@@ -1165,35 +1181,63 @@ impl ScreenData for MockBackend {
         sample_providers()
     }
 
-    fn test_provider(
-        &mut self,
-        provider: &str,
-        domain: &str,
-        api_key: &Secret,
-        secret_key: &Secret,
-    ) -> Result<String, String> {
-        let stored = self
-            .stored_provider
-            .as_ref()
-            .is_some_and(|stored| stored.provider == provider && stored.domain == domain);
-        if domain.is_empty() || (!stored && (api_key.is_empty() || secret_key.is_empty())) {
-            return Err(s("Enter the domain and both keys first."));
+    fn connected_providers(&self) -> Vec<ConnectedProvider> {
+        // Which apps use each domain follows from the sites, as the helper works it out.
+        let mut connected = self.connected.clone();
+        for provider in &mut connected {
+            for domain in &mut provider.domains {
+                domain.used_by = self
+                    .web
+                    .sites
+                    .iter()
+                    .filter(|site| site.exposure.public && domain.held_by.is_none())
+                    .filter(|site| site.public_host.as_deref().is_some_and(|h| h == domain.name || h.ends_with(&format!(".{}", domain.name))))
+                    .map(|site| site.package.clone())
+                    .collect();
+            }
         }
-        Ok(s("Test passed: read and wrote a temporary record"))
+        connected
     }
 
-    fn save_provider(
+    fn add_provider(
         &mut self,
         provider: &str,
-        domain: &str,
+        domain: Option<&str>,
         api_key: &Secret,
         secret_key: &Secret,
-    ) -> Result<(), String> {
-        self.test_provider(provider, domain, api_key, secret_key)?;
-        self.stored_provider = Some(StoredProvider { provider: s(provider), domain: s(domain) });
-        self.web.provider = s(provider);
-        self.web.domain = s(domain);
+    ) -> Result<ConnectedProvider, String> {
+        let entry = sample_providers().into_iter().find(|p| p.name == provider).ok_or_else(|| format!("{provider} is not a known provider"))?;
+        if api_key.is_empty() || (entry.fields.len() > 1 && secret_key.is_empty()) {
+            return Err(format!("Paste the key from {provider}."));
+        }
+        let names: Vec<String> = match (entry.lists_domains, domain) {
+            (true, _) => vec![s("example.org"), s("myshop.net")],
+            (false, Some(domain)) if domain.contains('.') => vec![domain.to_lowercase()],
+            (false, _) => return Err(format!("{provider} can't list your domains, so type the domain to use")),
+        };
+        let held = |name: &str| self.connected.iter().find(|p| p.domains.iter().any(|d| d.name == name)).map(|p| p.name.clone());
+        let domains = names.iter().map(|name| ConnectedDomain { name: name.clone(), used_by: Vec::new(), held_by: held(name) }).collect();
+        let kind = provider.to_lowercase().replace([' ', '.'], "");
+        let id = (1..).map(|n| if n == 1 { kind.clone() } else { format!("{kind}-{n}") }).find(|id| !self.connected.iter().any(|p| &p.id == id)).unwrap_or(kind);
+        let added = ConnectedProvider { id, name: s(provider), domains, lists_domains: entry.lists_domains, problem: None };
+        self.connected.push(added.clone());
+        self.sync_web_domain();
+        Ok(added)
+    }
+
+    fn remove_provider(&mut self, id: &str) -> Result<(), String> {
+        let provider = self.connected_providers().into_iter().find(|p| p.id == id).ok_or_else(|| format!("no connected provider is called {id}"))?;
+        let used: Vec<String> = provider.domains.iter().flat_map(|d| d.used_by.clone()).collect();
+        if !used.is_empty() {
+            return Err(format!("{} serves {}. Take those sites off the internet first", provider.name, used.join(", ")));
+        }
+        self.connected.retain(|p| p.id != id);
+        self.sync_web_domain();
         Ok(())
+    }
+
+    fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String> {
+        self.connected_providers().into_iter().find(|p| p.id == id).ok_or_else(|| format!("no connected provider is called {id}"))
     }
 
     fn save_acme(&mut self, settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
@@ -1204,8 +1248,8 @@ impl ScreenData for MockBackend {
             if !self.web.acme.dns01 {
                 return Err(s("local names under your domain need certificates through your DNS provider"));
             }
-            if !domain.ends_with(&self.web.domain) {
-                return Err(format!("local names must be under {}", self.web.domain));
+            if !self.under_a_domain(domain) {
+                return Err(s("local names must be under one of your domains"));
             }
         }
         let acme = &mut self.web.acme;
@@ -1274,8 +1318,8 @@ impl ScreenData for MockBackend {
     }
 
     fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
-        if !host.ends_with(&format!(".{}", self.web.domain)) {
-            return Err(format!("The address must be under {}.", self.web.domain));
+        if !self.under_a_domain(host) {
+            return Err(s("The address must be under one of your domains."));
         }
         let entry = self
             .web
@@ -1939,6 +1983,7 @@ fn sample_providers() -> Vec<Provider> {
         instructions,
         fields: vec![s("api_key"), s("secret_key")],
         dns01_note: None,
+        lists_domains: !matches!(name, "GoDaddy" | "Namecheap" | "IONOS"),
     };
     let keys = |name: &str| format!("Create an API key in your {name} account, then enable API access for this domain.");
     let account = |name: &str| {

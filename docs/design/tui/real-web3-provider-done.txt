@@ -7,11 +7,11 @@
 
        ✓  Porkbun is connected
 
-          Apps can now use this web address:
+          Apps can now use these web addresses:
           example.com
+          example.org
 
                                                                                                 Back to shop   
-
 
 
 

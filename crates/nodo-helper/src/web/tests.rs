@@ -39,6 +39,8 @@ struct Fake {
     nft_refuses: bool,
     retire_output: String,
     records: Records,
+    /// What `list_domains` answers per provider kind; a missing kind cannot list.
+    listings: Mutex<BTreeMap<String, Result<Vec<String>, String>>>,
     /// What this device's resolver answers, by name. Missing names fail to resolve.
     resolved: Mutex<BTreeMap<String, Vec<IpAddr>>>,
     removed_dirs: Mutex<Vec<String>>,
@@ -139,6 +141,10 @@ impl WebIo for Fake {
     }
     fn dns_provider(&self, _: ProviderConfig, _: &str) -> Result<Box<dyn DnsProvider>, String> {
         Ok(Box::new(FakeProvider(self.records.clone())))
+    }
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String> {
+        self.calls.lock().unwrap().push(format!("list {}", config.kind()));
+        self.listings.lock().unwrap().get(config.kind()).cloned().transpose()
     }
 }
 
@@ -350,7 +356,7 @@ fn status_reports_stale_records_and_the_last_change() {
     let web = web(Fake::default());
     store_cloudflare(&web);
     web.io.put(
-        "/ddns/state.json",
+        "/ddns/example.com.json",
         r#"{"published":{"shop/A":{"name":"shop","record_type":"A","ip":"93.184.216.34","changed_at":5},
             "old/A":{"name":"old","record_type":"A","ip":"93.184.216.34","changed_at":9}},"observed_v4":"93.184.216.34"}"#,
     );
@@ -448,7 +454,7 @@ fn godaddy_needs_its_own_key_and_secret_for_dns01_and_they_are_sealed() {
     web.set_dns01(&fields, &input(false, true)).unwrap();
 
     let stored = web.io.get("/nodo/web-dns.toml").unwrap();
-    assert!(!stored.contains("gdkey") && !stored.contains("gdsecret") && stored.contains("[dns01]"), "{stored}");
+    assert!(!stored.contains("gdkey") && !stored.contains("gdsecret") && stored.contains("dns01"), "{stored}");
     assert_eq!(issuer(&web)["challenges"]["dns"]["provider"]["api_token"], "gdkey:gdsecret");
     assert!(web.acme_settings(&input(false, true)).unwrap().dns01_stored);
     // Changing only the domain keeps them; the dynamic DNS token is not reused for DNS-01.
@@ -835,4 +841,175 @@ fn a_site_onion_leaves_the_node_out_unless_asked() {
     let torrc = web.io.get("/web/torrc").unwrap();
     assert!(torrc.contains("HiddenServiceDir /tor/shop.web"), "{torrc}");
     assert!(!torrc.contains("node-rpc"), "{torrc}");
+}
+
+fn two_sites(public: bool) -> WebInput {
+    let mut input = input(false, public);
+    let mut blog = input.sites[0].clone();
+    blog.package = "blog".into();
+    blog.service.suggested_subdomain = Some("blog".into());
+    blog.service.upstream = "127.0.0.1:3002".into();
+    blog.public_host = Some("example.org".into());
+    input.sites.push(blog);
+    input
+}
+
+fn cloudflare_token() -> Vec<(String, Secret)> {
+    vec![("api_token".into(), Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789"))]
+}
+
+fn gandi_token() -> Vec<(String, Secret)> {
+    vec![("personal_access_token".into(), Secret::new("pat_0123456789abcdef"))]
+}
+
+fn lists(web: &NodoWeb<Fake>, kind: &str, domains: &[&str]) {
+    web.io.listings.lock().unwrap().insert(kind.into(), Ok(domains.iter().map(|d| (*d).to_owned()).collect()));
+}
+
+#[test]
+fn an_old_single_provider_store_becomes_the_first_provider_with_its_state() {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    // Write the file in the form devices had before several providers, from the same sealed values.
+    let (store, _) = web.provider_store();
+    let old = &store.providers[0];
+    let legacy = toml::to_string(&Credentials { domain: "example.com".into(), dns: old.dns.clone(), dns01: old.dns01.clone() }).unwrap();
+    web.io.put("/nodo/web-dns.toml", &legacy);
+    web.io.put("/ddns/state.json", r#"{"published":{"shop/A":{"name":"shop","record_type":"A","ip":"93.184.216.34","changed_at":5}}}"#);
+    assert!(web.provider_store().1, "the old form is recognised");
+
+    web.apply(&input(false, true)).unwrap();
+    let stored = web.io.get("/nodo/web-dns.toml").unwrap();
+    assert!(stored.contains("version = 2") && stored.contains("[[provider]]"), "{stored}");
+    assert!(!stored.contains("cfut_"), "credentials stay sealed: {stored}");
+    assert!(web.io.get("/ddns/state.json").is_none());
+    assert!(web.io.get("/ddns/example.com.json").unwrap().contains("shop/A"));
+    let providers = web.list_domain_providers(&input(false, true));
+    assert_eq!(providers.len(), 1);
+    assert_eq!((providers[0].id.as_str(), providers[0].domains[0].name.as_str()), ("cloudflare", "example.com"));
+    assert_eq!(providers[0].domains[0].used_by.len(), 1);
+    // The sealed credentials still open, so dynamic DNS gets them.
+    assert!(web.io.get("/secrets/nodo-ddns/config.toml").unwrap().contains("cfut_0123456789"));
+}
+
+#[test]
+fn adding_providers_discovers_their_domains_and_each_domain_uses_its_own() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com"]);
+    lists(&web, "gandi", &["example.org", "example.com"]);
+    let cf = web.add_domain_provider("cloudflare", &cloudflare_token(), None, &two_sites(true)).unwrap();
+    assert_eq!(cf.domains.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.com"]);
+    assert!(cf.lists_domains && cf.checked_at.is_some());
+    let gandi = web.add_domain_provider("gandi", &gandi_token(), None, &two_sites(true)).unwrap();
+    // example.com stays with Cloudflare, connected first.
+    let held = gandi.domains.iter().find(|d| d.name == "example.com").unwrap();
+    assert_eq!(held.held_by.as_deref(), Some("Cloudflare"));
+    assert!(held.used_by.is_empty());
+
+    web.apply(&two_sites(true)).unwrap();
+    let stored = web.io.get("/nodo/web-dns.toml").unwrap();
+    assert!(!stored.contains("cfut_") && !stored.contains("pat_0123"), "{stored}");
+
+    // nodo-ddns gets one zone per domain, each with its provider and its own state file.
+    let ddns: toml::Value = toml::from_str(&web.io.get("/secrets/nodo-ddns/config.toml").unwrap()).unwrap();
+    let zones = ddns["zones"].as_array().unwrap();
+    let zone = |domain: &str| zones.iter().find(|z| z["domain"].as_str() == Some(domain)).unwrap().clone();
+    assert_eq!(zone("example.com")["dns"]["provider"].as_str(), Some("cloudflare"));
+    assert_eq!(zone("example.com")["records"].as_array().unwrap()[0].as_str(), Some("shop"));
+    assert_eq!(zone("example.com")["state_file"].as_str(), Some("/ddns/example.com.json"));
+    assert_eq!(zone("example.org")["dns"]["provider"].as_str(), Some("gandi"));
+    assert_eq!(zone("example.org")["records"].as_array().unwrap()[0].as_str(), Some("@"));
+
+    // Certificates are answered at each domain's provider.
+    let json = caddy_json(&web);
+    let policies = json["apps"]["tls"]["automation"]["policies"].as_array().unwrap().clone();
+    let provider_of = |host: &str| {
+        policies.iter().find(|p| p["subjects"].as_array().unwrap().iter().any(|s| s == host)).unwrap()["issuers"][0]
+            ["challenges"]["dns"]["provider"]["name"]
+            .clone()
+    };
+    assert_eq!(provider_of("shop.example.com"), "cloudflare");
+    assert_eq!(provider_of("example.org"), "gandi");
+
+    let listed = web.list_domain_providers(&two_sites(true));
+    assert_eq!(listed.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["cloudflare", "gandi"]);
+    let org = listed[1].domains.iter().find(|d| d.name == "example.org").unwrap();
+    assert_eq!(org.used_by[0].package, "blog");
+}
+
+#[test]
+fn a_provider_that_cannot_list_needs_a_domain_proved_with_a_test_record() {
+    let web = web(Fake::default());
+    let token = vec![("personal_access_token".to_owned(), Secret::new("gd-pat-token"))];
+    let error = web.add_domain_provider("godaddy", &token, None, &input(false, false)).unwrap_err();
+    assert!(error.to_string().contains("type the domain"), "{error}");
+    let added = web.add_domain_provider("godaddy", &token, Some("Example.com"), &input(false, false)).unwrap();
+    assert!(!added.lists_domains);
+    assert_eq!(added.domains[0].name, "example.com");
+    // The test record was written and removed again.
+    assert!(web.io.records.lock().unwrap().is_empty());
+    let more = web.add_provider_domain("godaddy", "example.net", &input(false, false)).unwrap();
+    assert_eq!(more.domains.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.com", "example.net"]);
+}
+
+#[test]
+fn a_listing_must_include_the_typed_domain_and_bad_input_is_refused() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.org"]);
+    let error = web.add_domain_provider("cloudflare", &cloudflare_token(), Some("example.com"), &input(false, false)).unwrap_err();
+    assert!(error.to_string().contains("does not control example.com"), "{error}");
+    lists(&web, "cloudflare", &[]);
+    assert!(web.add_domain_provider("cloudflare", &cloudflare_token(), None, &input(false, false)).is_err());
+    web.io.listings.lock().unwrap().insert("cloudflare".into(), Err("the provider rejected these credentials".into()));
+    assert!(web.add_domain_provider("cloudflare", &cloudflare_token(), None, &input(false, false)).is_err());
+    assert!(web.add_domain_provider("namecheap", &cloudflare_token(), None, &input(false, false)).is_err());
+    assert!(web.add_domain_provider("cloudflare", &[], None, &input(false, false)).is_err());
+    let mut locked = input(false, false);
+    locked.secrets = None;
+    assert!(matches!(web.add_domain_provider("cloudflare", &cloudflare_token(), None, &locked), Err(ApiError::Locked(_))));
+    assert!(web.list_domain_providers(&input(false, false)).is_empty(), "nothing was stored");
+}
+
+#[test]
+fn a_provider_in_use_cannot_be_removed() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com"]);
+    lists(&web, "gandi", &["example.org"]);
+    web.add_domain_provider("cloudflare", &cloudflare_token(), None, &input(false, true)).unwrap();
+    web.add_domain_provider("gandi", &gandi_token(), None, &input(false, true)).unwrap();
+    let error = web.remove_domain_provider("cloudflare", &input(false, true)).unwrap_err();
+    assert!(error.to_string().contains("shop.example.com"), "{error}");
+    web.remove_domain_provider("gandi", &input(false, true)).unwrap();
+    assert!(matches!(web.remove_domain_provider("gandi", &input(false, true)), Err(ApiError::NotFound(_))));
+    // Off the internet, it can go.
+    web.remove_domain_provider("cloudflare", &input(false, false)).unwrap();
+    assert!(web.list_domain_providers(&input(false, false)).is_empty());
+}
+
+#[test]
+fn refreshing_keeps_a_domain_a_site_uses_and_records_problems() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com", "example.net"]);
+    web.add_domain_provider("cloudflare", &cloudflare_token(), None, &input(false, true)).unwrap();
+    lists(&web, "cloudflare", &["example.net", "example.io"]);
+    let refreshed = web.refresh_domain_provider("cloudflare", &input(false, true)).unwrap();
+    let names: Vec<_> = refreshed.domains.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["example.com", "example.io", "example.net"]);
+    assert!(refreshed.problem.as_deref().is_some_and(|p| p.contains("example.com")));
+    web.io.listings.lock().unwrap().insert("cloudflare".into(), Err("the provider is rate limiting requests".into()));
+    let failed = web.refresh_domain_provider("cloudflare", &input(false, true)).unwrap();
+    assert_eq!(failed.problem.as_deref(), Some("the provider is rate limiting requests"));
+    assert_eq!(failed.domains.len(), 3, "a failed listing keeps the domains");
+}
+
+#[test]
+fn the_older_request_still_sets_the_first_provider_without_touching_others() {
+    let web = web(Fake::default());
+    lists(&web, "gandi", &["example.org"]);
+    web.add_domain_provider("gandi", &gandi_token(), None, &input(false, false)).unwrap();
+    store_cloudflare(&web);
+    let listed = web.list_domain_providers(&input(false, false));
+    assert_eq!(listed.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["cloudflare", "gandi"]);
+    let status = web.status(&input(false, true)).unwrap();
+    assert_eq!(status.domain.as_deref(), Some("example.com"));
 }

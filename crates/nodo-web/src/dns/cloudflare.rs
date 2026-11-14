@@ -4,7 +4,7 @@
 //! Web flow shows the record pointing straight at the home IP. An existing record's `proxied` setting
 //! is left as the user set it.
 
-use super::{
+use super::{tidy_domains, MAX_DOMAIN_PAGES, 
     decode, send, status_error, DnsError, ExistingRecord, IdBacked, IdRecords, ProviderMessage, RecordName,
     RecordType, Zone,
 };
@@ -87,6 +87,24 @@ struct ZoneRecord {
 }
 
 #[derive(Deserialize)]
+struct ListedZone {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ZonePage {
+    #[serde(default)]
+    result: Vec<ListedZone>,
+    result_info: Option<PageInfo>,
+}
+
+#[derive(Deserialize)]
+struct PageInfo {
+    #[serde(default)]
+    total_pages: usize,
+}
+
+#[derive(Deserialize)]
 struct Record {
     id: String,
     name: String,
@@ -148,6 +166,20 @@ impl IdRecords for Cloudflare {
         let path = format!("/zones/{}/dns_records/{}", encode_component(&self.zone_id()?), encode_component(id));
         self.call(Method::Delete, &path, None).map(|_| ())
     }
+
+    /// `GET /zones`, every zone the token can read, paged with `page` and `result_info.total_pages`.
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let mut names = Vec::new();
+        for page in 1..=MAX_DOMAIN_PAGES {
+            let response = self.call(Method::Get, &format!("/zones?per_page=50&page={page}"), None)?;
+            let parsed: ZonePage = decode(&response, "Cloudflare zone list")?;
+            names.extend(parsed.result.into_iter().map(|z| z.name));
+            if page >= parsed.result_info.map_or(1, |info| info.total_pages) {
+                break;
+            }
+        }
+        Ok(Some(tidy_domains(names)))
+    }
 }
 
 #[cfg(test)]
@@ -161,6 +193,18 @@ mod tests {
     const EMPTY: &str = r#"{"success":true,"errors":[],"messages":[],"result":[]}"#;
     const WRITTEN: &str = r#"{"success":true,"errors":[],"messages":[],"result":{"id":"372e67954025e0ba6aaa6d586b9e0b59"}}"#;
     const ZONE_ID: &str = "023e105f4ecef8ad9ca31a8372d0c353";
+
+    #[test]
+    fn lists_every_zone_across_pages() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"{"success":true,"errors":[],"result":[{"id":"1","name":"example.com"}],"result_info":{"page":1,"total_pages":2}}"#);
+        http.respond(200, r#"{"success":true,"errors":[],"result":[{"id":"2","name":"example.org"}],"result_info":{"page":2,"total_pages":2}}"#);
+        let provider = Cloudflare::new(http.clone(), Zone::new("example.com").unwrap(), Secret::new("cf-token"));
+        assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.com".to_owned(), "example.org".to_owned()]));
+        assert_eq!(http.request(0).url, "https://api.cloudflare.com/client/v4/zones?per_page=50&page=1");
+        assert_eq!(http.request(1).url, "https://api.cloudflare.com/client/v4/zones?per_page=50&page=2");
+        assert_eq!(header(&http.request(0), "Authorization"), Some("Bearer cf-token"));
+    }
 
     fn provider(http: std::sync::Arc<FakeHttp>) -> IdBacked<Cloudflare> {
         Cloudflare::new(http, Zone::new("example.com").unwrap(), Secret::new("cf-token"))

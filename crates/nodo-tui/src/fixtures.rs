@@ -214,15 +214,13 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         }
         ScreenId::WebSites => Screen::Web { selected: 0 },
         ScreenId::WebExposure => {
-            let has_provider = app.has_provider();
             let site = app.data.web.sites.iter().find(|s| s.package == "shop");
             let host = site.and_then(|s| s.public_host.clone());
             let mut state = ExposureState::new(
                 "shop",
                 Exposure { local: true, onion: true, public: true },
                 host.as_deref(),
-                &app.data.web.domain,
-                has_provider,
+                &app.domain_choices(),
             );
             state.selected = 2;
             Screen::WebExposure(state)

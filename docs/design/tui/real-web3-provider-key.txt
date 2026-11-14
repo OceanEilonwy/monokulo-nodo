@@ -7,15 +7,15 @@
     Create an API key in your Porkbun account, then enable API access for this domain.
 
 
-       Web address     example.com
-
        API key
 
        Secret key
 
-       The key stays on this Nodo, locked with your device passphrase, and is never shown again.
+       The Nodo asks Porkbun which domains this key controls. The key stays here, locked, never shown again.
 
                                                                                                      Connect   
+
+
 
 
 

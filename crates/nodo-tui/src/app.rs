@@ -724,6 +724,8 @@ pub struct ExposureState {
     pub selected: usize,
     /// The part of the public address before the domain, such as `pay` in `pay.example.com`.
     pub sub: Input,
+    /// The chosen domain, one of [`App::domain_choices`].
+    pub domain: String,
     /// The domain list is open.
     pub picking: bool,
     /// Index into the open domain list: the domains, then "Add a provider".
@@ -747,13 +749,31 @@ pub enum HostingFocus {
 }
 
 impl ExposureState {
-    /// `host` is the site's saved public host, `domain` the connected provider's domain.
-    pub fn new(site: &str, draft: Exposure, host: Option<&str>, domain: &str, has_provider: bool) -> Self {
+    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`]. The domain is
+    /// the longest one the host is under, or the first.
+    pub fn new(site: &str, draft: Exposure, host: Option<&str>, domains: &[(String, String)]) -> Self {
+        let under = |host: &str, domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+        let domain = host
+            .and_then(|host| domains.iter().filter(|(d, _)| under(host, d)).max_by_key(|(d, _)| d.len()))
+            .or(domains.first())
+            .map(|(d, _)| d.clone())
+            .unwrap_or_default();
         let sub = host
-            .and_then(|host| host.strip_suffix(domain))
+            .filter(|host| under(host, &domain))
+            .and_then(|host| host.strip_suffix(domain.as_str()))
             .map(|rest| rest.trim_end_matches('.').to_owned())
             .unwrap_or_else(|| site.split('-').next_back().unwrap_or(site).to_owned());
-        Self { site: site.to_owned(), draft, selected: 0, sub: Input::plain(sub), picking: false, pick: 0, details: false, has_provider }
+        Self {
+            site: site.to_owned(),
+            draft,
+            selected: 0,
+            sub: Input::plain(sub),
+            domain,
+            picking: false,
+            pick: 0,
+            details: false,
+            has_provider: !domains.is_empty(),
+        }
     }
 
     /// The focus order, which depends on whether the internet is ticked and a provider exists.
@@ -779,10 +799,10 @@ impl ExposureState {
         order[self.selected.min(order.len() - 1)]
     }
 
-    /// The public host the choices make: the address part and the domain.
-    pub fn host(&self, domain: &str) -> String {
+    /// The public host the choices make: the address part and the chosen domain.
+    pub fn host(&self) -> String {
         let sub = self.sub.text().trim().trim_matches('.');
-        if sub.is_empty() { domain.to_owned() } else { format!("{sub}.{domain}") }
+        if sub.is_empty() { self.domain.clone() } else { format!("{sub}.{}", self.domain) }
     }
 }
 
@@ -803,8 +823,8 @@ pub enum ProviderStage {
     Pick,
     /// The domain and key for the chosen company.
     Key,
-    /// Connected. Holds the provider and the domain.
-    Done { provider: String, domain: String },
+    /// Connected. Holds the provider's name and the domains its key controls.
+    Done { provider: String, domains: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1064,6 +1084,8 @@ pub enum ModalAction {
     /// Turns Wi-Fi off while it may be the connection in use.
     WifiOff,
     RemoveBluetooth(String),
+    /// Disconnects a domain provider, by id.
+    RemoveProvider(String),
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -1113,9 +1135,25 @@ impl App {
         self.data.web.sites.iter().filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public).collect()
     }
 
-    /// A domain provider is connected, with its domain.
+    /// A domain provider is connected with at least one domain an app can use.
     pub fn has_provider(&self) -> bool {
-        !self.data.web.provider.is_empty() && !self.data.web.domain.is_empty()
+        !self.domain_choices().is_empty()
+    }
+
+    /// The domains apps can be put under, each with its provider's name. A domain another provider
+    /// already holds is left out: it is used through that one.
+    pub fn domain_choices(&self) -> Vec<(String, String)> {
+        let mut choices: Vec<(String, String)> = self
+            .data
+            .connected
+            .iter()
+            .flat_map(|p| p.domains.iter().filter(|d| d.held_by.is_none()).map(move |d| (d.name.clone(), p.name.clone())))
+            .collect();
+        // Before the helper reports providers (or with an older one), the single connected domain.
+        if choices.is_empty() && !self.data.web.domain.is_empty() && !self.data.web.provider.is_empty() {
+            choices.push((self.data.web.domain.clone(), self.data.web.provider.clone()));
+        }
+        choices
     }
 
     pub fn new() -> Self {
@@ -1215,8 +1253,10 @@ pub enum Effect {
     SetPublicHost { site: String, host: String },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
-    TestProvider { provider: String, domain: String, api_key: Secret, secret_key: Secret },
-    SaveProvider { provider: String, domain: String, api_key: Secret, secret_key: Secret },
+    /// `domain` only for a provider that cannot list its domains.
+    AddProvider { provider: String, domain: Option<String>, api_key: Secret, secret_key: Secret },
+    RemoveProvider(String),
+    RefreshProvider(String),
     /// `dns01` holds the provider's separate certificate credentials, when it needs them.
     SaveAcme { settings: nodo_api::AcmeSettingsInput, dns01: Option<(Secret, Secret)> },
     CheckLocalNames,
@@ -1316,8 +1356,9 @@ pub enum Event {
     ExposureSet { after: ExposureAfter, result: Result<(), ApiError> },
     PublicHostSet(Result<(), String>),
     Reachability { site: String, going_public: bool, result: Reachability },
-    ProviderTested(Result<String, String>),
-    ProviderSaved(Result<(), String>),
+    ProviderAdded(Result<ConnectedProvider, String>),
+    ProviderRemoved(Result<(), String>),
+    ProviderRefreshed(Result<ConnectedProvider, String>),
     AcmeSaved(Result<(), String>),
     LocalNamesChecked(Result<Vec<nodo_api::LocalNameCheck>, String>),
     DocumentLoaded(Document),

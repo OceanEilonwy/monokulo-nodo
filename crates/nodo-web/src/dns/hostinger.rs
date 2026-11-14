@@ -4,7 +4,7 @@
 //! With `overwrite: true`, a PUT deletes and recreates only records matching both name and type, so
 //! other records in the zone are safe. The endpoint returns the whole zone, so reads filter locally.
 
-use super::{
+use super::{tidy_domains, 
     decode, parse_addresses, send, status_error, Change, DnsError, DnsProvider, ProviderMessage, RecordName,
     RecordType, UpsertOutcome, Zone,
 };
@@ -71,9 +71,35 @@ struct NameRecord {
     is_disabled: bool,
 }
 
+/// The domain portfolio. Spec: `GET /api/domains/v1/portfolio` in the OpenAPI file above.
+const PORTFOLIO: &str = "https://developers.hostinger.com/api/domains/v1/portfolio";
+
+#[derive(Deserialize)]
+struct PortfolioDomain {
+    /// `null` for a free domain that was never claimed.
+    domain: Option<String>,
+    #[serde(default)]
+    status: String,
+}
+
 impl DnsProvider for Hostinger {
     fn min_ttl(&self) -> u32 {
         MIN_TTL
+    }
+
+    /// The portfolio's active domains. The spec returns the whole list without paging.
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let request = HttpRequest::new(Method::Get, PORTFOLIO)
+            .header("Authorization", format!("Bearer {}", self.token.expose()));
+        let response = send(self.http.as_ref(), &request)?;
+        if !response.is_success() {
+            return Err(status_error(&response, |body| {
+                let parsed: ErrorBody = serde_json::from_slice(body).unwrap_or_default();
+                ProviderMessage { code: String::new(), detail: self.scrubber.clean(&parsed.message) }
+            }));
+        }
+        let listed: Vec<PortfolioDomain> = decode(&response, "Hostinger domain portfolio")?;
+        Ok(Some(tidy_domains(listed.into_iter().filter(|d| d.status == "active").filter_map(|d| d.domain))))
     }
 
     fn read(&self, name: &RecordName, record_type: RecordType) -> Result<Vec<IpAddr>, DnsError> {
@@ -122,6 +148,16 @@ mod tests {
 
     const ZONE: &str = include_str!("../../tests/fixtures/hostinger_zone.json");
     const OK: &str = r#"{"message":"Request accepted"}"#;
+
+    #[test]
+    fn lists_active_portfolio_domains() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"[{"id":1,"domain":"example.com","type":"domain","status":"active"},{"id":2,"domain":null,"type":"free_domain","status":"active"},{"id":3,"domain":"old.example","status":"expired"}]"#);
+        let provider = Hostinger::new(http.clone(), Zone::new("example.com").unwrap(), Secret::new("hs-token"));
+        assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.com".to_owned()]));
+        assert_eq!(http.request(0).url, "https://developers.hostinger.com/api/domains/v1/portfolio");
+        assert_eq!(header(&http.request(0), "Authorization"), Some("Bearer hs-token"));
+    }
     const URL: &str = "https://developers.hostinger.com/api/dns/v1/zones/example.com";
 
     fn provider(http: std::sync::Arc<FakeHttp>) -> Hostinger {

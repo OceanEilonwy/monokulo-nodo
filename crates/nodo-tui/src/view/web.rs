@@ -195,29 +195,33 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     if state.draft.public {
         card.blank(t);
         if state.has_provider {
-            card.row(t, vec![field_label("Provider"), t.n(web.provider.clone())]);
+            let choices = app.domain_choices();
+            let provider = choices.iter().find(|(d, _)| *d == state.domain).map(|(_, p)| p.clone()).unwrap_or_default();
+            card.row(t, vec![field_label("Provider"), t.n(provider)]);
             card.blank(t);
             let mut domain = vec![field_label("Domain")];
             let domain_focus = focus == HostingFocus::Domain && !state.picking;
             if domain_focus || state.picking {
                 card.focus_here();
             }
-            domain.extend(inset(t, &web.domain, 28, Some(if state.picking { "▴" } else { "▾" }), domain_focus));
+            domain.extend(inset(t, &state.domain, 28, Some(if state.picking { "▴" } else { "▾" }), domain_focus));
             card.row(t, domain);
-            ct.push(Target::text(web.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) }));
+            ct.push(Target::text(state.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) }));
             if state.picking {
                 let list = Style::new().fg(t.fg).bg(t.raised);
-                let chosen = |i: usize| if state.pick == i { "▸" } else { " " };
+                let marker = |i: usize| if state.pick == i { "▸" } else { " " };
+                for (i, (name, provider)) in choices.iter().enumerate() {
+                    let tick = if *name == state.domain { "✓" } else { " " };
+                    let text = format!(" {} {tick} {} {} ", marker(i), pad(name, 22), pad(provider, 14));
+                    card.row(t, vec![t.n(" ".repeat(19)), Span::styled(text, list)]);
+                    ct.push(Target::text(format!("{tick} {}", pad(name, 22)), Click::Pick { index: i, then: Some(KeyCode::Enter) }));
+                }
+                let add = choices.len();
                 card.row(
                     t,
-                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} ✓ {} {} ", chosen(0), pad(&web.domain, 18), pad(&web.provider, 10)), list)],
+                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", marker(add), pad("+ Add a provider…", 39)), Style::new().fg(t.accent).bg(t.raised))],
                 );
-                ct.push(Target::text(format!("✓ {}", web.domain), Click::Pick { index: 0, then: Some(KeyCode::Enter) }));
-                card.row(
-                    t,
-                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", chosen(1), pad("+ Add a provider…", 32)), Style::new().fg(t.accent).bg(t.raised))],
-                );
-                ct.push(Target::text("+ Add a provider…", Click::Pick { index: 1, then: Some(KeyCode::Enter) }));
+                ct.push(Target::text("+ Add a provider…", Click::Pick { index: add, then: Some(KeyCode::Enter) }));
             } else {
                 card.blank(t);
                 if focus == HostingFocus::Address {
@@ -225,9 +229,9 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
                 }
                 let mut address = vec![field_label("Address")];
                 address.extend(inset(t, state.sub.text(), 12, None, focus == HostingFocus::Address));
-                address.push(t.n(format!(" .{}", web.domain)));
+                address.push(t.n(format!(" .{}", state.domain)));
                 card.row(t, address);
-                ct.push(Target::row(format!(".{}", web.domain), Click::Pick { index: index_of(HostingFocus::Address), then: None }));
+                ct.push(Target::row(format!(".{}", state.domain), Click::Pick { index: index_of(HostingFocus::Address), then: None }));
                 card.blank(t);
                 card.row(t, vec![t.d("       Visitors will be able to see your home's internet address.")]);
                 if state.draft.onion {
@@ -283,6 +287,18 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     screen.finish(t, card, ct, Vec::new(), keys, w, h)
 }
 
+/// Each connected provider's name, numbered when the owner connected two accounts at one company.
+fn provider_labels(connected: &[ConnectedProvider]) -> Vec<String> {
+    connected
+        .iter()
+        .enumerate()
+        .map(|(index, provider)| {
+            let earlier = connected[..index].iter().filter(|p| p.name == provider.name).count();
+            if earlier == 0 { provider.name.clone() } else { format!("{} {}", provider.name, earlier + 1) }
+        })
+        .collect()
+}
+
 fn field_name(field: &str) -> String {
     match field {
         "api_key" => "API key".to_owned(),
@@ -300,7 +316,6 @@ fn field_name(field: &str) -> String {
 pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, Tab::Web, w);
-    let web = &app.data.web;
     let mut card = Card::new(t, w);
     let mut ct = Vec::new();
     let mut after = Vec::new();
@@ -308,25 +323,72 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     card.blank(t);
     let keys = match &state.stage {
         ProviderStage::List => {
-            if app.has_provider() {
-                card.row(t, vec![t.b(pad(&web.provider, 14)), t.n(web.domain.clone())]);
-            } else {
+            let connected = &app.data.connected;
+            if connected.is_empty() {
                 card.row(t, vec![t.d("None yet.")]);
+                card.blank(t);
             }
-            card.blank(t);
-            let add = if app.has_provider() { "Change provider" } else { "Add a provider" };
-            card.buttons(t, &[(add, true, Click::Key(KeyCode::Char('a')))], &mut ct);
+            let labels = provider_labels(connected);
+            for (index, (provider, label_text)) in connected.iter().zip(&labels).enumerate() {
+                let focused = index == state.selected;
+                if focused {
+                    card.focus_here();
+                }
+                // One row per provider, as designed: its name, its domains, and Remove at the end.
+                // A domain held through another provider is dim, since it can't be picked here.
+                let mut row = vec![marker(t, focused), label(t, &pad(label_text, 14), focused)];
+                for (i, domain) in provider.domains.iter().enumerate() {
+                    if i > 0 {
+                        row.push(t.n("   "));
+                    }
+                    row.push(if domain.held_by.is_some() { t.d(domain.name.clone()) } else { t.n(domain.name.clone()) });
+                }
+                if provider.domains.is_empty() {
+                    row.push(t.d("no domains".to_owned()));
+                }
+                let remove = super::v3::button(t, "Remove", false, 10, t.card);
+                let room = card.width.saturating_sub(4);
+                let used = super::v3::width_of(&row) + super::v3::width_of(&remove);
+                if used + 2 <= room {
+                    row.push(t.n(" ".repeat(room - used)));
+                    row.extend(remove);
+                    card.row(t, row);
+                } else {
+                    // Too many domains for one row: they wrap, and Remove gets its own row.
+                    card.row(t, row);
+                    let mut alone = vec![t.n(" ".repeat(room.saturating_sub(super::v3::width_of(&remove))))];
+                    alone.extend(remove);
+                    card.row(t, alone);
+                }
+                ct.push(Target::row(label_text.clone(), Click::Pick { index, then: None }));
+                ct.push(Target::button("Remove", Click::Pick { index, then: Some(KeyCode::Char('x')) }));
+                let held: Vec<String> = provider
+                    .domains
+                    .iter()
+                    .filter_map(|d| d.held_by.as_ref().map(|other| format!("{} is used through {other}", d.name)))
+                    .collect();
+                if !held.is_empty() {
+                    card.row(t, vec![t.n("   "), t.d(held.join(". "))]);
+                }
+                if let Some(problem) = &provider.problem {
+                    let again = "Look again";
+                    card.row(t, vec![t.n("   "), t.e(problem.clone()), t.n("   "), t.a(again.to_owned())]);
+                    ct.push(Target::text(again, Click::Pick { index, then: Some(KeyCode::Char('r')) }));
+                }
+                card.blank(t);
+            }
+            card.buttons(t, &[("Add a provider", true, Click::Key(KeyCode::Char('a')))], &mut ct);
             screen.before = vec![
                 trail(t, &["Web", "Domain providers"], &mut screen.targets),
                 Item::Blank,
                 heading(t, "Domain providers"),
-                quiet(t, "The company where you bought your web address. Add it once; then any app can use its domain."),
+                quiet(t, "The companies that hold your web addresses. Add each once; then any app can use their domains."),
                 Item::Blank,
             ];
             after.push(Item::Blank);
             after.push(line(vec![margin(t), t.a("Certificates and home names ›")]));
             after_targets.push(Target::text("Certificates and home names ›", Click::Key(KeyCode::Char('c'))));
-            "Keys: a add  c certificates  Esc back"
+            "Keys: ↑↓ choose  a add  r look again  x remove  c certificates  Esc back"
         }
         ProviderStage::Pick => {
             for (index, provider) in app.data.providers.iter().enumerate() {
@@ -361,26 +423,34 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             let provider = app.data.providers.get(state.selected);
             let name = provider.map_or("the provider", |p| p.name.as_str());
             let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| field_name(f)).collect()).unwrap_or_default();
-            let mut domain = vec![t.d(pad("Web address", 15))];
-            domain.extend(inset(t, state.domain.text(), 34, None, state.focus == ProviderFocus::Domain));
-            card.row(t, domain);
-            ct.push(Target::row("Web address", Click::Pick { index: 0, then: None }));
-            card.blank(t);
+            let lists = provider.is_some_and(|p| p.lists_domains);
+            // Targets follow the boxes in order, the same order the keys move through.
+            let mut index = 0;
+            if !lists {
+                let mut domain = vec![t.d(pad("Web address", 15))];
+                domain.extend(inset(t, state.domain.text(), 34, None, state.focus == ProviderFocus::Domain));
+                card.row(t, domain);
+                ct.push(Target::row("Web address", Click::Pick { index, then: None }));
+                index += 1;
+                card.blank(t);
+            }
             let first = names.first().cloned().unwrap_or_else(|| "API key".to_owned());
             let mut key = vec![t.d(pad(&first, 15))];
             key.extend(inset(t, &state.api_key.display(), 34, None, state.focus == ProviderFocus::ApiKey));
             card.row(t, key);
-            ct.push(Target::row(first, Click::Pick { index: 1, then: None }));
+            ct.push(Target::row(first, Click::Pick { index, then: None }));
+            index += 1;
             if let Some(second) = names.get(1) {
                 card.blank(t);
                 let mut secret = vec![t.d(pad(second, 15))];
                 secret.extend(inset(t, &state.secret_key.display(), 34, None, state.focus == ProviderFocus::SecretKey));
                 card.row(t, secret);
-                ct.push(Target::row(second.clone(), Click::Pick { index: 2, then: None }));
+                ct.push(Target::row(second.clone(), Click::Pick { index, then: None }));
             }
             card.blank(t);
             match &state.test {
                 Some(Err(text)) => card.row(t, vec![t.e(text.clone())]),
+                _ if lists => card.row(t, vec![t.d(format!("The Nodo asks {name} which domains this key controls. The key stays here, locked, never shown again."))]),
                 _ => card.row(t, vec![t.d("The key stays on this Nodo, locked with your device passphrase, and is never shown again.")]),
             }
             card.blank(t);
@@ -395,11 +465,17 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             ];
             "Keys: Tab next box  ↵ connect  Esc back"
         }
-        ProviderStage::Done { provider, domain } => {
+        ProviderStage::Done { provider, domains } => {
             card.row(t, vec![t.o("✓  "), t.b(format!("{provider} is connected"))]);
             card.blank(t);
-            card.row(t, vec![t.d("   Apps can now use this web address:")]);
-            card.row(t, vec![t.n(format!("   {domain}"))]);
+            if domains.is_empty() {
+                card.row(t, vec![t.d("   Its domains are already used through another provider.")]);
+            } else {
+                card.row(t, vec![t.d("   Apps can now use these web addresses:")]);
+                for domain in domains {
+                    card.row(t, vec![t.n(format!("   {domain}"))]);
+                }
+            }
             card.blank(t);
             let back = state.return_to.as_ref().map_or("Done".to_owned(), |site| format!("Back to {site}"));
             card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))], &mut ct);

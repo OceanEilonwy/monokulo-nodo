@@ -3,7 +3,7 @@
 //! LiveDNS addresses a whole record set by name and type, so a PUT replaces exactly the values this
 //! crate owns and nothing else. It uses a personal access token, as the older `Apikey` scheme is deprecated.
 
-use super::{
+use super::{tidy_domains, MAX_DOMAIN_PAGES, 
     decode, parse_addresses, send, status_error, Change, DnsError, DnsProvider, ProviderMessage, RecordName,
     RecordType, UpsertOutcome, Zone,
 };
@@ -72,9 +72,36 @@ struct RecordSet {
     rrset_values: Vec<String>,
 }
 
+/// Gandi pages lists with `page` and `per_page`.
+const DOMAIN_PAGE: usize = 100;
+
+#[derive(Deserialize)]
+struct ListedDomain {
+    fqdn: String,
+}
+
 impl DnsProvider for Gandi {
     fn min_ttl(&self) -> u32 {
         MIN_TTL
+    }
+
+    /// `GET /livedns/domains`: the domains on LiveDNS that the token can manage.
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let mut names = Vec::new();
+        for page in 1..=MAX_DOMAIN_PAGES {
+            let url = format!("{BASE}/domains?per_page={DOMAIN_PAGE}&page={page}");
+            let response = self.send(Method::Get, &url, None)?;
+            if !response.is_success() {
+                return Err(self.failure(&response));
+            }
+            let listed: Vec<ListedDomain> = decode(&response, "Gandi domain list")?;
+            let count = listed.len();
+            names.extend(listed.into_iter().map(|d| d.fqdn));
+            if count < DOMAIN_PAGE {
+                break;
+            }
+        }
+        Ok(Some(tidy_domains(names)))
     }
 
     fn read(&self, name: &RecordName, record_type: RecordType) -> Result<Vec<IpAddr>, DnsError> {
@@ -121,6 +148,24 @@ mod tests {
 
     const RECORD: &str = include_str!("../../tests/fixtures/gandi_record.json");
     const CREATED: &str = r#"{"message":"DNS Record Created"}"#;
+
+    #[test]
+    fn lists_livedns_domains() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"[{"fqdn":"example.com","domain_records_href":"x"},{"fqdn":"example.net"}]"#);
+        let provider = Gandi::new(http.clone(), Zone::new("example.com").unwrap(), Secret::new("pat_abc"));
+        assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.com".to_owned(), "example.net".to_owned()]));
+        assert_eq!(http.request(0).url, "https://api.gandi.net/v5/livedns/domains?per_page=100&page=1");
+        assert_eq!(header(&http.request(0), "Authorization"), Some("Bearer pat_abc"));
+    }
+
+    #[test]
+    fn a_refused_listing_is_unauthorized() {
+        let http = FakeHttp::new();
+        http.respond(401, r#"{"code":401,"message":"The server could not verify that you are authorized"}"#);
+        let provider = Gandi::new(http, Zone::new("example.com").unwrap(), Secret::new("pat_abc"));
+        assert!(matches!(provider.list_domains(), Err(DnsError::Unauthorized(_))));
+    }
     const URL: &str = "https://api.gandi.net/v5/livedns/domains/example.com/records/www/A";
 
     fn provider(http: std::sync::Arc<FakeHttp>) -> Gandi {

@@ -1,7 +1,7 @@
 //! Name.com, using the current Core API. Docs: <https://docs.name.com/api/v1/reference/dns/list-records.md>
 //! and the create, update and delete pages beside it.
 
-use super::{
+use super::{tidy_domains, MAX_DOMAIN_PAGES, 
     decode, send, status_error, DnsError, ExistingRecord, IdBacked, IdRecords, ProviderMessage, RecordName,
     RecordType, Zone,
 };
@@ -64,6 +64,20 @@ struct ErrorBody {
     message: String,
     #[serde(default)]
     details: String,
+}
+
+#[derive(Deserialize)]
+struct DomainPage {
+    #[serde(default)]
+    domains: Vec<ListedDomain>,
+    #[serde(rename = "nextPage")]
+    next_page: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct ListedDomain {
+    #[serde(rename = "domainName")]
+    domain_name: String,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +159,23 @@ impl IdRecords for NameCom {
         let url = format!("{}/{}", self.records_url(), encode_component(id));
         self.call(Method::Delete, &url, None).map(|_| ())
     }
+
+    /// `GET /core/v1/domains`, following `nextPage`. Docs:
+    /// <https://docs.name.com/api/v1/reference/domains/list-domains.md>.
+    fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
+        let mut names = Vec::new();
+        let mut page = 1;
+        for _ in 0..MAX_DOMAIN_PAGES {
+            let response = self.call(Method::Get, &format!("{BASE}?perPage={PER_PAGE}&page={page}"), None)?;
+            let parsed: DomainPage = decode(&response, "Name.com domain list")?;
+            names.extend(parsed.domains.into_iter().map(|d| d.domain_name));
+            match parsed.next_page {
+                Some(next) if next > page => page = next,
+                _ => break,
+            }
+        }
+        Ok(Some(tidy_domains(names)))
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +188,17 @@ mod tests {
     const EMPTY: &str = r#"{"records":[],"from":0,"to":0,"totalCount":0}"#;
     const RECORD: &str = r#"{"id":12345,"domainName":"example.org","host":"blog","type":"A","answer":"192.0.2.10","ttl":300}"#;
     const URL: &str = "https://api.name.com/core/v1/domains/example.org/records";
+
+    #[test]
+    fn lists_domains_following_next_page() {
+        let http = FakeHttp::new();
+        http.respond(200, r#"{"domains":[{"domainName":"example.org"}],"nextPage":2,"lastPage":2,"totalCount":2}"#);
+        http.respond(200, r#"{"domains":[{"domainName":"example.net"}],"totalCount":2}"#);
+        let provider = NameCom::new(http.clone(), Zone::new("example.org").unwrap(), "alice", Secret::new("nc-token"));
+        assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.net".to_owned(), "example.org".to_owned()]));
+        assert_eq!(http.request(0).url, "https://api.name.com/core/v1/domains?perPage=1000&page=1");
+        assert_eq!(http.request(1).url, "https://api.name.com/core/v1/domains?perPage=1000&page=2");
+    }
 
     fn provider(http: std::sync::Arc<FakeHttp>) -> IdBacked<NameCom> {
         NameCom::new(http, Zone::new("example.org").unwrap(), "alice", Secret::new("nc-token"))
