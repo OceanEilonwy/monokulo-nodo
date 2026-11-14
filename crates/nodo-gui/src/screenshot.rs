@@ -15,9 +15,24 @@ use slint::{ComponentHandle, PhysicalSize};
 use crate::geometry;
 use crate::state::{App, Button, Mode};
 use crate::view::Presenter;
-use crate::MainWindow;
+use crate::{ButtonView, DesignBoard, MainWindow};
+use slint::Model;
 
 pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "confirm", "progress", "failed", "off"];
+
+/// Design boards for the touch management screens and wallpapers (ui/design.slint), mock data
+/// only. "wp-panels" is the real tile screen with the proposed Manage button added.
+pub const DESIGN_SCENES: [&str; 23] = [
+    "wp-panels", "wp-logo", "wp-logo-panels", "m-screen", "m-home", "m-apps", "m-app", "m-settings",
+    "m-settings-kbd", "m-get-apps", "m-install", "m-web", "m-hosting", "m-sources", "m-add-source",
+    "m-system", "m-updates", "m-network", "m-backups", "m-blocked", "u-pin", "u-pin-wrong", "u-lockout",
+];
+/// Also a design scene, kept out of the array above to keep its length readable in reviews.
+pub const NO_PIN_SCENE: &str = "u-no-pin";
+
+fn is_design(name: &str) -> bool {
+    name == NO_PIN_SCENE || (DESIGN_SCENES.contains(&name) && name != "wp-panels")
+}
 
 struct Offscreen {
     window: Rc<MinimalSoftwareWindow>,
@@ -190,21 +205,50 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
             .clone()
     });
     window.set_size(PhysicalSize::new(geometry::WIDTH as u32, geometry::HEIGHT as u32));
+    let mut buffer = vec![Rgb8Pixel::default(); (geometry::WIDTH * geometry::HEIGHT) as usize];
+    if is_design(name) {
+        let board = DesignBoard::new().map_err(|e| e.to_string())?;
+        board.set_scene(name.into());
+        board.show().map_err(|e| e.to_string())?;
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut buffer, geometry::WIDTH as usize);
+        });
+        board.hide().map_err(|e| e.to_string())?;
+        return Ok(buffer);
+    }
     let ui = MainWindow::new().map_err(|e| e.to_string())?;
     ui.set_host("monokulo-nodo".into());
     ui.set_address("192.168.1.155".into());
     let now = Instant::now();
-    let app = scene(name, now)?;
+    let app = scene(if name == "wp-panels" { "view" } else { name }, now)?;
     let mut presenter = Presenter::new(&ui);
     presenter.show(&ui, &app, now, ("thu 13 nov", "14:32"));
+    if name == "wp-panels" {
+        add_manage_button(&ui);
+    }
     ui.show().map_err(|e| e.to_string())?;
-    let mut buffer = vec![Rgb8Pixel::default(); (geometry::WIDTH * geometry::HEIGHT) as usize];
     window.request_redraw();
     window.draw_if_needed(|renderer| {
         renderer.render(&mut buffer, geometry::WIDTH as usize);
     });
     ui.hide().map_err(|e| e.to_string())?;
     Ok(buffer)
+}
+
+/// The proposed "Manage" button, left of the top bar's other buttons (design only).
+fn add_manage_button(ui: &MainWindow) {
+    let model = ui.get_buttons();
+    let mut buttons: Vec<ButtonView> = model.iter().collect();
+    let Some(first) = buttons.iter().filter(|b| b.y < 140.0).min_by(|a, b| a.x.total_cmp(&b.x)).cloned() else { return };
+    for b in buttons.iter_mut().filter(|b| b.label == "Arrange") {
+        b.icon = 0;
+    }
+    let w = 236.0;
+    buttons.push(ButtonView { x: first.x - w - geometry::BUTTON_GAP, w, label: "Manage".into(), count: "".into(), sub: "".into(), kind: 2, icon: 1, ..first });
+    let left = first.x - w - geometry::BUTTON_GAP;
+    ui.set_header_text_width(left - geometry::PAD_X - geometry::BUTTON_GAP);
+    ui.set_buttons(slint::ModelRc::new(slint::VecModel::from(buttons)));
 }
 
 thread_local! {
@@ -237,5 +281,11 @@ mod tests {
             assert!(lit < buffer.len() / 3, "{name} keeps an OLED's pixels mostly off ({lit})");
         }
         assert!(scene("nothing", Instant::now()).is_err());
+        // The touch management design boards render too (mock data; they light more of the screen).
+        for name in DESIGN_SCENES.iter().copied().chain([NO_PIN_SCENE]) {
+            let buffer = pixels(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let lit = buffer.iter().filter(|p| p.r > 0 || p.g > 0 || p.b > 0).count();
+            assert!(lit > 1000, "{name} drew something");
+        }
     }
 }
