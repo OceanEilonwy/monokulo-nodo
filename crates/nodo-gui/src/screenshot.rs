@@ -22,7 +22,7 @@ pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "conf
 
 /// The real management screens, over nodo-tui's mock backend, as the device draws them.
 pub const MANAGE_SCENES: &[&str] = &[
-    "r-tiles", "r-home", "r-apps", "r-app", "r-settings", "r-field-menu", "r-refs", "r-keyboard", "r-get-apps",
+    "r-tiles", "r-home", "r-apps", "r-app", "r-settings", "r-field-menu", "r-refs", "r-chips", "r-chip-menu", "r-keyboard", "r-get-apps",
     "r-about", "r-install", "r-sources", "r-add-source", "r-web", "r-hosting", "r-providers", "r-system",
     "r-updates", "r-auto", "r-undo", "r-logs", "r-log", "r-backups", "r-network", "r-ssh", "r-screen", "r-pin", "r-no-pin",
 ];
@@ -34,11 +34,11 @@ fn manage_scene(name: &str) -> crate::manage::Manage {
     let mut m = Manage::new(Some(&worker));
     m.open();
     worker.drain_blocking(&mut m);
-    let first_app = m.first_app();
+    let _ = m.first_app();
     let steps: Vec<String> = match name {
         "r-apps" => vec!["tab:1".into()],
         "r-app" => vec!["tab:1".into(), "open:app:moneropay".into()],
-        "r-settings" | "r-field-menu" | "r-refs" | "r-keyboard" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:settings:moneropay".into()],
+        "r-settings" | "r-field-menu" | "r-refs" | "r-keyboard" | "r-chips" | "r-chip-menu" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:settings:moneropay".into()],
         "r-get-apps" => vec!["tab:1".into(), "open:get-apps".into()],
         "r-about" | "r-install" => vec!["tab:1".into(), "open:get-apps".into(), "about-first".into()],
         "r-sources" => vec!["tab:1".into(), "open:get-apps".into(), "open:sources".into()],
@@ -79,6 +79,14 @@ fn manage_scene(name: &str) -> crate::manage::Manage {
             worker.drain_blocking(&mut m);
         }
         "r-keyboard" => m.act(&format!("field-type:{}", m.first_field())),
+        "r-chips" | "r-chip-menu" => {
+            m.act("field-ref:daemon_rpc");
+            m.act("ref:cuprated.rpc_url");
+            worker.drain_blocking(&mut m);
+            if name == "r-chip-menu" {
+                m.act("field:daemon_rpc");
+            }
+        }
         "r-install" => {
             m.act("install");
             worker.drain_blocking(&mut m);
@@ -358,6 +366,9 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
     if name == "wp-panels" {
         add_manage_button(&ui);
     }
+    if name.starts_with("r-") && !MANAGE_SCENES.contains(&name) {
+        return Err(format!("no such scene: {name}"));
+    }
     if name.starts_with("r-") && name != "r-tiles" {
         let manage = manage_scene(name);
         let mut shown = None;
@@ -431,6 +442,12 @@ mod tests {
             assert!(lit < buffer.len() / 3, "{name} keeps an OLED's pixels mostly off ({lit})");
         }
         assert!(scene("nothing", Instant::now()).is_err());
+        // The real management screens and the logo tile, over the mock backend.
+        for name in MANAGE_SCENES.iter().copied().chain(["logo", "logo-text", "logo-full", "logo-options"]) {
+            let buffer = pixels(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let lit = buffer.iter().filter(|p| p.r > 0 || p.g > 0 || p.b > 0).count();
+            assert!(lit > 1000, "{name} drew something");
+        }
         // The touch management design boards render too (mock data; they light more of the screen).
         for name in DESIGN_SCENES.iter().copied().chain([NO_PIN_SCENE]).chain(G2_SCENES.iter().copied()) {
             let buffer = pixels(name).unwrap_or_else(|e| panic!("{name}: {e}"));

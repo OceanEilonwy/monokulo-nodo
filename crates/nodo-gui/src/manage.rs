@@ -126,7 +126,12 @@ struct Edit {
     changes: BTreeMap<String, FieldValue>,
     /// What a field held before "Type a value instead", for its undo.
     before: BTreeMap<String, FieldValue>,
-    consequences: BTreeMap<String, Vec<String>>,
+    /// What every field could reference, from the helper's ListReferences.
+    refs: Option<ReferenceList>,
+    /// What a field's draft resolves to and implies, from PreviewSetting.
+    previews: BTreeMap<String, FieldPreview>,
+    /// "Replace…" on a chip: the next pick replaces the whole value.
+    replacing: Option<String>,
 }
 
 /// A change the owner asked for while the screen was locked; done once the PIN unlocks it.
@@ -493,8 +498,23 @@ impl Manage {
                 self.edit = Edit::default();
                 self.run(move |d| {
                     let form = d.settings_form(&package);
+                    let refs = match d.call(Request::ListReferences { package: package.clone() }) {
+                        Ok(Response::References(options)) => nodo_tui::helper_backend::reference_list(options),
+                        _ => ReferenceList::default(),
+                    };
+                    // What each stored reference resolves to now, for its chips.
+                    let mut previews = BTreeMap::new();
+                    for f in form.iter().flat_map(|f| f.fields.iter()).filter(|f| has_refs(&f.value)) {
+                        let Some(input) = f.value.to_input() else { continue };
+                        let change = nodo_api::SettingChange { name: f.key.clone(), value: input };
+                        if let Ok(Response::SettingPreview(p)) = d.call(Request::PreviewSetting { package: package.clone(), change }) {
+                            previews.insert(f.key.clone(), nodo_tui::helper_backend::field_preview(&f.value, p));
+                        }
+                    }
                     Box::new(move |m: &mut Manage| {
                         m.edit.form = form;
+                        m.edit.refs = Some(refs);
+                        m.edit.previews = previews;
                         m.edit.loaded = true;
                     })
                 });
@@ -786,16 +806,15 @@ impl Manage {
         let value = kb.text.clone();
         match kb.editing {
             Editing::Field(key) => {
-                let before = self.field_value(&key);
-                if let Some(FieldValue::Reference { .. }) = &before {
-                    self.edit.before.insert(key.clone(), before.unwrap());
+                if let Some(before) = self.field_value(&key).filter(has_refs) {
+                    self.edit.before.entry(key.clone()).or_insert(before);
                 }
                 let kind = self.field(&key).map(|f| f.kind.clone());
                 let new = match kind {
                     Some(FieldKind::Secret) => FieldValue::NewSecret(Secret::new(value)),
                     _ => FieldValue::Text(value),
                 };
-                self.edit.changes.insert(key, new);
+                self.set_field(key, new);
             }
             Editing::Search => self.query = value,
             Editing::PickerSearch => {
@@ -893,27 +912,81 @@ impl Manage {
         self.edit.changes.get(key).cloned().or_else(|| self.field(key).map(|f| f.value.clone()))
     }
 
+    /// The generic reference picker: every public setting of the installed apps (and secrets
+    /// that need a grant), the ones that fit this field first.
     fn open_references(&mut self, key: &str) {
-        let Screen::Settings(package) = self.top().clone() else { return };
         let label = self.field(key).map(|f| f.label.clone()).unwrap_or_default();
-        let key = key.to_owned();
-        let k2 = key.clone();
+        let kind = self.field(key).map(|f| f.kind.clone());
+        let mut rows = Vec::new();
+        let mut other = 0;
+        for o in self.edit.refs.as_ref().map(|r| r.options.clone()).unwrap_or_default() {
+            if kind.as_ref().is_some_and(|k| !fits(k, &o.kind)) {
+                other += 1;
+                continue;
+            }
+            let note = match o.locked {
+                Some(l) if !l.granted => if l.secret { "secret · needs your approval".to_owned() } else { "not public · needs your approval".to_owned() },
+                _ => o.label.clone(),
+            };
+            rows.push((o.path(), o.value.clone().unwrap_or_default(), note));
+        }
+        let mut sub = format!("into {label}");
+        if other > 0 {
+            sub.push_str(&format!(" · {other} of another type not shown"));
+        }
+        self.picker = Some(Picker { title: "Insert a reference".into(), sub, query: String::new(), field: Some(key.to_owned()), rows });
+    }
+
+    /// Puts a reference into a field: after what was typed, in place of the old value after
+    /// "Replace…", or at the end.
+    fn insert_ref(&mut self, key: String, app: String, setting: String) {
+        let typed = match &self.keyboard {
+            Some(Keyboard { editing: Editing::Field(k), text, .. }) if *k == key => Some(text.clone()),
+            _ => None,
+        };
+        self.keyboard = None;
+        let current = self.field_value(&key);
+        if let Some(old) = current.clone() {
+            self.edit.before.entry(key.clone()).or_insert(old);
+        }
+        let mut pieces = match (typed, self.edit.replacing.take()) {
+            (Some(t), _) => vec![Piece::Text(t)],
+            (None, Some(r)) if r == key => Vec::new(),
+            // Into a plain value, a reference takes its place (the undo brings it back); into a
+            // value that already mixes text and references, it goes at the end.
+            _ => current.filter(has_refs).and_then(|v| v.pieces()).unwrap_or_default(),
+        };
+        pieces.push(Piece::Ref { app, setting });
+        self.set_field(key, FieldValue::from_pieces(pieces));
+    }
+
+    /// Changes a field's draft and asks the helper what it now resolves to and implies.
+    fn set_field(&mut self, key: String, value: FieldValue) {
+        if self.field(&key).is_some_and(|f| f.value == value) {
+            self.edit.changes.remove(&key);
+        } else {
+            self.edit.changes.insert(key.clone(), value.clone());
+        }
+        self.preview(key, value);
+    }
+
+    fn preview(&mut self, key: String, value: FieldValue) {
+        let Screen::Settings(package) = self.top().clone() else { return };
+        let Some(input) = value.to_input().filter(|i| !matches!(i, nodo_api::SettingInput::Secret(_))) else { return };
+        if !has_refs(&value) {
+            self.edit.previews.remove(&key);
+            return;
+        }
         self.run(move |d| {
-            let list = d.references(&package, &k2);
+            let change = nodo_api::SettingChange { name: key.clone(), value: input };
+            let preview = match d.call(Request::PreviewSetting { package, change }) {
+                Ok(Response::SettingPreview(p)) => Some(nodo_tui::helper_backend::field_preview(&value, p)),
+                _ => None,
+            };
             Box::new(move |m: &mut Manage| {
-                let mut rows = Vec::new();
-                for o in &list.options {
-                    m.edit.consequences.insert(o.path.clone(), o.consequences.clone());
-                    rows.push((o.path.clone(), o.value.clone(), o.consequences.join(" · ")));
+                if let Some(p) = preview {
+                    m.edit.previews.insert(key, p);
                 }
-                let mut sub = format!("into {label} ({})", list.expects);
-                if list.hidden_wrong_type > 0 {
-                    sub.push_str(&format!(" · {} of another type not shown", list.hidden_wrong_type));
-                }
-                if list.hidden_secrets > 0 {
-                    sub.push_str(&format!(" · {} secrets need your approval in the TUI", list.hidden_secrets));
-                }
-                m.picker = Some(Picker { title: "Insert a reference".into(), sub, query: String::new(), field: Some(key), rows });
             })
         });
     }
@@ -974,22 +1047,43 @@ impl Manage {
             "back" => self.back(),
             "open" => self.open_target(&arg),
             "ref" => {
-                if let Some(p) = self.picker.take() {
-                    if let Some(key) = p.field {
-                        let value = p.rows.iter().find(|r| r.0 == arg).map(|r| r.1.clone()).unwrap_or_default();
-                        if let Some(old) = self.field_value(&key) {
-                            self.edit.before.entry(key.clone()).or_insert(old);
-                        }
-                        self.edit.changes.insert(key, FieldValue::Reference { path: arg, resolved: value });
+                let Some(key) = self.picker.take().and_then(|p| p.field) else { return };
+                let (app, setting) = arg.split_once('.').map(|(a, s)| (a.to_owned(), s.to_owned())).unwrap_or_default();
+                let locked = self
+                    .edit
+                    .refs
+                    .as_ref()
+                    .and_then(|r| r.options.iter().find(|o| o.path() == arg))
+                    .and_then(|o| o.locked)
+                    .filter(|l| !l.granted);
+                let Screen::Settings(package) = self.top().clone() else { return };
+                match locked {
+                    None => self.insert_ref(key, app, setting),
+                    Some(l) => {
+                        let what = if l.secret { "a secret" } else { "a setting that is not public" };
+                        self.confirm(
+                            &format!("Let {package} read {arg}?"),
+                            &format!("{arg} is {what}. {package} will be able to read it; the value is never shown here."),
+                            false,
+                            "Allow",
+                            Box::new(move |m: &mut Manage| {
+                                let (consumer, provider, s) = (package.clone(), app.clone(), setting.clone());
+                                m.change("Allowing", move |d| {
+                                    let grant = nodo_api::SettingGrant { consumer: consumer.clone(), provider: provider.clone(), setting: s.clone() };
+                                    d.call(Request::SetGrant { grant, approved: true })?;
+                                    Ok(String::new())
+                                });
+                                m.insert_ref(key.clone(), app.clone(), setting.clone());
+                            }),
+                        );
                     }
                 }
-                self.keyboard = None;
             }
             "field" => self.field_menu(&arg),
             "field-type" => {
                 let current = match self.field_value(&arg) {
                     Some(FieldValue::Text(t)) => t,
-                    Some(FieldValue::Reference { resolved, .. }) => resolved,
+                    Some(v) if has_refs(&v) => self.edit.previews.get(&arg).and_then(|p| p.resolved.clone()).unwrap_or_default(),
                     _ => String::new(),
                 };
                 let (label, secret, mono) = self
@@ -1001,6 +1095,9 @@ impl Manage {
             }
             "field-ref" => {
                 self.dialog = None;
+                if self.field_value(&arg).is_some_and(|v| has_refs(&v)) {
+                    self.edit.replacing = Some(arg.clone());
+                }
                 self.open_references(&arg);
             }
             "field-remove" => {
@@ -1296,18 +1393,24 @@ impl Manage {
         let mut list = Vec::new();
         if self.edit.before.contains_key(key) {
             let back = match self.edit.before.get(key) {
-                Some(FieldValue::Reference { path, .. }) => format!("↺ Use {path} again"),
+                Some(v) if has_refs(v) => format!("↺ Use {} again", first_ref(v).unwrap_or_default()),
                 Some(FieldValue::Text(t)) => format!("↺ Back to {t}"),
                 _ => "↺ Undo".into(),
             };
             list.push(button(format!("field-undo:{key}"), back, 3));
         }
         let (title, text) = match &current {
-            Some(FieldValue::Reference { path, resolved }) => {
+            Some(v) if has_refs(v) => {
                 list.push(button(format!("field-remove:{key}"), "Remove", 2));
                 list.push(button(format!("field-type:{key}"), "✎ Type a value instead", 1));
                 list.push(button(format!("field-ref:{key}"), "Replace…", 0));
-                (path.clone(), if resolved.is_empty() { "This reference has no value now.".to_owned() } else { format!("Now: {resolved}") })
+                let preview = self.edit.previews.get(key);
+                let text = match (preview.and_then(|p| p.problem.clone()), preview.and_then(|p| p.resolved.clone())) {
+                    (Some(problem), _) => problem,
+                    (None, Some(resolved)) => format!("Now: {resolved}"),
+                    _ => "Working out its value…".to_owned(),
+                };
+                (refs_label(v), text)
             }
             _ => {
                 if f.kind.takes_reference() {
@@ -1326,20 +1429,20 @@ impl Manage {
         if self.edit.changes.is_empty() {
             return;
         }
-        let broken = self
-            .edit
-            .changes
-            .values()
-            .chain(self.edit.form.iter().flat_map(|f| f.fields.iter().map(|x| &x.value)))
-            .any(|v| matches!(v, FieldValue::Reference { resolved, .. } if resolved.is_empty()));
+        let broken = self.edit.previews.values().any(|p| p.broken() > 0);
         if broken {
             self.say("Fix the broken reference to save", true);
             return;
         }
         let mut lines: Vec<String> = Vec::new();
-        for v in self.edit.changes.values() {
-            if let FieldValue::Reference { path, .. } = v {
-                lines.extend(self.edit.consequences.get(path).cloned().unwrap_or_default());
+        for key in self.edit.changes.keys() {
+            if let Some(p) = self.edit.previews.get(key) {
+                for dep in &p.new_dependencies {
+                    lines.push(format!("{package} will depend on {dep}, so it starts afterwards"));
+                }
+                for (what, why) in &p.new_access {
+                    lines.push(format!("{package} will be able to {what} ({why})"));
+                }
             }
         }
         let changes: Vec<(String, FieldValue)> = self.edit.changes.clone().into_iter().collect();
@@ -1435,7 +1538,7 @@ impl Manage {
         let fields = self.edit.form.as_ref().map(|f| f.fields.clone()).unwrap_or_default();
         fields
             .iter()
-            .find(|f| matches!(f.value, FieldValue::Reference { .. }))
+            .find(|f| has_refs(&f.value))
             .or_else(|| fields.iter().find(|f| f.kind.takes_reference()))
             .or(fields.first())
             .map(|f| f.key.clone())
@@ -1503,8 +1606,7 @@ impl Manage {
             .filter(|(a, b, c)| q.is_empty() || a.to_lowercase().contains(&q) || b.to_lowercase().contains(&q) || c.to_lowercase().contains(&q))
             .map(|(path, value, note)| {
                 let id = if p.field.is_some() { format!("ref:{path}") } else { format!("provider-kind:{path}") };
-                let _ = note;
-                let sub = value.clone();
+                let sub = if value.is_empty() { note.clone() } else { value.clone() };
                 MRow { mono: p.field.is_some(), ..link(id, path, sub, "", 0) }
             })
             .collect();
@@ -1772,15 +1874,30 @@ impl Manage {
                     }
                     match v {
                         FieldValue::Text(t) => r.value = shared(t),
-                        FieldValue::Reference { path, resolved } => {
-                            let broken_ref = resolved.is_empty();
-                            if broken_ref {
-                                broken += 1;
+                        FieldValue::Pieces(pieces) => {
+                            let preview = self.edit.previews.get(&f.key);
+                            let mut chips = Vec::new();
+                            let mut n = 0;
+                            for piece in pieces {
+                                match piece {
+                                    Piece::Text(t) => chips.push(MChip { label: shared(t), value: SharedString::new(), broken: false, plain: true }),
+                                    Piece::Ref { app, setting } => {
+                                        let state = preview.and_then(|p| p.chips.get(n).cloned());
+                                        n += 1;
+                                        let broken_ref = matches!(state, Some(Err(_)));
+                                        if broken_ref {
+                                            broken += 1;
+                                        }
+                                        // A long value would make the chip wrap; the popover shows it in full.
+                                        let value = match state {
+                                            Some(Ok(Some(v))) if v.chars().count() <= 28 => v,
+                                            _ => String::new(),
+                                        };
+                                        chips.push(MChip { label: shared(format!("{app} · {setting}")), value: shared(value), broken: broken_ref, plain: false });
+                                    }
+                                }
                             }
-                            let (app, setting) = path.split_once('.').unwrap_or((path, ""));
-                            // A long value would make the chip wrap; the popover shows it in full.
-                            let shown = if broken_ref || resolved.chars().count() > 28 { String::new() } else { resolved.clone() };
-                            r.chips = model(vec![MChip { label: shared(format!("{app} · {setting}")), value: shared(shown), broken: broken_ref }]);
+                            r.chips = model(chips);
                         }
                         FieldValue::SecretSet => r.value = "••••••••  (set)".into(),
                         FieldValue::SecretUnset => r.value = SharedString::new(),
@@ -1789,7 +1906,7 @@ impl Manage {
                     }
                     if self.edit.before.contains_key(&f.key) {
                         r.sub = shared(match self.edit.before.get(&f.key) {
-                            Some(FieldValue::Reference { path, .. }) => format!("↺ Use {path} again (tap the field)"),
+                            Some(v) if has_refs(v) => format!("↺ Use {} again (tap the field)", first_ref(v).unwrap_or_default()),
                             _ => "↺ Tap the field to undo".to_owned(),
                         });
                     }
@@ -2256,6 +2373,36 @@ fn load_snapshot(d: &mut dyn Data) -> Result<Snapshot, ApiError> {
         unavailable: d.unavailable(),
         system_note: d.system_note(),
     })
+}
+
+fn has_refs(v: &FieldValue) -> bool {
+    matches!(v, FieldValue::Pieces(p) if !refs(p).is_empty())
+}
+
+fn first_ref(v: &FieldValue) -> Option<String> {
+    match v {
+        FieldValue::Pieces(p) => refs(p).first().map(|(a, s)| format!("{a}.{s}")),
+        _ => None,
+    }
+}
+
+fn refs_label(v: &FieldValue) -> String {
+    match v {
+        FieldValue::Pieces(p) => refs(p).iter().map(|(a, s)| format!("{a}.{s}")).collect::<Vec<_>>().join(" + "),
+        _ => String::new(),
+    }
+}
+
+/// Whether a value of `option` can go into a field of `field`: text-like fields take anything
+/// that is text; numbers and ports take numbers.
+fn fits(field: &FieldKind, option: &FieldKind) -> bool {
+    use FieldKind::*;
+    match field {
+        Number { .. } | Port => matches!(option, Number { .. } | Port),
+        MoneroAddress => matches!(option, MoneroAddress | Text),
+        Toggle => matches!(option, Toggle),
+        _ => !matches!(option, Toggle),
+    }
 }
 
 fn exposure_words(e: &nodo_api::Exposure) -> String {

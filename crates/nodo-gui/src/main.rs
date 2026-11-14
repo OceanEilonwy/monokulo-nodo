@@ -252,7 +252,7 @@ impl Runtime {
         if let Some(device) = &self.backlight {
             // System › Screen: the brightness in use, and how far idle dims it (Off never dims).
             let bright = self.manage.prefs.brightness();
-            let dim = self.manage.prefs.dim_percent();
+            let dim = self.dimmer.percent;
             let (level, percent) = match level {
                 backlight::Level::Dim if dim > 0 => (backlight::Level::Dim, dim.min(bright)),
                 _ if bright >= 100 => (backlight::Level::Full, 100),
@@ -365,6 +365,7 @@ impl Runtime {
         }
         self.app.tick(now);
         self.manage.poll(self.worker.as_ref());
+        self.dimmer.percent = self.manage.prefs.dim_percent();
         let prefs = &self.manage.prefs;
         self.app.logo = state::LogoLook {
             text: prefs.logo_style == screen_prefs::LogoStyle::Text,

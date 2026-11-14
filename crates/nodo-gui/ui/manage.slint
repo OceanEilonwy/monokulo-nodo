@@ -52,6 +52,8 @@ export struct MChip {
     label: string,
     value: string,
     broken: bool,
+    // Typed text between references, drawn as text, not a chip.
+    plain: bool,
 }
 
 // One line of a card. kind:
@@ -224,17 +226,17 @@ component MSwitch inherits Rectangle {
 component Chip inherits Rectangle {
     in property <MChip> c;
     height: 52px;
-    width: t.preferred-width + 32px;
+    width: t.preferred-width + (c.plain ? 0px : 32px);
     border-radius: 14px;
-    background: c.broken ? MG.err-fill : #2A2116;
-    border-width: 2px;
+    background: c.plain ? transparent : c.broken ? MG.err-fill : #2A2116;
+    border-width: c.plain ? 0px : 2px;
     border-color: c.broken ? #A8574C : #6B4A1E;
     t := Text {
-        x: 16px;
+        x: c.plain ? 0px : 16px;
         text: c.value == "" ? c.label : c.label + "  →  " + c.value;
         font-family: MG.mono;
         font-size: 22px;
-        color: c.broken ? MG.err : MG.accent;
+        color: c.plain ? MG.bright : c.broken ? MG.err : MG.accent;
         vertical-alignment: center;
         height: parent.height;
     }
@@ -761,8 +763,8 @@ export component ManageView inherits Rectangle {
         y: 232px;
         width: parent.width - 64px;
         height: parent.height - 232px;
-        viewport-height: cards-box.preferred-height + 40px;
-        viewport-y <=> root.scroll-y;
+        content-height: cards-box.preferred-height + 40px;
+        content-y <=> root.scroll-y;
         cards-box := VerticalLayout {
             width: parent.width;
             spacing: 20px;
@@ -800,7 +802,7 @@ export component ManageView inherits Rectangle {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 1100px;
+            width: 1500px;
             height: dlg.preferred-height;
             border-radius: 32px;
             background: MG.card;
@@ -829,6 +831,7 @@ export component ManageView inherits Rectangle {
                     spacing: 20px;
                     for b in root.dialog.buttons: MBtn {
                         b: b;
+                        min-w: 140px;
                         clicked(id) => { root.act(id); }
                     }
                 }
@@ -890,7 +893,7 @@ export component ManageView inherits Rectangle {
                 }
                 Flickable {
                     vertical-stretch: 1;
-                    viewport-height: plist.preferred-height;
+                    content-height: plist.preferred-height;
                     plist := VerticalLayout {
                         width: parent.width;
                         spacing: 4px;
