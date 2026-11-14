@@ -1,0 +1,36 @@
+
+    Home     Apps 2     Web     System                                                                 monokulo-nodo
+
+
+    System  ›  Updates  ›  Undo
+
+    Undo an update
+    Puts back the version before, with its data as it was then. Changes made since are lost.
+
+
+
+       mk-pay      0.1  →  0.2                   today, 03:12                                           Undo   
+
+
+
+       The Nodo    2026.11.12  →  2026.11.13     yesterday                                              Undo   
+
+
+
+       kringle     0.4.0  →  0.4.1               6 days ago      kept for 5 days; can't be undone now
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Keys: ↑↓ choose  ↵ undo  Esc back

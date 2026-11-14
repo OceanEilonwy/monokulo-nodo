@@ -91,10 +91,21 @@ pub enum Scene {
     T2Settings,
     T2SettingsPick,
     T2SettingsRolledBack,
+    B1Updates,
+    B1AutoUpdate,
+    B1UpdateFailed,
+    B1Rollbacks,
+    B1Logs,
+    T2System,
+    T2Updates,
+    T2AutoUpdates,
+    T2UpdateRolledBack,
+    T2UndoUpdates,
+    T2DeviceLogs,
 }
 
 impl Scene {
-    pub const ALL: [Scene; 61] = [
+    pub const ALL: [Scene; 72] = [
         Scene::V1Overview,
         Scene::Overview,
         Scene::App,
@@ -156,6 +167,17 @@ impl Scene {
         Scene::T2Settings,
         Scene::T2SettingsPick,
         Scene::T2SettingsRolledBack,
+        Scene::B1Updates,
+        Scene::B1AutoUpdate,
+        Scene::B1UpdateFailed,
+        Scene::B1Rollbacks,
+        Scene::B1Logs,
+        Scene::T2System,
+        Scene::T2Updates,
+        Scene::T2AutoUpdates,
+        Scene::T2UpdateRolledBack,
+        Scene::T2UndoUpdates,
+        Scene::T2DeviceLogs,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -221,6 +243,17 @@ impl Scene {
             Scene::T2Settings => "tui2-settings",
             Scene::T2SettingsPick => "tui2-settings-pick",
             Scene::T2SettingsRolledBack => "tui2-settings-rolled-back",
+            Scene::B1Updates => "tui1-updates",
+            Scene::B1AutoUpdate => "tui1-auto-update",
+            Scene::B1UpdateFailed => "tui1-update-failed",
+            Scene::B1Rollbacks => "tui1-rollbacks",
+            Scene::B1Logs => "tui1-logs",
+            Scene::T2System => "tui2-system",
+            Scene::T2Updates => "tui2-updates",
+            Scene::T2AutoUpdates => "tui2-auto-updates",
+            Scene::T2UpdateRolledBack => "tui2-update-rolled-back",
+            Scene::T2UndoUpdates => "tui2-undo-updates",
+            Scene::T2DeviceLogs => "tui2-device-logs",
         }
     }
 
@@ -292,6 +325,17 @@ impl Scene {
             Scene::T2Settings => "An app's Settings: every kind of field, an error shown in place",
             Scene::T2SettingsPick => "Settings: picking a value from another app (cuprated)",
             Scene::T2SettingsRolledBack => "Settings undone because the app didn't start",
+            Scene::B1Updates => "Before: Updates",
+            Scene::B1AutoUpdate => "Before: Auto-update",
+            Scene::B1UpdateFailed => "Before: Update rolled back",
+            Scene::B1Rollbacks => "Before: Rollbacks",
+            Scene::B1Logs => "Before: Service logs",
+            Scene::T2System => "System: the Nodo itself, one page",
+            Scene::T2Updates => "Updates: the Nodo and the apps on one page",
+            Scene::T2AutoUpdates => "Automatic updates: two switches and a time",
+            Scene::T2UpdateRolledBack => "An update that didn't start was undone by itself",
+            Scene::T2UndoUpdates => "Undo an update (the old Rollbacks)",
+            Scene::T2DeviceLogs => "Device logs: problems first, plain sentences",
         }
     }
 
@@ -321,6 +365,11 @@ impl Scene {
             Scene::B1Settings => ScreenId::Settings,
             Scene::B1Reference => ScreenId::Reference,
             Scene::B1ApplyFailed => ScreenId::ApplyFailed,
+            Scene::B1Updates => ScreenId::Updates,
+            Scene::B1AutoUpdate => ScreenId::AutoUpdate,
+            Scene::B1UpdateFailed => ScreenId::UpdateFailed,
+            Scene::B1Rollbacks => ScreenId::Rollbacks,
+            Scene::B1Logs => ScreenId::Logs,
             _ => return None,
         })
     }
@@ -361,6 +410,12 @@ impl Scene {
             Scene::T2Settings => "Clickable: each box (focus to type), Currency and Monero node (open a list), Show, − and +, the On box, Save (primary), Cancel.",
             Scene::T2SettingsPick => "Clickable: each choice in the list; clicking outside closes it.",
             Scene::T2SettingsRolledBack => "Clickable: Edit again (primary), Keep as it is, \"Show log\".",
+            Scene::T2System => "Clickable: Review (primary), each row (Updates, Backups, Network, Device logs, About). Hover shown on Backups.",
+            Scene::T2Updates => "Clickable: Update and restart (primary), each app's box, Update 2 apps, \"Automatic updates\", \"Undo an update\".",
+            Scene::T2AutoUpdates => "Clickable: each On/Off box, the When list, Save (primary), Cancel.",
+            Scene::T2UpdateRolledBack => "Clickable: OK (primary), Try again, \"Show log\".",
+            Scene::T2UndoUpdates => "Clickable: Undo on each card that can still be undone. Hover shown on mk-pay's card.",
+            Scene::T2DeviceLogs => "Clickable: the search box, each filter, each line (its full text), \"Show older\", \"Save to a file\". Hover shown on the 13:41 line.",
             _ => "",
         }
     }
@@ -1251,7 +1306,7 @@ impl Card {
     /// A row with one button at its right end, on the card's inner padding.
     fn row_with_button(&mut self, t: &Theme, mut spans: Vec<Span<'static>>, label: &str, is_primary: bool) {
         let width = label.trim_start_matches(['!', '~']).chars().count() + 6;
-        let [_, button, _] = button_rows(t, label, is_primary, ButtonStyle::Rounded, width, S.card);
+        let [_, button, _] = button_rows(t, label, is_primary, ButtonStyle::Rounded, width, self.bg);
         let room = self.width.saturating_sub(6);
         let used = width_of(&spans) + width_of(&button);
         if used + 2 > room {
@@ -1315,7 +1370,7 @@ impl Card {
         }
         self.buttons_at = Some(self.rows.len());
         let room = self.width.saturating_sub(6);
-        let bar = button_bar(t, list, ButtonStyle::Rounded, S.card);
+        let bar = button_bar(t, list, ButtonStyle::Rounded, self.bg);
         // `button_bar` gives three rows (padding, buttons, padding); the card already has its own
         // padding rows, so only the middle one is used, without the bar's right margin.
         if let Some(Item::Row(_, right)) = bar.into_iter().nth(1) {
@@ -1333,7 +1388,7 @@ impl Card {
     /// card rather than to the whole of it.
     fn inline_button(&mut self, t: &Theme, label: &str, indent: usize) {
         let width = label.chars().count() + 6;
-        let [_, middle, _] = button_rows(t, label, true, ButtonStyle::Rounded, width, S.card);
+        let [_, middle, _] = button_rows(t, label, true, ButtonStyle::Rounded, width, self.bg);
         let mut out = vec![t.n(" ".repeat(indent))];
         out.extend(middle);
         self.row(t, out);
@@ -1930,7 +1985,9 @@ fn stack(t: &Theme, page: Page, before: Vec<Item>, cards: Vec<Card>, after: Vec<
         let seen = rows.iter().take(visible).map(|(card, _)| *card).max().map_or(0, |c| c + 1);
         items.extend(rows.into_iter().take(visible).map(|(_, item)| item));
         items.push(Item::Blank);
-        items.push(line(vec![margin(t), t.d(format!("↓ {} more — scroll", total - seen))]));
+        // Every card has at least begun; only the end of the last one is hidden.
+        let hint = if total > seen { format!("↓ {} more — scroll", total - seen) } else { "↓ more below — scroll".to_owned() };
+        items.push(line(vec![margin(t), t.d(hint)]));
         items.push(Item::Blank);
     }
     page.plain(items).footers(action_bar(t, keys))
@@ -1967,6 +2024,12 @@ fn tui2_page(t: &Theme, scene: Scene, w: u16, h: u16) -> Page {
         Scene::T2Settings => t2_settings(t, w, h, false),
         Scene::T2SettingsPick => t2_settings(t, w, h, true),
         Scene::T2SettingsRolledBack => t2_settings_rolled_back(t, w, h),
+        Scene::T2System => t2_system(t, w, h),
+        Scene::T2Updates => t2_updates(t, w, h),
+        Scene::T2AutoUpdates => t2_auto_updates(t, w, h),
+        Scene::T2UpdateRolledBack => t2_update_rolled_back(t, w, h),
+        Scene::T2UndoUpdates => t2_undo_updates(t, w, h),
+        Scene::T2DeviceLogs => t2_device_logs(t, w, h),
         _ => Page::new(Line::default(), Line::default()),
     }
 }
@@ -2507,6 +2570,193 @@ fn t2_source_remove_builtin(t: &Theme, w: u16, h: u16) -> Page {
     fit_page(t, top2(t, "Apps", Some(("Apps", 2)), w), sources_trail(t, &["monokulo"]), card, Vec::new(), "Keys: ↵ remove  Esc cancel", w, h)
 }
 
+// System (batch 2): the Nodo itself. One page lists its parts; updates for the Nodo and the apps
+// share one review page; automatic updates, undoing an update, and device logs.
+
+fn system_trail(t: &Theme, last: &[&str]) -> Vec<Item> {
+    let mut parts = vec!["System"];
+    parts.extend_from_slice(last);
+    vec![Item::Blank, trail(t, &parts), Item::Blank]
+}
+
+fn t2_system(t: &Theme, w: u16, h: u16) -> Page {
+    let mut update = Card::new(w);
+    update.blank(t);
+    update.row(t, vec![t.b("A Nodo update is ready"), t.d("   2026.11.14 · needs a restart, about 2 minutes")]);
+    update.row(t, vec![t.d("Faster syncing for cuprated, and the fan curve no longer chatters.")]);
+    update.blank(t);
+    update.buttons(t, &[("Review", true)]);
+    let mut parts = Card::new(w);
+    parts.blank(t);
+    for (index, (name, summary)) in [
+        ("Updates", "2 for apps, 1 for the Nodo · automatic for apps, overnight"),
+        ("Backups", "Last backup 2 days ago, to the USB drive"),
+        ("Network", "Wired · 192.168.1.155 · Wi-Fi off"),
+        ("Device logs", "Last problem: none today"),
+        ("About this Nodo", "monokulo-nodo · NanoPC-T6 · 2026.11.13"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            parts.blank(t);
+        }
+        // The summary column takes what the card leaves, so the › stays on the row at 80 columns.
+        let room = parts.width.saturating_sub(6 + 18 + 2);
+        let summary: String = if summary.chars().count() > room { format!("{}…", summary.chars().take(room.saturating_sub(1)).collect::<String>()) } else { summary.to_owned() };
+        let spans = vec![t.b(pad(name, 18)), t.d(pad(&summary, room)), t.d("›")];
+        if name == "Backups" {
+            parts.hover_row(t, spans);
+        } else {
+            parts.row(t, spans);
+        }
+    }
+    parts.blank(t);
+    let before = vec![Item::Blank, heading(t, "This Nodo"), Item::Blank];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), before, vec![update, parts], Vec::new(), "Keys: ↑↓ choose  ↵ open  1-4 tabs", w, h)
+}
+
+fn t2_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut nodo = Card::new(w);
+    nodo.blank(t);
+    nodo.row(t, vec![t.b("The Nodo"), t.d("   2026.11.13  →  2026.11.14")]);
+    for item in ["Faster syncing for cuprated", "The fan curve no longer chatters", "Security fixes for the system base"] {
+        nodo.row(t, vec![t.n(format!("  ·  {item}"))]);
+    }
+    nodo.blank(t);
+    nodo.row_with_button(t, vec![t.d("Needs a restart, about 2 minutes. Apps stop safely first.")], "Update and restart", true);
+    nodo.blank(t);
+    let mut apps = Card::new(w);
+    apps.blank(t);
+    apps.row(t, vec![t.b("Apps")]);
+    for (on_, name, change, note) in [
+        (true, "mk-pay", "0.1  →  0.2", "fixes receipts in some currencies"),
+        (true, "kringle", "0.4.1  →  0.4.2", "smaller pages"),
+    ] {
+        apps.row(t, vec![tick(t, on_), t.n("  "), t.n(pad(name, 12)), t.d(pad(change, 18)), t.d(note.to_owned())]);
+    }
+    apps.blank(t);
+    apps.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], "Update 2 apps", false);
+    apps.blank(t);
+    let after = vec![Item::Blank, line(vec![margin(t), t.a("Automatic updates ›"), t.n("     "), t.a("Undo an update ›")])];
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Updates"]), vec![nodo, apps], after, "Keys: Tab move  Space tick  ↵ update  Esc back", w, h)
+}
+
+fn t2_auto_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    let mut first = vec![t.b(pad("Update apps by themselves", 36))];
+    first.extend(toggle(t, true));
+    card.row(t, first);
+    card.row(t, vec![t.d("Only apps whose new version asks for nothing new. Anything else waits for you.")]);
+    card.blank(t);
+    let mut when = vec![t.n(pad("When", 36))];
+    when.extend(inset(t, "Overnight, 2–5 am", 22, Some("▾")));
+    card.row(t, when);
+    card.blank(t);
+    let mut nodo = vec![t.b(pad("Update the Nodo by itself", 36))];
+    nodo.extend(toggle(t, false));
+    card.row(t, nodo);
+    card.row(t, vec![t.d("Updates that need a restart always wait for you, whatever this says.")]);
+    card.blank(t);
+    card.buttons(t, &[("Cancel", false), ("Save", true)]);
+    let mut before = system_trail(t, &["Updates", "Automatic"]);
+    before.push(heading(t, "Automatic updates"));
+    before.push(quiet(t, "The Nodo checks every 6 hours. You can always see and undo what it did."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), before, card, Vec::new(), "Keys: Tab move  Space on/off  ↵ save  Esc cancel", w, h)
+}
+
+fn t2_update_rolled_back(t: &Theme, w: u16, h: u16) -> Page {
+    let mut card = Card::new(w);
+    card.blank(t);
+    card.row(t, vec![t.e("▲  "), t.b("mk-pay 0.2 didn't start, so 0.1 was put back")]);
+    card.blank(t);
+    card.row(t, vec![t.n("mk-pay is running again as before, with its data as it was. Nothing was lost.")]);
+    card.row(t, vec![t.d("mk-pay said: \"database version 7 needs migration\"")]);
+    card.blank(t);
+    card.row(t, vec![t.a("Show log ›")]);
+    card.blank(t);
+    card.buttons(t, &[("Try again", false), ("OK", true)]);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), system_trail(t, &["Updates"]), card, Vec::new(), "Keys: ↵ OK  t try again  l log", w, h)
+}
+
+fn t2_undo_updates(t: &Theme, w: u16, h: u16) -> Page {
+    let mut cards = Vec::new();
+    for (index, (what, change, when, can)) in [
+        ("mk-pay", "0.1  →  0.2", "today, 03:12", true),
+        ("The Nodo", "2026.11.12  →  2026.11.13", "yesterday", true),
+        ("kringle", "0.4.0  →  0.4.1", "6 days ago", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut card = Card::new(w);
+        if index == 0 {
+            card = card.hovered();
+        }
+        card.blank(t);
+        let spans = vec![t.b(pad(what, 12)), t.n(pad(change, 30)), t.d(pad(when, 16))];
+        if can {
+            card.row_with_button(t, spans, "Undo", false);
+        } else {
+            let mut spans = spans;
+            spans.push(t.d("kept for 5 days; can't be undone now"));
+            card.row(t, spans);
+        }
+        card.blank(t);
+        cards.push(card);
+    }
+    let mut before = system_trail(t, &["Updates", "Undo"]);
+    before.push(heading(t, "Undo an update"));
+    before.push(quiet(t, "Puts back the version before, with its data as it was then. Changes made since are lost."));
+    before.push(Item::Blank);
+    before.push(Item::Blank);
+    stack(t, top2(t, "System", Some(("Apps", 2)), w), before, cards, Vec::new(), "Keys: ↑↓ choose  ↵ undo  Esc back", w, h)
+}
+
+fn t2_device_logs(t: &Theme, w: u16, h: u16) -> Page {
+    let chips: Vec<Span<'static>> = ["All", "Problems", "The Nodo", "cuprated", "mk-pay"]
+        .iter()
+        .enumerate()
+        .flat_map(|(index, name)| {
+            let style = if index == 1 { Style::new().fg(t.accent).bg(S.raised).add_modifier(Modifier::BOLD) } else { Style::new().fg(t.fg).bg(S.field) };
+            vec![Span::styled(format!("  {name}  "), style), t.n("  ")]
+        })
+        .collect();
+    let mut card = Card::new(w);
+    card.blank(t);
+    for (index, (time, from, text)) in [
+        ("14:02", "mk-bell", "couldn't reach the push relay; trying again in 1 minute"),
+        ("13:41", "The Nodo", "the SSD reached 61 °C; slowed down for 4 minutes"),
+        ("09:15", "cuprated", "lost 3 peers; found 5 new ones"),
+        ("03:12", "mk-pay", "update to 0.2 failed to start; put back 0.1"),
+        ("yesterday", "The Nodo", "update 2026.11.13 installed after restart"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let spans = vec![t.d(pad(time, 11)), t.b(pad(from, 11)), t.n(text.to_owned())];
+        if index == 1 {
+            card.hover_row(t, spans);
+        } else {
+            card.row(t, spans);
+        }
+    }
+    card.blank(t);
+    card.row(t, vec![t.a("Show older ›")]);
+    card.blank(t);
+    let mut search = vec![margin(t), t.d(pad("Search", 9))];
+    search.extend(inset(t, "", 30, None));
+    let mut before = system_trail(t, &["Device logs"]);
+    before.push(Item::Row(Line::from(search), Line::from(vec![t.a("Save to a file ›"), t.n(MARGIN)])));
+    before.push(Item::Blank);
+    before.push(line(std::iter::once(margin(t)).chain(chips).collect()));
+    before.push(Item::Blank);
+    fit_page(t, top2(t, "System", Some(("Apps", 2)), w), before, card, Vec::new(), "Click a line for its full text.   Keys: / search  1-5 filter  ↑↓ scroll", w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2555,6 +2805,10 @@ mod tests {
             Scene::T2AppRemove => Some("Remove mk-pay"),
             Scene::T2Settings => Some("Save"),
             Scene::T2SettingsRolledBack => Some("Edit again"),
+            Scene::T2System => Some("Review"),
+            Scene::T2Updates => Some("Update and restart"),
+            Scene::T2AutoUpdates => Some("Save"),
+            Scene::T2UpdateRolledBack => Some("OK"),
             _ => None,
         };
         for scene in Scene::ALL.into_iter().filter(|s| s.is_surface()) {
