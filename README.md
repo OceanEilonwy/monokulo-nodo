@@ -2,6 +2,12 @@
   <img src="docs/readme/logo.svg" width="288" alt="The Nodo logo in Unicode half blocks, as the boot splash draws it">
 </p>
 
+<p align="center">
+  <img src="docs/readme/tui-home.png" height="260" alt="The terminal UI's Home tab: the Nodo is locked, an app keeps stopping, three updates are ready">
+  &nbsp;&nbsp;
+  <img src="docs/design/gui/real/r-home.png" height="260" alt="Home on the NanoPC-T6N's touchscreen">
+</p>
+
 <h1 align="center">monokulo-nodo</h1>
 
 <p align="center">
