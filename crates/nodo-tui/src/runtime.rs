@@ -3,7 +3,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::panic;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -23,6 +22,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use crate::app::{App, Effect, Event, ExposureAfter, MouseKind, Screen, UsbView, TICKS_PER_SECOND};
+use crate::input::{Input, Next};
 use crate::model::*;
 use crate::theme::Theme;
 use crate::update::update;
@@ -638,7 +638,7 @@ fn install_panic_hook<M: TerminalMode>(mode: Arc<M>) {
 /// Why [`run`] returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
-    /// The user quit, or a termination signal arrived.
+    /// The user quit, a termination signal arrived or the terminal hung up.
     Quit,
     /// An update replaced this program on disk. The terminal is restored; the caller starts the
     /// new program in this process.
@@ -681,8 +681,8 @@ pub fn at_rest(app: &App, worker_busy: bool) -> bool {
         && matches!(app.screen, Screen::Home { .. } | Screen::Apps { .. } | Screen::Web { .. } | Screen::System { .. })
 }
 
-/// Runs the TUI until the user quits or a termination signal arrives. The backend lives on a
-/// worker thread, so slow helper calls never freeze the screen. With `restart_when_replaced`, it
+/// Runs the TUI until the user quits, a termination signal arrives or the terminal hangs up. The
+/// backend lives on a worker thread, so slow helper calls never freeze the screen. With `restart_when_replaced`, it
 /// also returns [`Exit::Restart`] when an update replaced this program and nothing is under way,
 /// so an open TUI never keeps running an old version.
 pub fn run<T: Backend + ScreenData + Send + 'static>(
@@ -691,11 +691,8 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
     theme: Theme,
     restart_when_replaced: bool,
 ) -> io::Result<Exit> {
-    let stop = Arc::new(AtomicBool::new(false));
-    for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGHUP, signal_hook::consts::SIGINT] {
-        signal_hook::flag::register(signal, Arc::clone(&stop))?;
-    }
-
+    // Declared before the guard, so it is dropped after the terminal is restored.
+    let mut input = Input::open()?;
     let _guard = TerminalGuard::enter(CrosstermMode)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     // ratatui 0.30's Terminal::clear asks the terminal where its cursor is, which a terminal that
@@ -712,7 +709,7 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
     let tick = Duration::from_millis(1000 / TICKS_PER_SECOND);
     let mut last_tick = Instant::now();
     let mut last_replaced_check = Instant::now();
-    while !app.should_quit && !stop.load(Ordering::Relaxed) {
+    while !app.should_quit {
         if restart_when_replaced && last_replaced_check.elapsed() >= REPLACED_CHECK {
             last_replaced_check = Instant::now();
             if at_rest(&app, worker.busy()) && program_replaced() {
@@ -727,8 +724,10 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
             view::render(frame, &app, &theme);
         })?;
         let wait = tick.saturating_sub(last_tick.elapsed());
-        if event::poll(wait)? {
-            match event::read()? {
+        match input.next(wait)? {
+            Next::Stop => break,
+            Next::Idle => {}
+            Next::Event(terminal_event) => match terminal_event {
                 // Some terminals also report key releases, which must not count as presses.
                 event::Event::Key(key) if key.kind != KeyEventKind::Release => {
                     dispatch_async(&mut app, &mut worker, Event::Key(key));
@@ -758,7 +757,7 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
                     dispatch_async(&mut app, &mut worker, Event::Resize(width, height));
                 }
                 _ => {}
-            }
+            },
         }
         if last_tick.elapsed() >= tick {
             last_tick = Instant::now();

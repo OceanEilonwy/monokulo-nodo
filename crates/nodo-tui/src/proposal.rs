@@ -510,15 +510,17 @@ pub fn render(scene: Scene, width: u16, height: u16, theme: &Theme) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
-/// Shows a scene in this terminal until a key is pressed.
+/// Shows a scene in this terminal until a key is pressed or the user leaves.
 pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
-    use crossterm::event::{self, Event, KeyEventKind};
+    use crate::input::{Input, Next};
+    use crossterm::event::{Event, KeyEventKind};
     use crossterm::execute;
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
 
     let (app, _) = fixture(ScreenId::WebSites);
+    let mut input = Input::open()?;
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(io::stdout()))?;
@@ -539,10 +541,10 @@ pub fn show(scene: Scene, theme: Theme) -> io::Result<()> {
                     draw_page(frame, area, &theme, page(&app, &theme, scene));
                 }
             })?;
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    return Ok(());
-                }
+            match input.next(std::time::Duration::from_secs(1))? {
+                Next::Stop => return Ok(()),
+                Next::Event(Event::Key(key)) if key.kind == KeyEventKind::Press => return Ok(()),
+                Next::Event(_) | Next::Idle => {}
             }
         }
     })();

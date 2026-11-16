@@ -13,6 +13,8 @@ use nodo_api::{
     SiteId,
 };
 
+use crate::input::{Input, Next};
+
 pub const USAGE: &str = "\
 nodo-tui --ctl COMMAND [ARGS]
   services | overview | packages | sites | sources | keys | drive
@@ -125,14 +127,18 @@ fn secret_line() -> Result<Secret, String> {
     Ok(Secret::new(line.trim_end_matches(['\n', '\r'])))
 }
 
+/// Reads through [`Input`], so a terminal that hangs up or a SIGTERM cancels the prompt instead of
+/// leaving it waiting, or spinning, forever.
 fn typed_secret() -> Result<Secret, String> {
-    use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    let mut input = Input::open().map_err(|e| e.to_string())?;
     eprint!("Secret: ");
     crossterm::terminal::enable_raw_mode().map_err(|e| e.to_string())?;
     let mut text = Zeroizing::new(String::new());
     let result = loop {
-        match read() {
-            Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => match key.code {
+        match input.next(std::time::Duration::from_secs(1)) {
+            Ok(Next::Stop) => break Err("cancelled".to_owned()),
+            Ok(Next::Event(Event::Key(key))) if key.kind != KeyEventKind::Release => match key.code {
                 KeyCode::Enter => break Ok(()),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     break Err("cancelled".to_owned())
