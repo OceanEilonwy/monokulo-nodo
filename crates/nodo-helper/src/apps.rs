@@ -16,6 +16,7 @@ use nodo_gen::{Layout, Profile};
 use nodo_install::{InstallError, Outcome, Permissions, Reviewed};
 use nodo_manifest::Manifest;
 
+use crate::bundle::InstallExtras;
 use crate::feeds::{shown_key, FeedState, InstalledRecord};
 use crate::helper::{lock, Helper};
 use crate::manage::failed;
@@ -174,6 +175,19 @@ impl<S: System> Helper<S> {
     }
 
     pub(crate) fn review_install(&self, feed: &str, package: &str) -> Result<Response, ApiError> {
+        Ok(match self.review_one(feed, package)? {
+            Ok((review, _)) => Response::InstallReview(review),
+            Err(refused) => refused,
+        })
+    }
+
+    /// Reviews one package: the review, with the inspected manifest, or the answer that says why
+    /// it cannot install (blocked by the pins, or rejected by the gate).
+    pub(crate) fn review_one(
+        &self,
+        feed: &str,
+        package: &str,
+    ) -> Result<Result<(InstallReview, Manifest), Response>, ApiError> {
         nodo_gen::validate::package_id(package)
             .map_err(|_| ApiError::NotFound("invalid package id".to_owned()))?;
         self.refuse_base_id(package)?;
@@ -197,18 +211,24 @@ impl<S: System> Helper<S> {
             previous.as_ref(),
         );
         let (pkgver, permissions, added, manifest) = match reviewed {
-            Ok(Reviewed::Blocked(reasons)) => return Ok(blocked(package, &reasons)),
+            Ok(Reviewed::Blocked(reasons)) => return Ok(Err(blocked(package, &reasons))),
             Ok(Reviewed::Ready {
                 pkgver,
                 permissions,
                 added,
                 manifest,
             }) => (pkgver, permissions, added, manifest),
-            Err(e) => return refusal(package, &version, e),
+            Err(e) => return refusal(package, &version, e).map(Err),
         };
         let first_install = !state.installed.contains_key(package);
         let encrypted = manifest.storage.encrypted;
-        Ok(Response::InstallReview(InstallReview {
+        let bundle = manifest.bundle.as_ref().map(|b| b.members.len() as u32);
+        let reviewed_version = pkgver
+            .strip_prefix(&format!("{package}-"))
+            .unwrap_or(&pkgver)
+            .to_owned();
+        self.remember_bundle(feed, package, &reviewed_version, bundle);
+        let review = InstallReview {
             feed: feed.to_owned(),
             package: package.to_owned(),
             pkgver,
@@ -217,7 +237,34 @@ impl<S: System> Helper<S> {
             first_install,
             encrypted_storage: encrypted,
             needs_passphrase: encrypted && !self.sys.exists(&self.volume_location(package)?.file),
-        }))
+            bundle,
+        };
+        Ok(Ok((review, *manifest)))
+    }
+
+    /// What a review found about a version's bundle, for the catalog: the feed's index carries
+    /// no manifest, so this is how Get apps can say "Installs N apps" before installing. A cache
+    /// only; failing to write it changes nothing else.
+    fn remember_bundle(&self, feed: &str, package: &str, version: &str, members: Option<u32>) {
+        let state = match self.read_feeds() {
+            Ok(state) => state,
+            Err(_) => return,
+        };
+        let seen = members.map(|members| crate::feeds::ReviewedBundle {
+            feed: feed.to_owned(),
+            version: version.to_owned(),
+            members,
+        });
+        if state.bundles.get(package) == seen.as_ref() {
+            return;
+        }
+        let _ = self.with_feeds(|state| {
+            match &seen {
+                Some(seen) => state.bundles.insert(package.to_owned(), seen.clone()),
+                None => state.bundles.remove(package),
+            };
+            Ok(())
+        });
     }
 
     pub(crate) fn install_from_feed(
@@ -231,6 +278,28 @@ impl<S: System> Helper<S> {
             .map_err(|_| ApiError::NotFound("invalid package id".to_owned()))?;
         self.refuse_base_id(package)?;
         let _work = lock(&self.manage.work);
+        self.install_from_feed_locked(
+            feed,
+            package,
+            approval,
+            passphrase,
+            &InstallExtras::default(),
+        )
+    }
+
+    /// The install itself, for a caller holding the work lock: one package, or one package of a
+    /// bundle with what the bundle adds to it.
+    pub(crate) fn install_from_feed_locked(
+        &self,
+        feed: &str,
+        package: &str,
+        approval: &PermissionApproval,
+        passphrase: Option<&Secret>,
+        extras: &InstallExtras,
+    ) -> Result<Response, ApiError> {
+        nodo_gen::validate::package_id(package)
+            .map_err(|_| ApiError::NotFound("invalid package id".to_owned()))?;
+        self.refuse_base_id(package)?;
         if self.installs_refused()? {
             return Err(ApiError::Failed(
                 "the system disk is low on space, so installs wait until there is more".into(),
@@ -266,6 +335,10 @@ impl<S: System> Helper<S> {
                 "{package} now offers {pkgver} or asks for something other than what you \
                  approved. Review it again."
             )));
+        }
+        // Chosen before anything is created, since the volume and data go where it says.
+        if extras.data_drive && first_install {
+            self.choose_data_drive(package)?;
         }
         if manifest.storage.encrypted
             && passphrase.is_none()
@@ -320,6 +393,7 @@ impl<S: System> Helper<S> {
                     version: version.clone(),
                     kept: kept.clone().or(old_kept),
                     previous: None,
+                    installed_at: Some(self.manage.packages.now()),
                 },
             );
             Ok(())
@@ -339,17 +413,60 @@ impl<S: System> Helper<S> {
             .report
             .details
             .push(format!("created user _{package}"));
-        if let Err(e) = self.install_package(package, passphrase, Some(feed)) {
+        // The grants it reads through are in place before its settings first resolve.
+        let added_grants = match self.record_grants(extras.grants) {
+            Ok(added) => added,
+            Err(e) => {
+                let report = progress.fail(4, format!("recording its grants failed: {e}"));
+                return Ok(Response::InstallReport(self.undo_first_install(
+                    package,
+                    first_install,
+                    report,
+                )));
+            }
+        };
+        for grant in extras.grants {
+            progress.report.details.push(format!(
+                "{} may read the setting {} of {}",
+                grant.consumer, grant.setting, grant.provider
+            ));
+        }
+        // The owner's answers are checked by the package's own rules first, so a refused one
+        // is reported as a settings problem, before anything else is created.
+        if !extras.changes.is_empty() {
+            if let Err(e) = self.plan_settings(package, extras.changes) {
+                let report = progress.fail(6, e.to_string());
+                if first_install {
+                    let _ = self.forget_grants(&added_grants);
+                }
+                return Ok(Response::InstallReport(self.undo_first_install(
+                    package,
+                    first_install,
+                    report,
+                )));
+            }
+        }
+        if let Err(e) = self.install_package_with(package, passphrase, Some(feed), extras.changes) {
             let index = match e {
                 ApiError::BadPassphrase => 5,
                 _ => 4,
             };
             let report = progress.fail(index, e.to_string());
+            if first_install {
+                let _ = self.forget_grants(&added_grants);
+            }
             return Ok(Response::InstallReport(self.undo_first_install(
                 package,
                 first_install,
                 report,
             )));
+        }
+        if !extras.changes.is_empty() {
+            let names: Vec<&str> = extras.changes.iter().map(|c| c.name.as_str()).collect();
+            progress
+                .report
+                .details
+                .push(format!("set {} before its first start", names.join(", ")));
         }
         progress.set(4, StepState::Done, "");
         if manifest.storage.encrypted {

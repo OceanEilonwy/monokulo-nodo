@@ -105,6 +105,35 @@ pub fn is_valid_version(version: &str) -> bool {
         && bytes.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'~'))
 }
 
+/// A setting's name, as settings files declare it: the same rule as `nodo-settings` applies,
+/// which depends on this crate and so cannot be used here.
+pub fn is_valid_setting_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 63
+        && bytes[0].is_ascii_lowercase()
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_' || *b == b'-')
+}
+
+/// A DNS name in lowercase: dot-separated labels of letters, digits and inner hyphens, at least
+/// two labels.
+pub fn is_valid_domain(domain: &str) -> bool {
+    let labels: Vec<&str> = domain.split('.').collect();
+    domain.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|label| {
+            let bytes = label.as_bytes();
+            (1..=63).contains(&bytes.len())
+                && bytes[0] != b'-'
+                && bytes[bytes.len() - 1] != b'-'
+                && bytes
+                    .iter()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        })
+}
+
 /// A relative path that stays inside the package directory however it is joined. It must be in
 /// canonical form, so checks elsewhere never disagree with the kernel about what it names.
 /// A file name inside the package's config directory. No separators, and no leading dot, so
@@ -367,8 +396,157 @@ impl Manifest {
         }
 
         self.check_panels(&mut c);
+        self.check_bundle(&mut c);
+        self.check_owner_page(&mut c);
 
         c.issues
+    }
+
+    fn check_bundle(&self, c: &mut Checker) {
+        let Some(bundle) = &self.bundle else { return };
+        if bundle.members.is_empty() {
+            c.add("bundle.members", "must name at least one package");
+        }
+        if bundle.members.len() > crate::MAX_BUNDLE_MEMBERS {
+            c.add(
+                "bundle.members",
+                format!("has more than {} entries", crate::MAX_BUNDLE_MEMBERS),
+            );
+        }
+        let mut seen = BTreeSet::new();
+        for (index, member) in bundle.members.iter().enumerate() {
+            let field = format!("bundle.members[{index}]");
+            if !is_valid_id(member) {
+                c.add(field, "is not a valid package id");
+            } else if member == &self.id {
+                c.add(field, "is the package itself");
+            } else if !seen.insert(member.as_str()) {
+                c.add(field, "is a duplicate");
+            }
+        }
+        let order = bundle.install_order(&self.id);
+        let position = |id: &str| order.iter().position(|p| *p == id);
+        let mut drive = BTreeSet::new();
+        for (index, member) in bundle.data_drive.iter().enumerate() {
+            let field = format!("bundle.data_drive[{index}]");
+            if !bundle.members.contains(member) {
+                c.add(field, "is not one of bundle.members");
+            } else if !drive.insert(member.as_str()) {
+                c.add(field, "is a duplicate");
+            }
+        }
+        if bundle.grants.len() > crate::MAX_BUNDLE_GRANTS {
+            c.add(
+                "bundle.grants",
+                format!("has more than {} entries", crate::MAX_BUNDLE_GRANTS),
+            );
+        }
+        let mut grants = BTreeSet::new();
+        for (index, grant) in bundle.grants.iter().enumerate() {
+            let field = |name: &str| format!("bundle.grants[{index}].{name}");
+            let consumer = position(&grant.consumer);
+            let provider = position(&grant.provider);
+            if consumer.is_none() {
+                c.add(
+                    field("consumer"),
+                    "is neither this package nor one of bundle.members",
+                );
+            }
+            if provider.is_none() {
+                c.add(
+                    field("provider"),
+                    "is neither this package nor one of bundle.members",
+                );
+            }
+            if !is_valid_setting_name(&grant.setting) {
+                c.add(field("setting"), "is not a valid setting name");
+            }
+            match (consumer, provider) {
+                (Some(consumer), Some(provider)) if consumer == provider => c.add(
+                    field("provider"),
+                    "is the consumer itself, which needs no grant",
+                ),
+                // The consumer's settings resolve when it is installed, so what it reads must exist.
+                (Some(consumer), Some(provider)) if provider > consumer => c.add(
+                    field("provider"),
+                    "is installed after the consumer; list it earlier in bundle.members",
+                ),
+                _ => {}
+            }
+            if !grants.insert((&grant.consumer, &grant.provider, &grant.setting)) {
+                c.add(format!("bundle.grants[{index}]"), "is a duplicate");
+            }
+        }
+        if bundle.ask.len() > crate::MAX_BUNDLE_ASKS {
+            c.add(
+                "bundle.ask",
+                format!("has more than {} entries", crate::MAX_BUNDLE_ASKS),
+            );
+        }
+        let mut asks = BTreeSet::new();
+        for (index, ask) in bundle.ask.iter().enumerate() {
+            let field = |name: &str| format!("bundle.ask[{index}].{name}");
+            if position(&ask.package).is_none() {
+                c.add(
+                    field("package"),
+                    "is neither this package nor one of bundle.members",
+                );
+            }
+            if !is_valid_setting_name(&ask.setting) {
+                c.add(field("setting"), "is not a valid setting name");
+            }
+            if !is_display_text(&ask.label, crate::MAX_ASK_LABEL_LEN) {
+                c.add(
+                    field("label"),
+                    format!(
+                        "must be 1 to {} printable characters on one line",
+                        crate::MAX_ASK_LABEL_LEN
+                    ),
+                );
+            }
+            if ask.help.chars().count() > crate::MAX_ASK_HELP_LEN
+                || ask.help.chars().any(char::is_control)
+            {
+                c.add(
+                    field("help"),
+                    format!(
+                        "must be at most {} printable characters on one line",
+                        crate::MAX_ASK_HELP_LEN
+                    ),
+                );
+            }
+            if !asks.insert((&ask.package, &ask.setting)) {
+                c.add(format!("bundle.ask[{index}]"), "is a duplicate");
+            }
+        }
+    }
+
+    fn check_owner_page(&self, c: &mut Checker) {
+        let Some(page) = &self.owner_page else { return };
+        if !is_display_text(&page.title, crate::MAX_OWNER_PAGE_TITLE_LEN) {
+            c.add(
+                "owner_page.title",
+                format!(
+                    "must be 1 to {} printable characters on one line",
+                    crate::MAX_OWNER_PAGE_TITLE_LEN
+                ),
+            );
+        }
+        let declared: BTreeSet<u16> = self
+            .network
+            .inbound
+            .iter()
+            .filter(|rule| matches!(rule.protocol, Protocol::Tcp))
+            .map(|rule| rule.port)
+            .collect();
+        let checked = check_health_url(&page.url).and_then(|()| match loopback_target(&page.url) {
+            Some((port, _)) if declared.contains(&port) => Ok(()),
+            Some((port, _)) => Err(format!(
+                "port {port} is not one this package declares in [[network.inbound]] (tcp)"
+            )),
+            None => Err("must be http://127.0.0.1:<port>/<path>".to_owned()),
+        });
+        c.check("owner_page.url", checked);
     }
 
     /// Ports this package's own service listens on, so a panel can only read its own package.
@@ -448,6 +626,19 @@ fn loopback_port(url: &str) -> Option<u16> {
     check_health_url(url).ok()?;
     let authority = url.strip_prefix("http://")?.split('/').next()?;
     parse_port(authority.rsplit_once(':')?.1)
+}
+
+/// The port and path of `http://127.0.0.1:<port>/<path>`, the only form an owner page may take:
+/// a loopback literal, so no name lookup decides where root connects, and a path of its own.
+pub(crate) fn loopback_target(url: &str) -> Option<(u16, String)> {
+    let rest = url.strip_prefix("http://127.0.0.1:")?;
+    let at = rest.find('/')?;
+    let (port, path) = rest.split_at(at);
+    let port = parse_port(port)?;
+    if port < MIN_PACKAGE_PORT || !is_valid_url_path(path, false) {
+        return None;
+    }
+    Some((port, path.to_owned()))
 }
 
 fn check_panel_url(url: &str, own: &BTreeSet<u16>) -> Result<(), String> {

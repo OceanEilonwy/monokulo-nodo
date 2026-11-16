@@ -3,14 +3,15 @@
 //! Every generated artifact (sandbox, firewall, proxy config, TUI forms) derives from this,
 //! so packages never write system configuration themselves.
 
+pub mod owner_page;
 mod validate;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use validate::{
-    is_valid_config_name, is_valid_id, is_valid_name, is_valid_package_path, is_valid_version, ManifestIssue, MAX_ID_LEN,
-    MIN_PACKAGE_PORT, RESERVED_IDS,
+    is_valid_config_name, is_valid_domain, is_valid_id, is_valid_name, is_valid_package_path, is_valid_setting_name,
+    is_valid_version, ManifestIssue, MAX_ID_LEN, MIN_PACKAGE_PORT, RESERVED_IDS,
 };
 
 /// The only manifest API version this build understands.
@@ -70,6 +71,91 @@ pub struct Manifest {
     /// Panels the package offers for the device's screen (docs/SCREEN.md).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub panels: Vec<Panel>,
+    /// Other packages of the same feed set up together with this one, in one install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<Bundle>,
+    /// The package's setup checklist for the owner, served by its own service on loopback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_page: Option<OwnerPage>,
+}
+
+/// A suite of apps installed in one go: the members first, in order, then the package that
+/// declares the bundle (the head). Everything here is shown to the owner before anything installs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bundle {
+    /// Package ids of the same feed, installed in this order, before the head.
+    pub members: Vec<String>,
+    /// Members whose data the owner may keep on the data drive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_drive: Vec<String>,
+    /// Grants approved together with the install. The provider is always installed before the
+    /// consumer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<BundleGrant>,
+    /// Settings asked once, before anything is installed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ask: Vec<BundleAsk>,
+}
+
+impl Bundle {
+    /// Every package the bundle installs, in order: the members, then the head.
+    pub fn install_order<'a>(&'a self, head: &'a str) -> Vec<&'a str> {
+        self.members
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(head))
+            .collect()
+    }
+}
+
+/// `consumer` may read `provider`'s secret or non-public `setting`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleGrant {
+    pub consumer: String,
+    pub provider: String,
+    pub setting: String,
+}
+
+/// One setting the owner fills in before the bundle installs. Its label and help are carried
+/// here because a package's settings file is not available before it is installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleAsk {
+    pub package: String,
+    pub setting: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub help: String,
+    /// A secret is typed or pasted into a masked field and never shown again.
+    #[serde(default)]
+    pub secret: bool,
+}
+
+pub const MAX_BUNDLE_MEMBERS: usize = 16;
+pub const MAX_BUNDLE_GRANTS: usize = 16;
+pub const MAX_BUNDLE_ASKS: usize = 16;
+pub const MAX_ASK_LABEL_LEN: usize = 64;
+pub const MAX_ASK_HELP_LEN: usize = 512;
+
+/// Where the owner's setup checklist comes from: a GET on the package's own service, on loopback,
+/// at a port it declares in `[[network.inbound]]`. The answer follows [`owner_page::PageDoc`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerPage {
+    /// The row's name on the app's page, such as "Setup".
+    pub title: String,
+    pub url: String,
+}
+
+pub const MAX_OWNER_PAGE_TITLE_LEN: usize = 24;
+
+impl OwnerPage {
+    /// The port and path of a URL that passed validation.
+    pub fn target(&self) -> Option<(u16, String)> {
+        validate::loopback_target(&self.url)
+    }
 }
 
 /// A panel for the device's screen: where its data comes from and the Lua file that turns the data
@@ -757,5 +843,212 @@ mod tests {
         let fields: Vec<_> = issues.iter().map(|issue| issue.field.as_str()).collect();
         assert_eq!(fields, ["id", "exec[0]", "settings"]);
         assert!(e.to_string().contains("exec[0]"));
+    }
+
+    const BUNDLE_HEAD: &str =
+        "api_version = 1\nid = \"pingers\"\nversion = \"1.0\"\nexec = [\"bin/pingers\"]\n";
+
+    const GOOD_BUNDLE: &str = r#"
+[bundle]
+members = ["pingers-push-relay", "pingers-map-host", "pingers-server", "pingers-ohttp-relay"]
+data_drive = ["pingers-map-host"]
+
+[[bundle.grants]]
+consumer = "pingers-server"
+provider = "pingers-push-relay"
+setting = "server_credential"
+
+[[bundle.grants]]
+consumer = "pingers"
+provider = "pingers-server"
+setting = "registration_code"
+
+[[bundle.ask]]
+package = "pingers-push-relay"
+setting = "domain"
+label = "Your domain"
+help = "The Pingers sites are named under it: pingers., ohttp., push. and maps."
+secret = false
+
+[[bundle.ask]]
+package = "pingers-push-relay"
+setting = "fcm_service_account"
+label = "Firebase service account"
+help = "Paste the JSON key file. It is sealed on this device and never shown again."
+secret = true
+"#;
+
+    fn bundle(body: &str) -> Result<Manifest, ManifestError> {
+        Manifest::parse(&format!("{BUNDLE_HEAD}{body}"))
+    }
+
+    fn bundle_fields(body: &str) -> Vec<String> {
+        match bundle(body) {
+            Err(ManifestError::Invalid(issues)) => issues.into_iter().map(|i| i.field).collect(),
+            other => panic!("expected issues, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bundle_parses_with_its_install_order_and_round_trips() {
+        let m = bundle(GOOD_BUNDLE).unwrap();
+        let b = m.bundle.as_ref().unwrap();
+        assert_eq!(
+            b.install_order(&m.id),
+            [
+                "pingers-push-relay",
+                "pingers-map-host",
+                "pingers-server",
+                "pingers-ohttp-relay",
+                "pingers"
+            ]
+        );
+        assert!(b.ask[1].secret);
+        assert_eq!(Manifest::parse(&toml::to_string(&m).unwrap()).unwrap(), m);
+        let plain = bundle("").unwrap();
+        assert_eq!(plain.bundle, None);
+        assert!(
+            !toml::to_string(&plain).unwrap().contains("bundle"),
+            "absent tables are not written"
+        );
+    }
+
+    #[test]
+    fn bundle_members_are_distinct_valid_ids_other_than_the_head() {
+        assert_eq!(
+            bundle_fields("[bundle]\nmembers = []\n"),
+            ["bundle.members"]
+        );
+        assert_eq!(
+            bundle_fields("[bundle]\nmembers = [\"pingers\"]\n"),
+            ["bundle.members[0]"]
+        );
+        assert_eq!(
+            bundle_fields("[bundle]\nmembers = [\"a-b\", \"a-b\"]\n"),
+            ["bundle.members[1]"]
+        );
+        assert_eq!(
+            bundle_fields("[bundle]\nmembers = [\"../x\", \"root\"]\n"),
+            ["bundle.members[0]", "bundle.members[1]"]
+        );
+        let many: Vec<String> = (0..17).map(|i| format!("\"m{i}\"")).collect();
+        assert_eq!(
+            bundle_fields(&format!("[bundle]\nmembers = [{}]\n", many.join(","))),
+            ["bundle.members"]
+        );
+        assert!(
+            bundle("[bundle]\nmembers = [\"a\"]\nunknown = 1\n").is_err(),
+            "no unknown fields"
+        );
+        assert_eq!(
+            bundle_fields("[bundle]\nmembers = [\"a\"]\ndata_drive = [\"b\"]\n"),
+            ["bundle.data_drive[0]"]
+        );
+    }
+
+    #[test]
+    fn bundle_grants_name_members_in_install_order() {
+        let grant = |consumer: &str, provider: &str, setting: &str| {
+            format!("[bundle]\nmembers = [\"a\", \"b\"]\n[[bundle.grants]]\nconsumer = \"{consumer}\"\nprovider = \"{provider}\"\nsetting = \"{setting}\"\n")
+        };
+        assert!(bundle(&grant("b", "a", "token")).is_ok());
+        assert!(
+            bundle(&grant("pingers", "b", "token")).is_ok(),
+            "the head is installed last"
+        );
+        assert_eq!(
+            bundle_fields(&grant("a", "b", "token")),
+            ["bundle.grants[0].provider"]
+        );
+        assert_eq!(
+            bundle_fields(&grant("a", "a", "token")),
+            ["bundle.grants[0].provider"]
+        );
+        assert_eq!(
+            bundle_fields(&grant("c", "a", "token")),
+            ["bundle.grants[0].consumer"]
+        );
+        assert_eq!(
+            bundle_fields(&grant("b", "a", "Bad Name")),
+            ["bundle.grants[0].setting"]
+        );
+        let twice = format!(
+            "{}[[bundle.grants]]\nconsumer = \"b\"\nprovider = \"a\"\nsetting = \"token\"\n",
+            grant("b", "a", "token")
+        );
+        assert_eq!(bundle_fields(&twice), ["bundle.grants[1]"]);
+    }
+
+    #[test]
+    fn bundle_asks_are_bounded_printable_text() {
+        let ask = |package: &str, label: &str, help: &str| {
+            format!("[bundle]\nmembers = [\"a\"]\n[[bundle.ask]]\npackage = \"{package}\"\nsetting = \"domain\"\nlabel = \"{label}\"\nhelp = \"{help}\"\n")
+        };
+        assert!(bundle(&ask("a", "Your domain", "")).is_ok());
+        assert!(bundle(&ask("pingers", "Your domain", "Help.")).is_ok());
+        assert_eq!(
+            bundle_fields(&ask("b", "Your domain", "")),
+            ["bundle.ask[0].package"]
+        );
+        assert_eq!(bundle_fields(&ask("a", "", "")), ["bundle.ask[0].label"]);
+        assert_eq!(
+            bundle_fields(&ask("a", &"x".repeat(65), "")),
+            ["bundle.ask[0].label"]
+        );
+        assert_eq!(
+            bundle_fields(&ask("a", "\\u001b[31mred", "")),
+            ["bundle.ask[0].label"]
+        );
+        assert_eq!(
+            bundle_fields(&ask("a", "Domain", &"x".repeat(513))),
+            ["bundle.ask[0].help"]
+        );
+        assert_eq!(
+            bundle_fields(&ask("a", "Domain", "line\\nbreak")),
+            ["bundle.ask[0].help"]
+        );
+        let many: String = (0..17)
+            .map(|i| {
+                format!("[[bundle.ask]]\npackage = \"a\"\nsetting = \"s{i}\"\nlabel = \"L\"\n")
+            })
+            .collect();
+        assert_eq!(
+            bundle_fields(&format!("[bundle]\nmembers = [\"a\"]\n{many}")),
+            ["bundle.ask"]
+        );
+    }
+
+    #[test]
+    fn an_owner_page_is_a_loopback_literal_on_a_declared_port() {
+        let inbound = "[[network.inbound]]\nport = 9475\nprotocol = \"tcp\"\nscope = \"local\"\n";
+        let page = |title: &str, url: &str| {
+            Manifest::parse(&format!(
+                "{BUNDLE_HEAD}[owner_page]\ntitle = \"{title}\"\nurl = \"{url}\"\n{inbound}"
+            ))
+        };
+        let m = page("Setup", "http://127.0.0.1:9475/owner").unwrap();
+        assert_eq!(
+            m.owner_page.as_ref().unwrap().target(),
+            Some((9475, "/owner".to_owned()))
+        );
+        assert_eq!(Manifest::parse(&toml::to_string(&m).unwrap()).unwrap(), m);
+        for url in [
+            "http://127.0.0.1:9476/owner",  // not declared
+            "http://localhost:9475/owner",  // a name, not a literal
+            "http://[::1]:9475/owner",      // not the address the helper connects to
+            "https://127.0.0.1:9475/owner", // not plain http
+            "http://127.0.0.1:9475",        // no path
+            "http://127.0.0.1:9475/a?b=1",  // not a plain path
+            "http://127.0.0.1:9475/../x",
+            "http://10.0.0.1:9475/owner",
+        ] {
+            assert!(page("Setup", url).is_err(), "{url}");
+        }
+        assert!(page(
+            "A title that is far too long here",
+            "http://127.0.0.1:9475/owner"
+        )
+        .is_err());
+        assert!(page("", "http://127.0.0.1:9475/owner").is_err());
     }
 }

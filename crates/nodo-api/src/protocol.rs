@@ -327,6 +327,34 @@ mod tests {
             Request::PairBluetooth { address: "AA:BB:CC:DD:EE:FF".into() },
             Request::ConnectBluetooth { address: "AA:BB:CC:DD:EE:FF".into(), connect: true },
             Request::RemoveBluetooth { address: "AA:BB:CC:DD:EE:FF".into() },
+            Request::ReviewBundle {
+                feed: "f".into(),
+                package: "a".into(),
+            },
+            Request::InstallBundle {
+                feed: "f".into(),
+                package: "a".into(),
+                approvals: vec![PermissionApproval {
+                    pkgver: "b-1_1".into(),
+                    permissions: vec!["x".into()],
+                }],
+                grants: vec![SettingGrant {
+                    consumer: "a".into(),
+                    provider: "b".into(),
+                    setting: "k".into(),
+                }],
+                answers: vec![BundleAnswer {
+                    package: "b".into(),
+                    setting: "s".into(),
+                    value: Secret::new("{\n\"k\": 1\n}"),
+                }],
+                data_drive: vec!["b".into()],
+                passphrase: Some(Secret::new("p")),
+            },
+            Request::OwnerPage {
+                package: "a".into(),
+                passphrase: Secret::new("p"),
+            },
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -353,6 +381,8 @@ mod tests {
             needs: vec![],
             encrypted_storage: true,
             has_settings: false,
+            owner_page: Some("Setup".into()),
+            bundle: vec!["b".into(), "c".into()],
         };
         let results: Vec<CallResult> = vec![
             Ok(Response::Ok),
@@ -696,6 +726,126 @@ mod tests {
                     address: "AA:BB:CC:DD:EE:FF".into(),
                     stage: PairingStage::TypePasskey("123456".into()),
                 }),
+            })),
+            Ok(Response::BundleReview(BundleReview {
+                feed: "f".into(),
+                package: "a".into(),
+                members: vec![BundleMember {
+                    review: InstallReview {
+                        feed: "f".into(),
+                        package: "b".into(),
+                        pkgver: "b-1_1".into(),
+                        permissions: vec!["uses c".into()],
+                        added: vec!["uses c".into()],
+                        first_install: true,
+                        encrypted_storage: true,
+                        needs_passphrase: true,
+                        bundle: None,
+                    },
+                    installed: Some("0.9_1".into()),
+                }],
+                grants: vec![BundleGrant {
+                    grant: SettingGrant {
+                        consumer: "a".into(),
+                        provider: "b".into(),
+                        setting: "k".into(),
+                    },
+                    text: "a may read the setting k of b".into(),
+                }],
+                asks: vec![BundleAsk {
+                    package: "b".into(),
+                    setting: "domain".into(),
+                    label: "Your domain".into(),
+                    help: "h".into(),
+                    secret: false,
+                    skipped: false,
+                }],
+                data_drive: vec!["b".into()],
+                data_drive_present: true,
+                needs_passphrase: true,
+            })),
+            Ok(Response::BundleReport(BundleReport {
+                package: "a".into(),
+                members: vec![BundleMemberReport {
+                    package: "b".into(),
+                    state: StepState::Failed,
+                    note: "n".into(),
+                    report: Some(InstallReport {
+                        pkgver: "b-1_1".into(),
+                        steps: vec![InstallStep {
+                            name: "Download package".into(),
+                            note: String::new(),
+                            state: StepState::Done,
+                        }],
+                        details: vec![],
+                        problem: Some("p".into()),
+                    }),
+                }],
+                problem: Some("b failed".into()),
+            })),
+            Ok(Response::OwnerPage(OwnerPageView {
+                package: "a".into(),
+                title: "Setup".into(),
+                intro: Some("i".into()),
+                steps: vec![OwnerStep {
+                    title: "s".into(),
+                    state: OwnerStepState::Todo,
+                    items: vec![
+                        OwnerItem::Text("t".into()),
+                        OwnerItem::Value {
+                            label: "l".into(),
+                            value: "v".into(),
+                        },
+                        OwnerItem::Check(OwnerCheck {
+                            label: "c".into(),
+                            state: OwnerCheckState::Waiting,
+                            detail: None,
+                        }),
+                        OwnerItem::Qr {
+                            label: "q".into(),
+                            data: "https://x".into(),
+                        },
+                        OwnerItem::Site(SiteFacts {
+                            package: "a".into(),
+                            site: "api".into(),
+                            host: Some("a.example.org".into()),
+                            suggested: false,
+                            public: true,
+                            records: vec![DnsRecord {
+                                kind: "A".into(),
+                                name: "a".into(),
+                                zone: "example.org".into(),
+                                value: "203.0.113.5".into(),
+                            }],
+                            automatic_dns: Some("Cloudflare".into()),
+                            checks: vec![],
+                        }),
+                        OwnerItem::Service {
+                            package: "a".into(),
+                            check: OwnerCheck {
+                                label: "a runs".into(),
+                                state: OwnerCheckState::Ok,
+                                detail: None,
+                            },
+                        },
+                        OwnerItem::Domain {
+                            domain: "example.org".into(),
+                            provider: None,
+                            check: OwnerCheck {
+                                label: "d".into(),
+                                state: OwnerCheckState::Failed,
+                                detail: Some("x".into()),
+                            },
+                        },
+                        OwnerItem::Backup {
+                            check: OwnerCheck {
+                                label: "b".into(),
+                                state: OwnerCheckState::Unknown,
+                                detail: None,
+                            },
+                        },
+                    ],
+                }],
             })),
         ];
         for result in results {

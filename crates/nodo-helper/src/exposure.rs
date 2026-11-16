@@ -121,6 +121,10 @@ pub trait ExposureApplier: Send + Sync {
     fn local_site_status(&self, _input: &WebInput) -> Result<LocalSiteStatus, ApiError> {
         Err(not_connected())
     }
+    /// The device's main LAN address, the one the owner reaches it on, when it can be told.
+    fn device_address(&self) -> Option<String> {
+        None
+    }
     /// The onion addresses Tor has made. Without a proxy there are none.
     fn onion_addresses(&self, _input: &WebInput) -> Result<crate::onion::OnionAddresses, ApiError> {
         Ok(crate::onion::OnionAddresses::default())
@@ -308,7 +312,9 @@ impl<S: System> Helper<S> {
             }
             Request::CheckReachabilityDetail { site } => {
                 let input = self.current_web_input()?;
-                Ok(Response::ReachabilityDetail(self.exposure.reachability(&input, &site)?))
+                let detail = self.exposure.reachability(&input, &site)?;
+                self.remember_reachability(&detail);
+                Ok(Response::ReachabilityDetail(detail))
             }
             Request::AcmeSettings => {
                 Ok(Response::AcmeSettings(self.exposure.acme_settings(&self.current_web_input()?)?))
@@ -335,6 +341,7 @@ impl<S: System> Helper<S> {
             Request::CheckReachability { site } => {
                 let input = self.current_web_input()?;
                 let detail = self.exposure.reachability(&input, &site)?;
+                self.remember_reachability(&detail);
                 Ok(Response::Reachability(match (detail.verdict.as_str(), &detail.router_wan) {
                     ("blocked_by_cgnat", Some(wan)) => ReachabilityReport::Cgnat {
                         wan_address: wan.clone(),

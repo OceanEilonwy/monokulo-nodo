@@ -41,6 +41,10 @@ pub struct ManagePaths {
     pub volume_root: PathBuf,
     /// Where a removable drive is mounted while a backup request uses it. Root only.
     pub usb_mount: PathBuf,
+    /// When the newest backup was made, where, and whether it holds the device key, for owner
+    /// pages. A backup file is encrypted, so this is the only place that says so without its
+    /// passphrase.
+    pub last_backup: PathBuf,
 }
 
 impl Default for ManagePaths {
@@ -62,6 +66,7 @@ impl Default for ManagePaths {
             app_config: "/etc/apps".into(),
             volume_root: nodo_gen::VOLUME_ROOT.into(),
             usb_mount: "/run/nodo/usb".into(),
+            last_backup: "/var/lib/nodo/last-backup.toml".into(),
         }
     }
 }
@@ -178,6 +183,28 @@ impl<S: System> Helper<S> {
                 passphrase,
             } => self.install_from_feed(&feed, &package, &approval, passphrase.as_ref()),
             Request::RemovePackage { package } => self.remove_package(&package),
+            Request::ReviewBundle { feed, package } => self.review_bundle(&feed, &package),
+            Request::InstallBundle {
+                feed,
+                package,
+                approvals,
+                grants,
+                answers,
+                data_drive,
+                passphrase,
+            } => self.install_bundle(
+                &feed,
+                &package,
+                &approvals,
+                &grants,
+                &answers,
+                &data_drive,
+                passphrase.as_ref(),
+            ),
+            Request::OwnerPage {
+                package,
+                passphrase,
+            } => self.owner_page(&package, &passphrase),
             Request::ListUpdates => self.list_updates(),
             Request::UpdateStatus => self.update_status(),
             Request::CheckUpdates => self.check_updates().and_then(|()| self.update_status()),

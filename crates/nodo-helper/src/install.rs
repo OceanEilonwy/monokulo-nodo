@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use nodo_api::{ApiError, Response, Secret};
+use nodo_api::{ApiError, Response, Secret, SettingChange};
 use nodo_gen::{generate, service_user, Artifacts, Profile, ResolvedGrants, VOLUME_ROOT};
 use nodo_manifest::Manifest;
 
@@ -60,7 +60,7 @@ impl<S: System> Helper<S> {
         passphrase: Option<&Secret>,
         feed: Option<&str>,
     ) -> Result<Response, ApiError> {
-        self.install_package_inner(id, passphrase, feed, false)
+        self.install_package_inner(id, passphrase, feed, false, &[])
     }
 
     /// Like [`Helper::install_package`], with the service left down, so a restore can fill its
@@ -71,7 +71,20 @@ impl<S: System> Helper<S> {
         passphrase: Option<&Secret>,
         feed: Option<&str>,
     ) -> Result<Response, ApiError> {
-        self.install_package_inner(id, passphrase, feed, true)
+        self.install_package_inner(id, passphrase, feed, true, &[])
+    }
+
+    /// Like [`Helper::install_package`], with setting values the owner gave before the install,
+    /// validated by the package's own rules exactly like `ApplySettings`, so they are in place
+    /// before its first start.
+    pub(crate) fn install_package_with(
+        &self,
+        id: &str,
+        passphrase: Option<&Secret>,
+        feed: Option<&str>,
+        changes: &[SettingChange],
+    ) -> Result<Response, ApiError> {
+        self.install_package_inner(id, passphrase, feed, false, changes)
     }
 
     fn install_package_inner(
@@ -80,8 +93,12 @@ impl<S: System> Helper<S> {
         passphrase: Option<&Secret>,
         feed: Option<&str>,
         held: bool,
+        changes: &[SettingChange],
     ) -> Result<Response, ApiError> {
         let package = self.package(id)?;
+        if !changes.is_empty() && package.manifest.settings.is_none() {
+            return Err(ApiError::Failed(format!("{id} has no settings")));
+        }
         if package.profile == Profile::System {
             return Err(ApiError::Failed(format!(
                 "{id} is part of the base system and is installed with it"
@@ -128,9 +145,9 @@ impl<S: System> Helper<S> {
         // that cannot be written refuse the install cleanly.
         let (packages, _) = self.packages()?;
         let plan = match package.manifest.settings {
-            Some(_) => {
-                Some(self.with_settings(&packages, |ctx| self.settings.plan(ctx, &package, &[]))?)
-            }
+            Some(_) => Some(
+                self.with_settings(&packages, |ctx| self.settings.plan(ctx, &package, changes))?,
+            ),
             None => None,
         };
         let inputs = match &plan {

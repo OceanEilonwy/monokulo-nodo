@@ -60,6 +60,20 @@ pub(crate) struct InstalledRecord {
     /// The version before this one, which a rollback by hand puts back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<crate::updates::PreviousVersion>,
+    /// Unix seconds of its install from a feed, which an owner page's backup check compares
+    /// with. Missing for packages installed before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<u64>,
+}
+
+/// What a review found about one version's `[bundle]`, so Get apps can say how many apps it sets
+/// up before it is installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewedBundle {
+    pub feed: String,
+    /// `version_revision`.
+    pub version: String,
+    pub members: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +92,9 @@ pub(crate) struct FeedState {
     /// are still added. A removed default is remembered here, so it does not come back.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub defaults_seeded: BTreeSet<String>,
+    /// Bundle heads by package, as their last review found them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bundles: BTreeMap<String, ReviewedBundle>,
 }
 
 /// One feed the image ships with.
@@ -534,12 +551,18 @@ impl<S: System> Helper<S> {
                     .get(&entry.name)
                     .filter(|i| i.feed == *name)
                     .map(|i| i.version.clone());
+                let bundle = state
+                    .bundles
+                    .get(&entry.name)
+                    .filter(|b| b.feed == *name && b.version == entry.version)
+                    .map(|b| b.members);
                 entries.push(CatalogEntry {
                     feed: name.clone(),
                     name: entry.name.clone(),
                     version: entry.version.clone(),
                     installed,
                     size_bytes: entry.size,
+                    bundle,
                 });
             }
         }

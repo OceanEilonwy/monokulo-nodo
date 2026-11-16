@@ -74,7 +74,7 @@ impl<S: System> Helper<S> {
             .ok_or_else(|| failed("the bindings store is corrupt"))
     }
 
-    fn bindings_write(&self, bindings: &Bindings) -> Result<Write, ApiError> {
+    pub(crate) fn bindings_write(&self, bindings: &Bindings) -> Result<Write, ApiError> {
         let text = toml::to_string(bindings).map_err(|e| failed(e.to_string()))?;
         Ok(Write::new(
             self.paths.bindings.clone(),

@@ -335,6 +335,7 @@ impl<S: System> Helper<S> {
             }
         };
         mounted.finish()?;
+        self.record_backup(written.created, written.summary.has_device_key(), true);
         Ok(written.into_response(locked))
     }
 

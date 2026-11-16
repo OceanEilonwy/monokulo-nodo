@@ -125,4 +125,16 @@ pub trait System: Send + Sync {
     /// Grows an open, mounted encrypted volume to `size` bytes: the file, its loop device, the
     /// LUKS mapping and the filesystem, without unmounting. The volume key goes to stdin.
     fn luks_grow(&self, file: &Path, name: &str, key: &[u8], size: u64) -> SysResult<()>;
+
+    /// The body of a `GET` to a loopback port over HTTP/1.1 that answered 200, at most `limit` bytes,
+    /// all of it within `timeout`. Only ever loopback, because the port comes from a package.
+    fn http_get_page(
+        &self,
+        port: u16,
+        path: &str,
+        limit: usize,
+        timeout: Duration,
+    ) -> SysResult<Vec<u8>>;
+    /// What the system resolver answers for `host`: empty when it has no answer.
+    fn resolve_host(&self, host: &str) -> Vec<std::net::IpAddr>;
 }
