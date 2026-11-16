@@ -2,12 +2,6 @@
   <img src="docs/readme/logo.svg" width="288" alt="The Nodo logo in Unicode half blocks, as the boot splash draws it">
 </p>
 
-<p align="center">
-  <img src="docs/readme/tui-home.png" height="260" alt="The terminal UI's Home tab: the Nodo is locked, an app keeps stopping, three updates are ready">
-  &nbsp;&nbsp;
-  <img src="docs/design/gui/real/r-home.png" height="260" alt="Home on the NanoPC-T6N's touchscreen">
-</p>
-
 <h1 align="center">monokulo-nodo</h1>
 
 <p align="center">
@@ -40,6 +34,17 @@
 - **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server and Kringle. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
 - **Updates that can be undone.** The base system arrives in tested, signed snapshots, never straight from Void's rolling `current`, with A/B rollback, opt-in auto-updates and backups to USB. See [updates, rollback, health and backups](docs/UPDATES.md).
 - **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system.
+
+<table>
+  <tr>
+    <td width="45%"><img src="docs/readme/tui-home.png" width="100%" alt="The terminal UI's Home tab: the Nodo is locked, an app keeps stopping, three updates are ready"></td>
+    <td width="55%"><img src="docs/design/gui/real/r-home.png" width="100%" alt="Home on the NanoPC-T6N's touchscreen"></td>
+  </tr>
+  <tr>
+    <td align="center">Home in the terminal UI, which opens when you log in over SSH</td>
+    <td align="center">Home on the T6N's touchscreen</td>
+  </tr>
+</table>
 
 ## Building
 
