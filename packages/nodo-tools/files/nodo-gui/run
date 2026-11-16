@@ -25,7 +25,8 @@ for b in /sys/class/backlight/*/brightness; do
 	break
 done
 # The panel sits on its side: its native mode is 1080x1920, and the console turns it a quarter turn
-# (fbcon rotate 3). Slint turns its picture, and the touches, the same way.
+# (fbcon rotate 3). Slint turns its picture the same way, but not the touches: libinput turns those,
+# through the calibration in /usr/lib/udev/rules.d/70-nodo-touch.rules.
 export SLINT_KMS_ROTATION=270
 # Fontconfig keeps its cache in the account's home.
 export HOME=/var/lib/nodo-screen

@@ -101,6 +101,23 @@ mod tests {
         assert!(toml::from_str::<Config>("[touch]\nrotate = 90\n").is_err());
     }
 
+    /// nodo-gui gets its touches through libinput, turned by the calibration in nodo-tools' udev
+    /// rule. It must turn them exactly as this default does, or taps land beside what is drawn.
+    #[test]
+    fn the_udev_calibration_turns_touches_as_the_default_does() {
+        let rules = include_str!("../../../packages/nodo-tools/files/udev/70-nodo-touch.rules");
+        let line = rules.lines().find(|l| !l.starts_with('#') && !l.trim().is_empty()).unwrap();
+        assert!(line.contains(r#"ATTRS{name}=="Goodix*""#), "{line}");
+        let matrix = line.split(r#"ENV{LIBINPUT_CALIBRATION_MATRIX}=""#).nth(1).unwrap();
+        let m: Vec<f64> = matrix.trim_end_matches('"').split(' ').map(|n| n.parse().unwrap()).collect();
+        assert_eq!(m.len(), 6, "{line}");
+        let t = Touch::default();
+        for (x, y) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.25, 0.75)] {
+            let turned = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
+            assert_eq!(turned, t.map(x, y), "raw ({x}, {y})");
+        }
+    }
+
     #[test]
     fn backlight_settings_default_to_two_minutes_and_twenty_percent() {
         assert_eq!(Config::default().backlight, Backlight { dim_after_secs: 120, dim_percent: 20 });

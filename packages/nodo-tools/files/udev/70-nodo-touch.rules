@@ -1,0 +1,7 @@
+# The built-in panel sits on its side: its native mode is 1080x1920, and nodo-gui shows it a quarter
+# turn round (SLINT_KMS_ROTATION=270, the console's fbcon rotate 3). Slint turns only the picture: it
+# hands on libinput's touch positions as they are, so without this a tap lands somewhere else on the
+# screen. This calibration turns them in libinput instead, to x' = 1 - y, y' = x, the mapping
+# nodo-screen's default [touch] table applies to the raw axes (swap_xy, invert_x). nodo-screen reads
+# evdev itself, so it is not turned twice. A test in nodo-screen holds the two to the same mapping.
+ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="Goodix*", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
