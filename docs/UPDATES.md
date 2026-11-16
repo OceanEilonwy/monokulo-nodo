@@ -114,8 +114,14 @@ check and what it found, the last error and the last update in
 `SystemUpdateStatus`, `CheckSystemUpdate`, `ApplySystemUpdate { serial }` (only the serial the
 last check found, which the screen showed), `SetSystemAutoUpdate` and `RunSystemUpdate` (root
 only). An apply waits while the disk is low, holds the same lock as package installs, and passes
-`--keep-running nodo-helper`, so the helper never restarts under its own request; a changed
-helper runs its new version after its next restart, and the result says so. **Automatic system
+`--keep-running nodo-helper`, so the client does not stop the helper it is answering. When the
+helper's own package changed, the helper restarts itself once the reply is sent (holding the work
+lock, so no install starts first), and at start it records itself as restarted rather than
+deferred. A restarted helper no longer holds the secrets key, so the owner unlocks again with the
+device passphrase; services keep running and open encrypted volumes stay open meanwhile. The same
+happens after an automatic system update. An open `nodo-tui` notices that its own program was
+replaced and starts the new one in place (same terminal, same login shell) the next time it is on
+one of the four tabs with nothing typed, asked or running. **Automatic system
 updates are off by default.** The `nodo-systemupdate` runit service in nodo-tools asks for one
 run every ten minutes; the helper checks every six hours (an hour after a failed check) and only
 records what it found. Only when the owner turned automatic system updates on does a run apply

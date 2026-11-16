@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use nodo_api::client::HelperClient;
 use nodo_api::{Backend, DEFAULT_SOCKET};
-use nodo_tui::app::{App, ScreenId};
+use nodo_tui::app::{App, Notice, NoticeKind, ScreenId};
 use nodo_tui::ctl;
 use nodo_tui::fixtures::fixture;
 use nodo_tui::helper_backend::HelperBackend;
@@ -140,10 +140,10 @@ fn main() -> ExitCode {
         match (screen, no_drive) {
             (Some(id), _) => {
                 let (app, backend) = fixture(id);
-                runtime::run(app, backend, theme)
+                runtime::run(app, backend, theme, false)
             }
-            (None, true) => runtime::run(App::new(), MockBackend::with_missing_drive(), theme),
-            (None, false) => runtime::run(App::new(), MockBackend::new(), theme),
+            (None, true) => runtime::run(App::new(), MockBackend::with_missing_drive(), theme, false),
+            (None, false) => runtime::run(App::new(), MockBackend::new(), theme, false),
         }
     } else {
         let backend = match HelperBackend::connect(&socket) {
@@ -157,15 +157,36 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        runtime::run(App::new(), backend, theme)
+        let mut app = App::new();
+        if std::env::var_os(RESTARTED).is_some() {
+            app.notice = Some(Notice { kind: NoticeKind::Info, text: "nodo-tui restarted to run the updated version".into() });
+        }
+        runtime::run(app, backend, theme, true)
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(runtime::Exit::Quit) => ExitCode::SUCCESS,
+        Ok(runtime::Exit::Restart) => restart(),
         Err(error) => {
             eprintln!("nodo-tui: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Set for the new program after a restart, so it can say why the screen started over.
+const RESTARTED: &str = "NODO_TUI_RESTARTED";
+
+/// Starts the program an update installed in this process, with the same arguments, so the
+/// terminal and the login shell waiting on it stay the same. Returns only if that fails.
+fn restart() -> ExitCode {
+    use std::os::unix::process::CommandExt;
+    let Some(program) = runtime::replacement_program() else {
+        eprintln!("nodo-tui was updated; run nodo-tui to open the new version.");
+        return ExitCode::SUCCESS;
+    };
+    let error = std::process::Command::new(&program).args(std::env::args_os().skip(1)).env(RESTARTED, "1").exec();
+    eprintln!("nodo-tui was updated, but {} did not start: {error}. Run nodo-tui to open it.", program.display());
+    ExitCode::FAILURE
 }
 
 /// `[tui] rounded_buttons` from the user's config, then the system's, resolved for this terminal.

@@ -11,9 +11,15 @@
 //! is due and only reports what it found, unless the owner turned automatic system updates on.
 //! Then a snapshot that needs no restart is applied inside the package update window while the
 //! disk has room. A snapshot that needs a restart always waits for the owner.
+//!
+//! Every service whose package changed is restarted, the helper included: `nodo-sysupdate` leaves
+//! the helper running so that it can answer, and the helper then restarts itself once the reply
+//! is sent. A restarted helper no longer holds the secrets key, so the owner unlocks again with
+//! the device passphrase; services keep running and encrypted volumes stay open meanwhile.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::Ordering;
 
 use nodo_api::{ApiError, Response, SystemSnapshot, SystemUpdateResult, SystemUpdateStatus};
 use nodo_update::auto::AutoPolicy;
@@ -28,7 +34,8 @@ use crate::system::System;
 pub(crate) const CHECK_INTERVAL_SECS: u64 = 6 * 3600;
 /// How soon a failed check is tried again.
 pub(crate) const RETRY_SECS: u64 = 3600;
-/// The helper is never restarted under its own request; it keeps running until its next restart.
+/// The helper is not restarted by the update client, which it is still waiting on; it restarts
+/// itself after answering (`Helper::restart_if_updated`).
 const HELPER_SERVICE: &str = "nodo-helper";
 const MAX_OUTPUT: usize = 64 * 1024;
 
@@ -39,6 +46,9 @@ pub trait SnapshotClient: Send + Sync {
     fn check(&self) -> Result<CheckReport, String>;
     /// Applies exactly `serial`, leaving `keep_running` running if their packages change.
     fn apply(&self, serial: u64, keep_running: &[&str]) -> Result<ApplyReport, String>;
+    /// Restarts the helper's own service, so it runs the program an update installed. On a
+    /// device this does not return: runit stops the helper.
+    fn restart_helper(&self) -> Result<(), String>;
 }
 
 /// `nodo-sysupdate` with its default configuration.
@@ -125,6 +135,21 @@ impl SnapshotClient for RealSnapshots {
         match self.run(&args)? {
             Report::Apply(report) => Ok(report),
             _ => Err("the update client answered something else".to_owned()),
+        }
+    }
+
+    fn restart_helper(&self) -> Result<(), String> {
+        let out = Command::new("sv")
+            .args(["restart", HELPER_SERVICE])
+            .env_clear()
+            .env("PATH", "/usr/bin:/usr/sbin:/bin:/sbin")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("sv: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stdout).trim().to_owned())
         }
     }
 }
@@ -358,7 +383,46 @@ impl<S: System> Helper<S> {
             return Err(ApiError::Failed(format!("the system is already at serial {}", report.serial)));
         }
         let _ = self.refresh_health_config();
+        if report.deferred.iter().any(|name| name == HELPER_SERVICE) {
+            self.manage.restart_pending.store(true, Ordering::SeqCst);
+        }
         state.last_applied.as_ref().map(Applied::result).ok_or_else(|| failed("the update was not recorded"))
+    }
+
+    /// Called after each reply is sent. When a system update replaced the helper's program, the
+    /// helper restarts now, so it never keeps running the old version. The work lock is held, so
+    /// no install starts in the meantime.
+    pub fn restart_if_updated(&self) {
+        if !self.manage.restart_pending.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let _work = lock(&self.manage.work);
+        eprintln!("nodo-helper: restarting to run the version the system update installed");
+        if let Err(e) = self.manage.snapshots.restart_helper() {
+            eprintln!("nodo-helper: could not restart: {e}. The new version runs after the next restart.");
+        }
+    }
+
+    /// At start: a helper the last system update left running on its old program has restarted
+    /// since, so the record says it was restarted instead of deferred.
+    pub fn note_helper_started(&self) {
+        let deferred = |state: &SystemState| {
+            state.last_applied.as_ref().is_some_and(|a| a.deferred.iter().any(|name| name == HELPER_SERVICE))
+        };
+        if !self.system_state().is_ok_and(|state| deferred(&state)) {
+            return;
+        }
+        let state = self.with_system_state(|state| {
+            if let Some(applied) = &mut state.last_applied {
+                if let Some(at) = applied.deferred.iter().position(|name| name == HELPER_SERVICE) {
+                    applied.deferred.remove(at);
+                    applied.restarted.push(HELPER_SERVICE.to_owned());
+                }
+            }
+        });
+        if let Err(e) = state {
+            eprintln!("nodo-helper: could not update the system update record: {e}");
+        }
     }
 
     pub(crate) fn set_system_auto_update(&self, enabled: bool) -> Result<Response, ApiError> {
@@ -456,10 +520,15 @@ mod tests {
                 snapshot: Some(offered.snapshot),
                 changed: vec!["nodo-tools: 0.1_1 -> 0.1_2".into()],
                 restarted: vec![],
-                deferred: vec!["nodo-helper".into()],
+                // As the real client: nothing restarts when the device must.
+                deferred: if offered.needs_restart { vec![] } else { vec!["nodo-helper".into()] },
                 needs_restart: offered.needs_restart,
                 withdrew: offered.withdraws_current.then(|| "s5".to_owned()),
             })
+        }
+        fn restart_helper(&self) -> Result<(), String> {
+            self.0.lock().unwrap().calls.push("restart helper".into());
+            Ok(())
         }
     }
 
@@ -588,7 +657,46 @@ mod tests {
     }
 
     #[test]
-    fn the_owner_applies_exactly_what_was_shown_and_the_helper_keeps_running() {
+    fn the_helper_restarts_after_answering_an_update_that_replaced_it() {
+        let (h, snapshots) = rig();
+        snapshots.offer(6, false, false);
+        h.handle(1000, Request::CheckSystemUpdate).unwrap();
+        h.restart_if_updated();
+        assert_eq!(snapshots.calls(), ["check"], "nothing was updated, so nothing restarts");
+        h.handle(1000, Request::ApplySystemUpdate { serial: 6 }).unwrap();
+        assert_eq!(snapshots.calls().len(), 2, "not before the reply is sent");
+        h.restart_if_updated();
+        assert_eq!(snapshots.calls()[2], "restart helper");
+        h.restart_if_updated();
+        assert_eq!(snapshots.calls().len(), 3, "once");
+        // The restarted helper records that it now runs the new version.
+        h.note_helper_started();
+        let applied = status(&h).last_applied.unwrap();
+        assert!(applied.deferred.is_empty());
+        assert_eq!(applied.restarted, ["nodo-helper"]);
+    }
+
+    #[test]
+    fn a_snapshot_needing_a_device_restart_does_not_restart_the_helper() {
+        let (h, snapshots) = rig();
+        snapshots.offer(6, true, false);
+        h.handle(1000, Request::CheckSystemUpdate).unwrap();
+        let Ok(Response::SystemUpdateApplied(_)) = h.handle(1000, Request::ApplySystemUpdate { serial: 6 }) else {
+            panic!()
+        };
+        h.restart_if_updated();
+        assert!(!snapshots.calls().iter().any(|c| c == "restart helper"), "{:?}", snapshots.calls());
+    }
+
+    #[test]
+    fn a_start_without_a_deferred_helper_writes_nothing() {
+        let (h, _) = rig();
+        h.note_helper_started();
+        assert!(h.sys.read_file(&h.system_state_path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_owner_applies_exactly_what_was_shown_and_the_client_leaves_the_helper_running() {
         let (h, snapshots) = rig();
         snapshots.offer(6, false, false);
         let Ok(Response::SystemUpdate(checked)) = h.handle(1000, Request::CheckSystemUpdate) else { panic!() };

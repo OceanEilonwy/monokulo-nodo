@@ -27,8 +27,8 @@ pub struct SystemUpdateResult {
     /// `name: old -> new`, one per package.
     pub changed: Vec<String>,
     pub restarted: Vec<String>,
-    /// Services that changed and keep running the old version until their next restart, such
-    /// as the helper itself.
+    /// Services that changed and were not restarted with the others. The helper is listed here
+    /// in the reply to the update, since it answers first and then restarts itself.
     pub deferred: Vec<String>,
     pub needs_restart: bool,
     /// The withdrawn snapshot the device left, when packages moved back.
