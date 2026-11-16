@@ -1,13 +1,45 @@
-# monokulo-nodo
+<p align="center">
+  <img src="docs/readme/logo.svg" width="288" alt="The Nodo logo in Unicode half blocks, as the boot splash draws it">
+</p>
 
-A from-scratch Monero appliance for the FriendlyElec NanoPC-T6N, built on Void Linux and runit, with one
-Rust codebase and signed xbps packages.
+<p align="center">
+  <img src="docs/readme/tui-home.png" height="260" alt="The terminal UI's Home tab: the Nodo is locked, an app keeps stopping, three updates are ready">
+  &nbsp;&nbsp;
+  <img src="docs/design/gui/real/r-home.png" height="260" alt="Home on the NanoPC-T6N's touchscreen">
+</p>
 
-**Status: early development. It has not yet been proven on real hardware. Do not rely on it for funds.**
+<h1 align="center">monokulo-nodo</h1>
 
-- [Architecture and decisions](docs/ARCHITECTURE.md)
-- [The app feed](docs/FEED.md), published at https://nodo.monokulo.com
-- [TUI design](docs/design/tui/)
+<p align="center">
+  <strong>A from-scratch Monero appliance for the FriendlyElec NanoPC-T6N.</strong><br>
+  Void Linux and runit, one Rust codebase, and signed xbps packages from feeds you choose.<br>
+  A Monero node by default, with Monokulo, the light wallet server and more one install away.
+</p>
+
+<p align="center">
+  <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml/badge.svg?branch=main" alt="Crates"></a>
+  <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml/badge.svg?branch=main" alt="System snapshot"></a>
+  <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml/badge.svg?branch=main" alt="App feed"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-informational" alt="GPL-3.0"></a>
+</p>
+
+<p align="center">
+  <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a> ·
+  <a href="docs/FEED.md"><b>App feed</b></a> ·
+  <a href="docs/SCREEN.md"><b>Screen</b></a> ·
+  <a href="docs/UPDATES.md"><b>Updates</b></a> ·
+  <a href="#building"><b>Building</b></a>
+</p>
+
+> **Status: early development. It has not yet been proven on real hardware. Do not rely on it for funds.**
+
+## Why monokulo-nodo
+
+- **A node first.** `cuprated` runs by default, with `monerod` as an alternative. Its RPC is restricted and stays on loopback; only P2P is open to the network.
+- **Every service in its own box.** Each one gets its own user, a bubblewrap sandbox, per-user nftables rules and a Landlock and seccomp layer, all generated from its manifest. Packages never write system configuration.
+- **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server and Kringle. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
+- **Updates that can be undone.** The base system arrives in tested, signed snapshots, never straight from Void's rolling `current`, with A/B rollback, opt-in auto-updates and backups to USB. See [updates, rollback, health and backups](docs/UPDATES.md).
+- **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system.
 
 ## Building
 
@@ -27,7 +59,7 @@ tests/inspect-t6n-mainline.sh out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n
 	out/images/nanopc-t6n/monokulo-nanopc-t6n-sd.img
 ```
 
-- [Hardware test](docs/HARDWARE_TEST.md) and [mainline kernel notes](docs/MAINLINE_KERNEL.md)
+- [Hardware test](docs/HARDWARE_TEST.md), [mainline kernel notes](docs/MAINLINE_KERNEL.md) and [TUI design](docs/design/tui/)
 
 ## License
 
