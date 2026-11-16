@@ -1,6 +1,7 @@
 //! `/etc/nodo/screen.toml`, shared with nodo-screen: when the backlight dims. Its `[touch]` table
-//! is nodo-screen's (libinput and the display's rotation turn touches for nodo-gui); it is read
-//! only so that the same file stays valid for both.
+//! is nodo-screen's (for nodo-gui, libinput turns touches through the calibration in nodo-tools'
+//! `70-nodo-touch.rules`, since Slint's display rotation turns only the picture); it is read only
+//! so that the same file stays valid for both.
 
 use serde::Deserialize;
 
