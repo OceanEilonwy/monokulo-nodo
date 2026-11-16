@@ -1762,10 +1762,17 @@ impl Manage {
             cards.push(toned(card("The data drive is missing", &drive.waiting, rows), 3));
         }
         let locked: Vec<_> = snap.overview.unlock_targets.iter().filter(|t| t.encrypted).collect();
-        if !locked.is_empty() {
+        // The helper can be locked with no encrypted app waiting, such as before the first one is
+        // installed; saved keys like a domain provider's still need the passphrase.
+        if !locked.is_empty() || snap.overview.locked {
             let mut rows: Vec<MRow> = locked.iter().map(|t| line(&t.name, &t.note)).collect();
             rows.push(buttons(vec![button("device-unlock", "Unlock", 0)]));
-            cards.push(toned(card("Unlock after a restart", "Encrypted apps wait for the device passphrase.", rows), 1));
+            let sub = if locked.is_empty() {
+                "Saved keys and secret settings wait for the device passphrase."
+            } else {
+                "Encrypted apps wait for the device passphrase."
+            };
+            cards.push(toned(card("Unlock after a restart", sub, rows), 1));
         }
         for a in &snap.overview.attention {
             let tone = match a.level {

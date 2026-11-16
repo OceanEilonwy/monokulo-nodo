@@ -5,7 +5,7 @@ mod common;
 
 use common::{draw, screen_text, send, text, type_text};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, Exposure, Request, ServiceState, SettingChange, SettingInput, SettingLiteral};
+use nodo_api::{ApiError, Backend, Exposure, Request, ServiceState, SettingChange, SettingInput, SettingLiteral};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{ctrl, fixture, press};
 use nodo_tui::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
@@ -469,6 +469,7 @@ fn hosting_without_a_provider_adds_one_and_comes_back() {
     assert!(screen.contains("Connect Cloudflare"), "{screen}");
     // Cloudflare lists the domains its key controls, so there is no web address to type.
     assert!(!screen.contains("Web address"), "{screen}");
+    assert!(screen.contains("This Nodo is locked. Connect asks for the device passphrase first"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert!(screen_text(&app).contains("Paste the key from Cloudflare"), "{}", screen_text(&app));
     type_text(&mut app, &mut mock, "api-value-123");
@@ -476,6 +477,13 @@ fn hosting_without_a_provider_adds_one_and_comes_back() {
     type_text(&mut app, &mut mock, "secret-value-456");
     let screen = screen_text(&app);
     assert!(!screen.contains("api-value-123") && !screen.contains("secret-value-456"), "{screen}");
+    // wallet-relay waits for the passphrase, so the device is locked: Connect asks for it first,
+    // then carries on with the keys already typed.
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Unlock your Nodo") && screen.contains("Connecting Cloudflare stores its key locked"), "{screen}");
+    assert!(mock.connected.is_empty(), "nothing is sent before the unlock");
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(mock.connected.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Cloudflare"]);
     let screen = screen_text(&app);
@@ -491,6 +499,7 @@ fn hosting_without_a_provider_adds_one_and_comes_back() {
 #[test]
 fn a_provider_that_cannot_list_asks_for_the_web_address() {
     let (mut app, mut mock) = fixture(ScreenId::WebProviders);
+    unlock_mock(&mut app, &mut mock);
     select_provider(&mut app, &mut mock, "GoDaddy");
     key(&mut app, &mut mock, ENTER);
     assert!(screen_text(&app).contains("Web address"), "{}", screen_text(&app));
@@ -504,6 +513,51 @@ fn a_provider_that_cannot_list_asks_for_the_web_address() {
     key(&mut app, &mut mock, ENTER);
     let godaddy = mock.connected.iter().find(|p| p.name == "GoDaddy").expect("connected");
     assert_eq!(godaddy.domains[0].name, "example.net");
+}
+
+fn unlock_mock(app: &mut App, mock: &mut MockBackend) {
+    assert_eq!(mock.call(Request::Unlock { passphrase: nodo_api::Secret::new(MOCK_PASSPHRASE) }), Ok(nodo_api::Response::Ok));
+    app.data = load_snapshot(mock).unwrap();
+}
+
+#[test]
+fn a_device_locked_with_no_app_waiting_still_unlocks_from_home_and_from_connect() {
+    // After a restart with no encrypted app installed yet: nothing waits, but the helper has no
+    // device key, so DNS keys can't be stored. The TUI must still offer the unlock.
+    let (mut app, mut mock) = without_a_provider();
+    unlock_mock(&mut app, &mut mock);
+    mock.key_locked = true;
+    app.data = load_snapshot(&mut mock).unwrap();
+    assert!(mock.services.iter().all(|svc| svc.state != ServiceState::Locked));
+    assert!(app.is_locked());
+
+    app.screen = Screen::Home { selected: 0 };
+    let screen = screen_text(&app);
+    assert!(screen.contains("Your Nodo is locked") && screen.contains("domain provider"), "{screen}");
+
+    app.screen = Screen::WebProviders(ProvidersState::new(""));
+    select_provider(&mut app, &mut mock, "Porkbun");
+    key(&mut app, &mut mock, ENTER);
+    type_text(&mut app, &mut mock, "example.net");
+    key(&mut app, &mut mock, TAB);
+    type_text(&mut app, &mut mock, "pk1_key");
+    key(&mut app, &mut mock, TAB);
+    type_text(&mut app, &mut mock, "sk1_secret");
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Unlock your Nodo") && screen.contains("Connecting Porkbun"), "{screen}");
+    type_text(&mut app, &mut mock, "wrong passphrase");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("did not unlock"), "{}", screen_text(&app));
+    assert!(mock.connected.is_empty());
+    let Screen::Unlock(state) = &mut app.screen else { panic!("still unlocking") };
+    state.retry_at_tick = 0;
+    dispatch(&mut app, &mut mock, ctrl('u'));
+    type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
+    key(&mut app, &mut mock, ENTER);
+    assert!(!mock.key_locked);
+    assert_eq!(mock.connected.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Porkbun"]);
+    assert!(screen_text(&app).contains("Porkbun is connected"), "{}", screen_text(&app));
 }
 
 #[test]

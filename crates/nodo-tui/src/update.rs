@@ -2417,7 +2417,20 @@ fn on_unlock_result(app: &mut App, result: Result<Response, ApiError>) -> Vec<Ef
     };
     match result {
         Ok(_) => {
+            let resume = state.resume.is_some();
             pop(app);
+            // Until the refresh arrives, the snapshot still says locked; the helper has the key now.
+            app.data.overview.locked = false;
+            app.data.overview.unlock_targets.clear();
+            for svc in app.data.services.iter_mut().filter(|svc| svc.state == nodo_api::ServiceState::Locked) {
+                svc.state = nodo_api::ServiceState::Waiting;
+            }
+            if resume {
+                notice(app, NoticeKind::Ok, "Unlocked.");
+                let mut effects = on_key(app, KeyEvent::from(KeyCode::Enter));
+                effects.push(Effect::Refresh);
+                return effects;
+            }
             notice(app, NoticeKind::Ok, "Unlocked. Services are starting in dependency order.");
             vec![Effect::Refresh]
         }
