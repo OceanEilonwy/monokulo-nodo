@@ -194,6 +194,8 @@ fn main() -> ExitCode {
     }
     // Radios the owner left off are blocked again, since rfkill state does not survive a reboot.
     helper.apply_radio_state();
+    // A system update that replaced the helper restarted it; its record says so from now on.
+    helper.note_helper_started();
     let helper = Arc::new(helper);
     watch_local_address(helper.clone());
     refresh_feeds_at_start(helper.clone());

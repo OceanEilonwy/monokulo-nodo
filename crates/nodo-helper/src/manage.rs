@@ -2,6 +2,7 @@
 //! installed, and the state they keep.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 use nodo_api::{ApiError, Request, Response};
@@ -76,6 +77,9 @@ pub struct Manage {
     pub(crate) work: Mutex<()>,
     /// Held while the feed or update state is read, changed and written back.
     pub(crate) state: Mutex<()>,
+    /// A system update replaced the helper's own program, so the helper restarts once the reply
+    /// to that request is sent (`Helper::restart_if_updated`).
+    pub(crate) restart_pending: AtomicBool,
 }
 
 impl Default for Manage {
@@ -87,6 +91,7 @@ impl Default for Manage {
             snapshots: Box::new(crate::sysupdate::RealSnapshots::default()),
             work: Mutex::new(()),
             state: Mutex::new(()),
+            restart_pending: AtomicBool::new(false),
         }
     }
 }
