@@ -6,6 +6,7 @@ mod certs;
 mod home;
 mod more;
 mod network;
+pub mod owner;
 pub mod layout;
 mod settings;
 mod setup;
@@ -65,6 +66,8 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Apps { selected } => apps::apps(app, t, *selected),
         Screen::AppPage(state) => apps::app_page(app, t, state),
         Screen::AppRemove(state) => apps::app_remove(app, t, state),
+        Screen::Bundle(state) => owner::bundle(app, t, state),
+        Screen::OwnerPage(state) => owner::owner_page(app, t, state),
         Screen::Search(state) => apps::search(app, t, state),
         Screen::Detail(detail) => apps::detail(app, t, detail),
         Screen::Rejected(data) => apps::rejected(app, t, data),

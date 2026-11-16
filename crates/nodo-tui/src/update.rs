@@ -14,6 +14,8 @@ use crate::secret::Input;
 mod more;
 #[path = "update_net.rs"]
 mod net;
+#[path = "update_owner.rs"]
+mod owner;
 #[path = "update_web.rs"]
 mod web;
 
@@ -357,6 +359,8 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::AppPage => app_page_key(app, key),
         ScreenId::AppRemove => app_remove_key(app, key),
         ScreenId::System => system_key(app, key),
+        ScreenId::Bundle => owner::bundle_key(app, key),
+        ScreenId::OwnerPage => owner::owner_key(app, key),
     }
 }
 
@@ -406,12 +410,18 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         };
     }
     let has_update = app.data.updates.iter().any(|item| item.name == name && !item.held);
+    let sections = app_sections(app, &name);
+    let owner_row = sections.len() > APP_SECTIONS.len();
+    let Screen::AppPage(state) = &mut app.screen else {
+        return Vec::new();
+    };
     match key.code {
         KeyCode::Char('?') => app.overlay = Some(Overlay { doc: help_document(), scroll: 0 }),
         KeyCode::Esc => pop(app),
-        KeyCode::Down | KeyCode::Up => step(&mut state.selected, APP_SECTIONS.len(), key.code == KeyCode::Down),
+        KeyCode::Down | KeyCode::Up => step(&mut state.selected, sections.len(), key.code == KeyCode::Down),
         KeyCode::Char('m') => state.more_open = true,
-        KeyCode::Enter => match APP_SECTIONS[state.selected.min(APP_SECTIONS.len() - 1)] {
+        KeyCode::Enter if owner_row && state.selected == 0 => return owner::open_owner_page(app, &name),
+        KeyCode::Enter => match sections[state.selected.min(sections.len() - 1)].as_str() {
             // An app without a web page shows Hosting as a dimmed row that says so; Enter on
             // it stays put rather than flash a notice as if it had gone somewhere.
             "Hosting" if !app.data.web.sites.iter().any(|site| site.package == name) => {}
@@ -556,6 +566,12 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Backup(state) => backup_input(&mut state.step),
         Screen::Restore(state) => more::restore_input(&mut state.step),
         Screen::Network(state) => net::network_input(state),
+        Screen::Bundle(state) => match state.step {
+            BundleStep::Answers => state.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
+            BundleStep::Passphrase => Some(&mut state.passphrase),
+            _ => None,
+        },
+        Screen::OwnerPage(state) if state.view.is_none() => Some(&mut state.passphrase),
         _ => None,
     }
 }
@@ -2224,6 +2240,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
         Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
         Event::GateLoaded(gate) => match gate {
             InstallGate::Review(data) => push(app, Screen::Review(ReviewState::new(data, ReviewPurpose::Install))),
+            InstallGate::Bundle(review) => owner::open_bundle(app, review),
             InstallGate::Rejected(data) => push(app, Screen::Rejected(data)),
             InstallGate::MissingCapability(data) => {
                 push(app, Screen::Capability(CapabilityState { data, choice: 0 }));
@@ -2405,6 +2422,8 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             }
         }
         Event::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
+        Event::BundleInstalled(result) => owner::on_bundle_installed(app, result),
+        Event::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
         Event::Key(_) | Event::Mouse { .. } | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
     }
     Vec::new()
@@ -2829,12 +2848,23 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
 /// A click that picks a row, a field or a choice: moves the selection there, as the arrow keys
 /// would, so whatever key the click then presses acts on what was clicked.
 fn pick(app: &mut App, index: usize) {
-    let counts = (app.home_items().len(), installed_apps(app).len(), app.data.feeds.len(), app.update_rows().len(), app.data.log_sources.len());
+    let sections = match &app.screen {
+        Screen::AppPage(state) => app_sections(app, &state.name).len(),
+        _ => APP_SECTIONS.len(),
+    };
+    let counts = (
+        app.home_items().len(),
+        installed_apps(app).len(),
+        app.data.feeds.len(),
+        app.update_rows().len(),
+        app.data.log_sources.len(),
+        sections,
+    );
     match &mut app.screen {
         Screen::Home { selected } => *selected = index.min(counts.0.saturating_sub(1)),
         Screen::NoDrive { choice } => *choice = index.min(3),
         Screen::Apps { selected } => *selected = index.min(counts.1.saturating_sub(1)),
-        Screen::AppPage(state) => state.selected = index.min(APP_SECTIONS.len() - 1),
+        Screen::AppPage(state) => state.selected = index.min(counts.5.saturating_sub(1)),
         Screen::AppRemove(state) => state.confirm_focused = index == 1,
         Screen::System { selected } => *selected = index.min(SYSTEM_ROWS.len() - 1),
         Screen::Search(state) => {
@@ -2858,6 +2888,7 @@ fn pick(app: &mut App, index: usize) {
         Screen::UpdateResults(state) => state.choice = index.min(3),
         Screen::Logs(state) => state.selected = index.min(counts.4.saturating_sub(1)),
         Screen::Rollbacks(state) => state.selected = index,
+        Screen::Bundle(_) | Screen::OwnerPage(_) => owner::pick(app, index),
         _ => web::pick(app, index),
     }
 }

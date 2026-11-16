@@ -40,7 +40,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 37, "every screen in the four tabs");
+    assert_eq!(ScreenId::ALL.len(), 39, "every screen in the four tabs");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -97,6 +97,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::Restore => &["Restore", "USB drives"],
         ScreenId::Rollbacks => &["System  ›  Updates  ›  Undo an update", "can roll back"],
         ScreenId::Network => &["System  ›  Network", "Wi-Fi", "Bluetooth"],
+        ScreenId::Bundle => &["Apps  ›  Get apps  ›  pingers  ›  Install", "Install pingers?", "Installs 4 apps", "Serves the site 'push'", "Cancel", "Continue"],
+        ScreenId::OwnerPage => &["Apps  ›  pingers  ›  Setup", "Pingers setup", "1.  Put the sites online", "203.0.113.5", "Copy"],
     }
 }
 
@@ -122,6 +124,10 @@ fn colours_follow_the_design() {
         let (app, _) = fixture(id);
         let (buffer, _) = draw(&app, 100, 32);
         for cell in buffer.content() {
+            // A QR code is black on white whatever the theme, so phones read it in a dark terminal.
+            if id == ScreenId::OwnerPage && [Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255)].contains(&cell.bg) {
+                continue;
+            }
             assert!(
                 [theme.ground, theme.accent, theme.bar, theme.card, theme.field, theme.raised, theme.danger].contains(&cell.bg),
                 "{}: unexpected background {:?}",

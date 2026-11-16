@@ -93,10 +93,14 @@ pub enum ScreenId {
     AppRemove,
     /// The Nodo itself: updates, backups, network, device logs, about.
     System,
+    /// Installing a suite of apps together: review, questions, passphrase, progress, result.
+    Bundle,
+    /// An app's setup checklist for the owner.
+    OwnerPage,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 37] = [
+    pub const ALL: [ScreenId; 39] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -134,6 +138,8 @@ impl ScreenId {
         ScreenId::AppPage,
         ScreenId::AppRemove,
         ScreenId::System,
+        ScreenId::Bundle,
+        ScreenId::OwnerPage,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -177,6 +183,8 @@ impl ScreenId {
             ScreenId::AppPage => "app",
             ScreenId::AppRemove => "appremove",
             ScreenId::System => "system",
+            ScreenId::Bundle => "bundle",
+            ScreenId::OwnerPage => "owner",
         }
     }
 
@@ -1141,9 +1149,12 @@ pub enum Screen {
     AppPage(AppPageState),
     AppRemove(AppRemoveState),
     System { selected: usize },
+    Bundle(Box<crate::app::BundleState>),
+    OwnerPage(Box<OwnerPageState>),
 }
 
-/// One installed app's page: its status and update, then Hosting, Settings and Logs.
+/// One installed app's page: its status and update, then its setup page when it has one, Hosting,
+/// Settings and Logs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPageState {
     pub name: String,
@@ -1156,6 +1167,151 @@ impl AppPageState {
     pub fn new(name: &str) -> Self {
         Self { name: name.to_owned(), selected: 0, more_open: false }
     }
+}
+
+/// Where installing a bundle stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BundleStep {
+    /// The apps it installs with their permissions, the grants and the data drive choices.
+    Review,
+    /// The settings the bundle asks for once, before anything installs.
+    Answers,
+    /// The device passphrase, for new encrypted storage or a secret answer while locked.
+    Passphrase,
+    /// The helper is installing.
+    Installing,
+    Done(nodo_api::BundleReport),
+}
+
+/// Installing a suite of apps together, from the review of the head that declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleState {
+    pub review: nodo_api::BundleReview,
+    pub step: BundleStep,
+    /// In the review: an index into the data drive toggles, then Cancel, then Continue. In the
+    /// questions: the field.
+    pub focus: usize,
+    /// Per `review.data_drive`: keep that app's data on the data drive. On by default when one
+    /// is present.
+    pub drive: Vec<bool>,
+    /// One per ask, in order. A secret ask is a masked field.
+    pub answers: Vec<Input>,
+    pub passphrase: Input,
+    pub error: Option<String>,
+    /// Rows scrolled past in a long review or result.
+    pub scroll: usize,
+}
+
+impl BundleState {
+    pub fn new(review: nodo_api::BundleReview) -> Self {
+        let drive = vec![review.data_drive_present; review.data_drive.len()];
+        let answers = review.asks.iter().map(|a| if a.secret { Input::secret() } else { Input::plain("") }).collect();
+        let focus = drive.len();
+        Self { review, step: BundleStep::Review, focus, drive, answers, passphrase: Input::secret(), error: None, scroll: 0 }
+    }
+
+    /// The asks the owner answers: those for apps not installed yet.
+    pub fn open_asks(&self) -> Vec<usize> {
+        (0..self.review.asks.len()).filter(|&i| !self.review.asks[i].skipped).collect()
+    }
+
+    /// The review's Cancel button, after the toggles; Continue is the one after it.
+    pub fn cancel_index(&self) -> usize {
+        self.drive.len()
+    }
+
+    /// The apps this install puts their data on the data drive for.
+    pub fn chosen_drive(&self) -> Vec<String> {
+        self.review.data_drive.iter().zip(&self.drive).filter(|(_, on)| **on).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// The answers as the helper takes them, every value a secret.
+    pub fn answers_for_helper(&self) -> Vec<nodo_api::BundleAnswer> {
+        self.open_asks()
+            .into_iter()
+            .map(|i| {
+                let ask = &self.review.asks[i];
+                nodo_api::BundleAnswer {
+                    package: ask.package.clone(),
+                    setting: ask.setting.clone(),
+                    value: nodo_api::Secret::new(self.answers[i].secret_value().expose()),
+                }
+            })
+            .collect()
+    }
+}
+
+/// An app's setup page: the passphrase first, then the checklist. The passphrase stays in memory
+/// only while the page is open, so `r` can fetch it again; leaving the page drops it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerPageState {
+    pub package: String,
+    /// The row's name on the app's page, such as "Setup".
+    pub title: String,
+    pub passphrase: Input,
+    pub held: Option<Secret>,
+    pub view: Option<nodo_api::OwnerPageView>,
+    pub error: Option<String>,
+    /// A fetch is under way.
+    pub loading: bool,
+    /// Rows scrolled past.
+    pub scroll: usize,
+    /// An index into [`copy_targets`].
+    pub focus: usize,
+    /// The copy target last copied, for the "Copied" note.
+    pub copied: Option<usize>,
+    /// Keep the focused copy target in view (after Tab); arrows scroll freely.
+    pub follow: bool,
+}
+
+impl OwnerPageState {
+    pub fn new(package: &str, title: &str) -> Self {
+        Self {
+            package: package.to_owned(),
+            title: title.to_owned(),
+            passphrase: Input::secret(),
+            held: None,
+            view: None,
+            error: None,
+            loading: false,
+            scroll: 0,
+            focus: 0,
+            copied: None,
+            follow: false,
+        }
+    }
+}
+
+/// Everything on a setup page that can be copied, in the order drawn: values, QR codes' data and
+/// the DNS records' values, each with its label.
+pub fn copy_targets(view: &nodo_api::OwnerPageView) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for step in &view.steps {
+        for item in &step.items {
+            match item {
+                nodo_api::OwnerItem::Value { label, value } => out.push((label.clone(), value.clone())),
+                nodo_api::OwnerItem::Qr { label, data } => out.push((label.clone(), data.clone())),
+                nodo_api::OwnerItem::Site(site) => {
+                    if let Some(host) = &site.host {
+                        out.push(("Address".to_owned(), host.clone()));
+                    }
+                    for record in &site.records {
+                        out.push((format!("{} record {}", record.kind, record.name), record.value.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// The rows of an app's page: its setup page first when it has one, then Hosting, Settings and
+/// Logs.
+pub fn app_sections(app: &App, name: &str) -> Vec<String> {
+    let mut rows: Vec<String> = app.data.owner_pages.iter().filter(|(p, _)| p == name).map(|(_, t)| t.clone()).collect();
+    rows.extend(APP_SECTIONS.iter().map(|s| (*s).to_owned()));
+    rows
 }
 
 /// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
@@ -1240,6 +1396,8 @@ impl Screen {
             Screen::AppPage(_) => ScreenId::AppPage,
             Screen::AppRemove(_) => ScreenId::AppRemove,
             Screen::System { .. } => ScreenId::System,
+            Screen::Bundle(_) => ScreenId::Bundle,
+            Screen::OwnerPage(_) => ScreenId::OwnerPage,
         }
     }
 
@@ -1351,6 +1509,8 @@ pub struct App {
     pub hits: std::cell::RefCell<Vec<crate::hit::Hit>>,
     /// The click target under the mouse pointer, drawn with a hover fill.
     pub hover: Option<ratatui::layout::Rect>,
+    /// Text to put on the terminal's clipboard (OSC 52). The runtime writes it and clears it.
+    pub clipboard: Option<String>,
 }
 
 impl Default for App {
@@ -1401,6 +1561,7 @@ impl App {
             pending: None,
             hits: std::cell::RefCell::new(Vec::new()),
             hover: None,
+            clipboard: None,
         }
     }
 
@@ -1548,6 +1709,15 @@ pub enum Effect {
     PollBluetooth,
     ConnectBluetooth { address: String, connect: bool },
     RemoveBluetooth(String),
+    /// Installs a reviewed bundle with the owner's answers and data drive choices.
+    InstallBundle {
+        review: Box<nodo_api::BundleReview>,
+        answers: Vec<nodo_api::BundleAnswer>,
+        data_drive: Vec<String>,
+        passphrase: Option<Secret>,
+    },
+    /// Fetches an app's setup page with the device passphrase.
+    LoadOwnerPage { package: String, passphrase: Secret },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1629,6 +1799,8 @@ pub enum Event {
     WifiChanged { result: Result<nodo_api::WifiStatus, String>, quiet: bool },
     WifiScanned(Result<Vec<nodo_api::WifiNetwork>, String>),
     BluetoothChanged { result: Result<nodo_api::BluetoothStatus, String>, quiet: bool },
+    BundleInstalled(Result<nodo_api::BundleReport, String>),
+    OwnerPageLoaded { package: String, result: Result<nodo_api::OwnerPageView, ApiError> },
 }
 
 /// The USB drive the backup screen shows: the first one plugged in, with its backups when it

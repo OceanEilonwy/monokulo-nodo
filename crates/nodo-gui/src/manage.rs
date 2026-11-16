@@ -2018,6 +2018,15 @@ impl Manage {
                 let rows = vec![text(&c.message, 4), line("Your node", &c.current_node), text(&c.switch_note, 0)];
                 Page { crumbs: self.crumbs(), title: format!("{} needs another app first", c.id.name), actions: Vec::new(), cards: vec![toned(card("", "", rows), 1)] }
             }
+            // A bundle asks questions, some of them secrets to paste, which the screen has no keyboard for.
+            InstallGate::Bundle(b) => {
+                let mut rows = vec![text("It installs these apps together, and asks a few questions first. Install it from the terminal (nodo-tui over SSH), where you can answer them.", 0)];
+                for m in &b.members {
+                    rows.push(line(format!("•  {}", m.review.package), if m.installed.is_some() { "installed already" } else { "" }));
+                }
+                rows.push(buttons(vec![button("back", "OK", 0)]));
+                Page { crumbs: self.crumbs(), title: format!("{} installs {} apps", b.package, b.members.len()), actions: Vec::new(), cards: vec![card("", "", rows)] }
+            }
         }
     }
 
@@ -2381,6 +2390,7 @@ fn load_snapshot(d: &mut dyn Data) -> Result<Snapshot, ApiError> {
         auto_update: d.auto_update(),
         unavailable: d.unavailable(),
         system_note: d.system_note(),
+        owner_pages: d.owner_pages(),
     })
 }
 

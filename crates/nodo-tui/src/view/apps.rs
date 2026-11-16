@@ -103,8 +103,8 @@ fn truncate(text: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
-/// One app's page: its state and update, then Hosting, Settings and Logs. Restart, Stop and
-/// Remove sit on the breadcrumb row (folded into "⋯ More" under 100 columns).
+/// One app's page: its state and update, then its setup page (when it has one), Hosting, Settings
+/// and Logs. Restart, Stop and Remove sit on the breadcrumb row (folded into "⋯ More" under 100 columns).
 pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::Apps, w);
@@ -157,8 +157,12 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
 
     let mut sections = Card::new(t, w);
     sections.blank(t);
-    let summaries = [hosting_summary(app, name), "Change how it works".to_owned(), log_summary(app, name)];
-    for (index, (section, summary)) in APP_SECTIONS.iter().zip(summaries).enumerate() {
+    let names = crate::app::app_sections(app, name);
+    let mut summaries = vec![hosting_summary(app, name), "Change how it works".to_owned(), log_summary(app, name)];
+    if names.len() > APP_SECTIONS.len() {
+        summaries.insert(0, "The steps to set it up, and whether each is done".to_owned());
+    }
+    for (index, (section, summary)) in names.iter().zip(summaries).enumerate() {
         if index > 0 {
             sections.blank(t);
         }
@@ -168,13 +172,13 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
         let lead = if index == state.selected { t.a("▸ ") } else { t.n("  ") };
         // Hosting is about the app's web page; an app without one has nothing to open there, so
         // the row is dimmed, says why, and takes no click.
-        if *section == "Hosting" && site.is_none() {
+        if section == "Hosting" && site.is_none() && index + 3 >= names.len() {
             sections.row(t, vec![lead, t.d(pad(section, 12)), t.d("This app has no web page to put online")]);
             continue;
         }
         let room = sections.inner().saturating_sub(2 + 12 + 3);
         sections.row_end(t, vec![lead, t.b(pad(section, 12)), t.d(truncate(&summary, room))], vec![t.d("›")]);
-        screen.targets.push(Target::card_row(*section, pick(index)));
+        screen.targets.push(Target::card_row(section.clone(), pick(index)));
     }
     sections.blank(t);
     screen.stack(t, vec![status, sections], "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back", w, h)
@@ -290,7 +294,12 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
         }
         let tag = tag_of(&pkg.status);
         let lead = if selected { t.a("▸ ") } else { t.n("  ") };
-        card.row_end(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&pkg.tagline, cols.what))], vec![t.d(tag.to_owned())]);
+        // A bundle head says how many apps one install sets up, itself included.
+        let what = match pkg.bundle {
+            Some(members) => format!("Installs {} apps · {}", members + 1, pkg.tagline),
+            None => pkg.tagline.clone(),
+        };
+        card.row_end(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&what, cols.what))], vec![t.d(tag.to_owned())]);
         screen.targets.push(Target::card_row(pkg.id.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
     }
     if results.is_empty() {

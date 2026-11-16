@@ -1,0 +1,32 @@
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  Get apps  ›  pingers  ›  Install
+
+
+       Install pingers?   Installs 4 apps
+
+       ▲  They come from pingers, a source you added. Nobody has reviewed their code for you.
+
+       ●  pingers-push-relay   version 1.0.0_1
+            ·  Connects to the internet
+            ·  Serves the site 'push'
+            ◆  Keeps its data in encrypted storage   Locks at reboot
+       ●  pingers-map-host   version 1.0.0_1
+            ·  Serves the site 'maps'
+            ·  Keeps its data unencrypted
+       ●  pingers-server   version 1.0.0_1
+            ·  Serves the site 'api'
+            ·  Uses pingers-push-relay
+            ◆  Keeps its data in encrypted storage   Locks at reboot
+       ●  pingers   version 1.0.0_1
+            ·  Sets up pingers-push-relay with it
+            ·  Sets up pingers-map-host with it
+            ·  Sets up pingers-server with it
+    ↓ more — scroll with ↑↓, PgUp and PgDn, or the wheel
+
+
+                                                              ▸ Cancel           Continue
+
+    Keys: ↑↓ choose  space switch  ↵ on a button  PgUp PgDn scroll  Esc cancel
