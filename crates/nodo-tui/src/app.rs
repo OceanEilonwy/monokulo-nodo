@@ -223,12 +223,15 @@ pub struct UnlockState {
     pub error: Option<String>,
     pub failures: u32,
     pub retry_at_tick: u64,
+    /// Why a screen sent the owner here. Once unlocked, that screen gets its Enter again, so
+    /// what was asked for carries on without typing it twice.
+    pub resume: Option<String>,
 }
 
 impl Default for UnlockState {
     /// Written out because a derived default would make the passphrase input a plain one.
     fn default() -> Self {
-        Self { input: Input::secret(), error: None, failures: 0, retry_at_tick: 0 }
+        Self { input: Input::secret(), error: None, failures: 0, retry_at_tick: 0, resume: None }
     }
 }
 
@@ -1410,8 +1413,10 @@ impl App {
         self.data.updates.iter().filter(|item| !item.held).count()
     }
 
+    /// The device key is not in memory. The helper says so even when no app waits, such as
+    /// before the first encrypted app is installed, and DNS keys still need it.
     pub fn is_locked(&self) -> bool {
-        self.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked)
+        self.data.overview.locked || self.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked)
     }
 
     /// Available updates first, then held ones, matching the rows the Updates screen shows.

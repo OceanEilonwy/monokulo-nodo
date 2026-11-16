@@ -443,6 +443,7 @@ impl ScreenData for HelperBackend {
                 None => "Not checked yet. Press r to check now.".to_owned(),
             },
             setup_needed: o.encryption == EncryptionState::NotSetUp,
+            locked: o.encryption == EncryptionState::Locked,
             attention: crate::helper_manage::attention(health.as_ref(), status.as_ref()),
         }
     }

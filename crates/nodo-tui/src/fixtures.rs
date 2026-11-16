@@ -156,6 +156,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 error: Some("That passphrase did not unlock this device. Try again.".to_owned()),
                 failures: 1,
                 retry_at_tick: 0,
+                resume: None,
             })
         }
         ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false },

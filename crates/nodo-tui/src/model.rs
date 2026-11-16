@@ -610,6 +610,10 @@ pub struct Overview {
     pub updates_checked: String,
     /// First boot: no device passphrase exists yet, so setup comes before anything else.
     pub setup_needed: bool,
+    /// The helper does not hold the device key, as after a restart. Sealed secrets, such as a
+    /// domain provider's keys, can't be stored until the owner unlocks, even when no installed
+    /// app has encrypted storage waiting.
+    pub locked: bool,
     pub attention: Vec<Attention>,
 }
 

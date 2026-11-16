@@ -465,6 +465,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             card.blank(t);
             match &state.test {
                 Some(Err(text)) => card.row(t, vec![t.e(text.clone())]),
+                _ if app.is_locked() => card.row(t, vec![t.d("This Nodo is locked. Connect asks for the device passphrase first, then stores the key.")]),
                 _ if lists => card.row(t, vec![t.d(format!("The Nodo asks {name} which domains this key controls. The key stays here, locked, never shown again."))]),
                 _ => card.row(t, vec![t.d("The key stays on this Nodo, locked with your device passphrase, and is never shown again.")]),
             }
