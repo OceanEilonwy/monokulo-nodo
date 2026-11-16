@@ -21,7 +21,7 @@ use nodo_api::{ApiError, Backend, PublicConfirmation, Request, Response};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, Effect, Event, ExposureAfter, MouseKind, UsbView, TICKS_PER_SECOND};
+use crate::app::{App, Effect, Event, ExposureAfter, MouseKind, Screen, UsbView, TICKS_PER_SECOND};
 use crate::input::{Input, Next};
 use crate::model::*;
 use crate::theme::Theme;
@@ -635,9 +635,62 @@ fn install_panic_hook<M: TerminalMode>(mode: Arc<M>) {
     }));
 }
 
+/// Why [`run`] returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    /// The user quit, a termination signal arrived or the terminal hung up.
+    Quit,
+    /// An update replaced this program on disk. The terminal is restored; the caller starts the
+    /// new program in this process.
+    Restart,
+}
+
+/// How often the event loop looks at whether an update replaced this program.
+const REPLACED_CHECK: Duration = Duration::from_secs(5);
+
+/// The program file this process was started from, as the kernel names it. Once the file is
+/// replaced, the kernel adds " (deleted)" to the old name.
+fn installed_program() -> Option<std::path::PathBuf> {
+    let link = std::fs::read_link("/proc/self/exe").ok()?;
+    let text = link.to_str()?;
+    Some(text.strip_suffix(" (deleted)").unwrap_or(text).into())
+}
+
+/// Whether the file at this process's program path is no longer the one it runs: an update
+/// installed a new nodo-tui. A program that was only removed is not replaced.
+pub fn program_replaced() -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(running) = std::fs::metadata("/proc/self/exe") else { return false };
+    let Some(path) = installed_program() else { return false };
+    std::fs::metadata(path).is_ok_and(|on_disk| (on_disk.dev(), on_disk.ino()) != (running.dev(), running.ino()))
+}
+
+/// The new program to start in place of this one, after [`Exit::Restart`].
+pub fn replacement_program() -> Option<std::path::PathBuf> {
+    installed_program().filter(|path| path.is_file())
+}
+
+/// A moment when starting again loses nothing: on one of the four tabs, with nothing typed,
+/// asked or running.
+pub fn at_rest(app: &App, worker_busy: bool) -> bool {
+    !worker_busy
+        && !app.working
+        && app.pending.is_none()
+        && app.modal.is_none()
+        && app.overlay.is_none()
+        && matches!(app.screen, Screen::Home { .. } | Screen::Apps { .. } | Screen::Web { .. } | Screen::System { .. })
+}
+
 /// Runs the TUI until the user quits, a termination signal arrives or the terminal hangs up. The
-/// backend lives on a worker thread, so slow helper calls never freeze the screen.
-pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, theme: Theme) -> io::Result<()> {
+/// backend lives on a worker thread, so slow helper calls never freeze the screen. With `restart_when_replaced`, it
+/// also returns [`Exit::Restart`] when an update replaced this program and nothing is under way,
+/// so an open TUI never keeps running an old version.
+pub fn run<T: Backend + ScreenData + Send + 'static>(
+    mut app: App,
+    backend: T,
+    theme: Theme,
+    restart_when_replaced: bool,
+) -> io::Result<Exit> {
     // Declared before the guard, so it is dropped after the terminal is restored.
     let mut input = Input::open()?;
     let _guard = TerminalGuard::enter(CrosstermMode)?;
@@ -655,7 +708,14 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, t
 
     let tick = Duration::from_millis(1000 / TICKS_PER_SECOND);
     let mut last_tick = Instant::now();
+    let mut last_replaced_check = Instant::now();
     while !app.should_quit {
+        if restart_when_replaced && last_replaced_check.elapsed() >= REPLACED_CHECK {
+            last_replaced_check = Instant::now();
+            if at_rest(&app, worker.busy()) && program_replaced() {
+                return Ok(Exit::Restart);
+            }
+        }
         for event in worker.ready() {
             dispatch_async(&mut app, &mut worker, event);
         }
@@ -708,5 +768,29 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(mut app: App, backend: T, t
             }
         }
     }
-    Ok(())
+    Ok(Exit::Quit)
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+
+    #[test]
+    fn restarts_only_at_rest_on_a_tab() {
+        let mut app = App::new();
+        app.screen = Screen::System { selected: 0 };
+        assert!(at_rest(&app, false));
+        assert!(!at_rest(&app, true), "a request is still running");
+        app.working = true;
+        assert!(!at_rest(&app, false));
+        app.working = false;
+        app.screen = Screen::Updates(crate::app::UpdatesState { selected: 0, checked: vec![], passphrase: None });
+        assert!(!at_rest(&app, false), "the owner is in the middle of something");
+    }
+
+    #[test]
+    fn this_test_program_was_not_replaced() {
+        assert!(!program_replaced());
+        assert!(replacement_program().is_some());
+    }
 }

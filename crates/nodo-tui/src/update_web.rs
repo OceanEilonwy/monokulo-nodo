@@ -207,6 +207,7 @@ fn provider_fields(app: &App, selected: usize) -> Vec<ProviderFocus> {
 
 pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let providers = app.data.providers.clone();
+    let locked = app.is_locked();
     let connected = app.data.connected.clone();
     let fields = match &app.screen {
         Screen::WebProviders(state) => provider_fields(app, state.selected),
@@ -307,6 +308,13 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                         return Vec::new();
                     }
                     state.test = None;
+                    if locked {
+                        // The keys are stored sealed, so the helper would refuse them. Ask for the
+                        // passphrase here; the unlock screen sends Enter back to carry on.
+                        let reason = format!("Connecting {} stores its key locked with the device passphrase.", provider.name);
+                        push(app, Screen::Unlock(UnlockState { resume: Some(reason), ..UnlockState::default() }));
+                        return Vec::new();
+                    }
                     return vec![Effect::AddProvider {
                         provider: provider.name.clone(),
                         domain: (!provider.lists_domains).then_some(domain),

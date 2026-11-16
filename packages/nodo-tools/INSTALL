@@ -12,5 +12,12 @@ post)
 		ln -s /etc/sv/nodo-gui "$enabled/nodo-gui"
 		echo "nodo-tools: the built-in screen now runs nodo-gui in place of nodo-screen"
 	fi
+	# On a running device, give the touchscreen its calibration (70-nodo-touch.rules) now rather
+	# than at the next boot. The update then restarts nodo-gui, whose libinput reads it on opening.
+	# Image builds have no udev running and skip this.
+	if [ -S ./run/udev/control ] && command -v udevadm >/dev/null 2>&1; then
+		udevadm control --reload 2>/dev/null &&
+			udevadm trigger --subsystem-match=input --action=change 2>/dev/null
+	fi
 	;;
 esac

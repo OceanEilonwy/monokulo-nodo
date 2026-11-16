@@ -59,6 +59,8 @@ pub fn serve_connection<S: System>(
         let result = helper.handle(uid, request);
         eprintln!("nodo-helper: uid {uid} {action}: {}", outcome(&result));
         respond(&mut stream, &result)?;
+        // After the answer is out, so the client learns what the update did.
+        helper.restart_if_updated();
     }
 }
 
@@ -92,6 +94,7 @@ pub fn serve_screen_connection<S: System>(
         let result = helper.handle_screen(uid, request);
         eprintln!("nodo-helper: screen {action}: {}", outcome(&result));
         respond(&mut stream, &result)?;
+        helper.restart_if_updated();
     }
 }
 

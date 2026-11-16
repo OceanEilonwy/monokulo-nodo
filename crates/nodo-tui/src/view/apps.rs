@@ -478,9 +478,14 @@ pub fn unlock(app: &App, t: &Theme, state: &UnlockState) -> Page {
     card.blank(t);
     card.row(t, vec![t.b("Unlock your Nodo")]);
     card.blank(t);
-    let restarted = if overview.restarted.is_empty() { "The Nodo restarted.".to_owned() } else { format!("{}.", overview.restarted.trim_end_matches('.')) };
-    card.row(t, vec![t.n(format!("{restarted} Your apps' data is locked until you type the device passphrase."))]);
     let waiting: Vec<&str> = overview.unlock_targets.iter().filter(|target| target.encrypted).map(|target| target.name.as_str()).collect();
+    if let Some(reason) = &state.resume {
+        card.row(t, vec![t.n(format!("{reason} Type it to unlock the Nodo and carry on."))]);
+    } else {
+        let restarted = if overview.restarted.is_empty() { "The Nodo restarted.".to_owned() } else { format!("{}.", overview.restarted.trim_end_matches('.')) };
+        let what = if waiting.is_empty() { "Saved keys and secret settings stay" } else { "Your apps' data is" };
+        card.row(t, vec![t.n(format!("{restarted} {what} locked until you type the device passphrase."))]);
+    }
     if !waiting.is_empty() {
         card.row(t, vec![t.d(format!("{} start after you unlock.", waiting.join(", ")))]);
     }

@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=23
+revision=24
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash"
@@ -72,6 +72,9 @@ do_install() {
 	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Regular.ttf 644 usr/share/fonts/nodo
 	vinstall crates/nodo-gui/ui/fonts/JetBrainsMono-Bold.ttf 644 usr/share/fonts/nodo
 	vinstall crates/nodo-gui/ui/fonts/OFL.txt 644 usr/share/licenses/nodo-tools OFL-JetBrainsMono.txt
+	# Turns the touchscreen's positions the quarter turn the picture takes (Slint turns only the
+	# picture). Matches only a Goodix touchscreen, so it does nothing on boards without one.
+	vinstall ${FILESDIR}/udev/70-nodo-touch.rules 644 usr/lib/udev/rules.d
 	# libxkbcommon's keymaps would otherwise bring xkbcomp and libX11 (the file says why).
 	vinstall ${FILESDIR}/xbps.d/nodo-no-x11.conf 644 usr/share/xbps.d
 	# The screen's Shut down button: a root service that only stops services and turns the device

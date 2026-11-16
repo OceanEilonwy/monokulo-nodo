@@ -80,7 +80,11 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
         let (head, body, label) = match item {
             HomeItem::Unlock => (
                 "Your Nodo is locked".to_owned(),
-                "Apps' data waits for the device passphrase. They start once you unlock.".to_owned(),
+                if app.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked) {
+                    "Apps' data waits for the device passphrase. They start once you unlock.".to_owned()
+                } else {
+                    "Saved keys and secret settings, such as a domain provider's, need the device passphrase.".to_owned()
+                },
                 "Unlock",
             ),
             HomeItem::Failing(id) => (

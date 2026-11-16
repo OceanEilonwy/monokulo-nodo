@@ -517,8 +517,18 @@ pub fn system_result(result: &SystemUpdateResult) -> UpdateResult {
     }
     if result.needs_restart {
         note.push_str(", restart when ready");
-    } else if !result.deferred.is_empty() {
-        note.push_str(&format!(", {} uses it after a restart", result.deferred.join(", ")));
+    } else {
+        // The helper restarts itself once it has answered, and a restarted helper has to be
+        // unlocked again before it can open secrets.
+        let (helper, others): (Vec<&String>, Vec<&String>) =
+            result.deferred.iter().partition(|name| name.as_str() == "nodo-helper");
+        if !others.is_empty() {
+            let names: Vec<&str> = others.iter().map(|name| name.as_str()).collect();
+            note.push_str(&format!(", {} uses it after a restart", names.join(", ")));
+        }
+        if !helper.is_empty() {
+            note.push_str(", the helper restarts: unlock again if asked");
+        }
     }
     UpdateResult { name: SYSTEM_BASE.to_owned(), applied: true, version: result.snapshot.clone(), note }
 }
@@ -965,7 +975,12 @@ mod tests {
         };
         let row = system_result(&result);
         assert!(row.applied);
-        assert_eq!(row.note, "Applied, 1 package changed, nodo-helper uses it after a restart");
+        assert_eq!(row.note, "Applied, 1 package changed, the helper restarts: unlock again if asked");
+        result.deferred.push("nodo-other".into());
+        assert_eq!(
+            system_result(&result).note,
+            "Applied, 1 package changed, nodo-other uses it after a restart, the helper restarts: unlock again if asked"
+        );
         result.withdrew = Some("2026.12".into());
         result.needs_restart = true;
         assert_eq!(system_result(&result).note, "Applied, 1 package changed, left withdrawn 2026.12, restart when ready");

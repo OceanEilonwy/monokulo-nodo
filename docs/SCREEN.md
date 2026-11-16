@@ -27,7 +27,10 @@ software renderer (no display server and no GPU driver), and reads the touchscre
 Its look is the design's at twice its size, in JetBrains Mono (SIL Open Font License, installed in
 `/usr/share/fonts/nodo` with its licence as `/usr/share/licenses/nodo-tools/OFL-JetBrainsMono.txt`).
 The panel's native mode is 1080 x 1920: the service sets `SLINT_KMS_ROTATION=270`, the quarter turn
-the console also takes (`docs/MAINLINE_KERNEL.md`), and Slint turns touches the same way. It uses no
+the console also takes (`docs/MAINLINE_KERNEL.md`). Slint turns only the picture, not the touches:
+nodo-tools' udev rule `70-nodo-touch.rules` gives the Goodix touchscreen a libinput calibration
+(`LIBINPUT_CALIBRATION_MATRIX="0 -1 1 1 0 0"`, the same mapping as nodo-screen's default `[touch]`
+table below), so taps land where they are drawn. It uses no
 CPU while nothing changes; on the T6N an animation across the screen costs about half of one core.
 `nodo-gui --screenshot SCENE FILE.png` renders a screen with sample panels without a display (scenes
 `view`, `arrange`, `drag`, `hidden`, `add`, `confirm`, `progress`, `failed`, `off`); `docs/design/gui`

@@ -70,6 +70,8 @@ pub struct MockBackend {
     pub fail_public_access: bool,
     /// First boot: no device passphrase yet.
     pub setup_needed: bool,
+    /// The helper lost the device key, as after a restart, with no app waiting for it.
+    pub key_locked: bool,
     pub ssh_keys: Vec<nodo_api::SshKey>,
     /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
     pub delay: Option<std::time::Duration>,
@@ -138,6 +140,7 @@ impl MockBackend {
             auto_update: sample_auto_update(),
             fail_public_access: false,
             setup_needed: false,
+            key_locked: false,
             delay: None,
             ssh_keys: vec![nodo_api::SshKey {
                 algorithm: s("ssh-ed25519"),
@@ -215,6 +218,7 @@ impl MockBackend {
     }
 
     fn finish_unlock(&mut self) {
+        self.key_locked = false;
         for svc in &mut self.services {
             if svc.state == ServiceState::Locked || svc.id == "bell" {
                 svc.state = ServiceState::Running;
@@ -228,7 +232,7 @@ impl MockBackend {
     }
 
     fn is_locked(&self) -> bool {
-        self.services.iter().any(|svc| svc.state == ServiceState::Locked)
+        self.key_locked || self.services.iter().any(|svc| svc.state == ServiceState::Locked)
     }
 }
 
@@ -738,6 +742,7 @@ impl ScreenData for MockBackend {
             },
             updates_checked: s("Last checked 2 hours ago"),
             setup_needed: self.setup_needed,
+            locked: self.is_locked(),
         }
     }
 
@@ -1235,6 +1240,9 @@ impl ScreenData for MockBackend {
         api_key: &Secret,
         secret_key: &Secret,
     ) -> Result<ConnectedProvider, String> {
+        if self.key_locked {
+            return Err(ApiError::Locked("unlock the device to store DNS credentials".to_owned()).to_string());
+        }
         let entry = sample_providers().into_iter().find(|p| p.name == provider).ok_or_else(|| format!("{provider} is not a known provider"))?;
         if api_key.is_empty() || (entry.fields.len() > 1 && secret_key.is_empty()) {
             return Err(format!("Paste the key from {provider}."));
