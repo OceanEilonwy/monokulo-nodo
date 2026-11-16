@@ -9,6 +9,7 @@ pub mod ctl;
 pub mod fixtures;
 pub mod helper_backend;
 pub mod hit;
+pub mod input;
 pub mod helper_manage;
 pub mod mock;
 pub mod model;

@@ -1,0 +1,7 @@
+# Reading the terminal directly would bring back a TUI that spins at full CPU after its terminal
+# hangs up and never notices SIGTERM. nodo_tui::input::Input is the one place that reads it; CI
+# denies this lint for nodo-tui.
+disallowed-methods = [
+    { path = "crossterm::event::poll", reason = "use nodo_tui::input::Input, which also ends on a hangup or a termination signal" },
+    { path = "crossterm::event::read", reason = "use nodo_tui::input::Input, which also ends on a hangup or a termination signal" },
+]
