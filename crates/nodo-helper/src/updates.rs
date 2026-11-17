@@ -774,6 +774,7 @@ impl<S: System> Helper<S> {
                 first_install: false,
                 encrypted_storage: manifest.storage.encrypted,
                 needs_passphrase: candidate.grows,
+                bundle: manifest.bundle.as_ref().map(|b| b.members.len() as u32),
             })),
             Ok(Reviewed::Blocked(reasons)) => Ok(crate::apps::blocked(package, &reasons)),
             Err(e) => crate::apps::refusal(package, &candidate.to, e),

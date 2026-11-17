@@ -50,6 +50,10 @@ pub struct CatalogEntry {
     /// The installed `version_revision`, when installed from this feed.
     pub installed: Option<String>,
     pub size_bytes: u64,
+    /// How many other apps installing this one sets up (`[bundle]`), when the helper knows: the
+    /// feed's index carries no manifest, so it is known once this version was reviewed or
+    /// installed.
+    pub bundle: Option<u32>,
 }
 
 /// The user's approval of exactly what a package version asks for: its `pkgver` and the lines
@@ -75,6 +79,88 @@ pub struct InstallReview {
     pub encrypted_storage: bool,
     /// Its encrypted volume does not exist yet, so installing needs the device passphrase.
     pub needs_passphrase: bool,
+    /// The package heads a bundle of this many other apps: install it with
+    /// [`crate::Request::ReviewBundle`] and [`crate::Request::InstallBundle`], which set them up too.
+    pub bundle: Option<u32>,
+}
+
+/// One package of a bundle as its review found it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleMember {
+    pub review: InstallReview,
+    /// The `version_revision` already installed from this feed. Such a package is skipped: its
+    /// settings are kept and no answers are applied to it, and it needs no approval.
+    pub installed: Option<String>,
+}
+
+/// A grant the bundle records, with the line the review shows for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleGrant {
+    pub grant: crate::SettingGrant,
+    /// Such as "pingers-server may read the setting server_credential of pingers-push-relay".
+    pub text: String,
+}
+
+/// A setting the owner fills in before anything installs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleAsk {
+    pub package: String,
+    pub setting: String,
+    pub label: String,
+    pub help: String,
+    /// A masked field; the value is a secret end to end and never shown again.
+    pub secret: bool,
+    /// The package is installed already, so this answer would not be applied and is not asked.
+    pub skipped: bool,
+}
+
+/// Everything a bundle installs, reviewed together. Nothing is installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleReview {
+    pub feed: String,
+    /// The head, which declares the bundle.
+    pub package: String,
+    /// In install order, the head last, one per package.
+    pub members: Vec<BundleMember>,
+    /// Quote these, in order, in [`crate::Request::InstallBundle`].
+    pub grants: Vec<BundleGrant>,
+    pub asks: Vec<BundleAsk>,
+    /// Members whose data may go on the data drive; offered on by default when one is present.
+    pub data_drive: Vec<String>,
+    pub data_drive_present: bool,
+    /// A package to install keeps new encrypted storage, or a secret answer needs the device key
+    /// while the device is locked.
+    pub needs_passphrase: bool,
+}
+
+/// The owner's answer to one ask. Every answer travels as a secret, so `Debug` never prints it;
+/// the helper applies a non-secret one as text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleAnswer {
+    pub package: String,
+    pub setting: String,
+    pub value: crate::Secret,
+}
+
+/// What a bundle install did, package by package, in install order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleReport {
+    pub package: String,
+    pub members: Vec<BundleMemberReport>,
+    /// Which package stopped the install and why. Packages installed before it stay installed,
+    /// and installing the bundle again skips them.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleMemberReport {
+    pub package: String,
+    /// `Done` installed, `Skipped` already installed, `Failed` stopped the install, `Pending`
+    /// not reached.
+    pub state: StepState,
+    pub note: String,
+    /// The package's own install steps, when it was installed or failed installing.
+    pub report: Option<InstallReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

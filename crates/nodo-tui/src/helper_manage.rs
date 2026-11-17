@@ -109,6 +109,7 @@ pub fn catalog(b: &HelperBackend, installed: Vec<nodo_api::PackageInfo>) -> Vec<
             tagline: if p.roles.is_empty() { String::new() } else { format!("Provides {}", p.roles.join(", ")) },
             description: Vec::new(),
             needs: p.needs.into_iter().map(|name| Need { name, met: true, source: None }).collect(),
+            bundle: (!p.bundle.is_empty()).then_some(p.bundle.len() as u32),
         });
     }
     for e in entries {
@@ -123,6 +124,7 @@ pub fn catalog(b: &HelperBackend, installed: Vec<nodo_api::PackageInfo>) -> Vec<
             tagline: format!("From the feed {}", e.feed),
             description: Vec::new(),
             needs: Vec::new(),
+            bundle: e.bundle,
         });
     }
     out
@@ -210,6 +212,7 @@ fn rejection(id: &PackageId, version: String, reasons: Vec<String>, evidence: &s
 
 pub fn install_gate(b: &HelperBackend, id: &PackageId) -> InstallGate {
     match b.ask(Request::ReviewInstall { feed: id.feed.clone(), package: id.name.clone() }) {
+        Ok(Response::InstallReview(r)) if r.bundle.is_some() => bundle_gate(b, id),
         Ok(Response::InstallReview(r)) => InstallGate::Review(review_data(id, &r, false)),
         Ok(Response::InstallRejected { version, reasons, .. }) => rejection(id, version, reasons, ""),
         Ok(Response::InstallBlocked { reasons, key_changed, .. }) => {
@@ -267,6 +270,72 @@ pub fn start_install(
             Err(format!("Not installed: {}", reasons.join("; ")))
         }
         other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+/// A bundle head: the review of every app it sets up, or why it cannot install.
+fn bundle_gate(b: &HelperBackend, id: &PackageId) -> InstallGate {
+    match b.ask(Request::ReviewBundle { feed: id.feed.clone(), package: id.name.clone() }) {
+        Ok(Response::BundleReview(r)) => InstallGate::Bundle(r),
+        Ok(Response::InstallRejected { package, version, reasons }) => {
+            rejection(&PackageId::new(&id.feed, &package), version, reasons, "")
+        }
+        Ok(Response::InstallBlocked { package, reasons, key_changed }) => {
+            let evidence =
+                if key_changed { "Open Feeds to decide about the new key." } else { "Nothing was installed." };
+            rejection(&PackageId::new(&id.feed, &package), String::new(), reasons, evidence)
+        }
+        Ok(other) => rejection(id, String::new(), vec![format!("unexpected reply: {other:?}")], ""),
+        Err(e) => rejection(id, String::new(), vec![e.to_string()], "Nothing was downloaded or changed."),
+    }
+}
+
+/// Approves exactly what the review showed: one approval per app to install, the declared grants.
+pub fn install_bundle(
+    b: &HelperBackend,
+    review: &nodo_api::BundleReview,
+    answers: Vec<nodo_api::BundleAnswer>,
+    data_drive: Vec<String>,
+    passphrase: Option<&Secret>,
+) -> Result<nodo_api::BundleReport, String> {
+    match text(b.ask(bundle_request(review, answers, data_drive, passphrase)))? {
+        Response::BundleReport(report) => Ok(report),
+        Response::InstallRejected { package, reasons, .. } | Response::InstallBlocked { package, reasons, .. } => {
+            Err(format!("Nothing was installed: {package}: {}", reasons.join("; ")))
+        }
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
+/// The request for a reviewed bundle: one approval per app to install, quoting its review, and
+/// the declared grants as shown.
+fn bundle_request(
+    review: &nodo_api::BundleReview,
+    answers: Vec<nodo_api::BundleAnswer>,
+    data_drive: Vec<String>,
+    passphrase: Option<&Secret>,
+) -> Request {
+    let approvals = review
+        .members
+        .iter()
+        .filter(|m| m.installed.is_none())
+        .map(|m| PermissionApproval { pkgver: m.review.pkgver.clone(), permissions: m.review.permissions.clone() })
+        .collect();
+    Request::InstallBundle {
+        feed: review.feed.clone(),
+        package: review.package.clone(),
+        approvals,
+        grants: review.grants.iter().map(|g| g.grant.clone()).collect(),
+        answers,
+        data_drive,
+        passphrase: passphrase.map(api),
+    }
+}
+
+pub fn owner_page(b: &HelperBackend, package: &str, passphrase: &Secret) -> Result<nodo_api::OwnerPageView, ApiError> {
+    match b.ask(Request::OwnerPage { package: package.to_owned(), passphrase: api(passphrase) })? {
+        Response::OwnerPage(view) => Ok(view),
+        other => Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
     }
 }
 
@@ -987,6 +1056,23 @@ mod tests {
     }
 
     #[test]
+    fn a_bundle_install_quotes_the_review_and_skips_what_is_installed() {
+        let mut review = crate::mock::sample_bundle_review();
+        review.members[1].installed = Some("0.9_1".into());
+        let Request::InstallBundle { approvals, grants, feed, package, passphrase, .. } =
+            bundle_request(&review, vec![], vec![], Some(&Secret::new("pass")))
+        else {
+            panic!()
+        };
+        assert_eq!((feed.as_str(), package.as_str()), ("pingers", "pingers"));
+        let quoted: Vec<&str> = approvals.iter().map(|a| a.pkgver.as_str()).collect();
+        assert_eq!(quoted, ["pingers-push-relay-1.0.0_1", "pingers-server-1.0.0_1", "pingers-1.0.0_1"]);
+        assert_eq!(approvals[2].permissions, review.members[3].review.permissions);
+        assert_eq!(grants, [review.grants[0].grant.clone()]);
+        assert_eq!(passphrase.unwrap().expose(), "pass");
+    }
+
+    #[test]
     fn ago_reads_as_plain_english() {
         assert_eq!(ago(now()), "just now");
         assert_eq!(ago(now() - 90), "1 minute ago");
@@ -1004,6 +1090,7 @@ mod tests {
             first_install,
             encrypted_storage: true,
             needs_passphrase: true,
+            bundle: None,
         }
     }
 

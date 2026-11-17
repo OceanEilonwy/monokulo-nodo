@@ -10,6 +10,7 @@
 
 pub mod client;
 mod manage;
+mod owner;
 pub mod protocol;
 mod radio;
 mod secret;
@@ -19,13 +20,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use manage::*;
+pub use owner::*;
 pub use radio::*;
 pub use secret::Secret;
 pub use system::*;
 
 /// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
 /// rollbacks and confirmed exposure changes. Version 3 added [`ServiceStatus::uptime_secs`].
-pub const PROTOCOL_VERSION: u8 = 3;
+/// Version 4 added bundles and owner pages: the bundle and owner page facts in [`PackageInfo`],
+/// [`CatalogEntry`] and [`InstallReview`].
+pub const PROTOCOL_VERSION: u8 = 4;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -238,6 +242,10 @@ pub struct PackageInfo {
     pub needs: Vec<String>,
     pub encrypted_storage: bool,
     pub has_settings: bool,
+    /// The title of the package's owner page (its setup checklist), when it has one.
+    pub owner_page: Option<String>,
+    /// The other packages its bundle sets up, in install order. Empty for most packages.
+    pub bundle: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1140,6 +1148,30 @@ pub enum Request {
         passphrase: Secret,
         pin: Option<Secret>,
     },
+    /// Reviews a bundle head and every package it sets up, from the same feed, as `ReviewInstall`
+    /// does for one. A member missing from the feed refuses the review. Installs nothing.
+    ReviewBundle {
+        feed: String,
+        package: String,
+    },
+    /// Installs a bundle under the work lock, members first and the head last, stopping at the
+    /// first failure. `approvals` hold one [`PermissionApproval`] per package to install, as the
+    /// review showed them; `grants` must be the declared ones exactly; `answers` only for declared
+    /// asks; `data_drive` only members the bundle allows there.
+    InstallBundle {
+        feed: String,
+        package: String,
+        approvals: Vec<PermissionApproval>,
+        grants: Vec<SettingGrant>,
+        answers: Vec<BundleAnswer>,
+        data_drive: Vec<String>,
+        passphrase: Option<Secret>,
+    },
+    /// The package's setup checklist. Needs the device passphrase, checked like an unlock.
+    OwnerPage {
+        package: String,
+        passphrase: Secret,
+    },
 }
 
 /// What the touchscreen may do right now.
@@ -1225,6 +1257,9 @@ pub enum Response {
     Wifi(WifiStatus),
     WifiNetworks(Vec<WifiNetwork>),
     Bluetooth(BluetoothStatus),
+    BundleReview(BundleReview),
+    BundleReport(BundleReport),
+    OwnerPage(OwnerPageView),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1373,6 +1408,9 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::ScreenUnlock { .. } => "screen-unlock",
         Request::ScreenLock => "screen-lock",
         Request::SetScreenPin { .. } => "set-screen-pin",
+        Request::ReviewBundle { .. } => "review-bundle",
+        Request::InstallBundle { .. } => "install-bundle",
+        Request::OwnerPage { .. } => "owner-page",
     }
 }
 
@@ -1462,6 +1500,30 @@ mod tests {
                 passphrase: Some(Secret::new("hunter2 long")),
                 accept_open: false,
             }),
+            Request::InstallBundle {
+                feed: "f".into(),
+                package: "a".into(),
+                approvals: vec![],
+                grants: vec![],
+                answers: vec![
+                    BundleAnswer {
+                        package: "a".into(),
+                        setting: "fcm_service_account".into(),
+                        value: Secret::new("{\"private_key\": \"hunter2\"}"),
+                    },
+                    BundleAnswer {
+                        package: "a".into(),
+                        setting: "domain".into(),
+                        value: Secret::new("hunter.example"),
+                    },
+                ],
+                data_drive: vec![],
+                passphrase: Some(Secret::new("hunter3")),
+            },
+            Request::OwnerPage {
+                package: "a".into(),
+                passphrase: Secret::new("hunter2"),
+            },
         ];
         for request in requests {
             let text = format!("{request:?}");

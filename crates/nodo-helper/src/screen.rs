@@ -67,6 +67,7 @@ pub fn is_read_only(request: &Request) -> bool {
             | FeedKeyChange { .. }
             | Catalog
             | ReviewInstall { .. }
+            | ReviewBundle { .. }
             | UpdateStatus
             | CheckUpdates
             | ReviewUpdate { .. }

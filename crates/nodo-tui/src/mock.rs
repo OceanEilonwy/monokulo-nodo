@@ -92,6 +92,12 @@ pub struct MockBackend {
     pub bluetooth: nodo_api::BluetoothStatus,
     /// Devices a Bluetooth scan finds.
     pub nearby: Vec<nodo_api::BluetoothDevice>,
+    /// Bundle heads by name, with what their review shows. None by default.
+    pub bundles: HashMap<String, nodo_api::BundleReview>,
+    /// Installed apps with a setup page, and the page each shows.
+    pub owner_views: BTreeMap<String, (String, nodo_api::OwnerPageView)>,
+    /// Every bundle install asked for: the answers and data drive choices it carried.
+    pub bundle_installs: Vec<(Vec<nodo_api::BundleAnswer>, Vec<String>)>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
 }
@@ -183,6 +189,9 @@ impl MockBackend {
             bluetooth: sample_bluetooth(),
             nearby: vec![bt_device("AA:BB:CC:00:00:03", "Kitchen Speaker", "audio-card", false, false, -71)],
             reach_attempts: HashMap::new(),
+            bundles: HashMap::new(),
+            owner_views: BTreeMap::new(),
+            bundle_installs: Vec::new(),
             job: None,
         }
     }
@@ -704,6 +713,43 @@ impl ScreenData for MockBackend {
         Ok(report)
     }
 
+    fn owner_pages(&self) -> Vec<(String, String)> {
+        self.owner_views.iter().map(|(package, (title, _))| (package.clone(), title.clone())).collect()
+    }
+
+    fn install_bundle(
+        &mut self,
+        review: &nodo_api::BundleReview,
+        answers: Vec<nodo_api::BundleAnswer>,
+        data_drive: Vec<String>,
+        passphrase: Option<&Secret>,
+    ) -> Result<nodo_api::BundleReport, String> {
+        if review.needs_passphrase && passphrase.is_none_or(|p| p.expose() != MOCK_PASSPHRASE) {
+            return Err(ApiError::BadPassphrase.to_string());
+        }
+        self.bundle_installs.push((answers, data_drive));
+        let mut members = Vec::new();
+        for member in &review.members {
+            let id = &member.review.package;
+            let (state, note) = match &member.installed {
+                Some(version) => (nodo_api::StepState::Skipped, format!("{version} is installed already, so it was skipped")),
+                None => (nodo_api::StepState::Done, s("installed")),
+            };
+            if let Some(pkg) = self.catalog.iter_mut().find(|p| &p.id.name == id) {
+                pkg.status = PackageStatus::Installed;
+            }
+            members.push(nodo_api::BundleMemberReport { package: id.clone(), state, note, report: None });
+        }
+        Ok(nodo_api::BundleReport { package: review.package.clone(), members, problem: None })
+    }
+
+    fn owner_page(&mut self, package: &str, passphrase: &Secret) -> Result<nodo_api::OwnerPageView, ApiError> {
+        if passphrase.expose() != MOCK_PASSPHRASE {
+            return Err(ApiError::BadPassphrase);
+        }
+        self.owner_views.get(package).map(|(_, view)| view.clone()).ok_or_else(|| ApiError::NotFound(package.to_owned()))
+    }
+
     fn overview(&self) -> Overview {
         Overview {
             node: NodeInfo {
@@ -824,6 +870,7 @@ impl ScreenData for MockBackend {
                 compatible_note: s("none found in your feeds"),
                 switch_note: s("about 300 GB more and a full sync"),
             }),
+            name if self.bundles.contains_key(name) => InstallGate::Bundle(self.bundles[name].clone()),
             _ => InstallGate::Review(sample_review(id, &version)),
         }
     }
@@ -1505,6 +1552,7 @@ fn summary(
         tagline: s(tagline),
         description: description.iter().map(|line| s(line)).collect(),
         needs,
+        bundle: None,
     }
 }
 
@@ -2151,6 +2199,138 @@ pub fn reachability_checks(host: &str, ports_open: bool) -> Reachability {
             firewall: s("Opens 80 and 443"),
         }),
         manual: Vec::new(),
+    }
+}
+
+fn member_review(package: &str, permissions: &[&str], encrypted: bool, bundle: Option<u32>) -> nodo_api::InstallReview {
+    let permissions: Vec<String> = permissions.iter().map(|p| s(p)).collect();
+    nodo_api::InstallReview {
+        feed: s("pingers"),
+        package: s(package),
+        pkgver: format!("{package}-1.0.0_1"),
+        added: permissions.clone(),
+        permissions,
+        first_install: true,
+        encrypted_storage: encrypted,
+        needs_passphrase: encrypted,
+        bundle,
+    }
+}
+
+/// A suite like Pingers: three apps and the head, two questions (one a secret) and a grant.
+pub fn sample_bundle_review() -> nodo_api::BundleReview {
+    let member = |review| nodo_api::BundleMember { review, installed: None };
+    nodo_api::BundleReview {
+        feed: s("pingers"),
+        package: s("pingers"),
+        members: vec![
+            member(member_review("pingers-push-relay", &["connects to the internet", "serves the site 'push'"], true, None)),
+            member(member_review("pingers-map-host", &["serves the site 'maps'", "keeps its data unencrypted"], false, None)),
+            member(member_review("pingers-server", &["serves the site 'api'", "uses pingers-push-relay"], true, None)),
+            member(member_review(
+                "pingers",
+                &[
+                    "sets up pingers-push-relay with it",
+                    "sets up pingers-map-host with it",
+                    "sets up pingers-server with it",
+                    "lets pingers-server read the setting server_credential of pingers-push-relay",
+                ],
+                false,
+                Some(3),
+            )),
+        ],
+        grants: vec![nodo_api::BundleGrant {
+            grant: nodo_api::SettingGrant {
+                consumer: s("pingers-server"),
+                provider: s("pingers-push-relay"),
+                setting: s("server_credential"),
+            },
+            text: s("pingers-server may read the setting server_credential of pingers-push-relay"),
+        }],
+        asks: vec![
+            nodo_api::BundleAsk {
+                package: s("pingers-push-relay"),
+                setting: s("domain"),
+                label: s("Your domain"),
+                help: s("The Pingers sites are named under it: pingers., ohttp., push. and maps."),
+                secret: false,
+                skipped: false,
+            },
+            nodo_api::BundleAsk {
+                package: s("pingers-push-relay"),
+                setting: s("fcm_service_account"),
+                label: s("Firebase service account"),
+                help: s("Paste the JSON key file. It is sealed on this device and never shown again."),
+                secret: true,
+                skipped: false,
+            },
+        ],
+        data_drive: vec![s("pingers-map-host")],
+        data_drive_present: true,
+        needs_passphrase: true,
+    }
+}
+
+fn owner_check(label: &str, state: nodo_api::OwnerCheckState, detail: &str) -> nodo_api::OwnerCheck {
+    nodo_api::OwnerCheck { label: s(label), state, detail: (!detail.is_empty()).then(|| s(detail)) }
+}
+
+/// A setup page like Pingers': one step done, one with a problem, one to do with a QR code.
+pub fn sample_owner_page() -> nodo_api::OwnerPageView {
+    use nodo_api::{OwnerCheckState as C, OwnerItem as I, OwnerStepState as St};
+    nodo_api::OwnerPageView {
+        package: s("pingers"),
+        title: s("Pingers setup"),
+        intro: Some(s("Four sites, then the phones. Each step checks itself when you press r.")),
+        steps: vec![
+            nodo_api::OwnerStep {
+                title: s("Put the sites online"),
+                state: St::Done,
+                items: vec![
+                    I::Site(nodo_api::SiteFacts {
+                        package: s("pingers-server"),
+                        site: s("api"),
+                        host: Some(s("pingers.example.com")),
+                        suggested: false,
+                        public: true,
+                        records: vec![nodo_api::DnsRecord {
+                            kind: s("A"),
+                            name: s("pingers"),
+                            zone: s("example.com"),
+                            value: s("203.0.113.5"),
+                        }],
+                        automatic_dns: Some(s("Porkbun")),
+                        checks: vec![
+                            owner_check("Online on the internet", C::Ok, ""),
+                            owner_check("Name points here", C::Ok, "pingers.example.com resolves to 203.0.113.5"),
+                            owner_check("Certificate", C::Ok, "Valid until 2027-02-19"),
+                        ],
+                    }),
+                    I::Service { package: s("pingers-server"), check: owner_check("pingers-server is running", C::Ok, "") },
+                ],
+            },
+            nodo_api::OwnerStep {
+                title: s("Back up the device key"),
+                state: St::Problem,
+                items: vec![I::Backup {
+                    check: owner_check(
+                        "Backup with the device key",
+                        C::Failed,
+                        "The newest backup does not hold the device key. Make one in System › Backups.",
+                    ),
+                }],
+            },
+            nodo_api::OwnerStep {
+                title: s("Connect the phones"),
+                state: St::Todo,
+                items: vec![
+                    I::Text(s("Build the app with this server address, then scan the code with each phone.")),
+                    I::Value { label: s("PINGERS_SERVER_HOST"), value: s("https://pingers.example.com") },
+                    I::Qr { label: s("Scan with the phone's camera"), data: s("https://pingers.example.com/j#s1Xk3") },
+                    I::Check(owner_check("A phone joined", C::Waiting, "")),
+                ],
+            },
+        ],
     }
 }
 

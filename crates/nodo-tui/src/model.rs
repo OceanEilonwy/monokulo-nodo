@@ -53,6 +53,8 @@ pub struct PackageSummary {
     pub tagline: String,
     pub description: Vec<String>,
     pub needs: Vec<Need>,
+    /// How many other apps installing it sets up, for a bundle head the helper has seen.
+    pub bundle: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +135,8 @@ pub enum InstallGate {
     Review(ReviewData),
     Rejected(RejectionData),
     MissingCapability(CapabilityData),
+    /// A suite of apps installed together: the head and every app it sets up.
+    Bundle(nodo_api::BundleReview),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -835,6 +839,8 @@ pub struct Snapshot {
     /// One line about system snapshot updates for the Updates screen, when there is anything
     /// to say: the installed snapshot, the last check, or why it failed.
     pub system_note: Option<String>,
+    /// Installed apps with a setup page for the owner, and its title, such as ("pingers", "Setup").
+    pub owner_pages: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1010,5 +1016,25 @@ pub trait ScreenData {
         _typed: &str,
     ) -> Result<nodo_api::RestoreReport, String> {
         Err("USB drives are not available here.".to_owned())
+    }
+
+    /// Installed apps with a setup page for the owner, and its title. Read with the snapshot.
+    fn owner_pages(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    /// Installs a reviewed bundle, approving exactly what the review showed: every package to
+    /// install, the declared grants, the owner's answers and data drive choices.
+    fn install_bundle(
+        &mut self,
+        _review: &nodo_api::BundleReview,
+        _answers: Vec<nodo_api::BundleAnswer>,
+        _data_drive: Vec<String>,
+        _passphrase: Option<&Secret>,
+    ) -> Result<nodo_api::BundleReport, String> {
+        Err("Installing several apps at once is not available here.".to_owned())
+    }
+    /// An app's setup page. The device passphrase is checked like an unlock.
+    fn owner_page(&mut self, _package: &str, _passphrase: &Secret) -> Result<nodo_api::OwnerPageView, nodo_api::ApiError> {
+        Err(nodo_api::ApiError::NotImplemented("setup pages".to_owned()))
     }
 }

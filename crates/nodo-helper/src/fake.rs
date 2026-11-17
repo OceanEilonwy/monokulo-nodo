@@ -507,6 +507,42 @@ impl System for FakeSystem {
             .ok_or_else(|| SysError(format!("port {port}: Connection refused")))
     }
 
+    /// A test puts the answer at `page <port><path>`; a call is recorded as `page <port><path>`.
+    fn http_get_page(
+        &self,
+        port: u16,
+        path: &str,
+        limit: usize,
+        _timeout: Duration,
+    ) -> SysResult<Vec<u8>> {
+        let call = format!("page {port}{path}");
+        self.record(call.clone())?;
+        let body = self
+            .state()
+            .files
+            .get(&call)
+            .cloned()
+            .ok_or_else(|| SysError(format!("port {port}: Connection refused")))?;
+        if body.len() > limit {
+            return Err(SysError("response too large".to_owned()));
+        }
+        Ok(body)
+    }
+
+    /// A test lists the addresses, one per line, at `dns <host>`.
+    fn resolve_host(&self, host: &str) -> Vec<std::net::IpAddr> {
+        let text = self
+            .state()
+            .files
+            .get(&format!("dns {host}"))
+            .cloned()
+            .unwrap_or_default();
+        String::from_utf8_lossy(&text)
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect()
+    }
+
     fn file_size(&self, path: &Path) -> Option<u64> {
         let state = self.state();
         state.files.get(&text(path))?;

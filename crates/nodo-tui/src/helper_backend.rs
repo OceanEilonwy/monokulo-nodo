@@ -1030,6 +1030,24 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::restore_usb_backup(self, device, name, passphrase, new_device, typed)
     }
 
+    fn owner_pages(&self) -> Vec<(String, String)> {
+        self.packages().into_iter().filter_map(|p| p.owner_page.map(|title| (p.id, title))).collect()
+    }
+
+    fn install_bundle(
+        &mut self,
+        review: &nodo_api::BundleReview,
+        answers: Vec<nodo_api::BundleAnswer>,
+        data_drive: Vec<String>,
+        passphrase: Option<&Secret>,
+    ) -> Result<nodo_api::BundleReport, String> {
+        crate::helper_manage::install_bundle(self, review, answers, data_drive, passphrase)
+    }
+
+    fn owner_page(&mut self, package: &str, passphrase: &Secret) -> Result<nodo_api::OwnerPageView, ApiError> {
+        crate::helper_manage::owner_page(self, package, passphrase)
+    }
+
     fn site_id(&self, key: &str) -> SiteId {
         if let Some(id) = self.sites.borrow().get(key) {
             return id.clone();

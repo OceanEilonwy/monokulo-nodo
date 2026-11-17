@@ -601,6 +601,12 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         NodoWeb::onion_addresses(self, input)
     }
 
+    fn device_address(&self) -> Option<String> {
+        router::system_gateway()
+            .and_then(device_address)
+            .map(|ip| ip.to_string())
+    }
+
     fn status(&self, input: &WebInput) -> Result<WebStatus, ApiError> {
         let plan = self.plan(input).map_err(ApiError::Failed)?;
         Ok(self.status_from(&plan, input))

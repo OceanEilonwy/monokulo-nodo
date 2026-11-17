@@ -172,7 +172,8 @@ codebase, and signed xbps packages from user-added feeds.
   what needs the owner first, one card and one button each (unlock, an app that keeps stopping, updates
   ready), then the other apps and one line of device health. Apps lists the installed apps; each has
   its own page with its update, Restart, Stop and Remove on the breadcrumb row (folded into "⋯ More"
-  under 100 columns), and rows for Hosting, Settings and Logs. Get apps (`g`) searches the sources,
+  under 100 columns), and rows for Hosting, Settings and Logs, after the app's own setup page when its
+  manifest declares one (`[owner_page]`, the row named by its title, such as Setup). Get apps (`g`) searches the sources,
   and Sources (the old Feeds) sits under it, a card per source. System holds the Nodo's own update,
   then Updates (the Nodo and the apps on one page, each with its own button), Backups, Network,
   Device logs and About; automatic updates and undoing an update are reached from Updates. Every
@@ -185,6 +186,53 @@ codebase, and signed xbps packages from user-added feeds.
   everything back; deleting data is never a side effect. Base system packages are refused, and so
   is an app with a site still online (take it offline in Hosting first). The TUI asks first on its
   own screen, with the focus on Cancel.
+- **Bundles:** A package may set up a suite of apps of its own feed in one install (`[bundle]` in
+  its manifest, [FEED.md](FEED.md) has the form): the members, installed in order before it, the
+  grants between them, the members whose data may go on the data drive, and settings asked once
+  before anything installs (label and help in the manifest, since a package's settings file is not
+  there before it is installed; a secret one is masked and travels as a `Secret`). The head's
+  permission summary lists the members and grants, so an update that adds one asks again.
+  `ReviewBundle` is every package's own `ReviewInstall` from the same feed (a member missing from
+  it refuses the review), plus the grants in plain words, the questions and the data drive choices,
+  offered on when a drive is present. `InstallBundle` repeats the reviews under the work lock,
+  refuses approvals that differ from them (one per package to install), grants other than the
+  declared ones and answers to questions it did not ask, checks the device passphrase once like an
+  unlock, then installs the members and the head each exactly as a single install would, with
+  three additions: the data drive is chosen first, the grants it reads through are recorded before
+  its settings first resolve, and the answers are planned as setting changes, checked by the
+  package's own rules like `ApplySettings` and sealed when secret, before its first start. The
+  first failure stops it and says which package and why (`BundleReport`); what installed before
+  stays, and installing again skips packages already installed, keeping their settings and not
+  applying answers to them. The feed's index carries no manifest, so Get apps learns that a
+  package is a bundle from its first review (the helper remembers it per version) and then says
+  "Installs N apps"; Install on any package goes to the bundle review when its review says it is
+  one. The touchscreen points to the TUI for these, since it has no keyboard for the questions.
+- **Owner pages:** A package may serve its owner a setup checklist (`[owner_page]`: a title for the
+  row on its app page and `http://127.0.0.1:<port>/<path>`, a port it declares in
+  `[[network.inbound]]`). `OwnerPage` needs the device passphrase, checked and counted like an
+  unlock, then GETs the page over HTTP/1.1 (30 s for all of it, since the package may test its
+  own sites first, at most 64 KiB, 200 only) and reads it as version 1 of the JSON in
+  `nodo_manifest::owner_page` (strict, every field bounded, control characters refused but line
+  breaks in paragraphs, at most 32 steps of 32 items). In `text` items and `value` labels and
+  values the helper then puts `{device_address}` (the LAN address the owner reaches the device
+  on), `{public_address}` (what the last reachability check found, or "unknown") and
+  `{data_dir:<package>}` (the host source of that package's data bind: its volume, the data drive
+  or `/var/lib/apps/<id>`; "unknown" when not installed), leaving any other brace alone, and checks
+  the limits again. `site`, `service`, `domain` and `backup` items only name what to show; the
+  helper fills them from its own state: a site's chosen or suggested address, whether it is public,
+  the A record to create (only A: public sites are served over IPv4), whether a connected provider
+  publishes it, and checks for the address, exposure, a live DNS lookup against the public address,
+  the certificate and the router (the last reachability check, kept in memory, with its age,
+  because running it again is slow); whether a service runs and passes its health check; whether a
+  provider holds a domain; and whether the newest backup holds the device key and is newer than
+  the package's install (the helper records each backup it makes in `last-backup.toml`, since the
+  file itself is encrypted). A step marked `auto` takes its state from its checks: all passed is
+  done, any failed is a problem, otherwise to do, and none is unknown. A package that does not
+  answer, or answers with something else, gets one problem step that says so and points at its
+  log. The TUI shows it under the app's page: numbered steps with marks in the ok, accent and
+  error colours, values in inset fields with Copy (OSC 52, and always on screen as text), QR codes
+  in half blocks, black on a white quiet zone so phones read them in a dark terminal, scrolling by
+  keys and wheel, and `r` to check again with the passphrase it holds only while the page is open.
 - **Web screens (flow v3):** The TUI's Web tab lists only the sites that are online, each with who can
   open it in words; clicking one, or pressing `h` on an installed app's page in Apps, opens that
   app's Hosting. There the owner ticks Home network, Tor and Internet in any combination, and for the

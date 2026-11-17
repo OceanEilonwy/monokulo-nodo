@@ -133,6 +133,9 @@ pub struct Helper<S: System> {
     pub(crate) radios: crate::radio::Radios,
     /// Whether the touchscreen may make changes right now.
     pub(crate) screen: crate::screen::ScreenGate,
+    /// The last reachability check and when it ran (unix seconds), which owner pages report
+    /// rather than run the slow check again. Only in memory, so empty after a restart.
+    pub(crate) last_reachability: Mutex<Option<(u64, nodo_api::ReachabilityDetail)>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +171,7 @@ impl<S: System> Helper<S> {
             secrets: Mutex::new(None),
             radios: crate::radio::Radios::default(),
             screen: crate::screen::ScreenGate::default(),
+            last_reachability: Mutex::new(None),
         }
     }
 

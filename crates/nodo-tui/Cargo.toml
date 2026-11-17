@@ -21,3 +21,5 @@ libc = "0.2"
 signal-hook = { version = "0.3", default-features = false }
 unicode-width = "0.2"
 zeroize = "1"
+# QR codes on setup pages, drawn with half blocks. MIT, no dependencies.
+qrcodegen = "1.8"

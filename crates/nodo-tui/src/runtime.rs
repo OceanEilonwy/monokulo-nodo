@@ -49,6 +49,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
         auto_update: backend.auto_update(),
         unavailable: backend.unavailable(),
         system_note: backend.system_note(),
+        owner_pages: backend.owner_pages(),
     })
 }
 
@@ -75,6 +76,14 @@ fn plain_result(result: Result<Response, ApiError>) -> Result<(), ApiError> {
 /// `nodo_api::Request` holds them as `String`.
 pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) -> Vec<Event> {
     match effect {
+        Effect::InstallBundle { review, answers, data_drive, passphrase } => {
+            let result = backend.install_bundle(&review, answers, data_drive, passphrase.as_ref());
+            vec![Event::BundleInstalled(result), refresh(backend)]
+        }
+        Effect::LoadOwnerPage { package, passphrase } => {
+            let result = backend.owner_page(&package, &passphrase);
+            vec![Event::OwnerPageLoaded { package, result }]
+        }
         Effect::Refresh => vec![refresh(backend)],
         Effect::Start(id) => service_command(backend, Request::StartService { id }),
         Effect::Stop(id) => service_command(backend, Request::StopService { id }),
@@ -720,6 +729,12 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
             dispatch_async(&mut app, &mut worker, event);
         }
         sync_working(&mut app, &worker);
+        if let Some(text) = app.clipboard.take() {
+            // Between frames, so it never lands inside one.
+            let out = terminal.backend_mut();
+            let _ = out.write_all(crate::clipboard::osc52(&text).as_bytes());
+            let _ = out.flush();
+        }
         terminal.draw(|frame| {
             view::render(frame, &app, &theme);
         })?;

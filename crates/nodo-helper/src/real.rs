@@ -560,6 +560,75 @@ impl System for RealSystem {
         Ok(body)
     }
 
+    fn http_get_page(
+        &self,
+        port: u16,
+        path: &str,
+        limit: usize,
+        timeout: Duration,
+    ) -> SysResult<Vec<u8>> {
+        if port == 0 || !path.starts_with('/') || !path.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(SysError("invalid local address".to_owned()));
+        }
+        let deadline = std::time::Instant::now() + timeout;
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let mut stream = TcpStream::connect_timeout(&addr, timeout)
+            .map_err(|e| SysError(format!("port {port}: {e}")))?;
+        stream.set_write_timeout(Some(PROBE_TIMEOUT))?;
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes())?;
+        // Bounded in size and in total time, since whoever answers is untrusted.
+        let cap = limit + 16 * 1024;
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(SysError(format!(
+                    "port {port} did not answer within {} seconds",
+                    timeout.as_secs()
+                )));
+            }
+            stream.set_read_timeout(Some(left))?;
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    response.extend_from_slice(&buffer[..n]);
+                    if response.len() > cap {
+                        return Err(SysError("response too large".to_owned()));
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Err(SysError(format!(
+                        "port {port} did not answer within {} seconds",
+                        timeout.as_secs()
+                    )))
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(SysError(format!("port {port}: {e}"))),
+            }
+        }
+        crate::http_page::parse_response(&response, limit).map_err(SysError)
+    }
+
+    fn resolve_host(&self, host: &str) -> Vec<std::net::IpAddr> {
+        use std::net::ToSocketAddrs;
+        let mut found: Vec<std::net::IpAddr> = (host, 0)
+            .to_socket_addrs()
+            .map(|addrs| addrs.map(|a| a.ip()).collect())
+            .unwrap_or_default();
+        found.sort();
+        found.dedup();
+        found
+    }
+
     fn file_size(&self, path: &Path) -> Option<u64> {
         fs::symlink_metadata(path)
             .ok()

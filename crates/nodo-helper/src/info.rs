@@ -69,6 +69,12 @@ fn info(package: &Package, feed: Option<String>) -> PackageInfo {
         needs: m.needs.clone(),
         encrypted_storage: m.storage.encrypted,
         has_settings: m.settings.is_some(),
+        owner_page: m.owner_page.as_ref().map(|p| p.title.clone()),
+        bundle: m
+            .bundle
+            .as_ref()
+            .map(|b| b.members.clone())
+            .unwrap_or_default(),
     }
 }
 

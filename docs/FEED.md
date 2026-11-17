@@ -149,6 +149,79 @@ If the old key leaked, also say so: anything signed with it after the leak is su
 3. Add the name to `feed/packages` and merge. The next run builds it, the check runs it through
    the device's review, and the page lists it.
 
+### A suite of apps, and a setup page
+
+An app made of several packages can be installed in one go. One package, the head, lists the
+others in `[bundle]`; each member is an ordinary package of the same feed with its own manifest and
+permissions. The owner sees every package's review on one screen, answers the questions once, and
+the members install in order, then the head. Its setup page then shows what is left to do.
+
+```toml
+[bundle]
+# Packages of the same feed set up together with this one, installed in this order, before it.
+members = ["pingers-push-relay", "pingers-map-host", "pingers-server", "pingers-ohttp-relay"]
+# Members whose data the owner may keep on the data drive (offered on when one is present).
+data_drive = ["pingers-map-host"]
+
+# Grants approved with the install. The provider must come before the consumer.
+[[bundle.grants]]
+consumer = "pingers-server"
+provider = "pingers-push-relay"
+setting = "server_credential"
+
+# Settings asked once, before anything installs, and applied before the package first starts.
+# Its own settings file still checks the value. A secret is masked and sealed on the device.
+[[bundle.ask]]
+package = "pingers-push-relay"
+setting = "fcm_service_account"
+label = "Firebase service account"
+help = "Paste the JSON key file. It is sealed on this device and never shown again."
+secret = true
+
+# A row on the app's page, opening the checklist its own service serves on loopback.
+[owner_page]
+title = "Setup"
+url = "http://127.0.0.1:9475/owner"
+
+[[network.inbound]]
+port = 9475
+protocol = "tcp"
+scope = "local"
+```
+
+Limits: at most 16 members, grants and asks; a label up to 64 characters and help up to 512, on
+one line; the owner page title up to 24 characters, its URL a `127.0.0.1` address on a TCP port the
+package declares, with a path. A pasted file reaches a secret setting without its line breaks (the
+TUI drops control characters from pastes), which for JSON changes nothing, since line breaks
+there are only spacing and the settings' environment file cannot hold them.
+
+The page itself is JSON, version 1, answered to a GET within 30 seconds, at most 64 KiB, with
+status 200 (`nodo_manifest::owner_page::PageDoc` has the types and limits):
+
+```json
+{"version": 1, "title": "Pingers setup", "intro": "optional short paragraph",
+ "steps": [{"title": "Put the four sites online", "state": "auto", "items": [
+   {"kind": "text", "text": "ssh root@{device_address}, then …"},
+   {"kind": "value", "label": "PINGERS_SERVER_HOST", "value": "https://pingers.example.org"},
+   {"kind": "check", "label": "Push relay answers", "state": "ok", "detail": "…"},
+   {"kind": "qr", "label": "Scan with the phone's camera", "data": "https://pingers.example.org/j#s1…"},
+   {"kind": "site", "package": "pingers-server", "site": "api"},
+   {"kind": "service", "package": "pingers-server"},
+   {"kind": "domain", "domain": "example.org"},
+   {"kind": "backup"}]}]}
+```
+
+A step's `state` is `done`, `todo`, `problem`, `unknown`, or `auto` (from its checks: all `ok` is
+done, any `failed` a problem, otherwise to do; no checks is unknown). A check's `state` is `ok`,
+`failed`, `waiting` or `unknown`. `site`, `service`, `domain` and `backup` are filled in by the
+device: a site's address, the DNS record to create and live checks of it, whether a service runs,
+whether a domain provider holds the domain, and whether a recent backup holds the device key. In
+`text` and `value` items the device replaces `{device_address}`, `{public_address}` and
+`{data_dir:<package>}` with its own values ("unknown" when it has none). Lengths: `text` and
+`value` 2048 characters, titles and labels 128, `intro` 1024, a check's `detail` 512, `qr.data`
+1024; at most 32 steps of 32 items. No control characters, except line breaks in `text`, `value`,
+`intro` and `detail`.
+
 ## Feeds of other projects
 
 Another project can build its own signed feed with these scripts, without copying recipes into

@@ -27,6 +27,12 @@ pub enum Permission {
     Gpu,
     /// A system package the package needs installed, without its version constraint.
     SystemPackage { name: String },
+    /// Another package of the same feed that installing this one sets up too (`[bundle]`). Each
+    /// asks for its own permissions in its own review.
+    BundleMember { name: String },
+    /// A grant the bundle install records: `consumer` may read `provider`'s secret or non-public
+    /// `setting`.
+    BundleGrant { consumer: String, provider: String, setting: String },
 }
 
 impl fmt::Display for Permission {
@@ -49,6 +55,10 @@ impl fmt::Display for Permission {
             Permission::UnencryptedStorage => f.write_str("keeps its data unencrypted"),
             Permission::Gpu => f.write_str("uses the GPU for computation (Vulkan)"),
             Permission::SystemPackage { name } => write!(f, "needs the system package {name}"),
+            Permission::BundleMember { name } => write!(f, "sets up {name} with it"),
+            Permission::BundleGrant { consumer, provider, setting } => {
+                write!(f, "lets {consumer} read the setting {setting} of {provider}")
+            }
         }
     }
 }
@@ -132,6 +142,18 @@ impl Permissions {
         if manifest.devices.gpu {
             granted.insert(Permission::Gpu);
         }
+        if let Some(bundle) = &manifest.bundle {
+            for name in &bundle.members {
+                granted.insert(Permission::BundleMember { name: name.clone() });
+            }
+            for grant in &bundle.grants {
+                granted.insert(Permission::BundleGrant {
+                    consumer: grant.consumer.clone(),
+                    provider: grant.provider.clone(),
+                    setting: grant.setting.clone(),
+                });
+            }
+        }
         for dependency in run_depends {
             granted.insert(Permission::SystemPackage { name: dependency_name(dependency) });
         }
@@ -193,6 +215,35 @@ mod tests {
                 "needs the system package libstdc++",
                 "keeps /admin, /admin/* of 'web' admin only",
             ]
+        );
+    }
+
+    #[test]
+    fn a_bundle_head_lists_its_members_and_grants() {
+        let m = manifest(
+            "[storage]\nencrypted = true\n[bundle]\nmembers = [\"relay\", \"server\"]\n\
+             [[bundle.grants]]\nconsumer = \"server\"\nprovider = \"relay\"\nsetting = \"credential\"\n\
+             [[bundle.ask]]\npackage = \"relay\"\nsetting = \"domain\"\nlabel = \"Your domain\"\n",
+        );
+        let p = Permissions::of(&m, &[]);
+        assert_eq!(
+            p.summary(),
+            [
+                "sets up relay with it",
+                "sets up server with it",
+                "lets server read the setting credential of relay"
+            ]
+        );
+        // A later version that adds a grant asks again.
+        let more = manifest(
+            "[storage]\nencrypted = true\n[bundle]\nmembers = [\"relay\", \"server\"]\n\
+             [[bundle.grants]]\nconsumer = \"server\"\nprovider = \"relay\"\nsetting = \"credential\"\n\
+             [[bundle.grants]]\nconsumer = \"shop\"\nprovider = \"server\"\nsetting = \"code\"\n",
+        );
+        let added = Permissions::of(&more, &[]).added_since(&p);
+        assert_eq!(
+            added.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["lets shop read the setting code of server"]
         );
     }
 

@@ -1,0 +1,32 @@
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    Apps  ›  pingers  ›  Setup
+
+
+       Pingers setup
+
+       Four sites, then the phones. Each step checks itself when you press r.
+
+       ✓  1.  Put the sites online
+            pingers-server · api
+          ▸ Address                                                                  Copy
+             pingers.example.com
+            A record pingers in example.com                                          Copy
+             203.0.113.5
+            Porkbun publishes this record by itself.
+            ✓  Online on the internet
+            ✓  Name points here   pingers.example.com resolves to 203.0.113.5
+            ✓  Certificate   Valid until 2027-02-19
+            ✓  pingers-server is running
+
+       ✕  2.  Back up the device key
+            ✕  Backup with the device key   The newest backup does not hold the device key.
+            Make one in System › Backups.
+
+       ○  3.  Connect the phones
+            Build the app with this server address, then scan the code with each phone.
+    ↓ more — scroll with ↑↓, PgUp and PgDn, or the wheel
+
+    Keys: ↑↓ scroll  Tab next value  c copy  r check again  Esc back

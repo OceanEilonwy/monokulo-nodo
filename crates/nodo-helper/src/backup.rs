@@ -472,6 +472,7 @@ impl<S: System> Helper<S> {
         let written = self
             .write_backup_file(&self.manage.paths.backups, &plan, backup_passphrase, now)
             .map_err(|f| f.error)?;
+        self.record_backup(written.created, written.summary.has_device_key(), false);
         Ok(Response::BackupCreated(nodo_api::BackupCreated {
             info: BackupInfo {
                 name: written.name,
