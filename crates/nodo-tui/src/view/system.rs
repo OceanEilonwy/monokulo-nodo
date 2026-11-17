@@ -351,7 +351,8 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
     before_targets.push(field_target("Search", 9, 30));
     let follow = if state.follow { t.o("● Following live") } else { t.d("○ Paused") };
     before.push(Item::Row(ratatui::text::Line::from(search), ratatui::text::Line::from(vec![follow, t.n("     "), t.a("Save to a file ›"), t.n(super::v3::MARGIN)])));
-    before_targets.push(Target::text("Save to a file ›", key('y')));
+    // Ctrl, here and on Problems, so a click works while the search box has the cursor.
+    before_targets.push(Target::text("Save to a file ›", Click::Ctrl('y')));
     before.push(Item::Blank);
     // The filter chips: problems only, then one per source on the device logs.
     let chip = |label: &str, on: bool| {
@@ -362,7 +363,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
         }
     };
     let mut chips = vec![margin(t), chip("Problems", state.errors_only), t.n("  ")];
-    before_targets.push(Target::text("Problems", key('e')));
+    before_targets.push(Target::text("Problems", Click::Ctrl('e')));
     if state.app.is_none() {
         let mut used = 16;
         for (index, name) in app.data.log_sources.iter().enumerate() {

@@ -210,7 +210,7 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         }
         if let Some(undo) = state.undo_for(index) {
             let text = format!("↺ {}", undo.label);
-            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Key(KeyCode::Char('u')), &mut screen.targets);
+            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Ctrl('z'), &mut screen.targets);
             card.blank(t);
         }
         if index == state.selected && state.editor.as_ref().is_some_and(|e| !e.suggestions_closed && e.completing().is_some()) {
