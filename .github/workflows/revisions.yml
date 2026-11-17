@@ -1,0 +1,37 @@
+# A pull request that changes a package's sources must raise that package's version or revision:
+# xbps only compares versions, so a rebuilt package with an unchanged one never reaches a device
+# that already has it. scripts/check-revisions.sh says which package and why.
+name: revisions
+
+on:
+  pull_request:
+    paths:
+      - packages/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE
+      - scripts/check-revisions.sh
+      - .github/workflows/revisions.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: revisions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Every package whose sources changed has a new version or revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/check-revisions.sh "$BASE_SHA"
