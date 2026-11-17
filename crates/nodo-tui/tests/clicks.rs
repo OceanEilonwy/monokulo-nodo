@@ -4,8 +4,9 @@
 mod common;
 
 use common::draw;
-use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, ScreenId};
-use nodo_tui::fixtures::fixture;
+use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, ScreenId, Undo};
+use nodo_tui::fixtures::{fixture, press};
+use nodo_tui::model::FieldValue;
 use nodo_tui::hit::{hit_at, Click, Hit};
 use nodo_tui::update::update;
 use ratatui::buffer::Buffer;
@@ -140,4 +141,64 @@ fn clicking_a_search_box_focuses_it_and_types_nothing() {
         assert!(focused, "{}: the box has the cursor", id.slug());
         assert!(!text.contains('/'), "{}: no key was typed into the box: {text:?}", id.slug());
     }
+}
+
+/// The Sources link opens Sources while the search box has the cursor (as it does when Get apps
+/// opens), rather than typing its key into the box.
+#[test]
+fn clicking_sources_while_typing_a_search_opens_sources() {
+    let (mut app, _) = fixture(ScreenId::Search);
+    if let Screen::Search(state) = &mut app.screen {
+        state.list_focused = false;
+    }
+    let (_, buffer, hits) = drawn(app.clone());
+    draw(&app, app.size.0, app.size.1);
+    let link = hits.iter().find(|hit| covered_text(&buffer, hit) == "Sources ›").expect("the Sources link is a target");
+    let (column, row) = cell_for(&hits, link).expect("nothing covers it");
+    update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row });
+    assert_eq!(app.screen.id(), ScreenId::Feeds, "the click opens Sources");
+}
+
+/// Clicks the target covering `label` on what `app` draws.
+fn click_text(app: &mut App, label: &str) -> Vec<nodo_tui::app::Effect> {
+    let (_, buffer, hits) = drawn(app.clone());
+    draw(app, app.size.0, app.size.1);
+    let target = hits.iter().find(|hit| covered_text(&buffer, hit) == label).unwrap_or_else(|| panic!("\"{label}\" is a target"));
+    let (column, row) = cell_for(&hits, target).expect("nothing covers it");
+    update(app, Event::Mouse { kind: MouseKind::Down, column, row })
+}
+
+/// Problems and Save to a file work while the log search box has the cursor, rather than typing
+/// their keys into it.
+#[test]
+fn log_links_work_while_typing_a_search() {
+    let (mut app, _) = fixture(ScreenId::Logs);
+    let Screen::Logs(state) = &mut app.screen else { panic!("the logs fixture") };
+    state.finding = true;
+    let was = state.errors_only;
+    click_text(&mut app, "Problems");
+    let Screen::Logs(state) = &app.screen else { panic!("still on Logs") };
+    assert_eq!(state.errors_only, !was, "Problems toggles");
+    assert_eq!(state.find.text(), "", "nothing typed into the search");
+    let effects = click_text(&mut app, "Save to a file ›");
+    assert!(!effects.is_empty(), "Save to a file does something");
+    let Screen::Logs(state) = &app.screen else { panic!("still on Logs") };
+    assert_eq!(state.find.text(), "", "nothing typed into the search");
+}
+
+/// The undo link undoes while another field's editor is open, rather than typing a u into it.
+#[test]
+fn undo_link_works_while_a_field_is_being_edited() {
+    let (mut app, _) = fixture(ScreenId::Settings);
+    let Screen::Settings(state) = &mut app.screen else { panic!("the settings fixture") };
+    let after = state.draft[0].clone();
+    state.undo = Some(Undo { field: 0, before: FieldValue::Text("http://old".into()), after, label: "Put it back".into() });
+    state.selected = 1;
+    update(&mut app, press(crossterm::event::KeyCode::Enter));
+    let Screen::Settings(state) = &app.screen else { panic!("still on Settings") };
+    assert!(state.editor.is_some(), "the second field's editor is open");
+    click_text(&mut app, "↺ Put it back");
+    let Screen::Settings(state) = &app.screen else { panic!("still on Settings") };
+    assert_eq!(state.draft[0], FieldValue::Text("http://old".into()), "the undo happened");
+    assert!(state.undo.is_none() && state.editor.is_none(), "the step is used and the editor closed");
 }

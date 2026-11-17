@@ -269,9 +269,10 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     let mut search = vec![margin(t), t.d(pad("Search", 9))];
     search.extend(inset(t, state.query.text(), 40, None, !state.list_focused));
     before_targets.push(field_target("Search", 9, 40));
-    let search_row = heading_link(t, t.n(""), "Sources ›", Click::Key(KeyCode::Char('s')), &mut Vec::new());
+    let search_row = heading_link(t, t.n(""), "Sources ›", Click::Ctrl('s'), &mut Vec::new());
     let Item::Row(_, right) = search_row else { unreachable!() };
-    before_targets.push(Target::text("Sources ›", Click::Key(KeyCode::Char('s'))));
+    // Ctrl, so a click opens Sources while the search box has the cursor instead of typing an s.
+    before_targets.push(Target::text("Sources ›", Click::Ctrl('s')));
     let scope = state.feed_filter.as_deref().map_or_else(String::new, |feed| format!(" from {feed}"));
     let count = quiet(t, &format!("{} of {} apps{scope} match. Click one to see what it does before installing.", results.len(), app.data.catalog.len()));
     screen.before = vec![Item::Blank, trail_row, Item::Blank, Item::Row(ratatui::text::Line::from(search), right), Item::Blank, count, Item::Blank];

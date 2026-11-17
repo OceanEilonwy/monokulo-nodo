@@ -896,7 +896,8 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             state.list_focused = false;
             state.selected = 0;
         }
-        KeyCode::Char('s') if state.list_focused => return open_sources(app, 0),
+        // Ctrl+S also works from the search box, where a plain s is typed: the Sources link sends it.
+        KeyCode::Char('s') if state.list_focused || key.modifiers.contains(KeyModifiers::CONTROL) => return open_sources(app, 0),
         KeyCode::Enter => {
             if let Some(id) = results.get(state.selected) {
                 return vec![Effect::LoadDetail(id.clone())];
@@ -1230,6 +1231,13 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             _ => Vec::new(),
         };
     }
+    // Ctrl+Z undoes even while a field is being typed in: the undo link sends it.
+    if is_ctrl(key, 'z') {
+        return undo_step(app);
+    }
+    let Screen::Settings(state) = &mut app.screen else {
+        return Vec::new();
+    };
     if let Some(input) = state.editing.as_mut() {
         match key.code {
             KeyCode::Esc => state.editing = None,
@@ -1475,6 +1483,7 @@ fn undo_step(app: &mut App) -> Vec<Effect> {
         return Vec::new();
     };
     state.editor = None;
+    state.editing = None;
     state.draft[undo.field] = undo.before;
     state.selected = undo.field;
     preview_field(state, undo.field)
@@ -1980,7 +1989,9 @@ fn logs_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Logs(state) = &mut app.screen else {
         return Vec::new();
     };
-    if state.finding {
+    // Ctrl+E and Ctrl+Y act even while typing a search, where a plain e or y is typed: the
+    // Problems chip and the Save link send them.
+    if state.finding && !is_ctrl(key, 'e') && !is_ctrl(key, 'y') {
         match key.code {
             KeyCode::Enter => state.finding = false,
             KeyCode::Esc => {
