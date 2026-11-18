@@ -189,6 +189,13 @@ fn mountinfo_contains(mountinfo: &str, path: &str) -> bool {
         .any(|line| line.split(' ').nth(4) == Some(path))
 }
 
+fn sv_status_text(mut cmd: Command) -> SysResult<String> {
+    let out = cmd.output().map_err(|e| SysError(format!("sv: {e}")))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok(text)
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The real [`System`]. Needs root for nearly everything.
@@ -209,10 +216,14 @@ impl System for RealSystem {
     fn sv_status(&self, id: &str) -> SysResult<String> {
         let mut cmd = command("sv");
         cmd.arg("status").arg(id).env("SVDIR", "/var/service");
-        let out = cmd.output().map_err(|e| SysError(format!("sv: {e}")))?;
-        let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&out.stderr));
-        Ok(text)
+        sv_status_text(cmd)
+    }
+
+    fn sv_status_dir(&self, dir: &Path) -> SysResult<String> {
+        // sv takes an argument starting with a slash as the service directory itself.
+        let mut cmd = command("sv");
+        cmd.arg("status").arg(dir);
+        sv_status_text(cmd)
     }
 
     fn exists(&self, path: &Path) -> bool {

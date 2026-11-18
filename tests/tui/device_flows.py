@@ -92,11 +92,6 @@ def remove_forms():
     if installed_version():
         ctl("remove-pkg", FORMS)
         wait_until("tui-forms to be removed", lambda: installed_version() is None, 60)
-    # runsvdir notices the removed service link only at its next scan, up to five seconds later.
-    # Installed again before then, the stopped runsv of the removed install is still there, and
-    # the helper's new link to the same name does not start it: the service stays down.
-    wait_until("runit to let go of tui-forms",
-               lambda: sh(f"pgrep -f '^runsv {FORMS}$'", check=False).strip() == "", 30)
 
 
 def ready_forms():
@@ -250,6 +245,29 @@ def forms_install_esc():
         else:
             check("an install that did not go through is not reported as installed",
                   "tui-forms is installed" not in outcome, outcome)
+
+
+def runsv_pid():
+    """The pid of the runsv that holds tui-forms, or "" when none does."""
+    return sh(f"pgrep -x -f 'runsv {FORMS}'", check=False).strip()
+
+
+def forms_reinstall():
+    with Journey("Reinstall at once: removed and installed again, the app runs"):
+        ready_forms()
+        before = runsv_pid()
+        check("a runsv holds the installed tui-forms", before != "", before)
+        # Back to back, well inside runsvdir's five-second scan, as an owner who removes an app
+        # and installs it again from the same screen can. The removal answers only once runit
+        # has let the old service go, so the install gets a runsv of its own.
+        ctl("remove-pkg", FORMS)
+        check("the removal answers after the old runsv has gone", runsv_pid() == "", runsv_pid())
+        report = sh(f"printf '%s\\n' '{PASSPHRASE}' | nodo-tui --ctl approve-install-encrypted tui-feed {FORMS}",
+                    timeout=300)
+        check("the install reports no problem", "problem: None" in report, report)
+        check("the service runs when the install says it is done", running(), sh(f"sv status {FORMS}", check=False))
+        after = runsv_pid()
+        check("a new runsv holds it, not the removed install's", after not in ("", before), f"{before} -> {after}")
 
 
 def forms_settings():
@@ -586,6 +604,7 @@ def providers():
 JOURNEYS = [
     ("forms-install", forms_install),
     ("forms-install-esc", forms_install_esc),
+    ("forms-reinstall", forms_reinstall),
     ("forms-settings", forms_settings),
     ("forms-mouse", forms_mouse),
     ("check-now", check_now),
