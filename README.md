@@ -65,6 +65,7 @@ tests/inspect-t6n-mainline.sh out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n
 ```
 
 - [Hardware test](docs/HARDWARE_TEST.md), [mainline kernel notes](docs/MAINLINE_KERNEL.md) and [TUI design](docs/design/tui/)
+- [Release walk-through](docs/RELEASE_WALKTHROUGH.md): an hour on the real board, required before a snapshot that changes this project's packages is published (`scripts/walkthrough.sh`)
 
 ## License
 

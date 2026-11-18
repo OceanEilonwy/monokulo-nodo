@@ -1,5 +1,9 @@
 # First hardware test: NanoPC-T6N from microSD
 
+This was the first boot of the image on the board, from two kept images. Every release since goes
+through the [release walk-through](RELEASE_WALKTHROUGH.md), which refers back here for flashing a
+card and for reading the diagnostic report off a card that does not boot.
+
 This boots the image from a microSD card. It does not change the eMMC, and it only adds a
 `cuprated` directory to the existing `NODO_BLOCKCHAIN` SSD partition.
 
