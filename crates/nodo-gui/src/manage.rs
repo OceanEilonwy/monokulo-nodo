@@ -1227,14 +1227,20 @@ impl Manage {
                 self.keyboard(Editing::PublicHost(arg), "Your web address", &current, false, true);
             }
             "hosting-save" => self.save_hosting(),
-            "check-updates" => self.change("Checking for updates", |d| {
-                d.check_updates().map_err(ApiError::Failed)?;
-                // Said out loud, so a check that found nothing still shows it ran.
-                Ok(match d.updates().len() {
-                    0 => "Up to date".to_owned(),
-                    n => format!("{} available", counted(n as u64, "update")),
-                })
-            }),
+            "check-updates" => {
+                self.busy = Some("Checking for updates".to_owned());
+                self.run(|d| {
+                    // Said out loud, so a check that found nothing still shows it ran, and what
+                    // could not be checked (a source, the system) shows next to what was found.
+                    let report = d.check_updates();
+                    let summary = report.summary(d.updates().len(), &d.feeds());
+                    Box::new(move |m: &mut Manage| {
+                        m.busy = None;
+                        m.say(&summary.text, summary.trouble);
+                        m.reload();
+                    })
+                });
+            }
             "apply-updates" => {
                 let names = self.selected_updates.clone();
                 if names.is_empty() {

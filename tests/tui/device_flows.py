@@ -11,8 +11,8 @@ package), so any of them can be run alone on a fresh VM:
 The package they use is tui-forms, built by feed.sh from forms/settings.lua: thirty settings of
 every kind, long enough that the form scrolls. It stands in for nodo-fixture-forms.
 
-The assertions say what the owner should see. Journeys in NEEDS_FIXES fail on main until branch
-tui-setup-fixes lands; that is expected, and their assertions are not to be relaxed to pass.
+The assertions say what the owner should see. A journey listed in NEEDS_FIXES fails on a known bug
+until it is fixed; its assertions are not to be relaxed to pass.
 """
 
 import os
@@ -92,6 +92,11 @@ def remove_forms():
     if installed_version():
         ctl("remove-pkg", FORMS)
         wait_until("tui-forms to be removed", lambda: installed_version() is None, 60)
+    # runsvdir notices the removed service link only at its next scan, up to five seconds later.
+    # Installed again before then, the stopped runsv of the removed install is still there, and
+    # the helper's new link to the same name does not start it: the service stays down.
+    wait_until("runit to let go of tui-forms",
+               lambda: sh(f"pgrep -f '^runsv {FORMS}$'", check=False).strip() == "", 30)
 
 
 def ready_forms():
@@ -435,8 +440,23 @@ def open_updates(tui):
     tui.wait_for(re.compile(r"System\s+›\s+Updates"), "Check now", timeout=30)
 
 
-CHECK_RESULT = re.compile(r"Up to date|\b\d+ updates? (are )?(available|ready|found)|\b(One|An) update")
-CHECK_FAILED = re.compile(r"(?i)could ?n[o']t check|can ?n[o']t (check|reach)|unreachable|not reachable")
+# What Check now found among the apps. On a device that cannot reach the snapshot server the
+# system check fails too, and that is said next to this, never instead of it.
+CHECK_RESULT = re.compile(r"\b[Uu]p to date\.|\b\d+ updates? available\.")
+SYSTEM_FAILED = "The system check failed:"
+
+
+def system_check_failed():
+    return "last_error: Some(" in ctl("system-status", check=False)
+
+
+def open_sources(tui):
+    tui.send("2")
+    tui.wait_for("Installed", timeout=20)
+    tui.send("g")
+    tui.wait_for("Get apps", "Sources ›", timeout=20)
+    tui.click_text("Sources ›")
+    tui.wait_for(re.compile(r"Get apps\s+›\s+Sources"), timeout=20)
 
 
 def check_now():
@@ -455,7 +475,13 @@ def check_now():
         tui.expect("checking says what it found", CHECK_RESULT, timeout=90)
         status = ctl("update-status")
         if "candidates: []" in status:
-            tui.expect("with nothing to update it says up to date", "Up to date")
+            tui.expect("with nothing to update it says up to date", re.compile(r"\b[Uu]p to date\."))
+        if system_check_failed():
+            # The VM is offline, so the system check always fails here: the owner hears both.
+            tui.expect("a failed system check is said next to the apps' result, not instead of it", CHECK_RESULT,
+                       SYSTEM_FAILED)
+            check("so Up to date is only claimed for the apps", "Apps up to date." in tui.text() or
+                  "Up to date." not in tui.text(), tui.text())
         check("tui-forms is not offered before a new version", not re.search(r"\]\s+tui-forms\b", tui.text()),
               tui.text())
         tui.quit()
@@ -469,20 +495,29 @@ def check_now():
         tui.wait_for(re.compile(r"tui-forms\s+\S+\s+→\s+" + re.escape(nxt) + r"_1"), timeout=90)
         tui.expect("the new version is listed and ticked, ready to update",
                    re.compile(r"\[x\]\s+tui-forms\s+\S+\s+→\s+" + re.escape(nxt) + r"_1"), timeout=5)
-        tui.expect("the check counts what it found", re.compile(r"\b\d+ updates? (are )?(available|ready|found)|\b(One|An) update"),
-                   timeout=10, absent=("Up to date",))
+        tui.expect("the check counts what it found", re.compile(r"\b\d+ updates? available\."), timeout=10,
+                   absent=("Up to date",))
+        if system_check_failed():
+            tui.expect("and says the system check failed beside it", SYSTEM_FAILED)
         tui.quit()
     away = FEED + ".away"
     try:
-        with Journey("Check now: an unreachable feed is an error"):
+        with Journey("Check now: an unreadable feed is named"):
             sh(f"rm -rf {away} && mv {FEED} {away}")
-        with Journey("Check now: an unreachable feed is an error"), Session() as tui:
+        with Journey("Check now: an unreadable feed is named"), Session() as tui:
             open_updates(tui)
             tui.send("r")
             # Named, so an unrelated failure (the system snapshot check, say) cannot pass for it.
-            tui.expect("a feed that cannot be read is reported, not hidden", CHECK_FAILED, "tui-feed", timeout=90,
+            tui.expect("a feed that cannot be read is named, not hidden", "Could not read tui-feed:", timeout=90,
                        absent=("Up to date",))
+            tui.send("esc")
+            open_sources(tui)
+            tui.expect("Sources shows the same feed could not be read", re.compile(r"tui-feed\b"),
+                       "Couldn't reach it:", timeout=20)
             tui.quit()
+        with Journey("Check now: an unreadable feed, helper side"):
+            feeds = ctl("feeds")
+            check("the helper recorded the problem on the feed", re.search(r"problem: Some\(", feeds), feeds)
     finally:
         sh(f"[ -d {away} ] && rm -rf {FEED} && mv {away} {FEED}; nodo-tui --ctl refresh-feeds >/dev/null", check=False)
 
@@ -557,18 +592,9 @@ JOURNEYS = [
     ("providers", providers),
 ]
 
-# Journeys that fail on main until branch tui-setup-fixes lands, and what each waits for. A FAIL
-# in them before then is the bug they guard against, not a broken test.
-NEEDS_FIXES = {
-    "forms-install": "the install page shows at once instead of the review sitting there (update.rs start_install)",
-    "forms-install-esc": "leaving the install page reports its outcome as a notice (on_install_progress)",
-    "forms-settings": "an empty optional int no longer blocks saving; clearing sends a reset",
-    "forms-mouse": "clicks on a scrolled form resolve to the field drawn under the pointer",
-    "check-now": "Check now reports its result and ticks what it found; an unreachable feed is an error",
-}
-# Still failing with tui-setup-fixes 22ab4d8 (its nodo-tui swapped into the VM, 2026-11-18):
-# check-now's result text. The system snapshot check always fails in the offline VM, and Check
-# now then says only "Could not check for updates: could not download the snapshot manifest…",
-# even when it found an app update, and says nothing about the unreadable tui-feed.
-# providers passes on main: two providers and a key with two domains already work through the
-# helper. It stays as a guard for the providers work going on separately.
+# Journeys that fail on main until a known bug is fixed, with what each waits for. A FAIL in them
+# is that bug, not a broken test, and still counts as a failure. None are waiting now: the first
+# four passed once #38 landed, and check-now once Check now reported a failed system check next to
+# the apps' result and named an unreadable source.
+NEEDS_FIXES = {}
+# providers is a guard for the providers work: two providers and a key with two domains.

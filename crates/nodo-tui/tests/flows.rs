@@ -639,6 +639,20 @@ fn the_local_ca_screen_shows_the_whole_fingerprint_and_the_trust_page() {
     assert_eq!(app.screen.id(), ScreenId::WebDomain);
 }
 
+/// A refused save on Domains is said where it is seen. At the foot of the page it was below the
+/// fold on a 100x32 terminal, so a mistyped email looked as if it had been taken.
+#[test]
+fn a_refused_email_on_domains_is_on_screen() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('d'));
+    assert_eq!(app.screen.id(), ScreenId::WebDomain);
+    dispatch(&mut app, &mut mock, ctrl('u'));
+    type_text(&mut app, &mut mock, "not an email");
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("✕ that email address is not valid"), "{screen}");
+}
+
 #[test]
 fn local_name_records_that_lag_are_explained_on_the_web_tab() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
@@ -1728,9 +1742,73 @@ fn check_now_shows_it_is_running_and_says_what_it_found() {
     assert!(screen_text(&app).contains(&format!("{count} updates available.")), "{}", screen_text(&app));
     assert!(screen_text(&app).contains("Check now ›"), "the link is back once the check is done");
 
+    // Up to date only once every source could be read: the crowded mock has one that cannot.
+    mock.updates.clear();
+    for feed in &mut mock.feeds {
+        if matches!(feed.status, FeedStatus::Unreachable(_)) {
+            feed.status = FeedStatus::Healthy;
+        }
+    }
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    let notice = app.notice.clone().expect("told");
+    assert_eq!((notice.kind, notice.text.as_str()), (NoticeKind::Ok, "Up to date."));
+}
+
+/// On a device that cannot reach the snapshot server the system check fails every time. Check
+/// now used to say only that, even when the apps' check had found an update; now it says both.
+#[test]
+fn a_failed_system_check_does_not_hide_what_the_apps_check_found() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.feeds.retain(|feed| !matches!(feed.status, FeedStatus::Unreachable(_)));
+    mock.knobs.system_check_failure = Some("could not download the snapshot manifest.".to_owned());
+    let mut new = mock.updates.iter().find(|item| item.note == UpdateNote::Ready).expect("a plain update").clone();
+    (new.name, new.source, new.held, new.preselected) = ("fast-sync".to_owned(), "community".to_owned(), false, true);
+    mock.updates.clear();
+    mock.published.push(new);
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    let notice = app.notice.clone().expect("told");
+    assert_eq!(notice.kind, NoticeKind::Error, "something could not be checked");
+    assert_eq!(notice.text, "1 update available. The system check failed: could not download the snapshot manifest.");
+    assert!(updates_state(&app).checked.contains(&"fast-sync".to_owned()), "what was found is ticked all the same");
+    assert!(screen_text(&app).contains("The system check failed"), "{}", screen_text(&app));
+
+    // With nothing found, only the apps are called up to date.
     mock.updates.clear();
     key(&mut app, &mut mock, KeyCode::Char('r'));
-    assert!(screen_text(&app).contains("Up to date."), "{}", screen_text(&app));
+    let notice = app.notice.clone().expect("told");
+    assert_eq!(notice.text, "Apps up to date. The system check failed: could not download the snapshot manifest.");
+}
+
+/// A source the helper could not read is marked on the source, and the check goes on. Check now
+/// names it, and Sources shows it with the helper's problem.
+#[test]
+fn check_now_names_a_source_it_could_not_read() {
+    let (mut app, mut mock) = fixture(ScreenId::Feeds);
+    let mut unseen = mock.updates[0].clone();
+    (unseen.name, unseen.source) = ("fast-sync".to_owned(), "community".to_owned());
+    mock.updates.clear();
+    mock.published.push(unseen);
+    mock.knobs.unreadable_feeds = vec![("community".to_owned(), "the feed index could not be downloaded".to_owned())];
+    let events = execute_effect(&mut mock, Effect::CheckUpdates);
+    for event in events {
+        dispatch(&mut app, &mut mock, event);
+    }
+    let notice = app.notice.clone().expect("told");
+    assert_eq!(notice.kind, NoticeKind::Error);
+    assert!(notice.text.starts_with("No updates in the sources that could be read."), "{}", notice.text);
+    assert!(notice.text.contains("Could not read community: the feed index could not be downloaded."), "{}", notice.text);
+    assert!(!notice.text.contains("Up to date"), "{}", notice.text);
+    assert!(mock.updates.is_empty(), "what the unread source published is not seen yet");
+    let screen = screen_text(&app);
+    assert!(screen.contains("Couldn't reach it: the feed index could not be downloaded"), "{screen}");
+
+    // Once it can be read again, its update is found.
+    mock.knobs.unreadable_feeds.clear();
+    mock.feeds.iter_mut().filter(|feed| feed.name == "community").for_each(|feed| feed.status = FeedStatus::Healthy);
+    for event in execute_effect(&mut mock, Effect::CheckUpdates) {
+        dispatch(&mut app, &mut mock, event);
+    }
+    assert_eq!(mock.updates.len(), 1);
 }
 
 /// A failed check, and a failed source refresh, switch or removal, say why instead of nothing.

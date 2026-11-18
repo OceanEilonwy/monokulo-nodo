@@ -551,7 +551,7 @@ pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
     rows
 }
 
-pub fn check_updates(b: &HelperBackend) -> Result<(), String> {
+pub fn check_updates(b: &HelperBackend) -> CheckReport {
     let apps = match b.ask(Request::CheckUpdates) {
         Ok(Response::UpdateStatus(status)) => {
             b.manage.borrow_mut().status = Some(status);
@@ -564,12 +564,13 @@ pub fn check_updates(b: &HelperBackend) -> Result<(), String> {
         }
     };
     // The helper also records a failed system check for the system line, but the owner who
-    // pressed Check now is told here too. A helper without system updates has nothing to say.
+    // pressed Check now is told here too, next to what the apps' check found rather than instead
+    // of it. A helper without system updates has nothing to say.
     let system = match b.ask(Request::CheckSystemUpdate) {
         Ok(_) | Err(ApiError::NotImplemented(_)) => Ok(()),
         Err(e) => Err(e.to_string()),
     };
-    apps.and(system)
+    CheckReport { apps, system }
 }
 
 /// The system update the user selected, as a result row.

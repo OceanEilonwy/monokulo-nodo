@@ -40,3 +40,10 @@ fn the_mock_refuses_what_the_helper_refuses() {
     contract::missing_sources_fail(&mut mock);
     contract::features_match_capabilities(&mut mock, "shop");
 }
+
+#[test]
+fn the_mock_names_a_source_it_could_not_read_as_the_helper_does() {
+    let mut mock = MockBackend::new();
+    mock.knobs.unreadable_feeds = vec![("community".to_owned(), "the feed did not answer".to_owned())];
+    contract::unreadable_source_is_named(&mut mock, "community");
+}

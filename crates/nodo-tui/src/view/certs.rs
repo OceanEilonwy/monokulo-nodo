@@ -106,10 +106,11 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
             Item::Row(left, Line::from(t.d(note.to_owned())))
         }
     };
-    let lets_encrypt = vec![
-        field(DomainFocus::Email, "Email for expiry notices", &state.email, "none, recommended"),
-        toggle(DomainFocus::Staging, state.staging, "Use the staging server", "Untrusted certificates, for testing"),
-    ];
+    // A refused save is said just above the fields that were saved, where it is seen: at the foot
+    // of the page it was below the fold on a 32-row terminal, and a refused email looked taken.
+    let mut lets_encrypt: Vec<Item> = state.error.iter().map(|error| Item::Text(Line::from(t.e(format!(" ✕ {error}"))))).collect();
+    lets_encrypt.push(field(DomainFocus::Email, "Email for expiry notices", &state.email, "none, recommended"));
+    lets_encrypt.push(toggle(DomainFocus::Staging, state.staging, "Use the staging server", "Untrusted certificates, for testing"));
 
     let radio = |on: bool| if on { "(•)" } else { "( )" };
     let address = acme.local_address.clone().unwrap_or_else(|| "the local address".to_owned());
@@ -172,9 +173,6 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
                 field(DomainFocus::Dns01Second, &label(1), &state.dns01_second, stored),
             ],
         ));
-    }
-    if let Some(error) = &state.error {
-        page = page.plain(vec![Item::Text(Line::from(t.e(format!(" ✕ {error}"))))]);
     }
     let keys: &[(&str, &str)] = if state.focus.is_text() {
         &[("↑↓", "fields"), ("type", "to edit"), ("↵", "save"), ("Esc", "back")]

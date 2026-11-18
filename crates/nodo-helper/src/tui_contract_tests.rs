@@ -10,25 +10,26 @@ use nodo_tui::contract;
 use nodo_tui::helper_backend::HelperBackend;
 use nodo_tui::model::{InstallOutcome, PackageId, ScreenData};
 
-use super::{setup, FEED};
+use super::{setup, FakePackages, FEED};
 use crate::helper::AllowedUids;
 use crate::server::serve;
 
-/// The TUI's backend, connected to a helper from `setup` that serves on a socket in `dir`.
-fn connected(dir: &tempfile::TempDir) -> HelperBackend {
-    let (mut h, _packages) = setup();
+/// The TUI's backend, connected to a helper from `setup` that serves on a socket in `dir`, and the
+/// scripted feed behind it.
+fn connected(dir: &tempfile::TempDir) -> (HelperBackend, FakePackages) {
+    let (mut h, packages) = setup();
     h.allowed = AllowedUids::new([rustix::process::geteuid().as_raw()]);
     let path = dir.path().join("helper.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let h = Arc::new(h);
     std::thread::spawn(move || serve(listener, h));
-    HelperBackend::connect(&path).unwrap()
+    (HelperBackend::connect(&path).unwrap(), packages)
 }
 
 #[test]
 fn the_tui_installs_through_the_helper_as_the_mock_does() {
     let dir = tempfile::tempdir().unwrap();
-    let mut backend = connected(&dir);
+    let (mut backend, _packages) = connected(&dir);
     let probe = backend.probe_feed(FEED).unwrap();
     backend.trust_feed(&probe).unwrap();
     let done = contract::install(&mut backend, &PackageId::new(&probe.name, "demo"));
@@ -39,7 +40,18 @@ fn the_tui_installs_through_the_helper_as_the_mock_does() {
 #[test]
 fn the_tui_hears_the_helper_refuse_what_the_mock_refuses() {
     let dir = tempfile::tempdir().unwrap();
-    let mut backend = connected(&dir);
+    let (mut backend, _packages) = connected(&dir);
     contract::missing_sources_fail(&mut backend);
     contract::features_match_capabilities(&mut backend, "demo");
+}
+
+#[test]
+fn the_tui_names_a_source_the_helper_could_not_read_as_the_mock_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut backend, packages) = connected(&dir);
+    let probe = backend.probe_feed(FEED).unwrap();
+    backend.trust_feed(&probe).unwrap();
+    // The feed stops answering after it was added, as a feed server that went away does.
+    packages.0.lock().unwrap().feeds.clear();
+    contract::unreadable_source_is_named(&mut backend, &probe.name);
 }
