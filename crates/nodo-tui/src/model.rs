@@ -513,6 +513,68 @@ pub struct UpdateReport {
     pub failure: Option<UpdateFailure>,
 }
 
+/// How Check now went. The apps' sources and the system snapshot are checked separately, and on
+/// a device that cannot reach the snapshot server the system check fails every time, so one
+/// failing must not hide what the other found. A source that could not be read is not a failure
+/// here: the helper records it on the source, and `summary` reads it from there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "how a check went, including a failed system check, must reach the owner"]
+pub struct CheckReport {
+    pub apps: Result<(), String>,
+    pub system: Result<(), String>,
+}
+
+/// What Check now tells the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckSummary {
+    pub text: String,
+    /// Something could not be checked, so the owner should not read the result as complete.
+    pub trouble: bool,
+    pub found: u64,
+}
+
+impl CheckReport {
+    /// The result in words, from the updates and sources as they are after the check: what was
+    /// found, then each source that could not be read by name, then the system check if it failed.
+    pub fn summary(&self, updates: usize, feeds: &[Feed]) -> CheckSummary {
+        // Problems come from other programs and may end with a full stop already.
+        let clause = |text: &str| text.trim_end().trim_end_matches('.').to_owned();
+        let unread: Vec<&Feed> = feeds.iter().filter(|feed| matches!(feed.status, FeedStatus::Unreachable(_))).collect();
+        let unreadable: Vec<String> = unread
+            .iter()
+            .filter_map(|feed| match &feed.status {
+                FeedStatus::Unreachable(problem) => Some(format!("Could not read {}: {}.", feed.name, clause(problem))),
+                _ => None,
+            })
+            .collect();
+        // Only a source that installed apps come from can hold an update for them. One that
+        // nothing came from is still named, but does not stop the apps being up to date.
+        let apps_unknown = unread.iter().any(|feed| !feed.installed_from.is_empty());
+        let found = updates as u64;
+        let mut parts = Vec::new();
+        match &self.apps {
+            Err(error) => parts.push(format!("Could not check for updates: {}.", clause(error))),
+            Ok(()) => {
+                parts.push(match (found, apps_unknown, self.system.is_ok()) {
+                    (0, false, true) => "Up to date.".to_owned(),
+                    (0, false, false) => "Apps up to date.".to_owned(),
+                    // Whatever the unread sources hold is unknown, so nothing is called up to date.
+                    (0, true, _) => "No updates in the sources that could be read.".to_owned(),
+                    (n, _, _) => format!("{} available.", counted(n, "update")),
+                });
+                parts.extend(unreadable.iter().cloned());
+            }
+        }
+        if let Err(error) = &self.system {
+            if self.apps.as_ref().err() != Some(error) {
+                parts.push(format!("The system check failed: {}.", clause(error)));
+            }
+        }
+        let trouble = self.apps.is_err() || self.system.is_err() || !unreadable.is_empty();
+        CheckSummary { text: parts.join(" "), trouble, found }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoUpdateEntry {
     pub name: String,
@@ -953,8 +1015,9 @@ pub trait ScreenData {
     }
 
     fn updates(&self) -> Vec<UpdateItem>;
-    /// Asks the feeds for new versions. What it found arrives with the next snapshot.
-    fn check_updates(&mut self) -> Result<(), String>;
+    /// Asks the feeds for new versions, and the system for a new snapshot. What it found arrives
+    /// with the next snapshot, and sources that could not be read are marked on them.
+    fn check_updates(&mut self) -> CheckReport;
     fn update_review(&self, name: &str) -> Option<ReviewData>;
     /// `approvals` are the reviews the user confirmed, for updates that ask for more.
     fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport;
@@ -1099,5 +1162,65 @@ pub trait ScreenData {
     /// An app's setup page. The device passphrase is checked like an unlock.
     fn owner_page(&mut self, _package: &str, _passphrase: &Secret) -> Result<nodo_api::OwnerPageView, nodo_api::ApiError> {
         Err(nodo_api::ApiError::NotImplemented("setup pages".to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feed(name: &str, status: FeedStatus) -> Feed {
+        Feed {
+            installed_from: vec![format!("{name}-app")],
+            name: name.to_owned(),
+            packages: 1,
+            key_state: KeyState::Pinned,
+            checked: String::new(),
+            status,
+            address: String::new(),
+            fingerprint: String::new(),
+            added: String::new(),
+        }
+    }
+
+    /// A helper that cannot be reached fails both checks with the same words; they are said once.
+    #[test]
+    fn a_check_summary_says_each_failure_once() {
+        let down = "cannot reach the helper".to_owned();
+        let report = CheckReport { apps: Err(down.clone()), system: Err(down) };
+        let summary = report.summary(0, &[feed("tui-feed", FeedStatus::Unreachable("gone".to_owned()))]);
+        assert_eq!(summary.text, "Could not check for updates: cannot reach the helper.");
+        assert!(summary.trouble);
+    }
+
+    /// Every unreadable source is named; a disabled or blocked one is not a reading problem.
+    #[test]
+    fn a_check_summary_names_every_source_it_could_not_read() {
+        let report = CheckReport { apps: Ok(()), system: Ok(()) };
+        let feeds = [
+            feed("one", FeedStatus::Unreachable("no answer.".to_owned())),
+            feed("two", FeedStatus::Unreachable("bad signature".to_owned())),
+            feed("three", FeedStatus::Disabled),
+            feed("four", FeedStatus::Blocked),
+            feed("five", FeedStatus::Healthy),
+        ];
+        let summary = report.summary(2, &feeds);
+        assert_eq!(summary.text, "2 updates available. Could not read one: no answer. Could not read two: bad signature.");
+        assert_eq!((summary.trouble, summary.found), (true, 2));
+        let clean = report.summary(0, &feeds[2..]);
+        assert_eq!((clean.text.as_str(), clean.trouble), ("Up to date.", false));
+        let unknown = report.summary(0, &feeds);
+        assert!(unknown.text.starts_with("No updates in the sources that could be read."), "{}", unknown.text);
+    }
+
+    /// A source nothing was installed from is named, but cannot hold an update for the apps.
+    #[test]
+    fn an_unread_source_nothing_came_from_leaves_the_apps_up_to_date() {
+        let report = CheckReport { apps: Ok(()), system: Ok(()) };
+        let mut unused = feed("monokulo", FeedStatus::Unreachable("no answer".to_owned()));
+        unused.installed_from.clear();
+        let summary = report.summary(0, &[unused, feed("tui-feed", FeedStatus::Healthy)]);
+        assert_eq!(summary.text, "Up to date. Could not read monokulo: no answer.");
+        assert!(summary.trouble);
     }
 }

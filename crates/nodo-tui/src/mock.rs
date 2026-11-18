@@ -74,6 +74,12 @@ pub struct TestKnobs {
     pub providers_failure: Option<String>,
     /// Makes checking for updates and refreshing, switching or removing a source fail with this.
     pub feeds_failure: Option<String>,
+    /// Sources that cannot be read, by name, with the helper's problem. A check or refresh still
+    /// succeeds, as the helper's does, and marks each of them unreachable with its problem.
+    pub unreadable_feeds: Vec<(String, String)>,
+    /// Makes the system snapshot check fail with this, as it does on a device that cannot reach
+    /// the snapshot server. The apps are checked all the same.
+    pub system_check_failure: Option<String>,
     /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
     pub radios_failure: Option<String>,
 }
@@ -87,6 +93,8 @@ impl Default for TestKnobs {
             restore_failure: None,
             providers_failure: None,
             feeds_failure: None,
+            unreadable_feeds: Vec::new(),
+            system_check_failure: None,
             radios_failure: None,
         }
     }
@@ -145,6 +153,22 @@ impl Default for MockBackend {
 }
 
 impl MockBackend {
+    /// Reads every switched-on source again, as the helper's refresh does: those the knobs make
+    /// unreadable are marked with their problem, and the rest answer, or keep the problem they had.
+    fn read_feeds(&mut self) {
+        for feed in &mut self.feeds {
+            if matches!(feed.status, FeedStatus::Disabled | FeedStatus::Blocked) {
+                continue;
+            }
+            if let Some((_, problem)) = self.knobs.unreadable_feeds.iter().find(|(name, _)| *name == feed.name) {
+                feed.status = FeedStatus::Unreachable(problem.clone());
+            }
+            if feed.status == FeedStatus::Healthy {
+                feed.checked = s("just now");
+            }
+        }
+    }
+
     /// The first connected domain is what the older single-provider fields show.
     fn sync_web_domain(&mut self) {
         let first = self.connected.iter().find_map(|p| p.domains.first().map(|d| (p.name.clone(), d.name.clone())));
@@ -1055,11 +1079,7 @@ impl ScreenData for MockBackend {
 
     fn refresh_feeds(&mut self) -> Result<(), String> {
         self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
-        for feed in &mut self.feeds {
-            if feed.status == FeedStatus::Healthy {
-                feed.checked = s("just now");
-            }
-        }
+        self.read_feeds();
         Ok(())
     }
 
@@ -1128,10 +1148,22 @@ impl ScreenData for MockBackend {
         self.updates.clone()
     }
 
-    fn check_updates(&mut self) -> Result<(), String> {
-        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
-        self.updates.append(&mut self.published);
-        Ok(())
+    fn check_updates(&mut self) -> CheckReport {
+        let system = self.knobs.system_check_failure.clone().map_or(Ok(()), Err);
+        if let Some(failure) = self.knobs.feeds_failure.clone() {
+            return CheckReport { apps: Err(failure), system };
+        }
+        // As the helper does: every source is read again first, and one that cannot be read is
+        // marked with its problem while the check goes on with the others.
+        self.read_feeds();
+        // What an unreadable source published stays unseen until it can be read.
+        let unreadable = &self.knobs.unreadable_feeds;
+        let (unseen, mut found): (Vec<UpdateItem>, Vec<UpdateItem>) = std::mem::take(&mut self.published)
+            .into_iter()
+            .partition(|item| unreadable.iter().any(|(name, _)| *name == item.source));
+        self.published = unseen;
+        self.updates.append(&mut found);
+        CheckReport { apps: Ok(()), system }
     }
 
     fn update_review(&self, name: &str) -> Option<ReviewData> {

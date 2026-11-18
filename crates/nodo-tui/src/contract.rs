@@ -63,3 +63,23 @@ pub fn features_match_capabilities(backend: &mut impl ScreenData, site: &str) {
     assert_eq!(password.is_ok(), caps.site_password, "a site password works exactly where it is claimed: {password:?}");
     assert_eq!(backend.set_public_access(site, &PublicAccess { require_password: false }), Ok(()));
 }
+
+/// A source that cannot be read does not fail Check now: the check goes on with the others, the
+/// source is marked unreachable with the backend's reason, and the summary names it. The caller
+/// makes `unreadable` a source that cannot be read first.
+pub fn unreadable_source_is_named(backend: &mut impl ScreenData, unreadable: &str) {
+    let report = backend.check_updates();
+    assert_eq!(report.apps, Ok(()), "an unreadable source does not fail the check of the others");
+    let feeds = backend.feeds();
+    let feed = feeds.iter().find(|feed| feed.name == unreadable).expect("the unreadable source is still listed");
+    let FeedStatus::Unreachable(problem) = &feed.status else {
+        panic!("{unreadable} is marked unreachable after the check, not {:?}", feed.status);
+    };
+    assert!(!problem.trim().is_empty(), "the source carries why it could not be read");
+    let summary = report.summary(backend.updates().len(), &feeds);
+    assert!(summary.trouble, "{}", summary.text);
+    assert!(summary.text.contains(&format!("Could not read {unreadable}: ")), "{}", summary.text);
+    if !feed.installed_from.is_empty() {
+        assert!(!summary.text.contains("Up to date"), "apps from an unread source are not up to date: {}", summary.text);
+    }
+}

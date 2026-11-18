@@ -560,7 +560,7 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::updates(self)
     }
 
-    fn check_updates(&mut self) -> Result<(), String> {
+    fn check_updates(&mut self) -> CheckReport {
         crate::helper_manage::check_updates(self)
     }
 

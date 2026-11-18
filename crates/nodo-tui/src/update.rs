@@ -2310,14 +2310,15 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             }
         },
         Event::InstallProgress(snapshot) => on_install_progress(app, snapshot),
-        Event::UpdatesChecked(Ok(())) => {
-            let found = app.update_rows().len() as u64;
-            match found {
-                0 => notice(app, NoticeKind::Ok, "Up to date."),
-                n => notice(app, NoticeKind::Info, format!("{} available.", counted(n, "update"))),
-            }
+        Event::UpdatesChecked(report) => {
+            let summary = report.summary(app.update_rows().len(), &app.data.feeds);
+            let kind = match (summary.trouble, summary.found) {
+                (true, _) => NoticeKind::Error,
+                (false, 0) => NoticeKind::Ok,
+                (false, _) => NoticeKind::Info,
+            };
+            notice(app, kind, summary.text);
         }
-        Event::UpdatesChecked(Err(error)) => fail(app, format!("Could not check for updates: {error}")),
         Event::FeedProbed(result) => {
             if let Screen::AddFeed(state) = &mut app.screen {
                 match result {

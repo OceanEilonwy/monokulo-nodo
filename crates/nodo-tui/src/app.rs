@@ -1761,8 +1761,9 @@ pub enum Event {
     DetailLoaded(Option<PackageDetail>),
     GateLoaded(InstallGate),
     InstallProgress(Option<InstallSnapshot>),
-    /// How Check now went. It comes after the snapshot that holds what it found.
-    UpdatesChecked(Result<(), String>),
+    /// How Check now went. It comes after the snapshot that holds what it found, and the sources
+    /// as they were read.
+    UpdatesChecked(CheckReport),
     FeedProbed(Result<FeedProbe, String>),
     FeedTrusted(Result<String, String>),
     KeyChangeLoaded(Option<KeyChange>),
