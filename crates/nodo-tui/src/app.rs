@@ -677,7 +677,13 @@ impl SettingsState {
     }
 
     pub fn error_for(&self, index: usize) -> Option<String> {
-        validate(&self.form.fields[index].kind, &self.draft[index])
+        let field = &self.form.fields[index];
+        // An optional field left empty has no value, which is always allowed; only what is typed
+        // has to fit the kind.
+        if !field.required && self.draft[index] == FieldValue::Text(String::new()) {
+            return None;
+        }
+        validate(&field.kind, &self.draft[index])
     }
 
     /// The preview of a field, if it is for the value the field holds now.
@@ -1634,7 +1640,9 @@ pub enum Effect {
     LoadReferences { package: String },
     PreviewSetting { package: String, field_index: usize, key: String, value: FieldValue },
     Grant { consumer: String, provider: String, setting: String },
-    ApplySettings { package: String, values: Vec<(String, FieldValue)> },
+    /// The changed fields. `None` puts a setting back to having no value of its own: an emptied
+    /// optional field.
+    ApplySettings { package: String, values: Vec<(String, Option<FieldValue>)> },
     CheckUpdates,
     ReviewUpdate {
         name: String,
@@ -1746,6 +1754,8 @@ pub enum Event {
     DetailLoaded(Option<PackageDetail>),
     GateLoaded(InstallGate),
     InstallProgress(Option<InstallSnapshot>),
+    /// How Check now went. It comes after the snapshot that holds what it found.
+    UpdatesChecked(Result<(), String>),
     FeedProbed(Result<FeedProbe, String>),
     FeedTrusted(Result<String, String>),
     KeyChangeLoaded(Option<KeyChange>),

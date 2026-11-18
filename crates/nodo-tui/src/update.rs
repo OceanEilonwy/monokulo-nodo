@@ -8,7 +8,7 @@ use nodo_api::{ApiError, Exposure, Response, ServiceState};
 
 use crate::app::*;
 use crate::model::*;
-use crate::secret::Input;
+use crate::secret::{Input, Secret};
 
 #[path = "update_more.rs"]
 mod more;
@@ -991,8 +991,7 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             KeyCode::Enter => {
                 let passphrase = Some(input.take_secret());
                 state.passphrase = None;
-                let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
-                return vec![Effect::StartInstall { id, approval, passphrase }];
+                return start_install(app, passphrase);
             }
             _ => {
                 edit_input(input, key);
@@ -1015,10 +1014,7 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 ReviewPurpose::Install if state.data.needs_passphrase => {
                     state.passphrase = Some(Input::secret());
                 }
-                ReviewPurpose::Install => {
-                    let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
-                    return vec![Effect::StartInstall { id, approval, passphrase: None }];
-                }
+                ReviewPurpose::Install => return start_install(app, None),
                 ReviewPurpose::Update { batch, mut pending_reviews, mut approvals } => {
                     if let Some(approval) = state.data.approval.clone() {
                         approvals.push((state.data.id.name.clone(), approval));
@@ -1037,6 +1033,17 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
+/// Leaves the review for the install page right away. With the helper the install is one request
+/// that answers when it is over, so without this the review sat there for minutes looking stuck.
+fn start_install(app: &mut App, passphrase: Option<Secret>) -> Vec<Effect> {
+    let Screen::Review(state) = &app.screen else {
+        return Vec::new();
+    };
+    let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
+    app.screen = Screen::Installing(InstallSnapshot::starting(&id, &state.data.version));
+    vec![Effect::StartInstall { id, approval, passphrase }]
+}
+
 fn installing_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Installing(snapshot) = &app.screen else {
         return Vec::new();
@@ -1044,7 +1051,12 @@ fn installing_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let name = snapshot.id.name.clone();
     match (&snapshot.outcome, key.code) {
         (_, KeyCode::Char('v')) => vec![Effect::ShowDocument(DocKind::InstallLog(name))],
-        (InstallOutcome::InProgress, KeyCode::Esc) => vec![Effect::CancelInstall],
+        (InstallOutcome::InProgress, KeyCode::Esc) if snapshot.can_cancel => vec![Effect::CancelInstall],
+        // It cannot be stopped, so Esc only leaves the page; the result comes as a notice.
+        (InstallOutcome::InProgress, KeyCode::Esc) => {
+            pop(app);
+            Vec::new()
+        }
         (InstallOutcome::Succeeded, KeyCode::Enter) => vec![Effect::OpenSettings(name)],
         (InstallOutcome::InProgress, _) => Vec::new(),
         (_, KeyCode::Esc | KeyCode::Enter) => {
@@ -1639,7 +1651,11 @@ fn apply_draft(state: &SettingsState) -> Vec<Effect> {
     let values = state
         .changed_indices()
         .into_iter()
-        .map(|index| (state.form.fields[index].key.clone(), state.draft[index].clone()))
+        .map(|index| {
+            let (field, value) = (&state.form.fields[index], &state.draft[index]);
+            let reset = field.input_for(value) == Some(nodo_api::SettingInput::Reset);
+            (field.key.clone(), (!reset).then(|| value.clone()))
+        })
         .collect();
     vec![Effect::ApplySettings { package: state.form.package.clone(), values }]
 }
@@ -1860,7 +1876,12 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 return vec![Effect::ShowDocument(DocKind::Changelog(item.name.clone()))];
             }
         }
-        KeyCode::Char('r') => return vec![Effect::CheckUpdates],
+        KeyCode::Char('r') => {
+            // Check now is a link, not a button, so it is marked as running here: it shows the
+            // hourglass and a second press waits for the first instead of queueing another check.
+            app.pending = Some(Pending { click: crate::hit::Click::Key(KeyCode::Char('r')), screen: ScreenId::Updates });
+            return vec![Effect::CheckUpdates];
+        }
         KeyCode::Char('h') => {
             if let Some(item) = current {
                 let name = item.name.clone();
@@ -2166,6 +2187,12 @@ fn certificate_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 
 fn on_refreshed(app: &mut App, snapshot: Snapshot) {
+    // What the Updates list showed, to carry the ticks and the selection over by app name.
+    let shown: Vec<String> = app.update_rows().iter().map(|item| item.name.clone()).collect();
+    let was_selected = match &app.screen {
+        Screen::Updates(state) => shown.get(state.selected).cloned(),
+        _ => None,
+    };
     app.data = snapshot;
     if app.data.overview.setup_needed && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
         push(app, Screen::Setup(SetupState::passphrase()));
@@ -2175,7 +2202,9 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     let services = app.data.services.len();
     let feeds = app.data.feeds.len();
     let sites = app.data.web.sites.len();
-    let rows = app.update_rows().len();
+    let update_rows: Vec<(String, bool)> =
+        app.update_rows().iter().map(|item| (item.name.clone(), item.preselected && !item.held)).collect();
+    let rows = update_rows.len();
     let drive_missing = app.data.overview.drive.is_some();
     let clamp = |index: &mut usize, len: usize| *index = (*index).min(len.saturating_sub(1));
     match &mut app.screen {
@@ -2184,7 +2213,21 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         Screen::Home { selected } => clamp(selected, services),
         Screen::Feeds { selected, .. } => clamp(selected, feeds),
         Screen::Web { selected } => clamp(selected, sites),
-        Screen::Updates(state) => clamp(&mut state.selected, rows),
+        // A check can add and remove updates. New ones are ticked as the list ticks them when it
+        // opens, gone ones are unticked, and the selection stays on the same app rather than
+        // the same row number, which would now be another app.
+        Screen::Updates(state) => {
+            state.checked.retain(|name| update_rows.iter().any(|(row, _)| row == name));
+            for (name, preselected) in &update_rows {
+                if *preselected && !shown.contains(name) && !state.checked.contains(name) {
+                    state.checked.push(name.clone());
+                }
+            }
+            match was_selected.and_then(|name| update_rows.iter().position(|(row, _)| *row == name)) {
+                Some(position) => state.selected = position,
+                None => clamp(&mut state.selected, rows),
+            }
+        }
         Screen::Logs(state) => clamp(&mut state.selected, sources),
         _ => {}
     }
@@ -2258,6 +2301,14 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             }
         },
         Event::InstallProgress(snapshot) => on_install_progress(app, snapshot),
+        Event::UpdatesChecked(Ok(())) => {
+            let found = app.update_rows().len() as u64;
+            match found {
+                0 => notice(app, NoticeKind::Ok, "Up to date."),
+                n => notice(app, NoticeKind::Info, format!("{} available.", counted(n, "update"))),
+            }
+        }
+        Event::UpdatesChecked(Err(error)) => fail(app, format!("Could not check for updates: {error}")),
         Event::FeedProbed(result) => {
             if let Screen::AddFeed(state) = &mut app.screen {
                 match result {
@@ -2491,7 +2542,16 @@ fn on_install_progress(app: &mut App, snapshot: Option<InstallSnapshot>) {
         _ => match &mut app.screen {
             Screen::Installing(current) => *current = snapshot,
             Screen::Review(_) => app.screen = Screen::Installing(snapshot),
-            _ => {}
+            // The owner left the install page while it ran, so say how it ended wherever they are.
+            _ => match &snapshot.outcome {
+                InstallOutcome::Succeeded => notice(
+                    app,
+                    NoticeKind::Ok,
+                    format!("{} is installed. Open it from Apps to set it up.", snapshot.id.name),
+                ),
+                InstallOutcome::Failed(reason) => fail(app, format!("{} wasn't installed: {reason}", snapshot.id.name)),
+                InstallOutcome::InProgress | InstallOutcome::Cancelled => {}
+            },
         },
     }
 }
@@ -2975,6 +3035,72 @@ mod tests {
         );
         let good = FieldValue::Text(crate::mock::sample_address());
         assert_eq!(validate(&FieldKind::MoneroAddress, &good), None);
+    }
+
+    fn mail_form() -> SettingsForm {
+        let field = |key: &str, kind: FieldKind, required: bool, value: &str| Field {
+            key: key.to_owned(),
+            label: key.to_owned(),
+            help: String::new(),
+            requirement: String::new(),
+            required,
+            kind,
+            value: FieldValue::Text(value.to_owned()),
+        };
+        let mail = FieldKind::Choice(vec!["off".to_owned(), "smtp".to_owned(), "tuta".to_owned()]);
+        SettingsForm {
+            package: "shop".to_owned(),
+            fields: vec![
+                field("mail", mail, false, "off"),
+                field("smtp_port", FieldKind::Number { min: Some(1), max: Some(65535) }, false, ""),
+                field("smtp_host", FieldKind::Text, false, "smtp.example.com"),
+                field("public_url", FieldKind::Url, true, "https://shop.example"),
+            ],
+            public_settings: Vec::new(),
+        }
+    }
+
+    fn save(app: &mut App) -> Vec<Effect> {
+        update(app, Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)))
+    }
+
+    /// An empty optional int (handicrafts' SMTP port) used to fail "Must be a whole number" and
+    /// block every save, such as switching Email from off to smtp to tuta.
+    #[test]
+    fn an_empty_optional_field_never_blocks_saving() {
+        let mut app = App::new();
+        let mut state = SettingsState::new(mail_form());
+        assert_eq!(state.error_for(1), None, "an empty optional int is fine");
+        state.draft[0] = FieldValue::Text("tuta".to_owned());
+        app.screen = Screen::Settings(state);
+        let effects = save(&mut app);
+        assert_eq!(
+            effects,
+            vec![Effect::ApplySettings {
+                package: "shop".to_owned(),
+                values: vec![("mail".to_owned(), Some(FieldValue::Text("tuta".to_owned())))],
+            }],
+            "{:?}",
+            app.notice
+        );
+    }
+
+    /// Clearing a stored optional value sends a reset, not "", which the helper would refuse.
+    /// A required field still has to be filled in.
+    #[test]
+    fn an_emptied_optional_field_is_reset_and_a_required_one_is_still_refused() {
+        let mut app = App::new();
+        let mut state = SettingsState::new(mail_form());
+        state.draft[2] = FieldValue::Text(String::new());
+        app.screen = Screen::Settings(state);
+        assert_eq!(
+            save(&mut app),
+            vec![Effect::ApplySettings { package: "shop".to_owned(), values: vec![("smtp_host".to_owned(), None)] }]
+        );
+        let Screen::Settings(state) = &mut app.screen else { panic!("still on Settings") };
+        state.draft[3] = FieldValue::Text(String::new());
+        assert!(state.error_for(3).is_some(), "a required URL cannot be empty");
+        assert!(save(&mut app).is_empty());
     }
 }
 

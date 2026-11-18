@@ -202,3 +202,112 @@ fn undo_link_works_while_a_field_is_being_edited() {
     assert_eq!(state.draft[0], FieldValue::Text("http://old".into()), "the undo happened");
     assert!(state.undo.is_none() && state.editor.is_none(), "the step is used and the editor closed");
 }
+
+/// A settings form like the handicrafts shop's: far taller than the screen, with a "+ reference"
+/// link on most fields.
+fn long_form() -> nodo_tui::model::SettingsForm {
+    use nodo_tui::model::{Field, FieldKind, SettingsForm};
+    let labels = [
+        "Public address", "Admin user", "Admin password hash", "Notifications to", "Email", "Send from", "Sender name",
+        "Tuta account", "Tuta password", "SMTP server", "SMTP port", "SMTP security", "SMTP user", "SMTP password",
+        "PayID", "Account name", "BSB", "Account number",
+    ];
+    let fields = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let (kind, value) = match label {
+                l if l.contains("password") => (FieldKind::Secret, FieldValue::SecretUnset),
+                &"Email" | &"SMTP security" => (FieldKind::Choice(vec!["off".into(), "on".into()]), FieldValue::Text("off".into())),
+                &"SMTP port" => (FieldKind::Number { min: Some(1), max: Some(65535) }, FieldValue::Text(String::new())),
+                _ => (FieldKind::Text, FieldValue::Text(String::new())),
+            };
+            Field {
+                key: format!("field_{index}"),
+                label: (*label).to_owned(),
+                help: "Optional".to_owned(),
+                requirement: "Optional".to_owned(),
+                required: false,
+                kind,
+                value,
+            }
+        })
+        .collect();
+    SettingsForm { package: "shop".into(), fields, public_settings: Vec::new() }
+}
+
+/// Scrolled to the middle or the end, every field label and "+ reference" link on screen picks
+/// its own field. Targets of rows scrolled away used to stay in the list, so a hidden field's
+/// "+ reference" took the first one on screen (opening the picker for the hidden field) and the
+/// labels above it found no target at all: clicking them did nothing.
+#[test]
+fn a_scrolled_settings_form_clicks_each_field_it_shows() {
+    let form = long_form();
+    let labels: Vec<String> = form.fields.iter().map(|f| f.label.clone()).collect();
+    for selected in [0, 9, form.fields.len() - 1] {
+        let mut app = App::new();
+        app.size = (100, 30);
+        let mut state = nodo_tui::app::SettingsState::new(form.clone());
+        state.selected = selected;
+        app.screen = Screen::Settings(state);
+        let (_, buffer, hits) = drawn(app.clone());
+        let screen = common::text(&buffer);
+        assert!(screen.contains("more — scroll"), "the form is taller than the screen:\n{screen}");
+        let mut field_above: Option<usize> = None;
+        let mut checked = 0;
+        for (row, line) in screen.lines().enumerate() {
+            let trimmed = line.trim_start().trim_start_matches("▸ ");
+            let own = labels.iter().position(|label| {
+                trimmed.strip_prefix(label.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with("  "))
+            });
+            let mut click = |column: usize, expect: usize, what: &str| {
+                let column = line[..column].chars().count() as u16;
+                let hit = hit_at(&hits, column, row as u16);
+                let Some(Click::Pick { index, .. }) = hit.as_ref().map(|hit| hit.click.clone()) else {
+                    panic!("selected {selected}: {what} on row {row} is not a target ({hit:?}):\n{screen}");
+                };
+                assert_eq!(index, expect, "selected {selected}: {what} on row {row} picks field {index}:\n{screen}");
+                checked += 1;
+            };
+            if let Some(index) = own {
+                field_above = Some(index);
+                click(line.find(labels[index].as_str()).expect("on the line"), index, &labels[index]);
+            }
+            if let (Some(at), Some(index)) = (line.find("+ reference"), field_above) {
+                click(at, index, "+ reference");
+            }
+        }
+        assert!(checked >= 6, "selected {selected}: enough of the form is on screen to check ({checked})");
+    }
+}
+
+/// The same for a list of cards (`Screen3::stack`): with more updates than fit, scrolled to the
+/// end, every app row on screen picks its own update, even when the name of an app scrolled away
+/// ("app-1") is part of one on screen ("app-12").
+#[test]
+fn a_scrolled_update_list_clicks_each_app_it_shows() {
+    let (mut app, _) = nodo_tui::fixtures::fixture(ScreenId::Updates);
+    let template = app.data.updates.iter().find(|item| item.name == "moneropay").expect("a sample update").clone();
+    for n in 0..30 {
+        let mut item = template.clone();
+        item.name = format!("app-{n}");
+        app.data.updates.push(item);
+    }
+    app.size = (100, 30);
+    let last = app.update_rows().len() - 1;
+    let Screen::Updates(state) = &mut app.screen else { panic!("the updates fixture") };
+    state.selected = last;
+    let names: Vec<String> = app.update_rows().iter().map(|item| item.name.clone()).collect();
+    let (_, buffer, hits) = drawn(app.clone());
+    let screen = common::text(&buffer);
+    assert!(screen.contains("— scroll") && !screen.contains("app-0 "), "the list is scrolled:\n{screen}");
+    let mut checked = 0;
+    for (row, line) in screen.lines().enumerate() {
+        let Some(index) = names.iter().position(|name| line.split_whitespace().any(|word| word == name)) else { continue };
+        let column = line[..line.find(names[index].as_str()).expect("on the line")].chars().count() as u16;
+        let click = hit_at(&hits, column, row as u16).map(|hit| hit.click);
+        assert!(matches!(click, Some(Click::Pick { index: at, .. }) if at == index), "row {row} ({}) clicks {click:?}:\n{screen}", names[index]);
+        checked += 1;
+    }
+    assert!(checked >= 5, "{checked} rows checked:\n{screen}");
+}

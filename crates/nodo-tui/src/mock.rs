@@ -84,6 +84,10 @@ pub struct MockBackend {
     pub restore_failure: Option<String>,
     /// Makes reading the provider catalog fail with this reason.
     pub providers_failure: Option<String>,
+    /// Makes checking for updates and refreshing, switching or removing a source fail with this.
+    pub feeds_failure: Option<String>,
+    /// Updates the next check finds, as a feed publishing new versions would.
+    pub published: Vec<UpdateItem>,
     /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
     pub radios_failure: Option<String>,
     pub wifi: nodo_api::WifiStatus,
@@ -183,6 +187,8 @@ impl MockBackend {
             }],
             restore_failure: None,
             providers_failure: None,
+            feeds_failure: None,
+            published: Vec::new(),
             radios_failure: None,
             wifi: sample_wifi(),
             access_points: sample_access_points(),
@@ -442,7 +448,12 @@ impl Backend for MockBackend {
                         SettingInput::Template(parts) => {
                             FieldValue::from_pieces(crate::helper_backend::pieces_of(parts))
                         }
-                        SettingInput::Reset => field.value.clone(),
+                        // The mock keeps no defaults, so a reset field is simply empty.
+                        SettingInput::Reset => match field.kind {
+                            FieldKind::Secret => FieldValue::SecretUnset,
+                            FieldKind::Toggle => FieldValue::Bool(false),
+                            _ => FieldValue::Text(String::new()),
+                        },
                     };
                 }
                 Ok(Response::Ok)
@@ -984,25 +995,31 @@ impl ScreenData for MockBackend {
         Ok(())
     }
 
-    fn refresh_feeds(&mut self) {
+    fn refresh_feeds(&mut self) -> Result<(), String> {
+        self.feeds_failure.clone().map_or(Ok(()), Err)?;
         for feed in &mut self.feeds {
             if feed.status == FeedStatus::Healthy {
                 feed.checked = s("just now");
             }
         }
+        Ok(())
     }
 
-    fn toggle_feed(&mut self, name: &str) {
+    fn toggle_feed(&mut self, name: &str) -> Result<(), String> {
+        self.feeds_failure.clone().map_or(Ok(()), Err)?;
         if let Some(feed) = self.feeds.iter_mut().find(|feed| feed.name == name) {
             feed.status = match feed.status {
                 FeedStatus::Disabled => FeedStatus::Healthy,
                 _ => FeedStatus::Disabled,
             };
         }
+        Ok(())
     }
 
-    fn remove_feed(&mut self, name: &str) {
+    fn remove_feed(&mut self, name: &str) -> Result<(), String> {
+        self.feeds_failure.clone().map_or(Ok(()), Err)?;
         self.feeds.retain(|feed| feed.name != name);
+        Ok(())
     }
 
     fn key_change(&self, feed: &str) -> Option<KeyChange> {
@@ -1058,7 +1075,11 @@ impl ScreenData for MockBackend {
         self.updates.clone()
     }
 
-    fn check_updates(&mut self) {}
+    fn check_updates(&mut self) -> Result<(), String> {
+        self.feeds_failure.clone().map_or(Ok(()), Err)?;
+        self.updates.append(&mut self.published);
+        Ok(())
+    }
 
     fn update_review(&self, name: &str) -> Option<ReviewData> {
         let item = self.updates.iter().find(|item| item.name == name)?;
@@ -1691,6 +1712,7 @@ pub fn install_snapshot(id: &PackageId, version: &str, working: usize) -> Instal
             vec![s("fetching and checking the package")]
         },
         outcome: InstallOutcome::InProgress,
+        can_cancel: true,
     }
 }
 
@@ -1761,6 +1783,7 @@ fn sample_forms() -> HashMap<String, SettingsForm> {
         label: s(label),
         help: s(help),
         requirement: s(requirement),
+        required: requirement.starts_with("Required"),
         kind,
         value,
     };
