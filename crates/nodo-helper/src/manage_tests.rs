@@ -456,6 +456,54 @@ fn removing_an_app_takes_away_its_files_and_record_but_keeps_its_data() {
     assert!(matches!(again, Err(ApiError::NotFound(_))), "{again:?}");
 }
 
+/// The race the VM journeys found. runsvdir notices a removed link only at its next scan, so the
+/// removal waits for the old runsv to go, and an install straight after gets a runsv of its own.
+#[test]
+fn removing_an_app_and_installing_it_again_at_once_starts_it() {
+    let (h, _packages) = installed();
+    let held = "down: /sv/demo: 2s, normally up; run: log: (pid 6) 90s\n";
+    h.sys.script_status("/sv/demo", &[held, held]);
+    h.sys.clear_calls();
+    let removed = call(&h, Request::RemovePackage { package: "demo".into() });
+    assert!(matches!(removed, Ok(Response::Ok)), "{removed:?}");
+    let calls = h.sys.calls();
+    let first = |needle: &str| calls.iter().position(|c| c == needle).unwrap();
+    let last = |needle: &str| calls.iter().rposition(|c| c == needle).unwrap();
+    assert!(first("remove /service/demo") < first("sv status /sv/demo"), "{calls:?}");
+    assert_eq!(calls.iter().filter(|c| *c == "sv status /sv/demo").count(), 3, "{calls:?}");
+    assert!(last("sv status /sv/demo") < first("remove /m/app/demo.toml"), "{calls:?}");
+    assert_eq!(h.sys.sleeps().len(), 2);
+
+    // The new link is picked up a moment later and its runsv starts the service by itself.
+    h.sys.script_status("demo", &["warning: demo: unable to open supervise/ok: file does not exist\n"]);
+    let r = review(&h);
+    let Ok(Response::InstallReport(report)) = install(&h, approve(&r)) else {
+        panic!()
+    };
+    assert_eq!(report.problem, None, "{report:?}");
+    assert_eq!(h.sys.link("/service/demo").as_deref(), Some("/sv/demo"));
+}
+
+#[test]
+fn an_install_runit_never_picks_up_is_reported_not_done() {
+    let (h, packages) = setup();
+    add_feed(&h);
+    h.sys.set_status("demo", "warning: demo: runsv not running\n");
+    let r = review(&h);
+    let Ok(Response::InstallReport(report)) = install(&h, approve(&r)) else {
+        panic!()
+    };
+    let problem = report.problem.clone().unwrap_or_default();
+    assert!(problem.contains("did not pick up"), "{report:?}");
+    assert!(
+        !report.steps.iter().any(|s| s.name.contains("health") && s.state == nodo_api::StepState::Done),
+        "{report:?}"
+    );
+    // A failed first install takes its files and link away again, as it always did.
+    assert_eq!(packages.installed(), None);
+    assert!(h.sys.link("/service/demo").is_none());
+}
+
 #[test]
 fn an_app_with_a_site_online_is_not_removed() {
     let (h, packages) = installed();
