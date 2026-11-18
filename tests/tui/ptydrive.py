@@ -8,7 +8,9 @@ also kept, so a test can prove a secret never reached the terminal in any form.
     with Tui(["nodo-tui"]) as tui:
         tui.wait_for("Device passphrase")
         tui.type("secret", enter=True)
+        tui.click_text("Save")
 
+Clicks are SGR mouse reports at the cell where the text is drawn, as a terminal sends them.
 A failed wait raises `ScreenTimeout`, whose message holds the last screen.
 """
 
@@ -260,6 +262,60 @@ class Tui:
             self.pump(0.02)
         if enter:
             self.send("enter")
+
+    def find(self, text, nth=0, below=0):
+        """The (row, column) where `text` starts on screen, counted in cells from 0, or None.
+
+        `nth` picks a later match and `below` skips the rows above it, for text that also appears
+        higher up, such as a link repeated on every row of a form. Columns count terminal cells,
+        so a wide character before the text moves it two columns, as it does for the program.
+        """
+        seen = 0
+        for row in range(below, self.screen.rows):
+            cells = self.screen.grid[row]
+            line, columns = "", []
+            for column, cell in enumerate(cells):
+                for ch in cell:
+                    line += ch
+                    columns.append(column)
+            at = line.find(text)
+            while at >= 0:
+                if seen == nth:
+                    return row, columns[at]
+                seen += 1
+                at = line.find(text, at + 1)
+        return None
+
+    def mouse(self, button, row, column, release=True):
+        """Sends an SGR mouse report (xterm mode 1006, which crossterm turns on) at a 0-based cell."""
+        report = f"\x1b[<{button};{column + 1};{row + 1}"
+        os.write(self.fd, (report + "M").encode())
+        if release:
+            os.write(self.fd, (report + "m").encode())
+        self.pump(0.2)
+
+    def click(self, row, column):
+        self.mouse(0, row, column)
+
+    def click_text(self, text, nth=0, below=0, offset=0):
+        """Clicks the first cell of `text` (plus `offset` cells) where it is on screen now."""
+        where = self.find(text, nth=nth, below=below)
+        if where is None:
+            raise ScreenTimeout(f"cannot click {text!r}: it is not on screen\n--- last screen ---\n{self.text()}")
+        self.click(where[0], where[1] + offset)
+        return where
+
+    def wheel(self, row, column, down=True, times=1):
+        """Turns the scroll wheel over a cell. Wheel reports have no release."""
+        for _ in range(times):
+            self.mouse(65 if down else 64, row, column, release=False)
+
+    def line_with(self, text):
+        """The screen line holding `text`, or "" when it is not on screen."""
+        for line in self.text().splitlines():
+            if text in line:
+                return line
+        return ""
 
     def contains(self, needle):
         screen = self.text()

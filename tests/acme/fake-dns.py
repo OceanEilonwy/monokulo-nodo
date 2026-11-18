@@ -2,7 +2,9 @@
 """A fake DNS provider and a fake home router resolver for the ACME tests, on one address.
 
 HTTPS: the Cloudflare API endpoints that nodo-ddns and Caddy's caddy-dns/cloudflare module use,
-plus the IP echo services nodo-ddns asks. Records live in memory and are copied into
+plus the IP echo services nodo-ddns asks. FAKE_CF_ZONES may name more Cloudflare zones than
+example.com, comma separated, so a key can list several domains. FAKE_GANDI_TOKEN turns on a fake
+Gandi LiveDNS at api.gandi.net as a second provider, holding the FAKE_GANDI_DOMAINS. Records live in memory and are copied into
 pebble-challtestsrv, which is the public DNS that Pebble validates against.
 
 UDP 53: the resolver this device uses, as a home router would be. It answers SOA and NS for the
@@ -10,9 +12,11 @@ zone itself, which Caddy needs to find the zone and to check that a DNS-01 recor
 and passes every other question on to challtestsrv. While FLAG_HIDE_PRIVATE exists it drops
 answers that hold private addresses, as routers with DNS rebinding protection do.
 
-Usage: fake-dns.py ADDRESS CERT KEY TOKEN CHALLTESTSRV PUBLIC_IP STATE_DIR
+Usage: [FAKE_CF_ZONES=...] [FAKE_GANDI_TOKEN=... FAKE_GANDI_DOMAINS=...]
+       fake-dns.py ADDRESS CERT KEY TOKEN CHALLTESTSRV PUBLIC_IP STATE_DIR
 """
 
+import hashlib
 import http.server
 import json
 import ipaddress
@@ -29,6 +33,12 @@ import urllib.request
 ADDRESS, CERT, KEY, TOKEN, CHALLTESTSRV, PUBLIC_IP, STATE = sys.argv[1:8]
 ZONE = "example.com"
 ZONE_ID = "023e105f4ecef8ad9ca31a8372d0c353"
+# Every zone the Cloudflare token can read, by id. example.com keeps the id the tests know.
+ZONES = {ZONE_ID: ZONE}
+for extra in filter(None, os.environ.get("FAKE_CF_ZONES", "").split(",")):
+    ZONES.setdefault(hashlib.md5(extra.strip().encode()).hexdigest(), extra.strip())
+GANDI_TOKEN = os.environ.get("FAKE_GANDI_TOKEN", "")
+GANDI_DOMAINS = [d.strip() for d in os.environ.get("FAKE_GANDI_DOMAINS", "").split(",") if d.strip()]
 NS_NAME = "ns1." + ZONE
 FLAG_HIDE_PRIVATE = os.path.join(STATE, "hide-private")
 ECHO_HOSTS = {"api.ipify.org", "ipv4.icanhazip.com", "checkip.amazonaws.com", "v4.ident.me", "ipv4.wtfismyip.com"}
@@ -92,6 +102,8 @@ class Api(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{}") if length else {}
         if host in ECHO_HOSTS:
             return self.reply(200, (PUBLIC_IP + "\n").encode(), "text/plain")
+        if host == "api.gandi.net" and GANDI_TOKEN:
+            return self.gandi(method, url.path, body)
         if host != "api.cloudflare.com":
             return self.reply(404, {"success": False, "errors": [{"code": 7003, "message": "no such host"}]})
         log(json.dumps({"method": method, "path": url.path, "query": query, "body": body}))
@@ -100,9 +112,14 @@ class Api(http.server.BaseHTTPRequestHandler):
         path = url.path.removeprefix("/client/v4")
         with lock:
             if method == "GET" and path == "/zones":
-                zones = [{"id": ZONE_ID, "name": ZONE}] if query.get("name", "").rstrip(".") == ZONE else []
+                # Without a name, Cloudflare lists every zone the token can read.
+                wanted = query.get("name", "").rstrip(".")
+                zones = [{"id": i, "name": n} for i, n in ZONES.items() if not wanted or n == wanted]
                 return self.ok(zones)
-            base = "/zones/%s/dns_records" % ZONE_ID
+            parts = path.split("/")
+            zone_id = parts[2] if len(parts) > 3 and parts[1] == "zones" and parts[2] in ZONES else ZONE_ID
+            zone = ZONES[zone_id]
+            base = "/zones/%s/dns_records" % zone_id
             if path == base and method == "GET":
                 found = []
                 for record in records.values():
@@ -120,16 +137,16 @@ class Api(http.server.BaseHTTPRequestHandler):
             if path == base and method == "POST":
                 # Like Cloudflare, names may come relative to the zone, as caddy-dns sends them.
                 name = body["name"].rstrip(".")
-                if name != ZONE and not name.endswith("." + ZONE):
-                    name += "." + ZONE
+                if name != zone and not name.endswith("." + zone):
+                    name += "." + zone
                 record = {
                     "id": "rec%d" % next_id[0],
                     "type": body["type"],
                     "name": name,
                     "content": body["content"],
                     "ttl": body.get("ttl", 1),
-                    "zone_id": ZONE_ID,
-                    "zone_name": ZONE,
+                    "zone_id": zone_id,
+                    "zone_name": zone,
                 }
                 next_id[0] += 1
                 records[record["id"]] = record
@@ -148,6 +165,36 @@ class Api(http.server.BaseHTTPRequestHandler):
                     sync(record["name"], record["type"])
                     return self.ok({"id": record["id"]})
         return self.reply(404, {"success": False, "errors": [{"code": 7000, "message": "No route"}]})
+
+    def gandi(self, method, path, body):
+        """Gandi LiveDNS: the domain list and record sets by name and type, with a bearer token."""
+        log(json.dumps({"gandi": method, "path": path, "body": body}))
+        if self.headers.get("Authorization") != "Bearer " + GANDI_TOKEN:
+            return self.reply(403, {"code": 403, "message": "Access was denied to this resource."})
+        parts = path.removeprefix("/v5/livedns").strip("/").split("/")
+        with lock:
+            if method == "GET" and parts == ["domains"]:
+                return self.reply(200, [{"fqdn": d} for d in GANDI_DOMAINS])
+            if len(parts) == 5 and parts[0] == "domains" and parts[2] == "records" and parts[1] in GANDI_DOMAINS:
+                domain, name, kind = parts[1], parts[3], parts[4]
+                fqdn = domain if name == "@" else name + "." + domain
+                key = "gandi:%s:%s" % (fqdn, kind)
+                if method == "GET":
+                    record = records.get(key)
+                    if record is None:
+                        return self.reply(404, {"code": 404, "message": "Unknown record"})
+                    return self.reply(200, {"rrset_name": name, "rrset_type": kind,
+                                            "rrset_values": [record["content"]]})
+                if method == "PUT":
+                    for value in body.get("rrset_values", [])[:1]:
+                        records[key] = {"id": key, "type": kind, "name": fqdn, "content": value}
+                    sync(fqdn, kind)
+                    return self.reply(201, {"message": "DNS Record Created"})
+                if method == "DELETE":
+                    records.pop(key, None)
+                    sync(fqdn, kind)
+                    return self.reply(204, b"", "text/plain")
+        return self.reply(404, {"code": 404, "message": "No route"})
 
     def do_GET(self):
         self.handle_any("GET")
