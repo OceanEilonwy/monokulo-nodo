@@ -125,7 +125,7 @@ class Journey:
 
 
 def wanted(name):
-    return not only or name in only
+    return not only or name in only or ("device" in only and name in DEVICE)
 
 
 def check(name, condition, detail=""):
@@ -876,6 +876,16 @@ JOURNEYS = [
     ("secrets", no_secrets_anywhere),
 ]
 
+# The journeys for flows that broke on a real device are in device_flows.py, which uses the helpers
+# above. Run as a script this file is __main__, so it is registered under its own name first, or
+# that import would load a second copy of it with its own counters. They run before the final
+# secrets check, so it covers what they typed too.
+sys.modules.setdefault("journeys", sys.modules[__name__])
+import device_flows  # noqa: E402
+
+JOURNEYS[-1:-1] = device_flows.JOURNEYS
+DEVICE = {name for name, _ in device_flows.JOURNEYS}
+
 
 def main():
     started = time.monotonic()
@@ -884,10 +894,17 @@ def main():
     except Exception:
         bad("setup", traceback.format_exc())
         return 1
+    waiting = []
     for name, run in JOURNEYS:
         if wanted(name):
+            before = failed
             run()
+            if failed > before and name in device_flows.NEEDS_FIXES:
+                waiting.append(name)
     say(f"{passed} passed, {failed} failed in {time.monotonic() - started:.0f}s")
+    # Still failures: this only says which of them are the known bugs tui-setup-fixes is fixing.
+    for name in waiting:
+        say(f"  {name} failed as expected before tui-setup-fixes: {device_flows.NEEDS_FIXES[name]}")
     return 1 if failed else 0
 
 

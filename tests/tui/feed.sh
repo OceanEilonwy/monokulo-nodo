@@ -3,8 +3,11 @@
 #   feed.sh init                 new keys and an empty feed at /srv/tui-feed
 #   feed.sh pkg VERSION [MODE]   builds and publishes tui-shop at VERSION; MODE "crash" fails its health
 #                                check, MODE "grow" asks for 320 MiB of encrypted storage instead of 256
+#   feed.sh forms VERSION        builds and publishes tui-forms at VERSION: thirty settings of every
+#                                kind from forms/settings.lua, with encrypted storage
 #   feed.sh resign               signs the feed again with the second key, as a key change would
 set -eu
+HERE=$(cd "$(dirname "$0")" && pwd)
 FEED=/srv/tui-feed
 WORK=/tmp/tui-pkgs
 KEYS=/root/tui-feed-keys
@@ -17,7 +20,7 @@ publish() {
 	xbps-rindex --privkey "$key" -S "$FEED/$(basename "$file")" >/dev/null
 }
 
-case ${1:?usage: feed.sh init|pkg|resign} in
+case ${1:?usage: feed.sh init|pkg|forms|resign} in
 init)
 	rm -rf "$FEED" "$WORK" "$KEYS"
 	mkdir -p "$FEED" "$WORK" "$KEYS"
@@ -70,6 +73,31 @@ pkg)
 	chmod 755 "$app/bin/run"
 	(cd "$WORK" && xbps-create -A x86_64 -n "tui-shop-${ver}_1" -s "A small shop for the TUI test" "$d" >/dev/null)
 	publish "$KEYS/current.pem" "$WORK/tui-shop-${ver}_1.x86_64.xbps"
+	;;
+forms)
+	ver=$2
+	d=$WORK/tui-forms-$ver
+	app=$d/opt/nodo/apps/tui-forms
+	rm -rf "$d"
+	mkdir -p "$app/bin"
+	chmod 755 "$d" "$d/opt" "$d/opt/nodo" "$d/opt/nodo/apps" "$app" "$app/bin"
+	cat > "$app/manifest.toml" <<-EOF
+	api_version = 1
+	id = "tui-forms"
+	version = "$ver"
+	exec = ["bin/run"]
+	settings = "settings.lua"
+	stop_timeout_secs = 5
+
+	[storage]
+	encrypted = true
+	EOF
+	cp "$HERE/forms/settings.lua" "$app/settings.lua"
+	printf '#!/bin/sh\necho "tui-forms %s running"\nwhile :; do sleep 1; done\n' "$ver" > "$app/bin/run"
+	chmod 644 "$app/manifest.toml" "$app/settings.lua"
+	chmod 755 "$app/bin/run"
+	(cd "$WORK" && xbps-create -A x86_64 -n "tui-forms-${ver}_1" -s "A long settings form for the TUI test" "$d" >/dev/null)
+	publish "$KEYS/current.pem" "$WORK/tui-forms-${ver}_1.x86_64.xbps"
 	;;
 resign)
 	cp "$KEYS/second.pem" "$KEYS/current.pem"

@@ -54,6 +54,7 @@ Docker is the only requirement for images. KVM speeds up service tests on x86_64
 scripts/test.sh fast                      # static checks, a few seconds
 scripts/test.sh vm                        # changed packages in a running KVM VM
 scripts/test.sh full                      # aarch64 image, cold boot, reboot and size checks
+tests/tui-e2e.sh --fresh device           # the real TUI and helper in a clean KVM VM, through a terminal
 scripts/build-packages.sh aarch64 cuprated cuprated-service nodo-base linux-nanopc-t6n
 scripts/build-image.sh nanopc-t6n ~/.ssh/id_ed25519.pub
 # The same image on the mainline longterm kernel, see docs/MAINLINE_KERNEL.md
