@@ -73,9 +73,7 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
             card.row(t, vec![t.a("▲  "), t.n(format!("The publisher withdrew {withdrawn}, which this Nodo runs."))]);
         }
         card.blank(t);
-        let mut targets = Vec::new();
-        card.buttons(t, &[("Review", true, key('v'))], &mut targets);
-        screen.targets.extend(targets);
+        card.buttons(t, &[("Review", true, key('v'))]);
         cards.push(card);
     }
     let mut parts = Card::new(t, w);
@@ -91,8 +89,7 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
         let summary = row_summary(app, row);
         let summary: String = if summary.chars().count() > room { format!("{}…", summary.chars().take(room.saturating_sub(1)).collect::<String>()) } else { summary };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
-        parts.row(t, vec![lead, t.b(pad(row, 18)), t.d(pad(&summary, room)), t.d("›")]);
-        screen.targets.push(Target::card_row(*row, pick(index, Some(KeyCode::Enter))));
+        parts.row_with(t, vec![lead, t.b(pad(row, 18)), t.d(pad(&summary, room)), t.d("›")], [Target::card_row(*row, pick(index, Some(KeyCode::Enter)))]);
     }
     parts.blank(t);
     cards.push(parts);
@@ -122,9 +119,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         card.row(t, pass);
         card.row(t, vec![t.d("Growing locked storage needs the device passphrase. It's used for this and not kept.")]);
         card.blank(t);
-        let mut targets = Vec::new();
-        card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Update", true, Click::Key(KeyCode::Enter))], &mut targets);
-        screen.targets.extend(targets);
+        card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Update", true, Click::Key(KeyCode::Enter))]);
         return screen.card(t, card, "Keys: type the device passphrase  ↵ update  Esc cancel", w, h);
     }
 
@@ -140,10 +135,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         };
         card.blank(t);
         let label = if update.note == UpdateNote::RestartNeeded { "Update and restart" } else { "Update the Nodo" };
-        let mut targets = Vec::new();
-        card.row_with_button(t, vec![t.d(note)], label, true, Click::Pick { index, then: Some(KeyCode::Char('n')) }, &mut targets);
-        // On the last row drawn: the button gets a row of its own when it does not fit beside.
-        card.on_row(card.next_row() - 1, targets);
+        card.row_with_button(t, vec![t.d(note)], label, true, Click::Pick { index, then: Some(KeyCode::Char('n')) });
         card.blank(t);
         cards.push(card);
     }
@@ -178,21 +170,18 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             (_, true) => t.d("held back"),
             _ => note,
         };
-        let row = card.next_row();
-        card.row(t, vec![lead, tick(t, ticked), t.n("  "), name, t.d(pad(&format!("{}  →  {}", item.from, item.to), 22)), note]);
-        card.on_row(row, [Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' '))))]);
+        let target = Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' '))));
+        card.row_with(t, vec![lead, tick(t, ticked), t.n("  "), name, t.d(pad(&format!("{}  →  {}", item.from, item.to), 22)), note], [target]);
     }
     card.blank(t);
     let count = apps.iter().filter(|(_, item)| state.checked.contains(&item.name)).count();
     if !apps.is_empty() {
-        let mut targets = Vec::new();
         let label = match count {
             0 => "Update apps".to_owned(),
             1 => "Update 1 app".to_owned(),
             n => format!("Update {n} apps"),
         };
-        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(app).is_none(), Click::Key(KeyCode::Enter), &mut targets);
-        card.on_row(card.next_row() - 1, targets);
+        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(app).is_none(), Click::Key(KeyCode::Enter));
         card.blank(t);
     }
     cards.push(card);
@@ -247,15 +236,13 @@ pub fn auto_update(app: &App, t: &Theme, state: &AutoUpdateState) -> Page {
     let lead = |selected: bool| if selected { t.a("▸ ") } else { t.n("  ") };
     let mut when = vec![lead(state.selected == 0), t.n(pad("How often", 34))];
     when.extend(inset(t, &draft.frequency, 12, Some("◂▸"), state.selected == 0));
-    card.row(t, when);
-    screen.targets.push(Target::card_row("How often", pick(0, None)));
+    card.row_with(t, when, [Target::card_row("How often", pick(0, None))]);
     let mut window = vec![t.n("  "), t.n(pad("Between", 34))];
     match &state.editing_window {
         Some(input) => window.extend(inset(t, input.text(), 22, None, true)),
         None => window.extend(inset(t, &format!("{} and {}", draft.window_start, draft.window_end), 22, None, false)),
     }
-    card.row(t, window);
-    screen.targets.push(field_target("Between", 34, 22));
+    card.row_with(t, window, [field_target("Between", 34, 22)]);
     if let Some(error) = &state.error {
         card.row(t, vec![t.n(" ".repeat(36)), t.e(format!("✕ {error}"))]);
     }
@@ -272,8 +259,7 @@ pub fn auto_update(app: &App, t: &Theme, state: &AutoUpdateState) -> Page {
         if entry.shows_warning(selected) {
             row.push(t.a("   ▲ Runs new code without your review"));
         }
-        card.row(t, row);
-        screen.targets.push(Target::card_row(entry.name.clone(), pick(index + 1, Some(KeyCode::Char(' ')))));
+        card.row_with(t, row, [Target::card_row(entry.name.clone(), pick(index + 1, Some(KeyCode::Char(' '))))]);
     }
     if let Some((index, entry)) = draft.packages.iter().enumerate().find(|(_, e)| e.name == SYSTEM_BASE) {
         card.blank(t);
@@ -283,14 +269,11 @@ pub fn auto_update(app: &App, t: &Theme, state: &AutoUpdateState) -> Page {
         }
         let mut row = vec![lead(selected), t.b(pad("Update the Nodo by itself", 34))];
         row.extend(toggle(t, entry.enabled));
-        card.row(t, row);
+        card.row_with(t, row, [Target::card_row("Update the Nodo by itself", pick(index + 1, Some(KeyCode::Char(' '))))]);
         card.row(t, vec![t.n("  "), t.d("Updates that need a restart always wait for you, whatever this says.")]);
-        screen.targets.push(Target::card_row("Update the Nodo by itself", pick(index + 1, Some(KeyCode::Char(' ')))));
     }
     card.blank(t);
-    let mut targets = Vec::new();
-    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Key(KeyCode::Enter))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Key(KeyCode::Enter))]);
     let keys = if state.editing_window.is_some() { "Keys: type like 03:00 to 05:00  ↵ done  Esc cancel" } else { "Keys: ↑↓ choose  Space on/off  ←→ how often  w between  ↵ save  Esc cancel" };
     screen.card(t, card, keys, w, h)
 }
@@ -305,7 +288,6 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    let mut targets = Vec::new();
     match &report.failure {
         Some(failure) => {
             card.row(t, vec![t.e("▲  "), t.b(format!("{}'s update didn't start, so {} was put back", failure.name, failure.kept_version))]);
@@ -320,12 +302,15 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
                 card.row(t, vec![t.o("✓  "), t.n(format!("{name} updated to {}", result.version))]);
             }
             card.blank(t);
-            card.link_row(t, vec![t.a("Show log ›"), t.n("     "), t.a("Copy a report for the publisher ›")], "Show log ›", pick(3, Some(KeyCode::Enter)), &mut targets);
-            targets.push(Target::text("Copy a report for the publisher ›", pick(2, Some(KeyCode::Enter))));
+            let links = [
+                Target::card_row("Show log ›", pick(3, Some(KeyCode::Enter))),
+                Target::text("Copy a report for the publisher ›", pick(2, Some(KeyCode::Enter))),
+            ];
+            card.row_with(t, vec![t.a("Show log ›"), t.n("     "), t.a("Copy a report for the publisher ›")], links);
             card.blank(t);
             let again = super::v3::focused("Try again", state.choice == 1);
             let ok = super::v3::focused("OK", state.choice != 1);
-            card.buttons(t, &[(again.as_str(), false, pick(1, Some(KeyCode::Enter))), (ok.as_str(), true, pick(0, Some(KeyCode::Enter)))], &mut targets);
+            card.buttons(t, &[(again.as_str(), false, pick(1, Some(KeyCode::Enter))), (ok.as_str(), true, pick(0, Some(KeyCode::Enter)))]);
         }
         None => {
             let applied = report.results.iter().filter(|r| r.applied).count();
@@ -337,10 +322,9 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
                 card.row(t, vec![mark, text, t.d(note)]);
             }
             card.blank(t);
-            card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))], &mut targets);
+            card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);
         }
     }
-    screen.targets.extend(targets);
     let keys = if report.failure.is_some() { "Keys: ↑↓ choose  ↵ confirm  Esc back" } else { "Keys: ↵ done" };
     screen.card(t, card, keys, w, h)
 }

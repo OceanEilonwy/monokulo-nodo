@@ -55,15 +55,19 @@ pub struct Target {
     pub click: Click,
     /// Extra rows below the found one that also belong to it, such as a choice's description.
     pub rows_below: u16,
+    /// The whole text of the row it is drawn on, when the screen knows it (`Card::on_row`): it
+    /// is then found only on a row with exactly that text. Found anywhere, a field's label also
+    /// matched the same words in the help of the field above, which took the click.
+    pub line: Option<String>,
 }
 
 impl Target {
     pub fn text(find: impl Into<String>, click: Click) -> Self {
-        Self { find: find.into(), area: Area::Text, click, rows_below: 0 }
+        Self { find: find.into(), area: Area::Text, click, rows_below: 0, line: None }
     }
 
     pub fn row(find: impl Into<String>, click: Click) -> Self {
-        Self { find: find.into(), area: Area::Row, click, rows_below: 0 }
+        Self { find: find.into(), area: Area::Row, click, rows_below: 0, line: None }
     }
 
     /// A button just wide enough for its text and a cell each side, such as the modal's. Buttons
@@ -71,7 +75,7 @@ impl Target {
     pub fn button(find: impl Into<String>, click: Click) -> Self {
         let find = find.into();
         let width = find.chars().count() as u16;
-        Self { find, area: Area::Button { width }, click, rows_below: 0 }
+        Self { find, area: Area::Button { width }, click, rows_below: 0, line: None }
     }
 
     /// The `width` a button was drawn with (`v3::button`'s), so its target is the whole button.
@@ -83,16 +87,22 @@ impl Target {
     }
 
     pub fn card_row(find: impl Into<String>, click: Click) -> Self {
-        Self { find: find.into(), area: Area::Card, click, rows_below: 0 }
+        Self { find: find.into(), area: Area::Card, click, rows_below: 0, line: None }
     }
 
     /// A text box: its label, found by `find`, and the box beside it, `cells` wide in all.
     pub fn field(find: impl Into<String>, cells: u16) -> Self {
-        Self { find: find.into(), area: Area::Field(cells), click: Click::Focus, rows_below: 0 }
+        Self { find: find.into(), area: Area::Field(cells), click: Click::Focus, rows_below: 0, line: None }
     }
 
     pub fn below(mut self, rows: u16) -> Self {
         self.rows_below = rows;
+        self
+    }
+
+    /// Only on a row whose text, trimmed, is `line`.
+    pub fn on_line(mut self, line: impl Into<String>) -> Self {
+        self.line = Some(line.into());
         self
     }
 }
@@ -143,10 +153,14 @@ pub fn resolve(buffer: &Buffer, area: Rect, targets: &[Target]) -> Vec<Hit> {
     // (row, index in that row's chars) after the previous match.
     let mut cursor: (u16, usize) = (area.y, 0);
     let rows: Vec<(Vec<char>, Vec<u16>)> = (area.y..area.y + area.height).map(|y| row_text(buffer, y, area)).collect();
+    let lines: Vec<String> = rows.iter().map(|(chars, _)| chars.iter().collect::<String>().trim().to_owned()).collect();
     for target in targets {
         let needle: Vec<char> = target.find.chars().collect();
         let search = |button: Option<u16>| {
             for y in cursor.0..area.y + area.height {
+                if target.line.as_ref().is_some_and(|line| *line != lines[usize::from(y - area.y)]) {
+                    continue;
+                }
                 let (chars, columns) = &rows[usize::from(y - area.y)];
                 let mut from = if y == cursor.0 { cursor.1 } else { 0 };
                 while let Some(start) = find_in_row(chars, &needle, from) {
@@ -345,6 +359,21 @@ mod tests {
             assert_eq!(b[(rect.x + rect.width, 1)].bg, t.card, "{label}: nothing beside the button changes");
             assert_eq!(b[(rect.x + 1, 0)].bg, t.card, "{label}: nor above it");
         }
+    }
+
+    /// A field's label is also in the help of the field above it. Tied to its row's text, the
+    /// label's target is found on its own row, not in the help.
+    #[test]
+    fn a_target_tied_to_its_line_skips_the_same_words_elsewhere() {
+        let b = buffer(&["  Such as smtp.example.com. SMTP port goes with it.", "  SMTP port         587", "  SMTP port         587  "]);
+        let tied = Target::card_row("SMTP port", Click::Key(KeyCode::Enter)).on_line("SMTP port         587");
+        let hits = resolve(&b, b.area, &[tied.clone()]);
+        assert_eq!(hits[0].rect.y, 1, "on its own row");
+        let free = resolve(&b, b.area, &[Target::card_row("SMTP port", Click::Key(KeyCode::Enter))]);
+        assert_eq!(free[0].rect.y, 0, "found anywhere, it takes the help");
+        let help = buffer(&["  Such as smtp.example.com. SMTP port goes with it."]);
+        let gone = resolve(&help, help.area, &[tied]);
+        assert!(gone.is_empty(), "with its row not on screen it is not a target at all");
     }
 
     #[test]

@@ -370,7 +370,10 @@ pub(super) fn on_provider_added(app: &mut App, result: Result<ConnectedProvider,
     match result {
         Ok(provider) => {
             let domains = provider.domains.iter().filter(|d| d.held_by.is_none()).map(|d| d.name.clone()).collect();
-            state.stage = ProviderStage::Done { provider: provider.name, domains };
+            let mut held_by: Vec<String> = provider.domains.iter().filter_map(|d| d.held_by.clone()).collect();
+            held_by.sort();
+            held_by.dedup();
+            state.stage = ProviderStage::Done { provider: provider.name, domains, held_by };
             vec![Effect::Refresh]
         }
         Err(text) => {

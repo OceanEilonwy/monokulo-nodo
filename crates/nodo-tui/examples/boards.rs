@@ -452,7 +452,11 @@ pub fn real_screens(out: &std::path::Path) {
     scenes.push(("real-web3-provider-key", "Connect Porkbun (real)", app));
     let (mut app, _) = fixture(ScreenId::WebProviders);
     if let Screen::WebProviders(state) = &mut app.screen {
-        state.stage = ProviderStage::Done { provider: "Porkbun".to_owned(), domains: vec!["example.com".to_owned(), "example.org".to_owned()] };
+        state.stage = ProviderStage::Done {
+            provider: "Porkbun".to_owned(),
+            domains: vec!["example.com".to_owned(), "example.org".to_owned()],
+            held_by: Vec::new(),
+        };
         state.return_to = Some("shop".to_owned());
     }
     scenes.push(("real-web3-provider-done", "Provider connected (real)", app));

@@ -62,24 +62,38 @@ fn dead_targets(name: &str, make: impl Fn() -> App) -> Vec<String> {
         };
         let (mut app, _, again) = drawn(make());
         assert_eq!(again[index], *hit, "{name}: the same app draws the same targets");
+        let (mut column, mut row) = (column, row);
+        // Whether it may rightly do nothing: a row that only takes the focus, already on it,
+        // with no other row on screen to move the focus to first (a short terminal).
+        let mut alone = false;
         match hit.click {
             // The tab bar's own tab, on that tab's first page: already there.
             Click::Tab(tab) if app.stack.is_empty() && app.screen.tab() == Some(tab) => continue,
             // A click that only moves the selection does nothing when the selection is already
             // there, so move it to another row first.
             Click::Pick { index: at, then: None } => {
-                if let Some(other) = again.iter().find(|other| matches!(other.click, Click::Pick { index, then: None } if index != at)) {
-                    if let Some((x, y)) = cell_for(&again, other) {
-                        update(&mut app, Event::Mouse { kind: MouseKind::Down, column: x, row: y });
-                        draw(&app, app.size.0, app.size.1);
+                match again.iter().find(|other| matches!(other.click, Click::Pick { index, then: None } if index != at)) {
+                    Some(other) => {
+                        if let Some((x, y)) = cell_for(&again, other) {
+                            update(&mut app, Event::Mouse { kind: MouseKind::Down, column: x, row: y });
+                            draw(&app, app.size.0, app.size.1);
+                            // A list that follows the focus may have scrolled: click the target
+                            // where it is now, or skip it if it scrolled out of view.
+                            let moved = app.hits.borrow().clone();
+                            match moved.iter().find(|h| h.click == hit.click).and_then(|h| cell_for(&moved, h)) {
+                                Some(cell) => (column, row) = cell,
+                                None => continue,
+                            }
+                        }
                     }
+                    None => alone = true,
                 }
             }
             _ => {}
         }
         let before = observable(&app);
         let effects = update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row });
-        if effects.is_empty() && observable(&app) == before {
+        if effects.is_empty() && observable(&app) == before && !alone {
             dead.push(format!("{name}: {:?} \"{text}\" does nothing", hit.click));
         }
     }
@@ -310,4 +324,150 @@ fn a_scrolled_update_list_clicks_each_app_it_shows() {
         checked += 1;
     }
     assert!(checked >= 5, "{checked} rows checked:\n{screen}");
+}
+
+/// A screen's text with the focus marks and spacing taken out, to recognise a row whether or not
+/// it is the focused one.
+fn plain(line: &str) -> String {
+    line.replace(['▸', '▏'], " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The rows that show the focus: the ▸ mark, or a text box's cursor.
+fn marked(screen: &str) -> Vec<String> {
+    screen.lines().filter(|line| line.contains('▸') || line.contains('▏')).map(plain).collect()
+}
+
+/// Every screen on a device with long lists (the awkward fixture app installed, two dozen more
+/// apps, updates and sites, a dozen sources, eight DNS accounts), at small sizes, scrolled to the
+/// top, part way and the end with the arrow keys. On each: every target does something, and a
+/// click on a row picks that row, not one scrolled away: picking it puts the focus mark on the
+/// row that was clicked.
+#[test]
+fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
+    let snapshot = {
+        let mut mock = common::forms::crowded();
+        nodo_tui::runtime::load_snapshot(&mut mock).expect("the mock answers")
+    };
+    let mut screens: Vec<(String, App)> = ScreenId::ALL.into_iter().map(|id| (id.slug().to_owned(), fixture(id).0)).collect();
+    // The fixture's own pages: its settings form and its app page.
+    let mock = common::forms::crowded();
+    let form = nodo_tui::model::ScreenData::settings_form(&mock, common::forms::ID).expect("installed");
+    let mut settings = App::new();
+    settings.screen = Screen::Settings(nodo_tui::app::SettingsState::new(form));
+    screens.push(("fixture settings".to_owned(), settings));
+    let mut page = App::new();
+    page.screen = Screen::AppPage(AppPageState::new(common::forms::ID));
+    screens.push(("fixture app page".to_owned(), page));
+    // The reference picker and automatic updates keep their lists in the screen, not the data.
+    let (mut picker, _) = fixture(ScreenId::Reference);
+    if let Screen::Reference(state) = &mut picker.screen {
+        state.query = nodo_tui::secret::Input::plain("");
+        let template = state.list.options[0].clone();
+        for n in 0..30 {
+            let mut option = template.clone();
+            option.app = format!("crowd-app-{n:02}");
+            state.list.options.push(option);
+        }
+    }
+    screens.push(("long reference list".to_owned(), picker));
+    let (mut auto, _) = fixture(ScreenId::AutoUpdate);
+    if let Screen::AutoUpdate(state) = &mut auto.screen {
+        // On the first app: "How often" only moves the focus, which does nothing where it is.
+        state.selected = 1;
+        for n in 0..24 {
+            state.draft.packages.insert(0, nodo_tui::model::AutoUpdateEntry::new(&format!("crowd-app-{n:02}"), "community", true, ""));
+        }
+        state.saved = state.draft.clone();
+    }
+    screens.push(("long automatic updates".to_owned(), auto));
+    // Each screen on a thread of its own: some 400 states, each clicked target by target.
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let workers: Vec<_> = screens
+            .into_iter()
+            .map(|(name, base)| {
+                let snapshot = snapshot.clone();
+                scope.spawn(move || {
+                    let mut failures = Vec::new();
+                    for size in [(60, 20), (80, 24), (100, 32)] {
+                        for downs in [0, 5, 60] {
+                            let mut app = base.clone();
+                            app.data = snapshot.clone();
+                            app.size = size;
+                            for _ in 0..downs {
+                                draw(&app, size.0, size.1);
+                                update(&mut app, press(crossterm::event::KeyCode::Down));
+                            }
+                            let at = format!("{name} {}x{} after {downs} downs", size.0, size.1);
+                            let prepared = app.clone();
+                            failures.extend(dead_targets(&at, || prepared.clone()));
+                            failures.extend(misplaced_picks(&at, &prepared));
+                        }
+                    }
+                    failures
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|worker| worker.join().expect("no panic")).collect()
+    });
+    assert!(failures.is_empty(), "{} problems:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Picks each row target without pressing anything after, and says where the focus mark did not
+/// land on the row clicked.
+fn misplaced_picks(at: &str, prepared: &App) -> Vec<String> {
+    let mut problems = Vec::new();
+    let (_, buffer, hits) = drawn(prepared.clone());
+    let before = common::text(&buffer);
+    let card_width = prepared.size.0.saturating_sub(8);
+    for (index, hit) in hits.iter().enumerate() {
+        let Click::Pick { index: pick, .. } = hit.click else { continue };
+        // Rows and labels: the targets as wide as the card or the screen.
+        if hit.rect.width < card_width {
+            continue;
+        }
+        let Some((column, row)) = cell_for(&hits, hit) else { continue };
+        let clicked = plain(before.lines().nth(usize::from(row)).unwrap_or_default());
+        let mut app = prepared.clone();
+        draw(&app, app.size.0, app.size.1);
+        app.hits.borrow_mut()[index].click = Click::Pick { index: pick, then: None };
+        update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row });
+        let (buffer, _) = draw(&app, app.size.0, app.size.1);
+        let now = marked(&common::text(&buffer));
+        // A screen that shows no focus for what was picked (a link among buttons) is left out;
+        // a focus that moved must have moved to the row clicked. A focused row may say more.
+        if now != marked(&before) && !now.iter().any(|line| line.starts_with(&clicked) || clicked.starts_with(line.as_str())) {
+            problems.push(format!("{at}: picking \"{clicked}\" (row {row}, index {pick}) marks {now:?}"));
+        }
+    }
+    problems
+}
+
+/// On a narrow terminal a source's on/off switch and its "Try again" link stay whole on one row
+/// and clickable. Padded to column 44, the switch ran past a 60-column card and wrapped ("[x]"
+/// on one row, "On" on the next), and "Try again" wrapped with the problem before it: neither
+/// was a target any more.
+#[test]
+fn a_sources_switch_and_link_stay_clickable_when_narrow() {
+    for size in [(60, 20), (80, 24), (100, 32)] {
+        let (mut app, _) = fixture(ScreenId::Feeds);
+        app.size = size;
+        let feeds = app.data.feeds.clone();
+        for (index, feed) in feeds.iter().enumerate() {
+            app.screen = Screen::Feeds { selected: index, keys: false };
+            let (_, buffer, hits) = drawn(app.clone());
+            let screen = common::text(&buffer);
+            let lines: Vec<&str> = screen.lines().collect();
+            let head = lines.iter().position(|line| line.trim_start().trim_start_matches("▸ ").starts_with(&format!("{} ", feed.name))).unwrap_or_else(|| panic!("{size:?}: {} is on screen:\n{screen}", feed.name));
+            let switch = if feed.status == nodo_tui::model::FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
+            let column = lines[head].find(switch).unwrap_or_else(|| panic!("{size:?}: {}'s switch is whole on its row:\n{screen}", feed.name));
+            let click = hit_at(&hits, lines[head][..column].chars().count() as u16, head as u16).map(|hit| hit.click);
+            assert_eq!(click, Some(Click::Pick { index, then: Some(crossterm::event::KeyCode::Char(' ')) }), "{size:?}: {}'s switch", feed.name);
+            // At 20 rows the window shows the source's head and address only.
+            if matches!(feed.status, nodo_tui::model::FeedStatus::Unreachable(_)) && size.1 >= 24 {
+                let row = lines.iter().position(|line| line.contains("Try again")).unwrap_or_else(|| panic!("{size:?}: Try again is whole on a row:\n{screen}"));
+                let column = lines[row][..lines[row].find("Try again").unwrap()].chars().count() as u16;
+                assert_eq!(hit_at(&hits, column, row as u16).map(|hit| hit.click), Some(Click::Key(crossterm::event::KeyCode::Char('r'))), "{size:?}");
+            }
+        }
+    }
 }

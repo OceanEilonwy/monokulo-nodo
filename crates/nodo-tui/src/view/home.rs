@@ -116,9 +116,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
         card.row(t, vec![mark, lead, t.b(head)]);
         card.row(t, vec![t.d(body)]);
         card.blank(t);
-        let mut targets = Vec::new();
-        card.buttons(t, &[(label, true, Click::Pick { index, then: Some(KeyCode::Enter) })], &mut targets);
-        screen.targets.extend(targets);
+        card.buttons(t, &[(label, true, Click::Pick { index, then: Some(KeyCode::Enter) })]);
         cards.push(card);
     }
     if !notes.is_empty() {
@@ -166,8 +164,10 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
             fine.focus_here();
         }
         let state_span = if bad { t.e(state) } else { t.d(state) };
-        fine.row(t, vec![lead, t.n(pad(id, name_width)), state_span]);
-        screen.targets.push(Target::card_row(*id, Click::Pick { index: *index, then: Some(KeyCode::Enter) }));
+        // Tied to its row: found by its name anywhere, an app's row target also took the update
+        // card's list of names ("moneropay, the Nodo, …") above it.
+        let target = Target::card_row(*id, Click::Pick { index: *index, then: Some(KeyCode::Enter) });
+        fine.row_with(t, vec![lead, t.n(pad(id, name_width)), state_span], [target]);
     }
     if apps.is_empty() {
         fine.row(t, vec![t.d("Get apps from Apps › Get apps.")]);
@@ -210,18 +210,16 @@ pub fn no_drive(app: &App, t: &Theme, choice: usize) -> Page {
         None => card.row(t, vec![t.n("The drive is back.")]),
     }
     card.blank(t);
-    let mut targets = Vec::new();
     for (index, (label, note)) in DRIVE_CHOICES.iter().enumerate().skip(1) {
         let lead = if index == choice { t.a("▸ ") } else { t.n("  ") };
         if index == choice {
             card.focus_here();
         }
         let note = if note.is_empty() { String::new() } else { format!("   {note}") };
-        card.link_row(t, vec![lead, t.a((*label).to_owned()), t.d(note)], label, Click::Pick { index, then: Some(KeyCode::Enter) }, &mut targets);
+        card.link_row(t, vec![lead, t.a((*label).to_owned()), t.d(note)], label, Click::Pick { index, then: Some(KeyCode::Enter) });
     }
     card.blank(t);
-    card.buttons(t, &[("Check again", true, Click::Pick { index: 0, then: Some(KeyCode::Enter) })], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Check again", true, Click::Pick { index: 0, then: Some(KeyCode::Enter) })]);
     screen.card(t, card, "Keys: ↵ check again  ↑↓ choose  l system log", w, h)
 }
 

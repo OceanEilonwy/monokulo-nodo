@@ -678,10 +678,17 @@ impl SettingsState {
 
     pub fn error_for(&self, index: usize) -> Option<String> {
         let field = &self.form.fields[index];
+        let empty = self.draft[index] == FieldValue::Text(String::new());
         // An optional field left empty has no value, which is always allowed; only what is typed
         // has to fit the kind.
-        if !field.required && self.draft[index] == FieldValue::Text(String::new()) {
+        if !field.required && empty {
             return None;
+        }
+        // A required one must have a value. Only a number's parse caught this before, so a fresh
+        // install with an empty required name or choice saved, and the app could not start. An
+        // unset secret is left to the helper: it may be one the helper makes when it saves.
+        if empty {
+            return Some("Required: give it a value.".to_owned());
         }
         validate(&field.kind, &self.draft[index])
     }
@@ -973,8 +980,9 @@ pub enum ProviderStage {
     Pick,
     /// The domain and key for the chosen company.
     Key,
-    /// Connected. Holds the provider's name and the domains its key controls.
-    Done { provider: String, domains: Vec<String> },
+    /// Connected. Holds the provider's name, the domains its key controls that sites can use, and
+    /// the providers already holding the rest (the same account connected twice, most often).
+    Done { provider: String, domains: Vec<String>, held_by: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

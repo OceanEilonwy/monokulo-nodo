@@ -2643,3 +2643,37 @@ fn the_help_overlay_names_the_network_screen() {
     let overlay = app.overlay.clone().expect("help");
     assert!(overlay.doc.lines.iter().any(|l| l.contains("Wi-Fi and Bluetooth, from Home")));
 }
+
+#[test]
+fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(
+        screen.contains("Missing a domain?") && screen.contains("API Access"),
+        "the list says where missing domains are: {screen}"
+    );
+    // A second Porkbun connection with the same key lists only what the first already holds.
+    let again = ConnectedProvider {
+        id: "porkbun-2".to_owned(),
+        name: "Porkbun".to_owned(),
+        domains: vec![ConnectedDomain {
+            name: "example.org".to_owned(),
+            used_by: Vec::new(),
+            held_by: Some("Porkbun".to_owned()),
+        }],
+        lists_domains: true,
+        problem: None,
+    };
+    update(&mut app, Event::ProviderAdded(Ok(again)));
+    let screen = screen_text(&app);
+    assert!(
+        screen.contains("already connected through Porkbun"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("If it is the same account, remove this one"),
+        "{screen}"
+    );
+    assert!(screen.contains("Missing a domain?"), "{screen}");
+}
