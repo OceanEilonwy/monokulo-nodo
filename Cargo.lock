@@ -3142,6 +3142,8 @@ dependencies = [
  "crossterm",
  "libc",
  "nodo-api",
+ "nodo-manifest",
+ "nodo-settings",
  "qrcodegen",
  "ratatui",
  "signal-hook",

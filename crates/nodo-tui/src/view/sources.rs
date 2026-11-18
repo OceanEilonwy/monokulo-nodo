@@ -55,27 +55,35 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
     for (index, feed) in app.data.feeds.iter().enumerate() {
         let mut card = Card::new(t, w);
         card.blank(t);
+        // The list scrolls to the selected source; without it, ↓ moved the selection off screen.
+        if index == selected {
+            card.focus_here();
+        }
         let mut head = vec![if index == selected { t.a("▸ ") } else { t.n("") }, t.b(feed.name.clone())];
         if feed.key_state == KeyState::BuiltIn {
             head.push(t.d("   built in"));
         }
         let used = super::v3::width_of(&head);
-        head.push(t.n(" ".repeat(44usize.saturating_sub(used))));
-        head.extend(toggle(t, feed.status != FeedStatus::Disabled));
-        let mut targets = vec![Target::card_row(feed.name.clone(), pick(index, None))];
-        targets.push(Target::text(if feed.status == FeedStatus::Disabled { "[ ] Off" } else { "[x] On" }, pick(index, Some(KeyCode::Char(' ')))));
-        card.row_with_button(t, head, "Remove", false, pick(index, Some(KeyCode::Char('x'))), &mut targets);
+        let switch = toggle(t, feed.status != FeedStatus::Disabled);
+        // The switch lines up at column 44, or further left on a narrow card: past the card's
+        // edge it wrapped, "[x]" on one row and "On" on the next, and was not clickable.
+        let column = 44usize.min(card.width.saturating_sub(4 + super::v3::width_of(&switch)));
+        head.push(t.n(" ".repeat(column.saturating_sub(used))));
+        head.extend(switch);
+        // Tied to the head row, before its button: found by its name anywhere, a source's target
+        // also took the address of the source above it (feeds.monokulo.example/official).
+        let toggle_text = if feed.status == FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
+        card.on_row(card.next_row(), [Target::card_row(feed.name.clone(), pick(index, None)), Target::text(toggle_text, pick(index, Some(KeyCode::Char(' '))))]);
+        card.row_with_button(t, head, "Remove", false, pick(index, Some(KeyCode::Char('x'))));
         card.row(t, vec![t.d(format!("{}   ·   {}", feed.address.trim_start_matches("https://"), counted(u64::from(feed.packages), "app")))]);
         match &feed.status {
             FeedStatus::Unreachable(problem) => {
                 card.blank(t);
-                card.row(t, vec![t.e(format!("✕  Couldn't reach it: {problem}")), t.n("   "), t.a("Try again")]);
-                targets.push(Target::text("Try again", key('r')));
+                card.row_link(t, vec![t.e(format!("✕  Couldn't reach it: {problem}"))], "Try again", key('r'));
             }
             FeedStatus::Blocked => {
                 card.blank(t);
-                card.row(t, vec![t.e("▲  Its key changed. Nothing new installs from it until you decide."), t.n("   "), t.a("Decide ›")]);
-                targets.push(Target::text("Decide ›", pick(index, Some(KeyCode::Enter))));
+                card.row_link(t, vec![t.e("▲  Its key changed. Nothing new installs from it until you decide.")], "Decide ›", pick(index, Some(KeyCode::Enter)));
             }
             _ => {}
         }
@@ -86,8 +94,11 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
             card.blank(t);
             key_row(&mut card, t, "Key", &feed.fingerprint, false);
         }
+        if index == selected {
+            // Its problem and "Try again" scroll into view with it.
+            card.focus_ends_here();
+        }
         card.blank(t);
-        screen.targets.extend(targets);
         cards.push(card);
     }
     if app.data.feeds.is_empty() {
@@ -113,7 +124,6 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
     screen.before = sources_trail(t, &["Add"], &mut before_targets);
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
-    let mut targets = Vec::new();
     card.blank(t);
     let keys = match state {
         AddFeedState::Address { input, error } => {
@@ -130,7 +140,7 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
             card.blank(t);
             card.row(t, vec![t.d("Nothing is installed yet: the Nodo first shows you what the source offers and its key.")]);
             card.blank(t);
-            card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Check", true, Click::Key(KeyCode::Enter))], &mut targets);
+            card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Check", true, Click::Key(KeyCode::Enter))]);
             "Keys: paste the address  ↵ check  Esc cancel"
         }
         AddFeedState::Confirm { probe, .. } => {
@@ -154,11 +164,10 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
             let trust = matches!(state, AddFeedState::Confirm { trust_focused: true, .. });
             let cancel = focused("Cancel", !trust);
             let add = focused("Add source", trust);
-            card.buttons(t, &[(cancel.as_str(), false, pick(0, Some(KeyCode::Enter))), (add.as_str(), true, pick(1, Some(KeyCode::Enter)))], &mut targets);
+            card.buttons(t, &[(cancel.as_str(), false, pick(0, Some(KeyCode::Enter))), (add.as_str(), true, pick(1, Some(KeyCode::Enter)))]);
             "Keys: ←→ choose  ↵ confirm  p its apps  Esc cancel"
         }
     };
-    screen.targets.extend(targets);
     screen.card(t, card, keys, w, h)
 }
 
@@ -189,7 +198,6 @@ pub fn feed_key(app: &App, t: &Theme, state: &FeedKeyState) -> Page {
         card.row(t, vec![t.d(format!("Apps from it on this Nodo: {}", names.join(", ")))]);
     }
     card.blank(t);
-    let mut targets = Vec::new();
     let keys = if let Some(input) = &state.typing {
         card.row(t, vec![t.n("Ask the publisher, by a way you trust, whether the new key is theirs.")]);
         card.row(t, vec![t.b(format!("Type {} to confirm", change.feed))]);
@@ -200,7 +208,7 @@ pub fn feed_key(app: &App, t: &Theme, state: &FeedKeyState) -> Page {
             card.row(t, vec![t.n(" ".repeat(15)), t.e(format!("✕ {error}"))]);
         }
         card.blank(t);
-        card.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), ("Trust the new key", true, Click::Key(KeyCode::Enter))], &mut targets);
+        card.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), ("Trust the new key", true, Click::Key(KeyCode::Enter))]);
         "Keys: type the name  ↵ trust the new key  Esc back"
     } else {
         card.row(t, vec![t.d("To trust the new key you'll type the source's name, so it can't happen by accident.")]);
@@ -215,10 +223,8 @@ pub fn feed_key(app: &App, t: &Theme, state: &FeedKeyState) -> Page {
                 (trust.as_str(), false, pick(1, Some(KeyCode::Enter))),
                 (keep.as_str(), true, pick(0, Some(KeyCode::Enter))),
             ],
-            &mut targets,
         );
         "Keys: ↑↓ choose  ↵ confirm  Esc decide later"
     };
-    screen.targets.extend(targets);
     screen.card(t, card, keys, w, h)
 }

@@ -57,8 +57,7 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
         };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
         let what = truncate(&tagline(app, name), cols.what);
-        card.row_end(t, vec![lead, t.b(pad(name, cols.name)), t.n(what)], vec![status, t.d("  ›")]);
-        screen.targets.push(Target::card_row(name.clone(), pick(index)));
+        card.row_end_with(t, vec![lead, t.b(pad(name, cols.name)), t.n(what)], vec![status, t.d("  ›")], [Target::card_row(name.clone(), pick(index))]);
     }
     if names.is_empty() {
         card.row(t, vec![t.d("No apps yet. Get apps finds them in your sources.")]);
@@ -127,12 +126,10 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
         card.blank(t);
         card.row(t, vec![t.b("More for "), t.b(name.to_owned())]);
         card.blank(t);
-        let mut targets = Vec::new();
-        card.link_row(t, vec![t.a("Restart"), t.d("   r")], "Restart", key('r'), &mut targets);
-        card.link_row(t, vec![t.a(stop_label.to_owned()), t.d("   s")], stop_label, key('s'), &mut targets);
-        card.link_row(t, vec![t.e("Remove…"), t.d("   x")], "Remove…", key('x'), &mut targets);
+        card.link_row(t, vec![t.a("Restart"), t.d("   r")], "Restart", key('r'));
+        card.link_row(t, vec![t.a(stop_label.to_owned()), t.d("   s")], stop_label, key('s'));
+        card.link_row(t, vec![t.e("Remove…"), t.d("   x")], "Remove…", key('x'));
         card.blank(t);
-        screen.targets.extend(targets);
         return screen.card(t, card, "Keys: r restart  s stop  x remove  Esc close", w, h);
     }
 
@@ -147,13 +144,11 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
     }
     status.row(t, line);
     status.blank(t);
-    let mut targets = Vec::new();
     match app.data.updates.iter().find(|u| u.name == name && !u.held) {
-        Some(update) => status.row_with_button(t, vec![t.a(format!("Version {} is ready", update.to)), t.d(format!("   from {}", update.from))], "Update", true, key('u'), &mut targets),
+        Some(update) => status.row_with_button(t, vec![t.a(format!("Version {} is ready", update.to)), t.d(format!("   from {}", update.from))], "Update", true, key('u')),
         None => status.row(t, vec![t.d("Up to date")]),
     }
     status.blank(t);
-    screen.targets.extend(targets);
 
     let mut sections = Card::new(t, w);
     sections.blank(t);
@@ -177,8 +172,7 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
             continue;
         }
         let room = sections.inner().saturating_sub(2 + 12 + 3);
-        sections.row_end(t, vec![lead, t.b(pad(section, 12)), t.d(truncate(&summary, room))], vec![t.d("›")]);
-        screen.targets.push(Target::card_row(section.clone(), pick(index)));
+        sections.row_end_with(t, vec![lead, t.b(pad(section, 12)), t.d(truncate(&summary, room))], vec![t.d("›")], [Target::card_row(section.clone(), pick(index))]);
     }
     sections.blank(t);
     screen.stack(t, vec![status, sections], "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back", w, h)
@@ -228,11 +222,9 @@ pub fn app_remove(app: &App, t: &Theme, state: &AppRemoveState) -> Page {
     card.row(t, vec![t.n(format!("{name} stops and its program is removed. Anything that relies on it stops working."))]);
     card.row(t, vec![t.d("Its data stays on the drive, so installing it again brings everything back. A site still online has to be taken offline first, in Hosting.")]);
     card.blank(t);
-    let mut targets = Vec::new();
     let cancel = focused("Cancel", !state.confirm_focused);
     let confirm = focused(&format!("!Remove {name}"), state.confirm_focused);
-    card.buttons(t, &[(cancel.as_str(), false, pick(0)), (confirm.as_str(), true, pick(1))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[(cancel.as_str(), false, pick(0)), (confirm.as_str(), true, pick(1))]);
     let keys = if state.confirm_focused { "Keys: ↵ remove  ←→ choose  Esc cancel" } else { "Keys: ←→ choose  Esc cancel  (Enter cancels until you move to Remove)" };
     screen.card(t, card, keys, w, h)
 }
@@ -300,8 +292,8 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
             Some(members) => format!("Installs {} apps · {}", members + 1, pkg.tagline),
             None => pkg.tagline.clone(),
         };
-        card.row_end(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&what, cols.what))], vec![t.d(tag.to_owned())]);
-        screen.targets.push(Target::card_row(pkg.id.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+        let target = Target::card_row(pkg.id.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) });
+        card.row_end_with(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&what, cols.what))], vec![t.d(tag.to_owned())], [target]);
     }
     if results.is_empty() {
         card.row(t, vec![t.d(empty_catalog_line(app, state))]);
@@ -348,15 +340,13 @@ pub fn detail(app: &App, t: &Theme, detail: &PackageDetail) -> Page {
     };
     card.row(t, vec![signature]);
     card.blank(t);
-    let mut targets = Vec::new();
     let keys = if detail.installed {
-        card.buttons(t, &[("Open its page", true, key('o'))], &mut targets);
+        card.buttons(t, &[("Open its page", true, key('o'))]);
         "Keys: o open its page  c changes  Esc back"
     } else {
-        card.buttons(t, &[("Install", true, key('i'))], &mut targets);
+        card.buttons(t, &[("Install", true, key('i'))]);
         "Keys: i install  c changes  v versions  Esc back"
     };
-    screen.targets.extend(targets);
     screen.card(t, card, keys, w, h)
 }
 
@@ -396,7 +386,6 @@ pub fn review(app: &App, t: &Theme, state: &ReviewState) -> Page {
     if !data.guarantees.is_empty() {
         card.blank(t);
     }
-    let mut targets = Vec::new();
     if let Some(input) = &state.passphrase {
         let mut pass = vec![t.d(pad("Passphrase", 13))];
         pass.extend(inset(t, &input.display(), 30, None, true));
@@ -404,14 +393,12 @@ pub fn review(app: &App, t: &Theme, state: &ReviewState) -> Page {
         card.row(t, vec![t.d("Its locked storage is made now and opens with your device passphrase.")]);
         card.blank(t);
         let verb = if is_update { "Update" } else { "Install" };
-        card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), (verb, true, Click::Key(KeyCode::Enter))], &mut targets);
-        screen.targets.extend(targets);
+        card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), (verb, true, Click::Key(KeyCode::Enter))]);
         return screen.card(t, card, "Keys: type the passphrase  ↵ install  Esc back", w, h);
     }
     let cancel = focused("Cancel", !state.confirm_focused);
     let verb = focused(if is_update { "Update" } else { "Install" }, state.confirm_focused);
-    card.buttons(t, &[(cancel.as_str(), false, pick(0)), (verb.as_str(), true, pick(1))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[(cancel.as_str(), false, pick(0)), (verb.as_str(), true, pick(1))]);
     let keys = if state.confirm_focused { "Keys: ↵ confirm  ←→ choose  d files  Esc cancel" } else { "Keys: ←→ choose  ↵ cancel  d files  Esc cancel" };
     screen.card(t, card, keys, w, h)
 }
@@ -462,7 +449,6 @@ pub fn installing(app: &App, t: &Theme, snapshot: &InstallSnapshot) -> Page {
         card.row(t, vec![mark, text]);
     }
     card.blank(t);
-    let mut targets = Vec::new();
     let keys = match &snapshot.outcome {
         InstallOutcome::InProgress if snapshot.can_cancel => {
             card.row(t, vec![t.d("You can leave this page; it carries on. A failed step removes what this install added.")]);
@@ -476,21 +462,20 @@ pub fn installing(app: &App, t: &Theme, snapshot: &InstallSnapshot) -> Page {
             "Keys: Esc leave"
         }
         InstallOutcome::Succeeded => {
-            card.buttons(t, &[("Done", false, Click::Key(KeyCode::Esc)), ("Set it up", true, Click::Key(KeyCode::Enter))], &mut targets);
+            card.buttons(t, &[("Done", false, Click::Key(KeyCode::Esc)), ("Set it up", true, Click::Key(KeyCode::Enter))]);
             "Keys: ↵ set it up  v full log  Esc done"
         }
         InstallOutcome::Failed(reason) => {
             card.row(t, vec![t.e(format!("✕ {reason}"))]);
             card.blank(t);
-            card.buttons(t, &[("Back", true, Click::Key(KeyCode::Esc))], &mut targets);
+            card.buttons(t, &[("Back", true, Click::Key(KeyCode::Esc))]);
             "Keys: v full log  Esc back"
         }
         InstallOutcome::Cancelled => {
-            card.buttons(t, &[("Back", true, Click::Key(KeyCode::Esc))], &mut targets);
+            card.buttons(t, &[("Back", true, Click::Key(KeyCode::Esc))]);
             "Keys: Esc back"
         }
     };
-    screen.targets.extend(targets);
     screen.card(t, card, keys, w, h)
 }
 
@@ -525,9 +510,7 @@ pub fn unlock(app: &App, t: &Theme, state: &UnlockState) -> Page {
     card.blank(t);
     card.row(t, vec![t.d("A lost passphrase can't be recovered; a backup brings the data back.")]);
     card.blank(t);
-    let mut targets = Vec::new();
-    card.buttons(t, &[("Unlock", true, Click::Key(KeyCode::Enter))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Unlock", true, Click::Key(KeyCode::Enter))]);
     screen.card(t, card, "Keys: type the passphrase  ↵ unlock  Esc leave locked", w, h)
 }
 
@@ -553,9 +536,7 @@ fn blocked(app: &App, t: &Theme, parts: &[&str], title: &str, body: &[String], d
         }
     }
     card.blank(t);
-    let mut targets = Vec::new();
-    card.buttons(t, buttons, &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, buttons);
     screen.card(t, card, keys, w, h)
 }
 

@@ -34,17 +34,19 @@ impl<'a> Rows<'a> {
         Self { t, w, items: Vec::new(), pieces: Vec::new(), focus: None }
     }
 
-    fn piece(&mut self, build: impl FnOnce(&mut Card, &Theme, &mut Vec<Target>)) {
+    /// Rows drawn on a card of their own, with the targets tied to them (`Card::row_with`), so
+    /// each is found only on its own row's text.
+    fn piece(&mut self, build: impl FnOnce(&mut Card, &Theme)) {
         let mut card = Card::new(self.t, self.w);
-        let mut targets = Vec::new();
-        build(&mut card, self.t, &mut targets);
+        build(&mut card, self.t);
+        let (items, targets) = card.into_parts();
         let start = self.items.len();
-        self.items.extend(card.items());
-        self.pieces.push((start, self.items.len(), targets));
+        self.items.extend(items);
+        self.pieces.push((start, self.items.len(), targets.into_iter().map(|(_, target)| target).collect()));
     }
 
     fn row(&mut self, spans: Vec<Span<'static>>) {
-        self.piece(|card, t, _| card.row(t, spans));
+        self.piece(|card, t| card.row(t, spans));
     }
 
     fn blank(&mut self) {
@@ -64,7 +66,7 @@ impl<'a> Rows<'a> {
 /// `follow`), a dim line when there is more, what comes after, and the keys.
 #[allow(clippy::too_many_arguments)]
 fn scrolled(t: &Theme, mut screen: Screen3, rows: Rows, start: usize, follow: bool, after: Vec<Item>, after_targets: Vec<Target>, keys: &str, w: u16, h: u16) -> Page {
-    let fixed = usize::from(STRIP_ROWS) + 1 + rows_of(&screen.before, w) + rows_of(&after, w);
+    let fixed = usize::from(STRIP_ROWS) + screen.bottom_rows(t, keys, w) + rows_of(&screen.before, w) + rows_of(&after, w);
     let total = rows.items.len();
     let mut avail = usize::from(h).saturating_sub(fixed);
     let mut start = start;
@@ -128,7 +130,6 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
     screen.targets.extend(before_targets);
     let mut rows = Rows::new(t, w);
     let mut after = Card::new(t, w);
-    let mut after_targets = Vec::new();
     let installing = review.members.iter().filter(|m| m.installed.is_none()).count();
     let keys;
     match &state.step {
@@ -176,9 +177,9 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                     }
                     let lead = if selected { t.a("▸ ") } else { t.n("  ") };
                     let label = id.clone();
-                    rows.piece(|card, t, targets| {
-                        card.row(t, vec![lead, tick(t, *on), t.n(format!(" {label}"))]);
-                        targets.push(Target::card_row(label.clone(), pick(index, KeyCode::Char(' '))));
+                    rows.piece(|card, t| {
+                        let target = Target::card_row(label.clone(), pick(index, KeyCode::Char(' ')));
+                        card.row_with(t, vec![lead, tick(t, *on), t.n(format!(" {label}"))], [target]);
                     });
                 }
             }
@@ -196,7 +197,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             let next = if state.open_asks().is_empty() { "Install" } else { "Continue" };
             let cancel_label = focused("Cancel", state.focus == cancel);
             let next_label = focused(next, state.focus == cancel + 1);
-            after.buttons(t, &[(cancel_label.as_str(), false, pick(cancel, KeyCode::Enter)), (next_label.as_str(), true, pick(cancel + 1, KeyCode::Enter))], &mut after_targets);
+            after.buttons(t, &[(cancel_label.as_str(), false, pick(cancel, KeyCode::Enter)), (next_label.as_str(), true, pick(cancel + 1, KeyCode::Enter))]);
             keys = if state.focus == cancel + 1 {
                 "Keys: ↵ continue  ↑↓ choose  space switch  PgUp PgDn scroll  Esc cancel"
             } else {
@@ -219,7 +220,12 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                     rows.focus_here();
                 }
                 let lead = if selected { t.a("▸ ") } else { t.n("  ") };
-                rows.row(vec![lead, t.b(ask.label.clone()), t.d(format!("   for {}", ask.package))]);
+                // The question's label picks it, as it did when found by its text alone.
+                let (label, package) = (ask.label.clone(), ask.package.clone());
+                rows.piece(|card, t| {
+                    let target = Target::card_row(label.clone(), Click::Pick { index: position, then: None });
+                    card.row_with(t, vec![lead, t.b(label), t.d(format!("   for {package}"))], [target]);
+                });
                 // A long paste, such as a key file, is shown by its length rather than overflowing.
                 let count = input.secret_value().expose().chars().count();
                 let shown = if ask.secret {
@@ -234,11 +240,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                 if ask.secret && count > 0 {
                     field.push(t.d(format!("  {count} characters")));
                 }
-                let label = ask.label.clone();
-                rows.piece(|card, t, targets| {
-                    card.row(t, field);
-                    targets.push(Target::card_row(label, Click::Pick { index: position, then: None }));
-                });
+                rows.row(field);
                 if !ask.help.is_empty() {
                     rows.row(vec![t.n("  "), t.d(ask.help.clone())]);
                 }
@@ -253,7 +255,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                 after.blank(t);
             }
             let next = if review.needs_passphrase { "Continue" } else { "Install" };
-            after.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), (next, true, pick(open.len().saturating_sub(1), KeyCode::Enter))], &mut after_targets);
+            after.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), (next, true, pick(open.len().saturating_sub(1), KeyCode::Enter))]);
             keys = "Keys: type or paste  Tab next  ↵ continue  Esc back";
         }
         BundleStep::Passphrase => {
@@ -270,7 +272,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             }
             rows.blank();
             after.blank(t);
-            after.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), ("Install", true, Click::Key(KeyCode::Enter))], &mut after_targets);
+            after.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), ("Install", true, Click::Key(KeyCode::Enter))]);
             keys = "Keys: type the passphrase  ↵ install  Esc back";
         }
         BundleStep::Installing => {
@@ -311,15 +313,19 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             after.blank(t);
             let has_setup = report.problem.is_none() && app.data.owner_pages.iter().any(|(p, _)| p == head);
             if has_setup {
-                after.buttons(t, &[("Done", false, Click::Key(KeyCode::Esc)), ("Open setup", true, Click::Key(KeyCode::Enter))], &mut after_targets);
+                after.buttons(t, &[("Done", false, Click::Key(KeyCode::Esc)), ("Open setup", true, Click::Key(KeyCode::Enter))]);
                 keys = "Keys: ↵ open setup  ↑↓ scroll  Esc done";
             } else {
-                after.buttons(t, &[("Done", true, Click::Key(KeyCode::Esc))], &mut after_targets);
+                after.buttons(t, &[("Done", true, Click::Key(KeyCode::Esc))]);
                 keys = "Keys: ↑↓ scroll  Esc done";
             }
         }
     }
-    let after = if after.width > 0 && !matches!(state.step, BundleStep::Installing) { after.items() } else { Vec::new() };
+    // The card under the window keeps its buttons' targets; while installing it is not shown.
+    let (after, after_targets) = match after.into_parts() {
+        (items, targets) if !matches!(state.step, BundleStep::Installing) => (items, targets.into_iter().map(|(_, target)| target).collect()),
+        _ => (Vec::new(), Vec::new()),
+    };
     let follow = !matches!(state.step, BundleStep::Done(_));
     scrolled(t, screen, rows, state.scroll, follow, after, after_targets, keys, w, h)
 }
@@ -367,8 +373,8 @@ fn value_rows(rows: &mut Rows, t: &Theme, label: &str, value: &str, index: usize
     let lead = if selected { t.a("▸ ") } else { t.n("  ") };
     let copied = if state.copied == Some(index) { "   Copied" } else { "" };
     let label = label.to_owned();
-    rows.piece(|card, t, targets| {
-        card.row_with_button(t, vec![t.n("   "), lead, t.b(label), t.o(copied)], "Copy", selected, pick(index, KeyCode::Char('c')), targets);
+    rows.piece(|card, t| {
+        card.row_with_button(t, vec![t.n("   "), lead, t.b(label), t.o(copied)], "Copy", selected, pick(index, KeyCode::Char('c')));
     });
     let room = rows.inner().saturating_sub(10);
     for part in value.split('\n') {
@@ -438,9 +444,7 @@ pub fn owner_page(app: &App, t: &Theme, state: &OwnerPageState) -> Page {
             card.row(t, vec![t.n(" ".repeat(13)), t.d(format!("Asking {package}… it may check its sites first, up to half a minute."))]);
         }
         card.blank(t);
-        let mut targets = Vec::new();
-        card.buttons(t, &[("Open", true, Click::Key(KeyCode::Enter))], &mut targets);
-        screen.targets.extend(targets);
+        card.buttons(t, &[("Open", true, Click::Key(KeyCode::Enter))]);
         return screen.card(t, card, "Keys: type the passphrase  ↵ open  Esc back", w, h);
     };
     let mut rows = Rows::new(t, w);

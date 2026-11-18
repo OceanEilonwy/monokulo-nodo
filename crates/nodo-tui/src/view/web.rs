@@ -92,7 +92,6 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
     let web = &app.data.web;
     let active = app.active_sites();
     let mut card = Card::new(t, w);
-    let mut card_targets = Vec::new();
     card.blank(t);
     if active.is_empty() {
         card.row(t, vec![t.d("No site is online yet.")]);
@@ -110,7 +109,7 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
         } else {
             t.n("")
         };
-        card.row(
+        card.row_with(
             t,
             vec![
                 marker(t, focused),
@@ -120,8 +119,8 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
                 status,
                 t.d("›"),
             ],
+            [Target::row(site.package.clone(), Click::Pick { index, then: Some(KeyCode::Enter) })],
         );
-        card_targets.push(Target::row(site.package.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
     }
     card.blank(t);
     screen.before = vec![
@@ -150,7 +149,6 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
     screen.finish(
         t,
         card,
-        card_targets,
         Vec::new(),
         "Keys: ↑↓ choose  ↵ open  p providers  n Tor links  d certificates",
         w,
@@ -169,7 +167,6 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     let order = state.order();
     let index_of = |f: HostingFocus| order.iter().position(|x| *x == f).unwrap_or(0);
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     card.blank(t);
 
     let local_url = site.map(|s| s.local_url.clone()).filter(|u| !u.is_empty()).unwrap_or_else(|| format!("https://{name}.local"));
@@ -186,9 +183,9 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         if focused {
             card.focus_here();
         }
-        card.row(t, vec![marker(t, focused), tick(t, on), t.n("  "), label(t, title, focused)]);
+        let target = Target::row(title, Click::Pick { index: index_of(which), then: Some(KeyCode::Char(' ')) }).below(1);
+        card.row_with(t, vec![marker(t, focused), tick(t, on), t.n("  "), label(t, title, focused)], [target]);
         card.row(t, vec![t.d(format!("       {about}"))]);
-        ct.push(Target::row(title, Click::Pick { index: index_of(which), then: Some(KeyCode::Char(' ')) }).below(1));
     }
 
     let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
@@ -205,23 +202,22 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
                 card.focus_here();
             }
             domain.extend(inset(t, &state.domain, 28, Some(if state.picking { "▴" } else { "▾" }), domain_focus));
-            card.row(t, domain);
-            ct.push(Target::text(state.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) }));
+            card.row_with(t, domain, [Target::text(state.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) })]);
             if state.picking {
                 let list = Style::new().fg(t.fg).bg(t.raised);
                 let marker = |i: usize| if state.pick == i { "▸" } else { " " };
                 for (i, (name, provider)) in choices.iter().enumerate() {
                     let tick = if *name == state.domain { "✓" } else { " " };
                     let text = format!(" {} {tick} {} {} ", marker(i), pad(name, 22), pad(provider, 14));
-                    card.row(t, vec![t.n(" ".repeat(19)), Span::styled(text, list)]);
-                    ct.push(Target::text(format!("{tick} {}", pad(name, 22)), Click::Pick { index: i, then: Some(KeyCode::Enter) }));
+                    let target = Target::text(format!("{tick} {}", pad(name, 22)), Click::Pick { index: i, then: Some(KeyCode::Enter) });
+                    card.row_with(t, vec![t.n(" ".repeat(19)), Span::styled(text, list)], [target]);
                 }
                 let add = choices.len();
-                card.row(
+                card.row_with(
                     t,
                     vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", marker(add), pad("+ Add a provider…", 39)), Style::new().fg(t.accent).bg(t.raised))],
+                    [Target::text("+ Add a provider…", Click::Pick { index: add, then: Some(KeyCode::Enter) })],
                 );
-                ct.push(Target::text("+ Add a provider…", Click::Pick { index: add, then: Some(KeyCode::Enter) }));
             } else {
                 card.blank(t);
                 if focus == HostingFocus::Address {
@@ -230,8 +226,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
                 let mut address = vec![field_label("Address")];
                 address.extend(inset(t, state.sub.text(), 12, None, focus == HostingFocus::Address));
                 address.push(t.n(format!(" .{}", state.domain)));
-                card.row(t, address);
-                ct.push(Target::row(format!(".{}", state.domain), Click::Pick { index: index_of(HostingFocus::Address), then: None }));
+                card.row_with(t, address, [Target::row(format!(".{}", state.domain), Click::Pick { index: index_of(HostingFocus::Address), then: None })]);
                 card.blank(t);
                 card.row(t, vec![t.d("       Visitors will be able to see your home's internet address.")]);
                 if state.draft.onion {
@@ -243,7 +238,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
             card.row(t, vec![t.d("       You'll come back here when it's added.")]);
             card.blank(t);
             let at = index_of(HostingFocus::AddProvider);
-            card.inline_button(t, "Add a provider", 7, Click::Pick { index: at, then: Some(KeyCode::Enter) }, &mut ct);
+            card.inline_button(t, "Add a provider", 7, Click::Pick { index: at, then: Some(KeyCode::Enter) });
         }
     }
     card.blank(t);
@@ -251,8 +246,8 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     if details_focus {
         card.focus_here();
     }
-    card.row(t, vec![marker(t, details_focus), t.a(details_toggle(state.details))]);
-    ct.push(Target::text(details_toggle(state.details), Click::Pick { index: index_of(HostingFocus::Details), then: Some(KeyCode::Enter) }));
+    let target = Target::text(details_toggle(state.details), Click::Pick { index: index_of(HostingFocus::Details), then: Some(KeyCode::Enter) });
+    card.row_with(t, vec![marker(t, details_focus), t.a(details_toggle(state.details))], [target]);
     if state.details {
         if let Some(site) = site {
             if !site.onion_url.is_empty() {
@@ -274,7 +269,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
     let primary = if going_public { "Check and save" } else { "Save" };
     if order.contains(&HostingFocus::Save) {
         // The button saves wherever the keyboard focus is: it moves the focus to itself first.
-        card.buttons(t, &[(primary, true, Click::Pick { index: index_of(HostingFocus::Save), then: Some(KeyCode::Enter) })], &mut ct);
+        card.buttons(t, &[(primary, true, Click::Pick { index: index_of(HostingFocus::Save), then: Some(KeyCode::Enter) })]);
     }
 
     screen.before = vec![
@@ -285,7 +280,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         quiet(t, &format!("Choose who can open {name}. Any combination works.")),
     ];
     let keys = if state.picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  Space tick  ↵ save  Esc back" };
-    screen.finish(t, card, ct, Vec::new(), keys, w, h)
+    screen.finish(t, card, Vec::new(), keys, w, h)
 }
 
 /// Each connected provider's name, numbered when the owner connected two accounts at one company.
@@ -318,7 +313,6 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, Tab::Web, w);
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     let mut after = Vec::new();
     let mut after_targets = Vec::new();
     card.blank(t);
@@ -352,19 +346,18 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 let remove = super::v3::button_target(t, "Remove", false, 10, t.card, &remove_click, &mut remove_target);
                 let room = card.width.saturating_sub(4);
                 let used = super::v3::width_of(&row) + super::v3::width_of(&remove);
+                let pick = Target::row(label_text.clone(), Click::Pick { index, then: None });
                 if used + 2 <= room {
                     row.push(t.n(" ".repeat(room - used)));
                     row.extend(remove);
-                    card.row(t, row);
+                    card.row_with(t, row, std::iter::once(pick).chain(remove_target));
                 } else {
                     // Too many domains for one row: they wrap, and Remove gets its own row.
-                    card.row(t, row);
+                    card.row_with(t, row, [pick]);
                     let mut alone = vec![t.n(" ".repeat(room.saturating_sub(super::v3::width_of(&remove))))];
                     alone.extend(remove);
-                    card.row(t, alone);
+                    card.row_with(t, alone, remove_target);
                 }
-                ct.push(Target::row(label_text.clone(), Click::Pick { index, then: None }));
-                ct.extend(remove_target);
                 let held: Vec<String> = provider
                     .domains
                     .iter()
@@ -375,12 +368,11 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 }
                 if let Some(problem) = &provider.problem {
                     let again = "Look again";
-                    card.row(t, vec![t.n("   "), t.e(problem.clone()), t.n("   "), t.a(again.to_owned())]);
-                    ct.push(Target::text(again, Click::Pick { index, then: Some(KeyCode::Char('r')) }));
+                    card.row_link(t, vec![t.n("   "), t.e(problem.clone())], again, Click::Pick { index, then: Some(KeyCode::Char('r')) });
                 }
                 card.blank(t);
             }
-            card.buttons(t, &[("Add a provider", true, Click::Key(KeyCode::Char('a')))], &mut ct);
+            card.buttons(t, &[("Add a provider", true, Click::Key(KeyCode::Char('a')))]);
             screen.before = vec![
                 Item::Blank,
                 trail(t, &["Web", "Domain providers"], &mut screen.targets),
@@ -405,8 +397,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 } else {
                     t.d(provider.dns01_note.clone().unwrap_or_default())
                 };
-                card.row(t, vec![marker(t, focused), label(t, &pad(&provider.name, 14), focused), note]);
-                ct.push(Target::row(provider.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
+                card.row_with(t, vec![marker(t, focused), label(t, &pad(&provider.name, 14), focused), note], [Target::row(provider.name.clone(), Click::Pick { index, then: Some(KeyCode::Enter) })]);
             }
             // An unavailable catalog is already named in the footer.
             let error = app.data.providers_error.as_ref().filter(|_| app.data.unavailable(Area::Providers).is_none());
@@ -444,23 +435,20 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             if !lists {
                 let mut domain = vec![t.d(pad("Web address", 15))];
                 domain.extend(inset(t, state.domain.text(), 34, None, state.focus == ProviderFocus::Domain));
-                card.row(t, domain);
-                ct.push(Target::row("Web address", Click::Pick { index, then: None }));
+                card.row_with(t, domain, [Target::row("Web address", Click::Pick { index, then: None })]);
                 index += 1;
                 card.blank(t);
             }
             let first = names.first().cloned().unwrap_or_else(|| "API key".to_owned());
             let mut key = vec![t.d(pad(&first, 15))];
             key.extend(inset(t, &state.api_key.display(), 34, None, state.focus == ProviderFocus::ApiKey));
-            card.row(t, key);
-            ct.push(Target::row(first, Click::Pick { index, then: None }));
+            card.row_with(t, key, [Target::row(first, Click::Pick { index, then: None })]);
             index += 1;
             if let Some(second) = names.get(1) {
                 card.blank(t);
                 let mut secret = vec![t.d(pad(second, 15))];
                 secret.extend(inset(t, &state.secret_key.display(), 34, None, state.focus == ProviderFocus::SecretKey));
-                card.row(t, secret);
-                ct.push(Target::row(second.clone(), Click::Pick { index, then: None }));
+                card.row_with(t, secret, [Target::row(second.clone(), Click::Pick { index, then: None })]);
             }
             card.blank(t);
             match &state.test {
@@ -470,7 +458,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 _ => card.row(t, vec![t.d("The key stays on this Nodo, locked with your device passphrase, and is never shown again.")]),
             }
             card.blank(t);
-            card.buttons(t, &[("Connect", true, Click::Key(KeyCode::Enter))], &mut ct);
+            card.buttons(t, &[("Connect", true, Click::Key(KeyCode::Enter))]);
             let instructions = provider.map(|p| p.instructions.clone()).unwrap_or_default();
             screen.before = vec![
                 Item::Blank,
@@ -495,14 +483,14 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             }
             card.blank(t);
             let back = state.return_to.as_ref().map_or("Done".to_owned(), |site| format!("Back to {site}"));
-            card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))], &mut ct);
+            card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))]);
             screen.before =
                 vec![Item::Blank, trail(t, &["Web", "Domain providers", "Add", provider.as_str()], &mut screen.targets), Item::Blank, Item::Blank];
             "Keys: ↵ continue"
         }
     };
     screen.after = after;
-    screen.finish(t, card, ct, after_targets, keys, w, h)
+    screen.finish(t, card, after_targets, keys, w, h)
 }
 
 fn check_symbol(t: &Theme, state: CheckState) -> Span<'static> {
@@ -518,7 +506,6 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     card.blank(t);
     let failed = state.checks.iter().any(|c| c.state == CheckState::Failed);
     for check in &state.checks {
@@ -537,8 +524,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
     card.blank(t);
     card.row(t, vec![t.d("A private Tor link works without any of this.")]);
     card.blank(t);
-    card.row(t, vec![t.a(details_toggle(state.details))]);
-    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    card.row_with(t, vec![t.a(details_toggle(state.details))], [Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d')))]);
     if state.details {
         for step in &state.manual {
             card.row(t, vec![t.d(format!("  {step}"))]);
@@ -554,7 +540,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
         buttons.push(("Continue anyway", false, Click::Key(KeyCode::Char('c'))));
     }
     buttons.push(("Use Tor instead", true, Click::Key(KeyCode::Char('o'))));
-    card.buttons(t, &buttons, &mut ct);
+    card.buttons(t, &buttons);
     let title = if failed { "The internet can't reach your Nodo yet" } else { "Some checks couldn't be confirmed" };
     screen.before = vec![
         Item::Blank,
@@ -563,7 +549,7 @@ pub fn check(app: &App, t: &Theme, state: &WebCheckState) -> Page {
         heading(t, title),
         Item::Blank,
     ];
-    screen.finish(t, card, ct, Vec::new(), "Keys: ↵ use Tor  r check again  d details  ? router help  Esc back", w, h)
+    screen.finish(t, card, Vec::new(), "Keys: ↵ use Tor  r check again  d details  ? router help  Esc back", w, h)
 }
 
 /// The checks passed: one clear confirm, starting on Cancel.
@@ -571,7 +557,6 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     let web = &app.data.web;
     card.blank(t);
     let provider = if web.provider.is_empty() { "Your provider".to_owned() } else { web.provider.clone() };
@@ -589,8 +574,7 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
         card.row(t, vec![t.a("Repeated requests can't be slowed down for this app.")]);
     }
     card.blank(t);
-    card.row(t, vec![t.a(details_toggle(state.details))]);
-    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    card.row_with(t, vec![t.a(details_toggle(state.details))], [Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d')))]);
     if state.details {
         card.row(t, vec![t.d(format!("  Record    {}", state.plan.dns_record))]);
         card.row(t, vec![t.d(format!("  Firewall  {}", state.plan.firewall))]);
@@ -600,7 +584,6 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     card.buttons(
         t,
         &[("Cancel", false, Click::Pick { index: 0, then: Some(KeyCode::Enter) }), (go.as_str(), true, Click::Pick { index: 1, then: Some(KeyCode::Enter) })],
-        &mut ct,
     );
     let selected = if state.focus == ConfirmFocus::Cancel { "Cancel".to_owned() } else { go.clone() };
     card.row(t, vec![t.d(format!("▸ {selected} is selected for the keyboard."))]);
@@ -612,7 +595,7 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
         heading(t, &format!("Ready to put {} on the internet", state.site)),
         Item::Blank,
     ];
-    screen.finish(t, card, ct, Vec::new(), "Keys: Tab choose  ↵ press  Esc cancel", w, h)
+    screen.finish(t, card, Vec::new(), "Keys: Tab choose  ↵ press  Esc cancel", w, h)
 }
 
 /// The internet provider shares one address between homes, so visitors can't reach the Nodo.
@@ -620,7 +603,6 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     card.blank(t);
     card.row(
         t,
@@ -629,8 +611,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
     card.blank(t);
     card.row(t, vec![t.d("A private Tor link still works on this connection.")]);
     card.blank(t);
-    card.row(t, vec![t.a(details_toggle(state.details))]);
-    ct.push(Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d'))));
+    card.row_with(t, vec![t.a(details_toggle(state.details))], [Target::text(details_toggle(state.details), Click::Key(KeyCode::Char('d')))]);
     if state.details {
         card.row(t, vec![t.d(format!("  Your router's outside address  {} (in {}, the shared range)", state.wan_address, state.wan_range))]);
         card.row(t, vec![t.d(format!("  What the internet sees         {}", state.internet_address))]);
@@ -639,12 +620,11 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
             .into_iter()
             .enumerate()
         {
-            card.row(t, vec![marker(t, state.choice == index + 1), t.n(format!("{option} ›"))]);
-            ct.push(Target::row(option, Click::Pick { index: index + 1, then: Some(KeyCode::Enter) }));
+            card.row_with(t, vec![marker(t, state.choice == index + 1), t.n(format!("{option} ›"))], [Target::row(option, Click::Pick { index: index + 1, then: Some(KeyCode::Enter) })]);
         }
     }
     card.blank(t);
-    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))], &mut ct);
+    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))]);
     screen.before = vec![
         Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
@@ -652,7 +632,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
         heading(t, "The internet can't reach your Nodo"),
         Item::Blank,
     ];
-    screen.finish(t, card, ct, Vec::new(), "Keys: o use Tor  r check again  d details  Esc back", w, h)
+    screen.finish(t, card, Vec::new(), "Keys: o use Tor  r check again  d details  Esc back", w, h)
 }
 
 /// After going public: online, with the secure connection followed until it is in place.
@@ -661,7 +641,6 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;
     let mut card = Card::new(t, w);
-    let mut ct = Vec::new();
     let cert = web.cert(&state.host);
     let cert_state = cert.map(|c| c.state).unwrap_or(nodo_api::CertState::Waiting);
     let broken = matches!(cert_state, nodo_api::CertState::Failed | nodo_api::CertState::Expired);
@@ -687,7 +666,7 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
         _ => card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]),
     }
     card.blank(t);
-    card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))], &mut ct);
+    card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);
     screen.before = vec![Item::Blank, trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];
-    screen.finish(t, card, ct, Vec::new(), "Keys: ↵ done  l logs  d certificates", w, h)
+    screen.finish(t, card, Vec::new(), "Keys: ↵ done  l logs  d certificates", w, h)
 }

@@ -23,3 +23,9 @@ unicode-width = "0.2"
 zeroize = "1"
 # QR codes on setup pages, drawn with half blocks. MIT, no dependencies.
 qrcodegen = "1.8"
+
+[dev-dependencies]
+# Only to load tests/fixtures/nodo-fixture-forms with the parsers the device uses, so the tests'
+# settings form has the real schema rather than a copy that could drift from it.
+nodo-manifest = { path = "../nodo-manifest" }
+nodo-settings = { path = "../nodo-settings" }

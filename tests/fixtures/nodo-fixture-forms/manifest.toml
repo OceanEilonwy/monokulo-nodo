@@ -1,0 +1,34 @@
+api_version = 1
+id = "nodo-fixture-forms"
+version = "1.0.0"
+# A deliberately awkward app for tests: its settings form is far taller than any terminal and has
+# every kind of setting (settings.lua). bin/run only has to stay up; a test feed may supply it.
+exec = ["bin/run", "--workers", "$(nodo-fixture-forms.workers)"]
+settings = "settings.lua"
+stop_timeout_secs = 5
+
+[storage]
+encrypted = true
+size_mib = 32
+
+[network]
+outbound = "internet"
+
+# Several sites, so Hosting lists more than one for one app.
+[[web]]
+name = "shop"
+upstream = "127.0.0.1:8095"
+suggested_subdomain = "forms"
+multi_address = true
+
+[[web]]
+name = "admin"
+upstream = "127.0.0.1:8096"
+suggested_subdomain = "forms-admin"
+admin_paths = ["/"]
+
+[[web]]
+name = "api"
+upstream = "127.0.0.1:8097"
+suggested_subdomain = "forms-api"
+multi_address = true

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod forms;
+
 use nodo_tui::app::App;
 use nodo_tui::mock::MockBackend;
 use nodo_tui::runtime::dispatch;
