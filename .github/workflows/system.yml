@@ -374,14 +374,30 @@ jobs:
       # T6N ran exactly those versions, and its report is in releases/walkthroughs/. The weekly
       # snapshot that only refreshes Void's index changes none of them and passes. A manual run may
       # waive it with a reason, which the run summary shows.
+      #
+      # A push or the weekly run that the gate holds back is not a failure: the build and its tests
+      # passed, and the snapshot is simply not published yet. It skips the rest of the job with a
+      # warning and a line in the run summary, so main stays green until someone walks the release
+      # through. A manual run is how a release is published, so there it still fails.
       - name: A hardware walk-through covers what this snapshot changes
+        id: gate
         env:
           WALKTHROUGH_WAIVER: ${{ inputs.walkthrough_waiver }}
+          WALKTHROUGH_GATE_LEVEL: ${{ github.event_name == 'workflow_dispatch' && 'error' || 'notice' }}
+          EVENT: ${{ github.event_name }}
         run: |
-          scripts/walkthrough.sh gate "$SNAPSHOT_ROOT/snapshots/$NAME/nodo/aarch64" \
-            "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml" releases/walkthroughs
+          if scripts/walkthrough.sh gate "$SNAPSHOT_ROOT/snapshots/$NAME/nodo/aarch64" \
+            "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml" releases/walkthroughs; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = workflow_dispatch ]; then
+            exit 1
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "**Not published:** $NAME waits for a hardware walk-through. Commit its report to releases/walkthroughs/, then run this workflow by hand." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.gate.outputs.publish == 'true'
         with:
           path: |
             ~/.cargo/registry
@@ -393,6 +409,7 @@ jobs:
       # sign refuses unless every index is the one the test run stamped. The key exists only in
       # this step, in a 0600 file under the runner's temp directory.
       - name: Sign and publish the snapshot
+        if: steps.gate.outputs.publish == 'true'
         env:
           NODO_SNAPSHOT_SIGNING_KEY: ${{ secrets.NODO_SNAPSHOT_SIGNING_KEY }}
         run: |
@@ -410,6 +427,7 @@ jobs:
           cat "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml"
 
       - name: Keep the newest snapshots
+        if: steps.gate.outputs.publish == 'true'
         run: |
           ls "$SNAPSHOT_ROOT/snapshots" | sort -r | tail -n +$((KEEP_SNAPSHOTS + 1)) | while read -r old; do
             echo "removing $old"
@@ -417,6 +435,7 @@ jobs:
           done
 
       - name: Write the site
+        if: steps.gate.outputs.publish == 'true'
         run: |
           rm -f "$SNAPSHOT_ROOT"/snapshots/*/tested
           scripts/pages-site.sh list out/site system snapshots
@@ -429,11 +448,13 @@ jobs:
       # Named per attempt: re-running a failed job uploads the site again into the same run, and
       # deploy-pages refuses when two artifacts share its name.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: steps.gate.outputs.publish == 'true'
         with:
           path: out/site
           name: github-pages-${{ github.run_attempt }}
 
       - name: Deploy
+        if: steps.gate.outputs.publish == 'true'
         id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         with:

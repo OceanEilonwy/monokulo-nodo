@@ -358,7 +358,9 @@ gate)
 		fi
 		echo "not usable: $report did not run $(echo "$missing" | tr '\n' ' ')"
 	done
-	echo "::error::no hardware walk-through covers this snapshot. Walk through docs/RELEASE_WALKTHROUGH.md" \
+	# The workflow holds a pushed snapshot back without failing, so it asks for a notice there;
+	# a manual run, which is meant to publish, keeps the error.
+	echo "::${WALKTHROUGH_GATE_LEVEL:-error}::no hardware walk-through covers this snapshot. Walk through docs/RELEASE_WALKTHROUGH.md" \
 		"on a card built from this commit, commit its report to releases/walkthroughs/, then run this workflow" \
 		"again by hand."
 	exit 1

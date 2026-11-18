@@ -229,8 +229,9 @@ the snapshot's `nodo` packages with the pins of the manifest devices have now. A
 changes none of them (the weekly one that only refreshes Void's index) goes ahead. One that changes
 any of them is published only when `releases/walkthroughs/` holds a report of the
 [release walk-through](RELEASE_WALKTHROUGH.md) that passed, is at most 30 days old, and ran on a
-NanoPC-T6N with every changed package at exactly the snapshot's version; otherwise the job fails
-and says why. That is the required step before a release: build the image from the commit, walk
+NanoPC-T6N with every changed package at exactly the snapshot's version. Otherwise a manual run
+fails and says why, while a push or the weekly run skips publishing with a notice and a line in the
+run summary and stays green: the snapshot was built and tested, it just waits for the walk-through. That is the required step before a release: build the image from the commit, walk
 it through on the board (about an hour), commit the report, and run the workflow by hand. A
 manual run may set `walkthrough_waiver` to publish without one in an emergency; the reason is
 shown in the run summary. Within a day of publishing, the previous walk-through's card applies the
