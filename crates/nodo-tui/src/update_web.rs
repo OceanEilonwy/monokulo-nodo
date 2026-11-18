@@ -7,7 +7,7 @@
 //! provider keys are only ever sent to the provider they were typed for, and never shown again.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nodo_api::{ApiError, Exposure};
+use nodo_api::{AliasMode, ApiError, Exposure, PublicAlias};
 
 use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
@@ -19,7 +19,8 @@ pub(super) fn open_hosting(app: &mut App, site: &str) -> bool {
     let Some(entry) = app.data.web.sites.iter().find(|entry| entry.package == site) else {
         return false;
     };
-    let state = ExposureState::new(&entry.package, entry.exposure, entry.public_host.as_deref(), &choices);
+    let mut state = ExposureState::new(&entry.package, entry.exposure, entry.public_host.as_deref(), &choices);
+    state.aliases = entry.public_aliases.clone();
     push(app, Screen::WebExposure(state));
     true
 }
@@ -74,17 +75,25 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if state.domain.is_empty() || !choices.iter().any(|(d, _)| *d == state.domain) {
         state.domain = choices.first().map(|(d, _)| d.clone()).unwrap_or_default();
     }
+    if state.alias_domain.is_empty() || !choices.iter().any(|(d, _)| *d == state.alias_domain) {
+        state.alias_domain = choices.first().map(|(d, _)| d.clone()).unwrap_or_default();
+    }
     let Some(site) = sites.iter().find(|site| site.package == state.site).cloned() else {
         pop(app);
         return Vec::new();
     };
-    if state.picking {
+    if state.list_open() {
         match key.code {
             KeyCode::Down | KeyCode::Up => step(&mut state.pick, choices.len() + 1, key.code == KeyCode::Down),
-            KeyCode::Esc => state.picking = false,
+            KeyCode::Esc => (state.picking, state.picking_alias) = (false, false),
             KeyCode::Enter | KeyCode::Char(' ') => {
-                state.picking = false;
+                let for_alias = state.picking_alias;
+                (state.picking, state.picking_alias) = (false, false);
                 match choices.get(state.pick) {
+                    Some((domain, _)) if for_alias => {
+                        state.alias_domain = domain.clone();
+                        state.alias_error = None;
+                    }
                     Some((domain, _)) => state.domain = domain.clone(),
                     None => return open_add_provider(app, Some(site.package)),
                 }
@@ -107,14 +116,72 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             state.picking = true;
             state.pick = choices.iter().position(|(d, _)| *d == state.domain).unwrap_or(0);
         }
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasDomain => {
+            state.picking_alias = true;
+            state.pick = choices.iter().position(|(d, _)| *d == state.alias_domain).unwrap_or(0);
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasMode => {
+            state.alias_mode = match state.alias_mode {
+                AliasMode::Redirect => AliasMode::Serve,
+                AliasMode::Serve => AliasMode::Redirect,
+            };
+        }
+        // Enter in the name box adds it too: that is what someone who just typed a name means.
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasAdd => add_alias(state, &choices, &sites),
+        KeyCode::Enter if focus == HostingFocus::AliasAddress => add_alias(state, &choices, &sites),
+        KeyCode::Char('x') | KeyCode::Delete if matches!(focus, HostingFocus::Alias(_)) => {
+            if let HostingFocus::Alias(index) = focus {
+                state.aliases.remove(index);
+                state.selected = state.selected.min(state.order().len() - 1);
+            }
+        }
         KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site.package)),
         KeyCode::Enter => return save(app, &site),
         _ if focus == HostingFocus::Address => {
             edit_input(&mut state.sub, key);
         }
+        _ if focus == HostingFocus::AliasAddress => {
+            edit_input(&mut state.alias_sub, key);
+            state.alias_error = None;
+        }
         _ => {}
     }
     Vec::new()
+}
+
+/// Every name the other sites answer at, with the site, as the helper checks them.
+fn names_of_other_sites(sites: &[Site], site: &str) -> Vec<(String, String)> {
+    sites
+        .iter()
+        .filter(|other| other.package != site)
+        .flat_map(|other| {
+            let names = other.public_host.iter().cloned().chain(other.public_aliases.iter().map(|a| a.host.clone()));
+            names.map(|name| (name, other.package.clone())).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Puts the new name on the list, after the same checks the helper makes on saving, so a name it
+/// would refuse is refused here at once, in its words.
+fn add_alias(state: &mut ExposureState, choices: &[(String, String)], sites: &[Site]) {
+    let owned: Vec<String> = choices.iter().map(|(domain, _)| domain.clone()).collect();
+    let mut next = state.aliases.clone();
+    next.push(PublicAlias { host: state.alias_host(), mode: state.alias_mode });
+    match nodo_api::check_aliases(&state.host(), &next, &owned, &names_of_other_sites(sites, &state.site)) {
+        Ok(()) => {
+            state.aliases = next;
+            state.alias_sub.clear();
+            state.alias_error = None;
+            // The new row comes before the controls, so the focus moves on one to stay where it was.
+            state.selected = (state.selected + 1).min(state.order().len() - 1);
+        }
+        Err(reason) => state.alias_error = Some(sentence(&reason)),
+    }
+}
+
+/// A helper message as a sentence on its own. It often starts with a name, which keeps its case.
+fn sentence(text: &str) -> String {
+    if text.ends_with('.') { text.to_owned() } else { format!("{text}.") }
 }
 
 /// Ticks or unticks one choice. Each choice is its own flag: the exposures are independent.
@@ -135,20 +202,24 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
     };
     let draft = state.draft;
     let host = state.host();
+    let aliases = state.aliases.clone();
     let name = state.site.clone();
     if draft.public && !state.has_provider {
         notice(app, NoticeKind::Info, "Add a domain provider first, so the internet can use your web address.");
         return Vec::new();
     }
-    let host_changes = draft.public && site.public_host.as_deref() != Some(host.as_str());
-    if draft == site.exposure && !host_changes {
+    // Going public sends the names even unchanged, so the helper checks them again first: a
+    // provider removed since they were saved would leave a name with no record or certificate.
+    let going_public = draft.public && !site.exposure.public;
+    let names_change = draft.public
+        && (site.public_host.as_deref() != Some(host.as_str())
+            || aliases != site.public_aliases
+            || (going_public && !aliases.is_empty()));
+    if draft == site.exposure && !names_change {
         notice(app, NoticeKind::Info, "There are no changes to save.");
         return Vec::new();
     }
     let mut effects = Vec::new();
-    if host_changes {
-        effects.push(Effect::SetPublicHost { site: name.clone(), host });
-    }
     if draft.public && !site.exposure.public {
         // The internet only comes on after the checks and a confirm. Home network and Tor apply
         // now, since they stay as chosen while the internet is checked.
@@ -156,13 +227,34 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
         if others != site.exposure {
             effects.push(Effect::SetExposure { site: name.clone(), exposure: others, after: ExposureAfter::Stay, confirmation: None });
         }
-        effects.push(Effect::CheckReachability { site: name, going_public: true });
-        return effects;
+        effects.push(Effect::CheckReachability { site: name.clone(), going_public: true });
+    } else if draft != site.exposure {
+        effects.push(Effect::SetExposure { site: name.clone(), exposure: draft, after: ExposureAfter::Back, confirmation: None });
     }
-    if draft != site.exposure {
-        effects.push(Effect::SetExposure { site: name, exposure: draft, after: ExposureAfter::Back, confirmation: None });
+    if names_change {
+        // The names go first, and the rest only once the helper took them.
+        return vec![Effect::SetPublicHost { site: name, host, aliases, then: effects }];
     }
     effects
+}
+
+/// The names were saved, or refused. Refused, the Hosting screen stays as it was, so the owner can
+/// fix the name; saved with nothing else to do, it is done.
+pub(super) fn on_public_host_set(app: &mut App, result: Result<(), String>, then: Vec<Effect>) -> Vec<Effect> {
+    match result {
+        Err(text) => {
+            fail(app, format!("Not saved: {text}"));
+            Vec::new()
+        }
+        Ok(()) if then.is_empty() => {
+            if matches!(app.screen, Screen::WebExposure(_)) {
+                pop(app);
+            }
+            notice(app, NoticeKind::Ok, "Saved.");
+            Vec::new()
+        }
+        Ok(()) => then,
+    }
 }
 
 fn open_add_provider(app: &mut App, return_to: Option<String>) -> Vec<Effect> {
@@ -588,7 +680,7 @@ pub(super) fn pick(app: &mut App, index: usize) {
     match &mut app.screen {
         Screen::Web { selected } => *selected = index,
         Screen::WebExposure(state) => {
-            if state.picking {
+            if state.list_open() {
                 state.pick = index;
             } else {
                 state.selected = index.min(state.order().len() - 1);

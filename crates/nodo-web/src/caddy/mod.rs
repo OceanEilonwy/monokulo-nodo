@@ -36,7 +36,7 @@ pub mod types;
 use crate::local::{LocalAddress, LocalUnavailable};
 use crate::names::{self, quoted};
 use crate::secret::Secret;
-use nodo_api::{Exposure, ServiceState};
+use nodo_api::{AliasMode, Exposure, PublicAlias, ServiceState};
 use nodo_manifest::{UpstreamProtocol, WebService};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -127,6 +127,9 @@ pub struct Site {
     pub public_subdomain: Option<String>,
     /// The full host the user chose, which wins over the subdomain and needs no connected domain.
     pub public_host: Option<String>,
+    /// Other public names, each serving the site too or redirecting to its public host. They are
+    /// only used while the site is public.
+    pub public_aliases: Vec<PublicAlias>,
     /// Known only after Tor has created the service. See [`WebPlan::onion_pending`].
     pub onion_host: Option<String>,
     /// The user's choice on the Confirm screen. See [`DomainSettings::rate_limit`].
@@ -483,6 +486,10 @@ struct Resolved<'a> {
     admin_regexp: Option<String>,
     local: Option<String>,
     public: Option<String>,
+    /// Names that serve the site as `public` does. Empty unless the site is public.
+    serve_aliases: Vec<String>,
+    /// Names answered with a redirect to `public`. Empty unless the site is public.
+    redirect_aliases: Vec<String>,
     onion_enabled: bool,
     onion: Option<String>,
 }
@@ -551,12 +558,26 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             if site.rate_limit && limit.is_none() {
                 rate_limit_unenforced.push(site_ref());
             }
+            // Serving aliases join the host's own route, so they get exactly the same handling.
+            let served: Vec<String> = std::iter::once(host.clone()).chain(item.serve_aliases.iter().cloned()).collect();
             public_routes.push(host_route(
-                Matcher { host: vec![host.clone()], ..Matcher::default() },
+                Matcher { host: served, ..Matcher::default() },
                 site_handlers(item, true, limit),
             ));
+            if !item.redirect_aliases.is_empty() {
+                public_routes.push(host_route(
+                    Matcher { host: item.redirect_aliases.clone(), ..Matcher::default() },
+                    vec![redirect_route(host)],
+                ));
+            }
+            // Every name gets a certificate and a place in the SNI policy. Being in a host matcher
+            // also gives each Caddy's HTTP to HTTPS redirect on port 80.
             public_subjects.push(host.clone());
             plan_addresses.push(address(AddressKind::Public, host, format!("https://{host}"), &public_listen));
+            for alias in item.serve_aliases.iter().chain(&item.redirect_aliases) {
+                public_subjects.push(alias.clone());
+                plan_addresses.push(address(AddressKind::Public, alias, format!("https://{alias}"), &public_listen));
+            }
         }
 
         // A name under the owner's domain can only get its certificate through DNS-01.
@@ -948,6 +969,21 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         None
     };
 
+    let mut serve_aliases = Vec::new();
+    let mut redirect_aliases = Vec::new();
+    if public.is_some() {
+        for alias in &site.public_aliases {
+            // The redirect target is built from these names, so they get the same strict check.
+            if !names::is_public_name(&alias.host) {
+                return Err(WebConfigError::InvalidName { field: "public_alias", value: quoted(&alias.host) });
+            }
+            match alias.mode {
+                AliasMode::Serve => serve_aliases.push(alias.host.clone()),
+                AliasMode::Redirect => redirect_aliases.push(alias.host.clone()),
+            }
+        }
+    }
+
     let onion = if site.exposure.onion {
         site.onion_host
             .as_ref()
@@ -963,7 +999,18 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         None
     };
 
-    Ok(Resolved { site, dial, admin_patterns, admin_regexp, local, public, onion_enabled: site.exposure.onion, onion })
+    Ok(Resolved {
+        site,
+        dial,
+        admin_patterns,
+        admin_regexp,
+        local,
+        public,
+        serve_aliases,
+        redirect_aliases,
+        onion_enabled: site.exposure.onion,
+        onion,
+    })
 }
 
 fn check_unique(resolved: &[Resolved<'_>]) -> Result<(), WebConfigError> {
@@ -978,7 +1025,8 @@ fn check_unique(resolved: &[Resolved<'_>]) -> Result<(), WebConfigError> {
                 site: site.service.name.clone(),
             });
         }
-        for host in [&item.local, &item.public, &item.onion].into_iter().flatten() {
+        let aliases = item.serve_aliases.iter().chain(&item.redirect_aliases);
+        for host in [&item.local, &item.public, &item.onion].into_iter().flatten().chain(aliases) {
             if !hosts.insert(host) {
                 return Err(WebConfigError::DuplicateHost { host: host.clone() });
             }
@@ -1096,6 +1144,21 @@ fn allocate_port(next: &mut u32, reserved: &mut BTreeSet<u16>) -> Result<u16, We
 
 fn host_route(matcher: Matcher, routes: Vec<Route>) -> Route {
     Route { matchers: vec![matcher], handle: vec![Handler::Subroute { routes }], terminal: true }
+}
+
+/// Sends a request for another name of a site to the same path and query on its public host.
+/// 308 keeps the method and body, so a form posted to the old name still arrives.
+fn redirect_route(host: &str) -> Route {
+    Route {
+        handle: vec![Handler::StaticResponse {
+            status_code: Some("308".to_owned()),
+            headers: BTreeMap::from([("Location".to_owned(), vec![format!("https://{host}{{http.request.uri}}")])]),
+            body: None,
+            abort: false,
+        }],
+        terminal: true,
+        ..Route::default()
+    }
 }
 
 fn https_server(listen: String, mut routes: Vec<Route>, hosts: &[String], redirects: bool) -> Server {

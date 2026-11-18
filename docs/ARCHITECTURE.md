@@ -261,6 +261,23 @@ codebase, and signed xbps packages from user-added feeds.
   the first one, converted on the helper's next apply without opening the sealed values, and its
   dynamic DNS state moves to that domain's file. `SetDnsProvider` and `TestDnsProvider` still work on
   the first provider.
+- **Other names of a site:** A public site can also answer at more names, each either served (the
+  same site, as a second host in its Caddy route) or redirected (a 308 to `https://<primary>` with
+  the path and query kept, such as the bare `example.com` beside `www.example.com`). Hosting lists
+  them under "Also answers at": a new name is picked like the main address (a connected domain plus
+  an optional part, empty for the domain itself), and the going-public confirmation lists every
+  name. Each name must be under a connected provider's domain, because that provider publishes its
+  record (`@` for the bare domain) and answers its DNS-01 challenge; names are unique across all
+  sites, and a provider is in use while any name of a public site is under its domains. While the
+  site is public, names can be removed (the change is applied at once) but not added or changed,
+  since the confirmation covered the names it had; going public checks again that every name still
+  has its provider. `SetPublicHost` carries them (`aliases`, `None` keeping the saved ones), and
+  `SiteInfo::public_aliases` reports them (protocol version 5). `public-hosts.toml` keeps a site
+  without other names as the plain host string, and one with them as `{ host, aliases = [{ host,
+  mode }] }`; a helper from before this cannot read that table, so before a downgrade remove the
+  names (or the downgraded helper treats the whole file as corrupt until they are gone). Backups
+  carry the file as it is. The GUI shows the names on a site's page; they are changed in the TUI or
+  with `nodo-tui --ctl host PACKAGE SITE HOST NAME=serve|NAME=redirect…`.
 - **Mouse:** The TUI turns on mouse reporting (crossterm's `EnableMouseCapture`; it is turned off
   again on exit and from the panic hook). Screens declare click targets by the text they draw, which
   are found in the drawn frame (`crates/nodo-tui/src/hit.rs`), so a click lands on exactly what is

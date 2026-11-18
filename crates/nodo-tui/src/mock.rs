@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use nodo_api::{
-    ApiError, Backend, Exposure, Origin, Request, Response, Rollback, RollbackStage, ServiceState, ServiceStatus,
+    ApiError, Backend, Exposure, Origin, PublicAlias, Request, Response, Rollback, RollbackStage, ServiceState, ServiceStatus,
     SettingInput, SettingLiteral,
 };
 
@@ -175,6 +175,11 @@ impl MockBackend {
         let (provider, domain) = first.unwrap_or_default();
         self.web.provider = provider;
         self.web.domain = domain;
+    }
+
+    /// The domains sites can use: each connected one, held by the provider connected first.
+    fn owned_domains(&self) -> Vec<String> {
+        self.connected.iter().flat_map(|p| p.domains.iter()).filter(|d| d.held_by.is_none()).map(|d| d.name.clone()).collect()
     }
 
     fn under_a_domain(&self, host: &str) -> bool {
@@ -540,6 +545,7 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::SetExposure { site, exposure, confirmation } => {
+                let owned = self.owned_domains();
                 let entry = self
                     .web
                     .sites
@@ -551,6 +557,12 @@ impl Backend for MockBackend {
                     let host = entry.public_host.clone().unwrap_or_default();
                     if confirmation.map(|c| c.typed_host) != Some(host.clone()) {
                         return Err(ApiError::NeedsConfirmation(format!("type {host} exactly to confirm")));
+                    }
+                    if let Some(stale) = entry.public_aliases.iter().find(|a| !owned.iter().any(|d| nodo_api::host_under(&a.host, d))) {
+                        return Err(ApiError::Failed(format!(
+                            "{} is not under a domain of a connected provider any more. Remove it, or connect its provider, before going public",
+                            stale.host
+                        )));
                     }
                 }
                 entry.exposure = exposure;
@@ -1393,7 +1405,10 @@ impl ScreenData for MockBackend {
                     .sites
                     .iter()
                     .filter(|site| site.exposure.public && domain.held_by.is_none())
-                    .filter(|site| site.public_host.as_deref().is_some_and(|h| h == domain.name || h.ends_with(&format!(".{}", domain.name))))
+                    .filter(|site| {
+                        let mut hosts = site.public_host.iter().chain(site.public_aliases.iter().map(|a| &a.host));
+                        hosts.any(|h| nodo_api::host_under(h, &domain.name))
+                    })
                     .map(|site| site.package.clone())
                     .collect();
             }
@@ -1522,17 +1537,35 @@ impl ScreenData for MockBackend {
         reachability_checks(&host, ports_open)
     }
 
-    fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias]) -> Result<(), String> {
         if !self.under_a_domain(host) {
             return Err(s("The address must be under one of your domains."));
         }
-        let entry = self
+        // From here the helper's rules (exposure.rs set_public_host), in its words.
+        if !nodo_api::valid_public_host(host) {
+            return Err(s("the host must be a full lowercase domain name, such as shop.example.com"));
+        }
+        let entry = self.web.sites.iter().find(|entry| entry.package == site).ok_or_else(|| format!("unknown site {site}"))?;
+        if entry.exposure.public && entry.public_host.as_deref() != Some(host) {
+            return Err(s("take the site off its public address before changing the host"));
+        }
+        if entry.exposure.public && !aliases.iter().all(|alias| entry.public_aliases.contains(alias)) {
+            return Err(s("take the site off its public address before adding another name; removing one works while it is public"));
+        }
+        let owned = self.owned_domains();
+        let taken: Vec<(String, String)> = self
             .web
             .sites
-            .iter_mut()
-            .find(|entry| entry.package == site)
-            .ok_or_else(|| format!("unknown site {site}"))?;
+            .iter()
+            .filter(|other| other.package != site)
+            .flat_map(|other| {
+                other.public_host.iter().cloned().chain(other.public_aliases.iter().map(|a| a.host.clone())).map(|h| (h, other.package.clone()))
+            })
+            .collect();
+        nodo_api::check_aliases(host, aliases, &owned, &taken)?;
+        let entry = self.web.sites.iter_mut().find(|entry| entry.package == site).ok_or_else(|| format!("unknown site {site}"))?;
         entry.public_host = Some(s(host));
+        entry.public_aliases = aliases.to_vec();
         Ok(())
     }
 
@@ -2109,6 +2142,7 @@ fn sample_web() -> WebOverview {
         local_url: format!("https://{package}.local"),
         onion_url: s(onion),
         public_host: host.map(s),
+        public_aliases: Vec::new(),
         locked,
         rate_limit_unenforced: false,
         local_waiting: false,
@@ -2137,7 +2171,16 @@ fn sample_web() -> WebOverview {
                 false,
             ),
             site("wallet-relay", Exposure::default(), "http://jkl…opq.onion", None, true),
-        ],
+        ]
+        .into_iter()
+        .map(|mut site| {
+            // The shop answers at the bare domain too, sending visitors on to its own address.
+            if site.package == "shop" {
+                site.public_aliases = vec![PublicAlias { host: s("example.com"), mode: nodo_api::AliasMode::Redirect }];
+            }
+            site
+        })
+        .collect(),
         domain: s("example.com"),
         provider: s("Porkbun"),
         certificates: s("✓ Renew in 61 days"),

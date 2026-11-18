@@ -890,6 +890,20 @@ pub struct ExposureState {
     pub details: bool,
     /// A domain provider is connected, so the internet choice can pick a domain.
     pub has_provider: bool,
+    /// The other names the site answers at, as they will be saved.
+    pub aliases: Vec<nodo_api::PublicAlias>,
+    /// The new name being put together: the part before its domain, empty for the domain itself.
+    pub alias_sub: Input,
+    /// The new name's domain, one of [`App::domain_choices`].
+    pub alias_domain: String,
+    pub alias_mode: nodo_api::AliasMode,
+    /// The open domain list is for the new name, not the main address.
+    pub picking_alias: bool,
+    /// Why the new name could not be added.
+    pub alias_error: Option<String>,
+    /// The site was public when the screen opened. The helper then lets names be removed but not
+    /// added, since going public confirmed the names it had.
+    pub was_public: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -900,6 +914,12 @@ pub enum HostingFocus {
     Internet,
     Domain,
     Address,
+    /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
+    Alias(usize),
+    AliasDomain,
+    AliasAddress,
+    AliasMode,
+    AliasAdd,
     AddProvider,
     Details,
     Save,
@@ -930,6 +950,13 @@ impl ExposureState {
             pick: 0,
             details: false,
             has_provider: !domains.is_empty(),
+            aliases: Vec::new(),
+            alias_sub: Input::plain(String::new()),
+            alias_domain: domains.first().map(|(d, _)| d.clone()).unwrap_or_default(),
+            alias_mode: nodo_api::AliasMode::Redirect,
+            picking_alias: false,
+            alias_error: None,
+            was_public: draft.public,
         }
     }
 
@@ -940,6 +967,10 @@ impl ExposureState {
         if self.draft.public {
             if has_provider {
                 order.extend([HostingFocus::Domain, HostingFocus::Address]);
+                order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
+                if !self.was_public {
+                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
+                }
             } else {
                 order.push(HostingFocus::AddProvider);
             }
@@ -960,6 +991,17 @@ impl ExposureState {
     pub fn host(&self) -> String {
         let sub = self.sub.text().trim().trim_matches('.');
         if sub.is_empty() { self.domain.clone() } else { format!("{sub}.{}", self.domain) }
+    }
+
+    /// The new name the choices make, the same way: an empty part is the domain itself.
+    pub fn alias_host(&self) -> String {
+        let sub = self.alias_sub.text().trim().trim_matches('.');
+        if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+    }
+
+    /// The domain list is open, for either address.
+    pub fn list_open(&self) -> bool {
+        self.picking || self.picking_alias
     }
 }
 
@@ -1665,7 +1707,9 @@ pub enum Effect {
     Shell,
     /// `confirmation` is the host the user typed, which the helper requires to go public.
     SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
-    SetPublicHost { site: String, host: String },
+    /// Saves the host and every other name of a site. `then` runs only once that worked, so a
+    /// refused name never goes on to the checks or to going public with the old names.
+    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, then: Vec<Effect> },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
     /// `domain` only for a provider that cannot list its domains.
@@ -1785,7 +1829,7 @@ pub enum Event {
     LogsLoaded { source: String, view: LogView },
     DriveResult(Result<Document, String>),
     ExposureSet { after: ExposureAfter, result: Result<(), ApiError> },
-    PublicHostSet(Result<(), String>),
+    PublicHostSet { result: Result<(), String>, then: Vec<Effect> },
     Reachability { site: String, going_public: bool, result: Reachability },
     ProviderAdded(Result<ConnectedProvider, String>),
     ProvidersLoaded(Result<Vec<Provider>, String>),

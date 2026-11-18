@@ -601,7 +601,8 @@
               "match": [
                 {
                   "host": [
-                    "shop.example.com"
+                    "shop.example.com",
+                    "shop.example.org"
                   ]
                 }
               ],
@@ -642,6 +643,37 @@
                               "dial": "127.0.0.1:3001"
                             }
                           ]
+                        }
+                      ],
+                      "terminal": true
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": "308",
+                          "headers": {
+                            "Location": [
+                              "https://shop.example.com{http.request.uri}"
+                            ]
+                          }
                         }
                       ],
                       "terminal": true
@@ -755,6 +787,8 @@
                   "blog.example.com",
                   "pay.example.com",
                   "shop.example.com",
+                  "shop.example.org",
+                  "example.com",
                   "vault.example.com"
                 ]
               }
@@ -788,6 +822,8 @@
               "blog.example.com",
               "pay.example.com",
               "shop.example.com",
+              "shop.example.org",
+              "example.com",
               "vault.example.com"
             ],
             "issuers": [

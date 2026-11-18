@@ -601,6 +601,123 @@ def providers():
             sh(f"sh {HERE}/web-net.sh down", check=False)
 
 
+SHOP = "tui-shop"
+WEB_STATE = "/tmp/tui-web"
+HOME_IP = "93.184.216.34"
+
+
+def install_shop():
+    """tui-shop installed and running: its manifest has the web site these journeys publish."""
+    if SHOP not in sh("xbps-query -l", check=False):
+        sh(f"printf '%s\\n' '{PASSPHRASE}' | nodo-tui --ctl approve-install-encrypted tui-feed {SHOP}", timeout=300)
+    wait_until("tui-shop to run", lambda: sh(f"sv status {SHOP}", check=False).startswith("run:"), 60)
+
+
+def public_get(host, path, scheme="https"):
+    """A request from the pretend internet to the home's address, as a visitor's browser sends it:
+    (status, headers, body). Certificates are checked against Pebble's root."""
+    port = 443 if scheme == "https" else 80
+    out = sh(f"ip netns exec tuinet curl -s -o {WEB_STATE}/body -D {WEB_STATE}/headers -w '%{{http_code}}' "
+             f"--cacert {WEB_STATE}/pebble-root.pem --connect-timeout 3 --max-time 8 "
+             f"--resolve {host}:{port}:{HOME_IP} '{scheme}://{host}{path}' || true", check=False).strip()
+    headers = sh(f"cat {WEB_STATE}/headers 2>/dev/null || true", check=False)
+    body = sh(f"cat {WEB_STATE}/body 2>/dev/null || true", check=False)
+    return out, headers, body
+
+
+def site_aliases():
+    """tui-shop goes public at www.example.com with the bare example.com redirecting to it. The
+    TUI adds the other name and shows it on the confirmation; then, through the real helper, Caddy,
+    the fake Cloudflare (DNS-01 answered through pebble-challtestsrv) and Pebble, the bare domain
+    answers 308 to www with the path and query, and www serves the site."""
+    up = ""
+    try:
+        with Journey("Other names: setup"):
+            ready_device()
+            up = sh(f"sh {HERE}/web-net.sh up {j.CF_TOKEN}", timeout=300)
+            check("Pebble runs, so the names can get certificates (tests/acme-prepare.sh)", "pebble" in up, up)
+            install_shop()
+            ctl("expose", SHOP, "shop", "0", "0", "0")
+            for provider in provider_ids():
+                ctl("remove-provider", provider)
+            sh(f"printf '%s\\n' '{j.CF_TOKEN}' | nodo-tui --ctl add-provider cloudflare api_token")
+            ctl("host", SHOP, "shop", "www.example.com", "none")
+            # tui-shop itself serves nothing, so a stand-in answers on its upstream port.
+            sh("mkdir -p /tmp/tui-upstream && echo 'tui-shop home page' > /tmp/tui-upstream/index.html")
+            # Apart, since the pattern would find the shell that starts the server too.
+            sh("pkill -f 'http[.]server 8090' || true")
+            sh("nohup python3 -m http.server 8090 --bind 127.0.0.1 --directory /tmp/tui-upstream "
+               ">/tmp/tui-upstream.log 2>&1 </dev/null &")
+            # Pebble signs with a new root each time it starts, so certificates from an earlier run
+            # would not verify: Caddy must ask again.
+            sh("rm -rf /var/lib/caddy/data/caddy/certificates/203.0.113.1-dir /var/lib/caddy/data/caddy/acme/203.0.113.1-dir")
+        with Journey("Other names: the TUI adds the bare domain and puts the shop online"), Session(rows=48) as tui:
+            tui.send("2")
+            tui.wait_for("Installed", timeout=20)
+            select_row(tui, SHOP)
+            tui.send("enter")
+            tui.wait_for(re.compile(r"Apps\s+›\s+" + SHOP), timeout=20)
+            tui.send("h")
+            tui.wait_for("Hosting", "Home network", timeout=20)
+            # Home network, Tor, Internet: tick the internet.
+            tui.send("down", "down", "space")
+            tui.expect("the internet shows the address and the other names", "Also answers at", "www", ".example.com",
+                       "Nothing else yet: only www.example.com.")
+            # Domain, Address, then the new name's domain and its box, left empty for example.com itself.
+            tui.send("down", "down", "down", "down")
+            tui.send("enter")
+            tui.expect("the bare domain is added, redirecting to www", re.compile(r"example\.com\s+→ www\.example\.com"))
+            # The new name's box, its mode, Add, Show details, then Save.
+            tui.send("down", "down", "down", "down")
+            tui.send("enter")
+            tui.wait_for(re.compile(r"Ready to put|Some checks|can't reach"), timeout=120)
+            if "Ready to put" not in tui.text():
+                # Something could not be verified from inside the VM, such as the ports. The owner
+                # sees it and decides, as on a device.
+                tui.send("c")
+            tui.expect("the confirmation lists every name and which one redirects", "Ready to put tui-shop on the internet",
+                       "https://www.example.com", "and https://example.com  redirects to www.example.com",
+                       "Public certificate logs list www.example.com, example.com permanently.", timeout=60)
+            check("the helper saved the other name", 'host: "example.com"' in ctl("sites") and "Redirect" in ctl("sites"),
+                  ctl("sites"))
+            tui.send("tab", "enter")
+            tui.expect("the shop is online at both names", "https://www.example.com", "https://example.com  redirects here",
+                       timeout=60)
+            tui.quit()
+        with Journey("Other names: the bare domain redirects to www, and www serves the shop"):
+            sh(f"ip netns exec tuinet curl -sf --cacert {WEB_STATE}/pki/ca.crt https://203.0.113.1:15000/roots/0 "
+               f"> {WEB_STATE}/pebble-root.pem")
+            end = time.monotonic() + 240
+            while True:
+                www, apex = public_get("www.example.com", "/"), public_get("example.com", "/")
+                if (www[0], apex[0]) == ("200", "308") or time.monotonic() > end:
+                    break
+                time.sleep(3)
+            tls = sh("tail -5 /var/lib/caddy/nodo-tls.log 2>/dev/null || true", check=False)
+            check("both names have certificates from Pebble and answer", (www[0], apex[0]) == ("200", "308"),
+                  f"www: {www[0]}, example.com: {apex[0]}\n{apex[1]}\n{tls}")
+            code, headers, body = public_get("www.example.com", "/")
+            check("www serves the shop", code == "200" and "tui-shop home page" in body, f"{code}\n{headers}\n{body}")
+            code, headers, _ = public_get("example.com", "/cart?item=2&x=%20")
+            check("the bare domain answers 308 to www, keeping the path and query",
+                  code == "308" and re.search(r"(?im)^location: https://www\.example\.com/cart\?item=2&x=%20\s*$", headers),
+                  f"{code}\n{headers}")
+            code, headers, _ = public_get("example.com", "/x", scheme="http")
+            check("plain HTTP on the bare domain goes to https first",
+                  code == "308" and re.search(r"(?im)^location: https://example\.com/x\s*$", headers), f"{code}\n{headers}")
+            records = sh(f"cat {WEB_STATE}/fake.log 2>/dev/null | grep -i 'example.com' | tail -20 || true", check=False)
+            config = sh("cat /run/nodo/secrets/nodo-ddns/config.toml 2>/dev/null | grep -A3 'domain = \"example.com\"' || true",
+                        check=False)
+            check("dynamic DNS publishes the bare domain as @ beside www", '"@"' in config and '"www"' in config,
+                  config + records)
+    finally:
+        ctl("expose", SHOP, "shop", "0", "0", "0", check=False)
+        ctl("host", SHOP, "shop", "www.example.com", "none", check=False)
+        sh("pkill -f 'http[.]server 8090' || true", check=False)
+        if up:
+            sh(f"sh {HERE}/web-net.sh down", check=False)
+
+
 JOURNEYS = [
     ("forms-install", forms_install),
     ("forms-install-esc", forms_install_esc),
@@ -609,6 +726,7 @@ JOURNEYS = [
     ("forms-mouse", forms_mouse),
     ("check-now", check_now),
     ("providers", providers),
+    ("site-aliases", site_aliases),
 ]
 
 # Journeys that fail on main until a known bug is fixed, with what each waits for. A FAIL in them

@@ -2755,3 +2755,188 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
     );
     assert!(screen.contains("Missing a domain?"), "{screen}");
 }
+
+// A site's other names, on its Hosting screen
+
+fn redirect(host: &str) -> nodo_api::PublicAlias {
+    nodo_api::PublicAlias { host: host.to_owned(), mode: nodo_api::AliasMode::Redirect }
+}
+
+fn serve(host: &str) -> nodo_api::PublicAlias {
+    nodo_api::PublicAlias { host: host.to_owned(), mode: nodo_api::AliasMode::Serve }
+}
+
+/// The Hosting screen tall enough that nothing scrolls away.
+fn hosting_text(app: &App) -> String {
+    text(&draw(app, 100, 70).0)
+}
+
+fn hosting(app: &App) -> &ExposureState {
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting, got {:?}", app.screen.id()) };
+    state
+}
+
+/// Moves the keyboard focus down to `target`, as Tab would, failing if it is not on the way.
+fn focus_on(app: &mut App, mock: &mut MockBackend, target: HostingFocus) {
+    for _ in 0..30 {
+        if hosting(app).focus() == target {
+            return;
+        }
+        key(app, mock, DOWN);
+    }
+    panic!("{target:?} is not reachable with the keyboard: {:?}", hosting(app).order());
+}
+
+/// A site's Hosting with the internet ticked, before it has gone public. The site is the `row`th
+/// on the Web tab; `prepare` changes the device first.
+fn hosting_of(row: usize, name: &str, prepare: impl FnOnce(&mut MockBackend)) -> (App, MockBackend) {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    prepare(&mut mock);
+    app.data = load_snapshot(&mut mock).unwrap();
+    mock.calls.clear();
+    for _ in 0..row {
+        key(&mut app, &mut mock, DOWN);
+    }
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).site, name);
+    keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE]);
+    assert!(hosting(&app).draft.public);
+    (app, mock)
+}
+
+/// monokulo-pay's Hosting, going public.
+fn pay_hosting(prepare: impl FnOnce(&mut MockBackend)) -> (App, MockBackend) {
+    hosting_of(1, "monokulo-pay", prepare)
+}
+
+fn site_of<'a>(mock: &'a MockBackend, name: &str) -> &'a Site {
+    mock.web.sites.iter().find(|s| s.package == name).unwrap()
+}
+
+fn pay(mock: &MockBackend) -> &Site {
+    site_of(mock, "monokulo-pay")
+}
+
+/// The sample shop answers at example.com; these flows give that name to monokulo-pay.
+fn without_shop_aliases(mock: &mut MockBackend) {
+    mock.web.sites.iter_mut().for_each(|site| site.public_aliases.clear());
+}
+
+#[test]
+fn an_apex_redirect_is_added_saved_and_listed_on_the_going_public_confirmation() {
+    // moneropay, whose checks pass in the mock (monokulo-pay's find a shared address).
+    let (mut app, mut mock) = hosting_of(2, "moneropay", without_shop_aliases);
+    assert!(hosting_text(&app).contains("Also answers at"), "{}", hosting_text(&app));
+    // The box left empty is the domain itself, and a new name redirects unless told otherwise.
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).aliases, [redirect("example.com")]);
+    assert_eq!(hosting(&app).focus(), HostingFocus::AliasAddress, "the focus stays on the box for the next name");
+    assert!(hosting_text(&app).contains("example.com  → moneropay.example.com"), "{}", hosting_text(&app));
+    assert!(site_of(&mock, "moneropay").public_aliases.is_empty(), "nothing is saved before Save");
+
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(site_of(&mock, "moneropay").public_aliases, [redirect("example.com")]);
+    assert_eq!(app.screen.id(), ScreenId::WebConfirm, "the names were saved, then the checks passed");
+    let screen = hosting_text(&app);
+    assert!(screen.contains("and https://example.com  redirects to moneropay.example.com"), "{screen}");
+    assert!(screen.contains("Public certificate logs list moneropay.example.com, example.com permanently."), "{screen}");
+    keys(&mut app, &mut mock, &[TAB, ENTER]);
+    assert!(site_of(&mock, "moneropay").exposure.public, "confirmed with the primary host, as the helper wants");
+}
+
+#[test]
+fn a_name_under_a_second_providers_domain_can_serve_the_same_site() {
+    let (mut app, mut mock) = pay_hosting(|mock| {
+        mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    });
+    focus_on(&mut app, &mut mock, HostingFocus::AliasDomain);
+    key(&mut app, &mut mock, ENTER);
+    assert!(hosting(&app).picking_alias, "the same domain list as the main address");
+    assert!(hosting_text(&app).contains("myshop.net"), "{}", hosting_text(&app));
+    keys(&mut app, &mut mock, &[DOWN, ENTER]);
+    assert_eq!(hosting(&app).alias_domain, "example.org");
+    assert_eq!(hosting(&app).domain, "example.com", "the main address keeps its domain");
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    type_text(&mut app, &mut mock, "pay");
+    focus_on(&mut app, &mut mock, HostingFocus::AliasMode);
+    key(&mut app, &mut mock, SPACE);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAdd);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).aliases, [serve("pay.example.org")]);
+    assert!(hosting_text(&app).contains("pay.example.org  same site"), "{}", hosting_text(&app));
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(pay(&mock).public_aliases, [serve("pay.example.org")]);
+    assert_eq!(pay(&mock).public_host.as_deref(), Some("pay.example.com"));
+}
+
+#[test]
+fn a_public_site_can_lose_a_name_but_not_gain_one() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).site, "shop");
+    assert_eq!(hosting(&app).aliases, [redirect("example.com")]);
+    let order = hosting(&app).order();
+    assert!(!order.contains(&HostingFocus::AliasAdd) && !order.contains(&HostingFocus::AliasAddress), "{order:?}");
+    focus_on(&mut app, &mut mock, HostingFocus::Alias(0));
+    assert!(hosting_text(&app).contains("take the site off the internet first"), "{}", hosting_text(&app));
+    key(&mut app, &mut mock, KeyCode::Char('x'));
+    assert!(hosting(&app).aliases.is_empty());
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    let shop = mock.web.sites.iter().find(|s| s.package == "shop").unwrap();
+    assert!(shop.public_aliases.is_empty() && shop.exposure.public, "removed while it stays public");
+    assert_eq!(app.notice.as_ref().map(|n| n.text.as_str()), Some("Saved."));
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+#[test]
+fn a_saved_name_outside_the_connected_domains_is_refused_and_nothing_goes_on() {
+    // A name saved while its provider was connected; the provider has gone since.
+    let (mut app, mut mock) = pay_hosting(|mock| {
+        without_shop_aliases(mock);
+        mock.web.sites[1].public_aliases = vec![redirect("old.myshop.net")];
+    });
+    assert_eq!(hosting(&app).aliases, [redirect("old.myshop.net")]);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    type_text(&mut app, &mut mock, "www");
+    key(&mut app, &mut mock, ENTER);
+    let error = hosting(&app).alias_error.clone().expect("the new name is checked with the saved ones");
+    assert!(error.contains("old.myshop.net is not under a domain of a connected provider"), "{error}");
+    // Going public with the stale name is refused by the device before any check runs.
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    let notice = app.notice.clone().expect("the refusal is told");
+    assert_eq!(notice.kind, NoticeKind::Error);
+    assert!(notice.text.contains("old.myshop.net is not under a domain of a connected provider"), "{}", notice.text);
+    assert_eq!(app.screen.id(), ScreenId::WebExposure, "the screen stays, to fix the name");
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetExposure { .. })), "nothing went on after the refusal");
+    assert_eq!(pay(&mock).public_aliases, [redirect("old.myshop.net")]);
+    assert!(!pay(&mock).exposure.public);
+}
+
+#[test]
+fn a_name_twice_or_another_sites_name_is_refused_on_the_spot() {
+    let (mut app, mut mock) = pay_hosting(|_| {});
+    // The shop already answers at example.com.
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).alias_error.as_deref(), Some("example.com is already an address of shop."));
+    assert!(hosting_text(&app).contains("example.com is already an address of shop."), "{}", hosting_text(&app));
+    assert!(hosting(&app).aliases.is_empty());
+    type_text(&mut app, &mut mock, "www");
+    assert_eq!(hosting(&app).alias_error, None, "typing clears the refusal");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).aliases, [redirect("www.example.com")]);
+    type_text(&mut app, &mut mock, "www");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).alias_error.as_deref(), Some("www.example.com is listed twice."));
+    type_text(&mut app, &mut mock, "");
+    dispatch(&mut app, &mut mock, ctrl('u'));
+    type_text(&mut app, &mut mock, "pay");
+    key(&mut app, &mut mock, ENTER);
+    assert!(hosting(&app).alias_error.as_deref().is_some_and(|e| e.contains("main address")), "{:?}", hosting(&app).alias_error);
+    assert_eq!(hosting(&app).aliases.len(), 1);
+}

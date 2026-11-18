@@ -80,6 +80,12 @@ fn under(host: &str, domain: &str) -> bool {
     host == domain || host.strip_suffix(domain).is_some_and(|rest| rest.ends_with('.'))
 }
 
+/// Every public name a site answers at: its host, then its other names. A provider whose domain
+/// holds any of them publishes that record and answers that certificate challenge.
+fn site_hosts(site: &crate::exposure::WebSite) -> impl Iterator<Item = &str> {
+    site.public_host.as_deref().into_iter().chain(site.public_aliases.iter().map(|a| a.host.as_str()))
+}
+
 impl ProviderStore {
     /// The provider records and certificates for `domain` go through: the first one that holds it.
     pub fn owner(&self, domain: &str) -> Option<&StoredProvider> {
@@ -283,10 +289,9 @@ impl<I: WebIo> NodoWeb<I> {
                     .iter()
                     .filter(|s| s.exposure.public && owner.is_none())
                     .filter(|s| {
-                        s.public_host
-                            .as_deref()
-                            .and_then(|host| store.zone_of(host))
-                            .is_some_and(|(p, d)| p.id == provider.id && d == domain)
+                        site_hosts(s).any(|host| {
+                            store.zone_of(host).is_some_and(|(p, d)| p.id == provider.id && d == domain)
+                        })
                     })
                     .map(|s| SiteId { package: s.package.clone(), site: s.service.name.clone() })
                     .collect();
@@ -373,10 +378,9 @@ impl<I: WebIo> NodoWeb<I> {
             .sites
             .iter()
             .filter(|s| s.exposure.public)
-            .filter_map(|s| {
-                let host = s.public_host.as_deref()?;
-                store.zone_of(host).filter(|(p, _)| p.id == provider.id).map(|_| host.to_owned())
-            })
+            .flat_map(site_hosts)
+            .filter(|host| store.zone_of(host).is_some_and(|(p, _)| p.id == provider.id))
+            .map(str::to_owned)
             .collect();
         if !in_use.is_empty() {
             return Err(failed(format!(
@@ -408,9 +412,7 @@ impl<I: WebIo> NodoWeb<I> {
                 let still_used: Vec<String> = kept
                     .into_iter()
                     .filter(|d| {
-                        input.sites.iter().any(|s| {
-                            s.exposure.public && s.public_host.as_deref().is_some_and(|host| under(host, d))
-                        })
+                        input.sites.iter().any(|s| s.exposure.public && site_hosts(s).any(|host| under(host, d)))
                     })
                     .collect();
                 provider.problem = (!still_used.is_empty()).then(|| {

@@ -35,6 +35,14 @@ fn the_test_knobs_keep_the_contract_for_what_they_claim() {
 }
 
 #[test]
+fn the_mock_checks_a_sites_other_names_as_the_helper_does() {
+    let mut mock = MockBackend::new();
+    // The sample shop answers at the bare domain, which the scenario gives monokulo-pay.
+    mock.web.sites.iter_mut().for_each(|site| site.public_aliases.clear());
+    contract::site_aliases(&mut mock, "monokulo-pay", "example.com", "moneropay.example.com");
+}
+
+#[test]
 fn the_mock_refuses_what_the_helper_refuses() {
     let mut mock = MockBackend::new();
     contract::missing_sources_fail(&mut mock);

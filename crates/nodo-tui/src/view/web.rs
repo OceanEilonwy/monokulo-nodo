@@ -16,6 +16,7 @@ use crate::app::*;
 use crate::hit::{Click, Target};
 use crate::model::*;
 use crate::theme::Theme;
+use nodo_api::AliasMode;
 
 /// The size of the frame being drawn. Pages fit cards to it, so it is the real area, not the last
 /// size the app was told about.
@@ -179,7 +180,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         if index > 0 {
             card.blank(t);
         }
-        let focused = focus == which && !state.picking;
+        let focused = focus == which && !state.list_open();
         if focused {
             card.focus_here();
         }
@@ -201,23 +202,10 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
             if domain_focus || state.picking {
                 card.focus_here();
             }
-            domain.extend(inset(t, &state.domain, 28, Some(if state.picking { "▴" } else { "▾" }), domain_focus));
+            domain.extend(inset(t, &state.domain, domain_box(&card), Some(if state.picking { "▴" } else { "▾" }), domain_focus));
             card.row_with(t, domain, [Target::text(state.domain.clone(), Click::Pick { index: index_of(HostingFocus::Domain), then: Some(KeyCode::Enter) })]);
             if state.picking {
-                let list = Style::new().fg(t.fg).bg(t.raised);
-                let marker = |i: usize| if state.pick == i { "▸" } else { " " };
-                for (i, (name, provider)) in choices.iter().enumerate() {
-                    let tick = if *name == state.domain { "✓" } else { " " };
-                    let text = format!(" {} {tick} {} {} ", marker(i), pad(name, 22), pad(provider, 14));
-                    let target = Target::text(format!("{tick} {}", pad(name, 22)), Click::Pick { index: i, then: Some(KeyCode::Enter) });
-                    card.row_with(t, vec![t.n(" ".repeat(19)), Span::styled(text, list)], [target]);
-                }
-                let add = choices.len();
-                card.row_with(
-                    t,
-                    vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", marker(add), pad("+ Add a provider…", 39)), Style::new().fg(t.accent).bg(t.raised))],
-                    [Target::text("+ Add a provider…", Click::Pick { index: add, then: Some(KeyCode::Enter) })],
-                );
+                domain_list(&mut card, t, state, &choices, &state.domain);
             } else {
                 card.blank(t);
                 if focus == HostingFocus::Address {
@@ -232,6 +220,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
                 if state.draft.onion {
                     card.row(t, vec![t.a("       With Tor on too, visitors could tell the two addresses are the same app.")]);
                 }
+                other_names(&mut card, t, state, &choices, &index_of);
             }
         } else {
             card.row(t, vec![t.n("       To use a web address you own, first add the company you bought it from.")]);
@@ -242,7 +231,7 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         }
     }
     card.blank(t);
-    let details_focus = focus == HostingFocus::Details && !state.picking;
+    let details_focus = focus == HostingFocus::Details && !state.list_open();
     if details_focus {
         card.focus_here();
     }
@@ -255,6 +244,9 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
             }
             if let Some(host) = &site.public_host {
                 card.row(t, vec![t.d(format!("  Internet address  {host}"))]);
+            }
+            for alias in &site.public_aliases {
+                card.row(t, vec![t.d(format!("  Also answers at   {}  ({})", alias.host, alias.mode.label()))]);
             }
         }
         if !web.acme.challenge.is_empty() {
@@ -279,8 +271,123 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         heading(t, "Hosting"),
         quiet(t, &format!("Choose who can open {name}. Any combination works.")),
     ];
-    let keys = if state.picking { "Keys: ↑↓ choose  ↵ pick  Esc close the list" } else { "Keys: Tab move  Space tick  ↵ save  Esc back" };
+    let keys = if state.list_open() {
+        "Keys: ↑↓ choose  ↵ pick  Esc close the list"
+    } else if matches!(focus, HostingFocus::Alias(_)) {
+        "Keys: Tab move  x remove this name  ↵ save  Esc back"
+    } else {
+        "Keys: Tab move  Space tick  ↵ save  Esc back"
+    };
     screen.finish(t, card, Vec::new(), keys, w, h)
+}
+
+/// The domain box's width: 28 where it fits after its label, narrower on a small terminal so its
+/// arrow stays on the row.
+fn domain_box(card: &Card) -> usize {
+    card.width.saturating_sub(4 + 19 + 4).clamp(12, 28)
+}
+
+/// The open list of connected domains, under the domain box it picks for.
+fn domain_list(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(String, String)], chosen: &str) {
+    let list = Style::new().fg(t.fg).bg(t.raised);
+    let marker = |i: usize| if state.pick == i { "▸" } else { " " };
+    for (i, (name, provider)) in choices.iter().enumerate() {
+        let tick = if name == chosen { "✓" } else { " " };
+        let text = format!(" {} {tick} {} {} ", marker(i), pad(name, 22), pad(provider, 14));
+        let target = Target::text(format!("{tick} {}", pad(name, 22)), Click::Pick { index: i, then: Some(KeyCode::Enter) });
+        card.row_with(t, vec![t.n(" ".repeat(19)), Span::styled(text, list)], [target]);
+    }
+    let add = choices.len();
+    card.row_with(
+        t,
+        vec![t.n(" ".repeat(19)), Span::styled(format!(" {} {} ", marker(add), pad("+ Add a provider…", 39)), Style::new().fg(t.accent).bg(t.raised))],
+        [Target::text("+ Add a provider…", Click::Pick { index: add, then: Some(KeyCode::Enter) })],
+    );
+}
+
+/// "Also answers at": the site's other names, each with Remove, and the controls that add one
+/// (domain, the part before it, serve or redirect). While the site is public only Remove is
+/// offered, as the helper allows.
+fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(String, String)], index_of: &dyn Fn(HostingFocus) -> usize) {
+    let focus = state.focus();
+    let host = state.host();
+    let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
+    card.blank(t);
+    card.row(t, vec![t.n("       "), t.b("Also answers at")]);
+    if state.aliases.is_empty() {
+        card.row(t, vec![t.d(format!("       Nothing else yet: only {host}."))]);
+    }
+    for (index, alias) in state.aliases.iter().enumerate() {
+        let which = HostingFocus::Alias(index);
+        let focused = focus == which && !state.list_open();
+        if focused {
+            card.focus_here();
+        }
+        let what = match alias.mode {
+            AliasMode::Redirect => format!("→ {host}"),
+            AliasMode::Serve => "same site".to_owned(),
+        };
+        let at = index_of(which);
+        let spans = vec![t.n("     "), marker(t, focused), label(t, &alias.host, focused), t.n("  "), t.d(what)];
+        // The row picks the name; its Remove button removes it. Text targets go on first.
+        card.on_row(card.next_row(), [Target::row(alias.host.clone(), Click::Pick { index: at, then: None })]);
+        card.row_with_button(t, spans, "Remove", false, Click::Pick { index: at, then: Some(KeyCode::Char('x')) });
+    }
+    if state.was_public {
+        card.row(t, vec![t.d("       To add a name, take the site off the internet first. Removing one works now.")]);
+        return;
+    }
+    card.blank(t);
+    let domain_focus = focus == HostingFocus::AliasDomain && !state.list_open();
+    if domain_focus || state.picking_alias {
+        card.focus_here();
+    }
+    let mut domain = vec![field_label("New name")];
+    domain.extend(inset(t, &state.alias_domain, domain_box(card), Some(if state.picking_alias { "▴" } else { "▾" }), domain_focus));
+    let pick_domain = Click::Pick { index: index_of(HostingFocus::AliasDomain), then: Some(KeyCode::Enter) };
+    card.row_with(t, domain, [Target::row("New name", pick_domain)]);
+    if state.picking_alias {
+        domain_list(card, t, state, choices, &state.alias_domain);
+        return;
+    }
+    let address_focus = focus == HostingFocus::AliasAddress;
+    if address_focus {
+        card.focus_here();
+    }
+    let mut address = vec![field_label("")];
+    address.extend(inset(t, state.alias_sub.text(), 12, None, address_focus));
+    address.push(t.n(format!(" .{}", state.alias_domain)));
+    let pick_address = Click::Pick { index: index_of(HostingFocus::AliasAddress), then: None };
+    card.row_with(t, address, [Target::row(format!(" .{}", state.alias_domain), pick_address)]);
+    card.row(t, vec![t.d(format!("       Leave the box empty for {} itself.", state.alias_domain))]);
+    let mode_focus = focus == HostingFocus::AliasMode && !state.list_open();
+    if mode_focus {
+        card.focus_here();
+    }
+    let (redirect, serve) = match state.alias_mode {
+        AliasMode::Redirect => ("◉", "○"),
+        AliasMode::Serve => ("○", "◉"),
+    };
+    let mode = vec![
+        t.n("     "),
+        marker(t, mode_focus),
+        label(t, &pad("It", 12), mode_focus),
+        t.n(format!("{redirect} redirects   {serve} shows the same site")),
+    ];
+    let toggle = Click::Pick { index: index_of(HostingFocus::AliasMode), then: Some(KeyCode::Char(' ')) };
+    card.row_with(t, mode, [Target::row("redirects", toggle)]);
+    if state.alias_mode == AliasMode::Redirect {
+        card.row(t, vec![t.d(format!("       Visitors go on to https://{host}, to the same page."))]);
+    }
+    let add_focus = focus == HostingFocus::AliasAdd && !state.list_open();
+    if add_focus {
+        card.focus_here();
+    }
+    let add = super::v3::focused("Add this name", add_focus);
+    card.row_with_button(t, Vec::new(), &add, false, Click::Pick { index: index_of(HostingFocus::AliasAdd), then: Some(KeyCode::Enter) });
+    if let Some(error) = &state.alias_error {
+        card.row(t, vec![t.e(format!("       {error}"))]);
+    }
 }
 
 /// Each connected provider's name, numbered when the owner connected two accounts at one company.
@@ -575,10 +682,20 @@ pub fn confirm(app: &App, t: &Theme, state: &WebConfirmState) -> Page {
     }
     card.blank(t);
     card.row(t, vec![t.n("Anyone will be able to open "), t.b(state.plan.url.clone())]);
+    // Every other name goes public with it, so each is shown here, the screen the owner confirms.
+    let aliases = web.sites.iter().find(|s| s.package == state.site).map(|s| s.public_aliases.clone()).unwrap_or_default();
+    for alias in &aliases {
+        let what = match alias.mode {
+            AliasMode::Redirect => format!("redirects to {}", state.plan.host),
+            AliasMode::Serve => "the same site".to_owned(),
+        };
+        card.row(t, vec![t.n("   and "), t.b(format!("https://{}", alias.host)), t.d(format!("  {what}"))]);
+    }
     card.row(t, vec![t.a("Your home's internet address becomes public.")]);
     card.row(t, vec![t.a("Records of it can stay online after you stop.")]);
     card.row(t, vec![t.a("Anyone can connect this address to your home, including your Monero node.")]);
-    card.row(t, vec![t.a(format!("Public certificate logs list {} permanently.", state.plan.host))]);
+    let names: Vec<&str> = std::iter::once(state.plan.host.as_str()).chain(aliases.iter().map(|a| a.host.as_str())).collect();
+    card.row(t, vec![t.a(format!("Public certificate logs list {} permanently.", names.join(", ")))]);
     card.row(t, vec![t.d("The Nodo keeps the secure connection up to date. Take it offline at any time.")]);
     if web.sites.iter().any(|s| s.package == state.site && s.rate_limit_unenforced) {
         card.row(t, vec![t.a("Repeated requests can't be slowed down for this app.")]);
@@ -663,6 +780,10 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
     card.blank(t);
     card.row(t, vec![t.n(format!("   https://{}", state.host))]);
     if let Some(site) = web.sites.iter().find(|s| s.package == state.site) {
+        for alias in &site.public_aliases {
+            let what = if alias.mode == AliasMode::Redirect { "  redirects here" } else { "" };
+            card.row(t, vec![t.n(format!("   https://{}", alias.host)), t.d(what)]);
+        }
         if site.exposure.local && !site.local_url.is_empty() {
             card.row(t, vec![t.n(format!("   {}", site.local_url))]);
         }

@@ -1412,7 +1412,8 @@ mod backups {
         let dir = tempfile::tempdir().unwrap();
         let proxy = Proxy::default();
         let exposure = "[shop.web]\nlocal = false\nonion = false\npublic = true\n";
-        let hosts = "[shop]\nweb = \"shop.example.com\"\n";
+        // One site with other names, one in the old plain form: a restore carries both.
+        let hosts = "[shop]\nweb = \"shop.example.com\"\n\n[shop.single]\nhost = \"www.example.org\"\naliases = [{ host = \"example.org\", mode = \"redirect\" }]\n";
         fs::write(dir.path().join("exposure.toml"), exposure).unwrap();
         fs::write(dir.path().join("public-hosts.toml"), hosts).unwrap();
         let h = with_proxy(&dir, &proxy);
@@ -1426,6 +1427,9 @@ mod backups {
         assert_eq!(proxy.0.lock().unwrap().0, 1, "applied once, by the restore itself");
         assert!(report.restored.contains(&"site exposure applied to the proxy".to_owned()), "{report:?}");
         assert!(report.restored.contains(&"public host names".to_owned()), "{report:?}");
+        let hosts: crate::exposure::PublicHosts = h.load_toml(&h.paths.public_hosts).unwrap().0;
+        assert_eq!(hosts["shop"]["single"].aliases()[0].host, "example.org", "the aliases came back");
+        assert_eq!(hosts["shop"]["web"].host(), "shop.example.com");
     }
 
     #[test]

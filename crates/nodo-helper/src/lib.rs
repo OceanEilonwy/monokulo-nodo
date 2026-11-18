@@ -51,7 +51,7 @@ pub mod worker;
 mod wpa;
 
 pub use catalog::Package;
-pub use exposure::{ExposureApplier, ExposureState, NoCaddyYet, PublicHosts, WebInput, WebSite};
+pub use exposure::{ExposureApplier, ExposureState, HostEntry, NoCaddyYet, PublicHosts, WebInput, WebSite};
 pub use helper::{AllowedUids, DriveConfig, Helper, Paths, Timing};
 pub use nodo_api::{client, protocol};
 pub use policy::NodoSettings;

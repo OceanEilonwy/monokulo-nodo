@@ -8,7 +8,7 @@ use std::io::{self, BufRead, IsTerminal};
 use zeroize::Zeroizing;
 
 use nodo_api::{
-    Exposure, PublicConfirmation, RepairConfirmation, Request, Secret, SettingChange, SettingGrant, SettingInput,
+    AliasMode, Exposure, PublicAlias, PublicConfirmation, RepairConfirmation, Request, Secret, SettingChange, SettingGrant, SettingInput,
     SettingLiteral,
     SiteId,
 };
@@ -27,7 +27,7 @@ nodo-tui --ctl COMMAND [ARGS]
   set PACKAGE NAME ref TARGET.SETTING
   set PACKAGE NAME secret          (value on stdin)
   reset PACKAGE NAME
-  host PACKAGE SITE HOST
+  host PACKAGE SITE HOST [NAME=serve|NAME=redirect...|none]   (other names; none clears, nothing keeps)
   expose PACKAGE SITE LOCAL ONION PUBLIC [TYPED_HOST]   (each flag 0 or 1)
   add-key LINE | remove-key FINGERPRINT
   drive-check | drive-repair CHECK_ID | drive-mount
@@ -160,6 +160,23 @@ fn typed_secret() -> Result<Secret, String> {
     result.map(|()| Secret::new(text.as_str()))
 }
 
+/// `NAME=serve` or `NAME=redirect` each; `none` alone clears them; nothing keeps the saved ones.
+fn aliases(args: &[&str]) -> Result<Option<Vec<PublicAlias>>, String> {
+    match args {
+        [] => Ok(None),
+        ["none"] => Ok(Some(Vec::new())),
+        _ => args
+            .iter()
+            .map(|arg| match arg.split_once('=') {
+                Some((host, "serve")) => Ok(PublicAlias { host: host.to_owned(), mode: AliasMode::Serve }),
+                Some((host, "redirect")) => Ok(PublicAlias { host: host.to_owned(), mode: AliasMode::Redirect }),
+                _ => Err(format!("expected NAME=serve or NAME=redirect, got {arg}")),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+    }
+}
+
 fn flag(text: &str) -> Result<bool, String> {
     match text {
         "1" => Ok(true),
@@ -213,7 +230,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             package: id(package),
             changes: vec![SettingChange { name: id(name), value: SettingInput::Reset }],
         },
-        ["host", package, s, host] => Request::SetPublicHost { site: site(package, s), host: id(host) },
+        ["host", package, s, host, rest @ ..] => {
+            Request::SetPublicHost { site: site(package, s), host: id(host), aliases: aliases(rest)? }
+        }
         ["expose", package, s, local, onion, public, typed @ ..] => Request::SetExposure {
             site: site(package, s),
             exposure: Exposure { local: flag(local)?, onion: flag(onion)?, public: flag(public)? },
@@ -422,6 +441,27 @@ mod tests {
         assert_eq!(confirmation.unwrap().typed_host, "shop.example.com");
         assert!(parse(&args("expose shop web 1 0 2")).is_err());
         assert!(parse(&args("bogus")).is_err());
+    }
+
+    #[test]
+    fn parses_other_names_of_a_site() {
+        let Ok(Request::SetPublicHost { aliases, .. }) = parse(&args("host shop web www.example.com")) else { panic!() };
+        assert_eq!(aliases, None, "without names the saved ones stay");
+        let Ok(Request::SetPublicHost { aliases, .. }) = parse(&args("host shop web www.example.com none")) else { panic!() };
+        assert_eq!(aliases, Some(Vec::new()));
+        let Ok(Request::SetPublicHost { aliases, .. }) =
+            parse(&args("host shop web www.example.com example.com=redirect pay.example.org=serve"))
+        else {
+            panic!()
+        };
+        assert_eq!(
+            aliases.unwrap(),
+            vec![
+                PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect },
+                PublicAlias { host: "pay.example.org".into(), mode: AliasMode::Serve },
+            ]
+        );
+        assert!(parse(&args("host shop web www.example.com example.com=moved")).is_err());
     }
 
     #[test]

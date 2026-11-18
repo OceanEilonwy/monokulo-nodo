@@ -199,6 +199,15 @@ mod tests {
             Request::SetPublicHost {
                 site: site(),
                 host: "h".into(),
+                aliases: None,
+            },
+            Request::SetPublicHost {
+                site: site(),
+                host: "www.example.com".into(),
+                aliases: Some(vec![
+                    PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect },
+                    PublicAlias { host: "pay.example.org".into(), mode: AliasMode::Serve },
+                ]),
             },
             Request::CheckReachability { site: site() },
             Request::ListProviders,
@@ -460,6 +469,14 @@ mod tests {
                 multi_address: false,
                 public_host: None,
                 locked: false,
+                public_aliases: Vec::new(),
+            }, SiteInfo {
+                id: site(),
+                exposure: Exposure { local: false, onion: false, public: true },
+                multi_address: true,
+                public_host: Some("www.example.com".into()),
+                locked: false,
+                public_aliases: vec![PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect }],
             }])),
             Ok(Response::Reachability(ReachabilityReport::Cgnat {
                 wan_address: "100.64.0.1".into(),

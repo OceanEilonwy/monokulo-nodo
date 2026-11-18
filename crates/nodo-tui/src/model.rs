@@ -726,6 +726,8 @@ pub struct Site {
     pub onion_url: String,
     /// Host name, without a scheme, because this is the text the user types to go public.
     pub public_host: Option<String>,
+    /// The other names the site answers at while public, each served or redirected to the host.
+    pub public_aliases: Vec<nodo_api::PublicAlias>,
     pub locked: bool,
     /// Rate limiting is always on for public sites, except where the proxy reports it cannot
     /// enforce it for this site.
@@ -1065,7 +1067,9 @@ pub trait ScreenData {
     /// Looks at the provider's domains again.
     fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String>;
     fn reachability(&mut self, site: &str) -> Reachability;
-    fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String>;
+    /// Saves the site's public host and the other names it answers at, all of them: a name left
+    /// out is removed.
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias]) -> Result<(), String>;
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
     fn save_acme(&mut self, _settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
         Err("Certificate settings are not available here.".to_owned())

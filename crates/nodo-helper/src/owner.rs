@@ -406,7 +406,7 @@ impl<S: System> Helper<S> {
         suggested_sub: Option<&str>,
         facts: &Facts,
     ) -> SiteFacts {
-        let chosen = facts.hosts.get(package).and_then(|s| s.get(site)).cloned();
+        let chosen = facts.hosts.get(package).and_then(|s| s.get(site)).map(|e| e.host().to_owned());
         let exposure: Exposure = facts
             .exposure
             .get(package)

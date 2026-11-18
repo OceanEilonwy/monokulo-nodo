@@ -25,8 +25,8 @@
               Visitors will be able to see your home's internet address.
               With Tor on too, visitors could tell the two addresses are the same app.
 
-         Show details ›
-
+              Also answers at
+       ↓ 5 more — scroll or make the window taller
                                                                            Check and save
 
     Keys: Tab move  Space tick  ↵ save  Esc back
