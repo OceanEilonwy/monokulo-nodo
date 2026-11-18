@@ -3,7 +3,7 @@
 mod common;
 
 use common::{draw, screen_text, send, text, type_text};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyCode;
 use nodo_tui::app::{App, BundleStep, Event, MouseKind, Screen, ScreenId};
 use nodo_tui::fixtures::{fixture, press};
 use nodo_tui::mock::{sample_bundle_review, sample_owner_page, MockBackend, MOCK_PASSPHRASE};
@@ -208,5 +208,4 @@ fn osc52_carries_the_copied_text() {
     let mut app = App::new();
     app.clipboard = Some("abc".to_owned());
     assert_eq!(nodo_tui::clipboard::osc52(app.clipboard.as_deref().unwrap()), "\x1b]52;c;YWJj\x07");
-    let _ = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
 }

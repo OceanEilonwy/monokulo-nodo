@@ -78,6 +78,9 @@ pub fn unread_feeds(list: &[nodo_api::FeedInfo]) -> bool {
 pub fn catalog(b: &HelperBackend, installed: Vec<nodo_api::PackageInfo>) -> Vec<PackageSummary> {
     if let Ok(Response::Feeds(list)) = b.ask(Request::ListFeeds) {
         if unread_feeds(&list) {
+            // Kept out of the catalog's way: the helper records each feed it could not read on
+            // that feed, where Sources shows it, and the catalog read below reports its own error.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = b.ask(Request::RefreshFeeds);
         }
     }
@@ -726,9 +729,11 @@ fn apply_packages(
     report
 }
 
-pub fn set_held(b: &HelperBackend, name: &str, held: bool) {
-    if let Some(version) = candidate_to(b, name) {
-        let _ = b.ask(Request::SetHold { package: name.to_owned(), version, held });
+/// A package with no update to hold has nothing to record, which is not a failure.
+pub fn set_held(b: &HelperBackend, name: &str, held: bool) -> Result<(), String> {
+    match candidate_to(b, name) {
+        Some(version) => text(b.ask(Request::SetHold { package: name.to_owned(), version, held })).map(|_| ()),
+        None => Ok(()),
     }
 }
 

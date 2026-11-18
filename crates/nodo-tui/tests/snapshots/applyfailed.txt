@@ -12,7 +12,7 @@
          Log level               info  →  debug
 
        moneropay said: "listen tcp :18081: bind: address already in use"
-       API port 18081 is used by monero-daemon. Pick a different port.
+       Read the moneropay log for more detail.
 
        Show log ›
 

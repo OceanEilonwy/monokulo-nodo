@@ -1,6 +1,8 @@
 //! System › Screen and the logo tile's options: the screen's own preferences, kept next to the
 //! layout in `/var/lib/nodo-screen`, which the screen's account owns.
 
+#![deny(clippy::let_underscore_must_use, unused_must_use)]
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -54,11 +56,14 @@ impl Prefs {
 
     pub fn save(&self) {
         let Some(path) = &self.path else { return };
-        if let Ok(text) = toml::to_string(self) {
-            let tmp = path.with_extension("tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
-            }
+        let tmp = path.with_extension("tmp");
+        let saved = toml::to_string(self)
+            .map_err(|e| e.to_string())
+            .and_then(|text| std::fs::write(&tmp, text).map_err(|e| e.to_string()))
+            .and_then(|()| std::fs::rename(&tmp, path).map_err(|e| e.to_string()));
+        // The screen keeps working with what it has, so the log is where a failed save shows.
+        if let Err(e) = saved {
+            crate::log(&format!("could not save the screen preferences: {e}"));
         }
     }
 

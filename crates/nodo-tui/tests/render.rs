@@ -67,7 +67,7 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::Search => &["Apps  ›  Get apps", "Search", "Sources ›", "moneropay", "apps match"],
         ScreenId::Detail => &["Apps  ›  Get apps  ›  moneropay", "It will:", "Install"],
         ScreenId::Review => &["Install wallet-relay?", "a source you added", "It will be able to:", "Cancel", "Install"],
-        ScreenId::Installing => &["Installing moneropay", "✓  Download package", "You can leave this page"],
+        ScreenId::Installing => &["Installing moneropay", "This can take a few minutes", "You can leave this page", "Esc leave"],
         ScreenId::Unlock => &["Unlock your Nodo", "Passphrase", "Unlock"],
         ScreenId::Feeds => &["Apps  ›  Get apps  ›  Sources", "Add a source", "built in", "Remove", "more — scroll"],
         ScreenId::AddFeed => &["Its key", "Check this matches what the publisher gave you", "Add source"],

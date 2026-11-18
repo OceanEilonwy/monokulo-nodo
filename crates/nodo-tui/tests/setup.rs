@@ -138,7 +138,7 @@ fn a_drive_that_cannot_be_used_says_why_and_a_failed_restore_can_be_retried() {
     assert!(screen_text(&app).contains("sda1 cannot be used: it is read-only"), "{}", screen_text(&app));
     key(&mut app, &mut mock, KeyCode::Char('g'));
     to_confirm_from_drives(&mut app, &mut mock);
-    mock.restore_failure = Some("the drive was removed while reading".to_owned());
+    mock.knobs.restore_failure = Some("the drive was removed while reading".to_owned());
     type_text(&mut app, &mut mock, "restore");
     key(&mut app, &mut mock, KeyCode::Tab);
     type_text(&mut app, &mut mock, "a new device passphrase");
@@ -150,7 +150,7 @@ fn a_drive_that_cannot_be_used_says_why_and_a_failed_restore_can_be_retried() {
     assert!(screen.contains("the drive was removed while reading"), "{screen}");
     assert!(screen.contains("The device is still not set up"), "{screen}");
     assert!(mock.setup_needed);
-    mock.restore_failure = None;
+    mock.knobs.restore_failure = None;
     key(&mut app, &mut mock, KeyCode::Enter);
     assert!(screen_text(&app).contains("Open this backup"), "retry asks for the passphrase again");
 }
@@ -276,7 +276,7 @@ fn keys_can_be_added_and_removed_only_after_confirming() {
 fn a_slow_helper_call_does_not_block_the_screen() {
     let (mut app, mut mock) = fixture(ScreenId::Main);
     app.screen = nodo_tui::app::Screen::AppPage(nodo_tui::app::AppPageState::new("cuprated"));
-    mock.delay = Some(Duration::from_millis(300));
+    mock.knobs.delay = Some(Duration::from_millis(300));
     let mut worker = EffectWorker::spawn(mock);
     let started = Instant::now();
     // s on cuprated's page stops it.

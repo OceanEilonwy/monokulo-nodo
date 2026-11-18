@@ -310,7 +310,7 @@ fn going_online_takes_one_confirm_that_starts_on_cancel() {
 fn a_site_does_not_go_public_if_its_protections_fail() {
     let (mut app, mut mock) = at_confirm_screen();
     mock.calls.clear();
-    mock.fail_public_access = true;
+    mock.knobs.fail_public_access = true;
     keys(&mut app, &mut mock, &[TAB, ENTER]);
     assert!(exposure_calls(&mock).is_empty());
     assert!(screen_text(&app).contains("Could not apply the site's protections."));
@@ -430,7 +430,7 @@ fn providers_without_an_api_cannot_be_connected_and_offer_no_guided_move() {
 #[test]
 fn adding_a_provider_says_why_there_is_no_list_and_reads_it_again() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    mock.providers_failure = Some("the helper is not running".to_owned());
+    mock.knobs.providers_failure = Some("the helper is not running".to_owned());
     app.data = load_snapshot(&mut mock).unwrap();
     keys(&mut app, &mut mock, &[KeyCode::Char('p'), KeyCode::Char('a')]);
     let screen = screen_text(&app);
@@ -438,7 +438,7 @@ fn adding_a_provider_says_why_there_is_no_list_and_reads_it_again() {
     assert!(!screen.contains("Cloudflare"), "{screen}");
 
     // Opening the add flow again asks the helper again.
-    mock.providers_failure = None;
+    mock.knobs.providers_failure = None;
     keys(&mut app, &mut mock, &[ESC, KeyCode::Char('p'), KeyCode::Char('a')]);
     let screen = screen_text(&app);
     assert!(screen.contains("Cloudflare"), "{screen}");
@@ -1013,10 +1013,21 @@ fn a_rollback_keeps_the_draft_for_editing_and_can_discard_it() {
     let screen = screen_text(&app);
     assert!(screen.contains("5000  →  18081") && screen.contains("info  →  debug"), "{screen}");
 
+    // The helper's explanation names no field, so editing again leaves the focus where it was.
+    let Screen::ApplyFailed(failed) = &app.screen else { panic!("expected the failure") };
+    assert_eq!(failed.explanation.blamed_field, None);
+    key(&mut app, &mut mock, ENTER);
+    let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
+    assert_eq!(state.selected, API_PORT + 1, "the focus stays on the field last edited");
+    assert_eq!(state.changed_indices().len(), 2);
+
+    // An explanation that does name a field, which only a future helper could give, focuses it.
+    dispatch(&mut app, &mut mock, ctrl('s'));
+    let Screen::ApplyFailed(failed) = &mut app.screen else { panic!("expected the failure") };
+    failed.explanation.blamed_field = Some("api_port".to_owned());
     key(&mut app, &mut mock, ENTER);
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
     assert_eq!(state.selected, API_PORT, "edit draft focuses the field that caused it");
-    assert_eq!(state.changed_indices().len(), 2);
 
     dispatch(&mut app, &mut mock, ctrl('s'));
     key(&mut app, &mut mock, KeyCode::Char('x'));
@@ -1312,6 +1323,8 @@ fn search_filter_feed_and_clear() {
     assert!(screen_text(&app).contains("41 of 41 apps match"));
 }
 
+/// As on the device: the install is one request, so the page goes from waiting to installed with
+/// nothing to poll in between.
 #[test]
 fn install_runs_to_completion_then_opens_settings() {
     let (mut app, mut mock) = loaded();
@@ -1322,15 +1335,47 @@ fn install_runs_to_completion_then_opens_settings() {
     assert_eq!(app.screen.id(), ScreenId::Review);
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Installing);
-    assert!(screen_text(&app).contains("Step 1 of 8"));
     assert!(app.stack.iter().all(|screen| screen.id() != ScreenId::Review), "Esc must not reopen review");
+    let screen = screen_text(&app);
+    assert!(screen.contains("is installed"), "{screen}");
+    assert!(screen.contains("↵ set it up"), "{screen}");
+    assert!(update(&mut app, Event::Tick).is_empty(), "a finished install is not polled");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::Settings);
+}
 
+/// The helper cannot report progress, so a waiting install page asks it for none.
+#[test]
+fn a_waiting_install_is_not_polled_where_the_backend_reports_no_progress() {
+    let (mut app, _mock) = fixture(ScreenId::Installing);
+    assert!(!app.data.capabilities.install_progress);
+    for _ in 0..20 {
+        assert!(update(&mut app, Event::Tick).is_empty());
+    }
+    // A snapshot that claims it can cancel still gets no cancel from a backend that cannot.
+    let Screen::Installing(snapshot) = &app.screen else { panic!("the installing fixture") };
+    let mut claims = snapshot.clone();
+    claims.can_cancel = true;
+    update(&mut app, Event::InstallProgress(Some(claims)));
+    let Screen::Installing(snapshot) = &app.screen else { panic!("still installing") };
+    assert!(!snapshot.can_cancel);
+}
+
+/// A backend that reports steps, which the helper does not: a test knob on the mock.
+#[test]
+fn install_steps_show_where_the_backend_reports_them() {
+    let (mut app, _) = loaded();
+    let mut mock = MockBackend::with_stepped_installs();
+    app.data = load_snapshot(&mut mock).unwrap();
+    search(&mut app, &mut mock, "moneropay");
+    keys(&mut app, &mut mock, &[ENTER, KeyCode::Char('i'), RIGHT, ENTER]);
+    assert_eq!(app.screen.id(), ScreenId::Installing);
+    assert!(screen_text(&app).contains("Step 1 of 8"), "{}", screen_text(&app));
     for _ in 0..200 {
         dispatch(&mut app, &mut mock, Event::Tick);
     }
     let screen = screen_text(&app);
     assert!(screen.contains("is installed"), "{screen}");
-    assert!(screen.contains("↵ set it up"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Settings);
 }
@@ -1353,9 +1398,12 @@ fn a_failed_install_reports_that_it_was_undone() {
     assert_eq!(app.screen.id(), ScreenId::Search);
 }
 
+/// Only a backend that can cancel offers it, which the helper cannot: a test knob on the mock.
 #[test]
-fn an_install_can_be_cancelled() {
-    let (mut app, mut mock) = fixture(ScreenId::Review);
+fn an_install_can_be_cancelled_where_the_backend_can_cancel() {
+    let (mut app, _) = fixture(ScreenId::Review);
+    let mut mock = MockBackend::with_stepped_installs();
+    app.data = load_snapshot(&mut mock).unwrap();
     app.stack.push(Screen::Home { selected: 0 });
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Installing);
@@ -1689,7 +1737,7 @@ fn check_now_shows_it_is_running_and_says_what_it_found() {
 #[test]
 fn a_failed_check_or_source_change_says_why() {
     let (mut app, mut mock) = fixture(ScreenId::Updates);
-    mock.feeds_failure = Some("official: the feed did not answer".to_owned());
+    mock.knobs.feeds_failure = Some("official: the feed did not answer".to_owned());
     key(&mut app, &mut mock, KeyCode::Char('r'));
     let notice = app.notice.clone().expect("told");
     assert_eq!(notice.kind, NoticeKind::Error);
@@ -1837,10 +1885,10 @@ fn packages_default_to_auto_update_off() {
     let mut mock = MockBackend::new();
     let before = mock.auto_update.enabled_count();
     let id = PackageId::new("community", "node-exporter");
-    mock.start_install(&id, None, None).unwrap();
-    for _ in 0..200 {
-        mock.poll_install();
-    }
+    let InstallGate::Review(review) = mock.install_gate(&id) else { panic!("node-exporter reaches review") };
+    assert!(mock.start_install(&id, None, None).is_err(), "nothing installs without the review's approval");
+    let done = mock.start_install(&id, review.approval.as_ref(), None).unwrap();
+    assert_eq!(done.outcome, InstallOutcome::Succeeded);
     let added = mock.auto_update.packages.iter().find(|entry| entry.name == "node-exporter").unwrap();
     assert!(!added.enabled);
     assert!(added.third_party);
@@ -1989,8 +2037,14 @@ fn a_late_log_reply_for_another_service_is_ignored() {
 }
 
 #[test]
-fn the_mock_says_when_it_does_not_really_copy() {
+fn copying_a_report_says_it_is_not_available_as_on_the_device() {
     let (mut app, mut mock) = fixture(ScreenId::Logs);
+    key(&mut app, &mut mock, KeyCode::Char('y'));
+    assert!(screen_text(&app).contains("Copying reports is not available yet."), "{}", screen_text(&app));
+
+    // A backend that can copy, through the test knob, says where the report went.
+    let (mut app, mut mock) = fixture(ScreenId::Logs);
+    mock.knobs.capabilities.copy_report = true;
     key(&mut app, &mut mock, KeyCode::Char('y'));
     assert!(screen_text(&app).contains("was not copied anywhere"));
 }
@@ -2538,7 +2592,7 @@ fn radios_that_are_off_or_missing_say_so() {
 #[test]
 fn radios_the_helper_cannot_read_say_why_and_can_be_asked_again() {
     let (mut app, mut mock) = loaded();
-    mock.radios_failure = Some("the helper is not running".to_owned());
+    mock.knobs.radios_failure = Some("the helper is not running".to_owned());
     key(&mut app, &mut mock, KeyCode::Char('w'));
     let screen = screen_text(&app);
     assert!(!screen.contains("Asking the helper"), "{screen}");
@@ -2554,7 +2608,7 @@ fn radios_the_helper_cannot_read_say_why_and_can_be_asked_again() {
     assert!(screen_text(&app).contains("could not say"));
 
     // ...and so does a click, which finds the helper back.
-    mock.radios_failure = None;
+    mock.knobs.radios_failure = None;
     click(&mut app, &mut mock, "Try again");
     let screen = screen_text(&app);
     assert!(screen.contains("● Joined home-5G"), "{screen}");

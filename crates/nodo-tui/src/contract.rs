@@ -1,0 +1,65 @@
+//! Scenarios every backend must pass the same way, so the mock the tests use cannot drift from the
+//! device. nodo-tui runs them against `MockBackend`, and nodo-helper runs them against
+//! `HelperBackend` talking to its real request handler over a socket (see
+//! `nodo-helper/src/tui_contract_tests.rs`). Each one panics with what differed.
+//!
+//! They check behaviour against [`Capabilities`], and a test holds the mock's default capabilities
+//! equal to `HelperBackend::CAPABILITIES`, so both backends do the same here.
+
+use crate::model::*;
+
+/// The longest a backend with stepped installs may take, in polls, before the install is over.
+const MOST_POLLS: usize = 1000;
+
+/// Installs `id`, which must reach a review, and returns how the install ended. Nothing installs
+/// without the review's approval; the install answers when it is over unless the backend reports
+/// progress; there is a cancel only where the backend can cancel.
+pub fn install(backend: &mut impl ScreenData, id: &PackageId) -> InstallSnapshot {
+    let caps = backend.capabilities();
+    let InstallGate::Review(review) = backend.install_gate(id) else {
+        panic!("{} should reach a review", id.name);
+    };
+    assert!(review.approval.is_some(), "a review carries the approval an install quotes");
+    assert!(backend.start_install(id, None, None).is_err(), "an install without the review's approval is refused");
+
+    let mut snapshot = backend.start_install(id, review.approval.as_ref(), None).expect("the reviewed install starts");
+    assert_eq!(&snapshot.id, id);
+    if caps.install_progress {
+        assert_eq!(snapshot.outcome, InstallOutcome::InProgress, "with progress the install answers while it runs");
+        assert_eq!(snapshot.can_cancel, caps.cancel_install, "a running install offers a cancel exactly where the backend can cancel");
+        for _ in 0..MOST_POLLS {
+            if snapshot.outcome != InstallOutcome::InProgress {
+                break;
+            }
+            snapshot = backend.poll_install().expect("an install with progress keeps reporting");
+        }
+    } else {
+        assert_ne!(snapshot.outcome, InstallOutcome::InProgress, "without progress the install answers when it is over");
+        assert!(!snapshot.can_cancel, "a finished install has nothing to cancel");
+        assert_eq!(backend.poll_install(), None, "without progress there is nothing to poll");
+    }
+    assert_ne!(snapshot.outcome, InstallOutcome::InProgress, "the install ended");
+    if !caps.cancel_install {
+        assert_eq!(backend.cancel_install(), None, "a backend that cannot cancel never reports a cancel");
+    }
+    snapshot
+}
+
+/// Switching or removing a source that does not exist says so, instead of looking as if it worked.
+pub fn missing_sources_fail(backend: &mut impl ScreenData) {
+    let missing = "no-such-source";
+    assert!(!backend.feeds().iter().any(|feed| feed.name == missing));
+    assert!(backend.toggle_feed(missing).is_err(), "switching a source that is not there fails");
+    assert!(backend.remove_feed(missing).is_err(), "removing a source that is not there fails");
+}
+
+/// What the backend says it can and cannot do is what it does: what is not built fails with a
+/// reason rather than pretending, and what is claimed works.
+pub fn features_match_capabilities(backend: &mut impl ScreenData, site: &str) {
+    let caps = backend.capabilities();
+    let copied = backend.copy_report("contract");
+    assert_eq!(copied.is_ok(), caps.copy_report, "copying a report works exactly where it is claimed: {copied:?}");
+    let password = backend.set_public_access(site, &PublicAccess { require_password: true });
+    assert_eq!(password.is_ok(), caps.site_password, "a site password works exactly where it is claimed: {password:?}");
+    assert_eq!(backend.set_public_access(site, &PublicAccess { require_password: false }), Ok(()));
+}

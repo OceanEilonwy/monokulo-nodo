@@ -157,12 +157,15 @@ enum Power {
 fn power_off(tx: Sender<Power>) {
     thread::spawn(move || {
         let result = nodo_power::request_poweroff(Path::new(nodo_power::SOCKET), |e| {
+            // Ignored, as below: a send fails only once the screen has stopped listening.
+            #[allow(clippy::let_underscore_must_use)]
             let _ = tx.send(Power::Event(e));
         });
         let error = result.err().map(|e| format!("cannot reach the shutdown service ({e})"));
         if let Some(error) = &error {
             log(error);
         }
+        #[allow(clippy::let_underscore_must_use)]
         let _ = tx.send(Power::Closed(error));
     });
 }
@@ -332,7 +335,9 @@ impl Runtime {
             let (Some(panel), Some(state)) = (self.app.offered(key), self.app.states.get(key)) else { continue };
             if state.next_due <= now && !self.in_flight.contains(key) && *key != state::logo_key() {
                 self.in_flight.insert(key.clone());
-                let _ = self.jobs.send(Job { panel: panel.clone(), history: state.history() });
+                if self.jobs.send(Job { panel: panel.clone(), history: state.history() }).is_err() {
+                    log("the panel worker has stopped, so panels no longer refresh");
+                }
             }
         }
         while let Ok(done) = self.done.try_recv() {
@@ -603,7 +608,9 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
             };
             show();
             if quit {
-                let _ = slint::quit_event_loop();
+                if let Err(e) = slint::quit_event_loop() {
+                    log(&format!("could not stop the event loop: {e}"));
+                }
             }
         });
     }

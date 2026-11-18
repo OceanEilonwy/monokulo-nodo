@@ -1,0 +1,45 @@
+//! The TUI's `HelperBackend`, talking to this helper's real request handler over a socket, passes
+//! the same scenarios as the `MockBackend` the TUI's tests drive (`nodo_tui::contract`). Together
+//! with the TUI's test that the mock's capabilities equal `HelperBackend::CAPABILITIES`, a TUI
+//! test cannot pass on behaviour the device does not have.
+
+use std::os::unix::net::UnixListener;
+use std::sync::Arc;
+
+use nodo_tui::contract;
+use nodo_tui::helper_backend::HelperBackend;
+use nodo_tui::model::{InstallOutcome, PackageId, ScreenData};
+
+use super::{setup, FEED};
+use crate::helper::AllowedUids;
+use crate::server::serve;
+
+/// The TUI's backend, connected to a helper from `setup` that serves on a socket in `dir`.
+fn connected(dir: &tempfile::TempDir) -> HelperBackend {
+    let (mut h, _packages) = setup();
+    h.allowed = AllowedUids::new([rustix::process::geteuid().as_raw()]);
+    let path = dir.path().join("helper.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let h = Arc::new(h);
+    std::thread::spawn(move || serve(listener, h));
+    HelperBackend::connect(&path).unwrap()
+}
+
+#[test]
+fn the_tui_installs_through_the_helper_as_the_mock_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut backend = connected(&dir);
+    let probe = backend.probe_feed(FEED).unwrap();
+    backend.trust_feed(&probe).unwrap();
+    let done = contract::install(&mut backend, &PackageId::new(&probe.name, "demo"));
+    assert_eq!(done.outcome, InstallOutcome::Succeeded, "{done:?}");
+    assert!(!done.can_cancel);
+}
+
+#[test]
+fn the_tui_hears_the_helper_refuse_what_the_mock_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut backend = connected(&dir);
+    contract::missing_sources_fail(&mut backend);
+    contract::features_match_capabilities(&mut backend, "demo");
+}

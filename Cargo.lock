@@ -3027,6 +3027,7 @@ dependencies = [
  "nodo-install",
  "nodo-manifest",
  "nodo-settings",
+ "nodo-tui",
  "nodo-update",
  "nodo-web",
  "pbkdf2",

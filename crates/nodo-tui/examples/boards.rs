@@ -8,7 +8,6 @@
 //!
 //! Writes `<slug>.dc.html` for each scene at 120x36, and `<slug>-80x24.dc.html` for a few.
 
-use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use nodo_tui::proposal::{self, Scene};
@@ -115,7 +114,7 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
                 let layers: Vec<String> =
                     parts.iter().map(|(pos, size)| format!("linear-gradient({fg},{fg}) {pos} / {size} no-repeat")).collect();
                 let css = format!("width:{}px;background:{},{bg}", (f32::from(cells) * FONT_PX * 0.6).round(), layers.join(","));
-                let _ = write!(out, "<span style=\"{css}\"></span>");
+                out.push_str(&format!("<span style=\"{css}\"></span>"));
                 continue;
             }
             let (class, inner) = if text == "\u{E0B6}" {
@@ -125,7 +124,7 @@ fn grid(buffer: &Buffer, theme: &Theme) -> String {
             } else {
                 ("", escape(&text))
             };
-            let _ = write!(out, "<span{class} style=\"{css}\">{inner}</span>");
+            out.push_str(&format!("<span{class} style=\"{css}\">{inner}</span>"));
         }
         out.push_str("</div>");
     }

@@ -1,4 +1,8 @@
 //! A stateful in-memory device with the design's sample data, for `--mock` and for tests.
+//!
+//! By default it can do what `HelperBackend` can and no more, so a test cannot pass on behaviour
+//! the device does not have. What tests need beyond that, such as failures, slowness or stepped
+//! installs, is switched on through [`TestKnobs`], so each test that uses it says so.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -50,6 +54,44 @@ struct InstallJob {
     fails_at_end: bool,
 }
 
+/// How many steps an install shows, from `install_snapshot`.
+const INSTALL_STEPS: usize = 8;
+
+/// Behaviour the real device does not have by default, for tests that need it. All of it starts
+/// off, matching `HelperBackend`; a test switches on only what it exercises.
+#[derive(Debug, Clone)]
+pub struct TestKnobs {
+    /// What the mock says it can do, and does. Starts as `HelperBackend::CAPABILITIES`; a test
+    /// may raise it to drive the screens for a backend that can do more, such as stepped installs.
+    pub capabilities: Capabilities,
+    /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
+    pub delay: Option<std::time::Duration>,
+    /// Makes applying a site's protections fail, to exercise that failure path.
+    pub fail_public_access: bool,
+    /// Makes a USB restore fail with this reason, as a pulled drive would.
+    pub restore_failure: Option<String>,
+    /// Makes reading the provider catalog fail with this reason.
+    pub providers_failure: Option<String>,
+    /// Makes checking for updates and refreshing, switching or removing a source fail with this.
+    pub feeds_failure: Option<String>,
+    /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
+    pub radios_failure: Option<String>,
+}
+
+impl Default for TestKnobs {
+    fn default() -> Self {
+        Self {
+            capabilities: crate::helper_backend::HelperBackend::CAPABILITIES,
+            delay: None,
+            fail_public_access: false,
+            restore_failure: None,
+            providers_failure: None,
+            feeds_failure: None,
+            radios_failure: None,
+        }
+    }
+}
+
 pub struct MockBackend {
     /// Every `Backend` request received, so tests can assert what would reach the helper.
     pub calls: Vec<Request>,
@@ -66,30 +108,20 @@ pub struct MockBackend {
     /// The connected provider accounts, as the helper would report them.
     pub connected: Vec<ConnectedProvider>,
     pub auto_update: AutoUpdatePrefs,
-    /// Makes applying a site's protections fail, to exercise that failure path.
-    pub fail_public_access: bool,
+    /// Test-only behaviour, all off by default. See [`TestKnobs`].
+    pub knobs: TestKnobs,
     /// First boot: no device passphrase yet.
     pub setup_needed: bool,
     /// The helper lost the device key, as after a restart, with no app waiting for it.
     pub key_locked: bool,
     pub ssh_keys: Vec<nodo_api::SshKey>,
-    /// Makes every helper call this slow, to show the screen stays responsive meanwhile.
-    pub delay: Option<std::time::Duration>,
     /// The node's onion service.
     pub node_onion: nodo_api::NodeOnion,
     pub rollbacks: Vec<nodo_api::RollbackOption>,
     /// Update events, including failed updates that were rolled back.
     pub update_history: Vec<nodo_api::UpdateEvent>,
-    /// Makes a USB restore fail with this reason, as a pulled drive would.
-    pub restore_failure: Option<String>,
-    /// Makes reading the provider catalog fail with this reason.
-    pub providers_failure: Option<String>,
-    /// Makes checking for updates and refreshing, switching or removing a source fail with this.
-    pub feeds_failure: Option<String>,
     /// Updates the next check finds, as a feed publishing new versions would.
     pub published: Vec<UpdateItem>,
-    /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
-    pub radios_failure: Option<String>,
     pub wifi: nodo_api::WifiStatus,
     /// Networks in range, with the passphrase each accepts.
     pub access_points: Vec<(nodo_api::WifiNetwork, String)>,
@@ -148,10 +180,9 @@ impl MockBackend {
                 problem: None,
             }],
             auto_update: sample_auto_update(),
-            fail_public_access: false,
+            knobs: TestKnobs::default(),
             setup_needed: false,
             key_locked: false,
-            delay: None,
             ssh_keys: vec![nodo_api::SshKey {
                 algorithm: s("ssh-ed25519"),
                 fingerprint: s("SHA256:mockmockmockmockmockmockmockmockmockmockmo"),
@@ -185,11 +216,7 @@ impl MockBackend {
                 to: s("1.3.0_1"),
                 kind: nodo_api::UpdateEventKind::RolledBack { reason: s("bell did not pass its health check") },
             }],
-            restore_failure: None,
-            providers_failure: None,
-            feeds_failure: None,
             published: Vec::new(),
-            radios_failure: None,
             wifi: sample_wifi(),
             access_points: sample_access_points(),
             bluetooth: sample_bluetooth(),
@@ -218,6 +245,36 @@ impl MockBackend {
             })
             .collect();
         nodo_api::OnionStatus { tor_installed: true, tor_running: true, node: Some(self.node_onion.clone()), sites }
+    }
+
+    /// A mock whose installs report their steps as they go and can be cancelled, which the helper
+    /// cannot do. For tests of those screens only.
+    pub fn with_stepped_installs() -> Self {
+        let mut mock = Self::new();
+        mock.knobs.capabilities.install_progress = true;
+        mock.knobs.capabilities.cancel_install = true;
+        mock
+    }
+
+    /// The end of an install: every step done and the package installed, or the last step
+    /// failed and what it added removed.
+    fn finish_install(&mut self, id: &PackageId, version: &str, fails: bool) -> InstallSnapshot {
+        if fails {
+            let mut snapshot = install_snapshot(id, version, INSTALL_STEPS - 1);
+            snapshot.steps[INSTALL_STEPS - 1].state = StepState::Failed;
+            snapshot.outcome = InstallOutcome::Failed(s("Health check failed. What this install added has been removed."));
+            return snapshot;
+        }
+        let mut snapshot = install_snapshot(id, version, INSTALL_STEPS);
+        snapshot.outcome = InstallOutcome::Succeeded;
+        if let Some(pkg) = self.catalog.iter_mut().find(|pkg| &pkg.id == id) {
+            pkg.status = PackageStatus::Installed;
+        }
+        if !self.auto_update.packages.iter().any(|entry| entry.name == id.name) {
+            let third_party = id.feed != "official" && id.feed != "monokulo";
+            self.auto_update.packages.push(AutoUpdateEntry::new(&id.name, &id.feed, third_party, "Installed just now"));
+        }
+        snapshot
     }
 
     /// The data drive scenario: the node cannot start and everything else waits for it.
@@ -366,7 +423,7 @@ pub fn sample_bluetooth() -> nodo_api::BluetoothStatus {
 
 impl Backend for MockBackend {
     fn call(&mut self, request: Request) -> Result<Response, ApiError> {
-        if let Some(delay) = self.delay {
+        if let Some(delay) = self.knobs.delay {
             std::thread::sleep(delay);
         }
         self.calls.push(request.clone());
@@ -495,8 +552,8 @@ impl Backend for MockBackend {
                 Ok(Response::Ok)
             }
             Request::ListRollbacks => Ok(Response::Rollbacks(self.rollbacks.clone())),
-            Request::WifiStatus | Request::BluetoothStatus if self.radios_failure.is_some() => {
-                Err(ApiError::Failed(self.radios_failure.clone().unwrap_or_default()))
+            Request::WifiStatus | Request::BluetoothStatus if self.knobs.radios_failure.is_some() => {
+                Err(ApiError::Failed(self.knobs.radios_failure.clone().unwrap_or_default()))
             }
             Request::WifiStatus => Ok(Response::Wifi(self.wifi.clone())),
             Request::SetWifiEnabled { enabled } => {
@@ -613,6 +670,10 @@ impl Backend for MockBackend {
 }
 
 impl ScreenData for MockBackend {
+    fn capabilities(&self) -> Capabilities {
+        self.knobs.capabilities
+    }
+
     fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
         Ok(vec![
             nodo_api::BackupInfo { name: s("nodo-1762560000.nodobak"), size_bytes: 4_812_300, created: 1_762_560_000 },
@@ -716,7 +777,7 @@ impl ScreenData for MockBackend {
         new_device_passphrase: Option<&Secret>,
         typed: &str,
     ) -> Result<nodo_api::RestoreReport, String> {
-        if let Some(reason) = &self.restore_failure {
+        if let Some(reason) = &self.knobs.restore_failure {
             return Err(reason.clone());
         }
         let report = self.restore_backup(name, passphrase, new_device_passphrase, typed)?;
@@ -889,7 +950,7 @@ impl ScreenData for MockBackend {
     fn start_install(
         &mut self,
         id: &PackageId,
-        _approval: Option<&nodo_api::PermissionApproval>,
+        approval: Option<&nodo_api::PermissionApproval>,
         _passphrase: Option<&Secret>,
     ) -> Result<InstallSnapshot, String> {
         let version = self
@@ -898,17 +959,27 @@ impl ScreenData for MockBackend {
             .find(|pkg| &pkg.id == id)
             .map(|pkg| pkg.version.clone())
             .ok_or_else(|| format!("unknown package {}", id.name))?;
-        let snapshot = install_snapshot(id, &version, 0);
-        self.job = Some(InstallJob {
-            snapshot: snapshot.clone(),
-            current: 0,
-            polls: 0,
-            fails_at_end: id.name == "paywall-relay",
-        });
+        // The helper's rule: an install quotes the review it follows, or nothing installs.
+        let approval = approval.ok_or("Review what the package asks for first.")?;
+        let pkgver = format!("{}-{version}", id.name);
+        if approval.pkgver != pkgver {
+            return Err(format!("Not installed: the approval was for {}, not {pkgver}", approval.pkgver));
+        }
+        let fails = id.name == "paywall-relay";
+        if !self.knobs.capabilities.install_progress {
+            // As the helper does: one request that answers once the install is over.
+            return Ok(self.finish_install(id, &version, fails));
+        }
+        let mut snapshot = install_snapshot(id, &version, 0);
+        snapshot.can_cancel = self.knobs.capabilities.cancel_install;
+        self.job = Some(InstallJob { snapshot: snapshot.clone(), current: 0, polls: 0, fails_at_end: fails });
         Ok(snapshot)
     }
 
     fn poll_install(&mut self) -> Option<InstallSnapshot> {
+        if !self.knobs.capabilities.install_progress {
+            return None;
+        }
         let job = self.job.as_mut()?;
         if job.snapshot.outcome != InstallOutcome::InProgress {
             return Some(job.snapshot.clone());
@@ -919,39 +990,26 @@ impl ScreenData for MockBackend {
         }
         job.polls = 0;
         job.current += 1;
-        let total = job.snapshot.steps.len();
-        let id = job.snapshot.id.clone();
-        let version = job.snapshot.version.clone();
-        if job.fails_at_end && job.current == total {
-            job.snapshot.steps[total - 1].state = StepState::Failed;
-            job.snapshot.outcome =
-                InstallOutcome::Failed(s("Health check failed. What this install added has been removed."));
+        let (id, version, current, fails) =
+            (job.snapshot.id.clone(), job.snapshot.version.clone(), job.current, job.fails_at_end);
+        let mut snapshot = if current == INSTALL_STEPS {
+            self.finish_install(&id, &version, fails)
         } else {
-            job.snapshot = install_snapshot(&id, &version, job.current);
-            if job.current == total {
-                job.snapshot.outcome = InstallOutcome::Succeeded;
-                if let Some(pkg) = self.catalog.iter_mut().find(|pkg| pkg.id == id) {
-                    pkg.status = PackageStatus::Installed;
-                }
-                if !self.auto_update.packages.iter().any(|entry| entry.name == id.name) {
-                    let third_party = id.feed != "official" && id.feed != "monokulo";
-                    self.auto_update.packages.push(AutoUpdateEntry::new(
-                        &id.name,
-                        &id.feed,
-                        third_party,
-                        "Installed just now",
-                    ));
-                }
-            }
+            install_snapshot(&id, &version, current)
+        };
+        snapshot.can_cancel = snapshot.outcome == InstallOutcome::InProgress && self.knobs.capabilities.cancel_install;
+        if let Some(job) = self.job.as_mut() {
+            job.snapshot = snapshot.clone();
         }
-        Some(job.snapshot.clone())
+        Some(snapshot)
     }
 
     fn cancel_install(&mut self) -> Option<InstallSnapshot> {
-        let job = self.job.as_mut()?;
-        job.snapshot.outcome = InstallOutcome::Cancelled;
-        let snapshot = job.snapshot.clone();
-        self.job = None;
+        if !self.knobs.capabilities.cancel_install {
+            return None;
+        }
+        let mut snapshot = self.job.take()?.snapshot;
+        snapshot.outcome = InstallOutcome::Cancelled;
         Some(snapshot)
     }
 
@@ -996,7 +1054,7 @@ impl ScreenData for MockBackend {
     }
 
     fn refresh_feeds(&mut self) -> Result<(), String> {
-        self.feeds_failure.clone().map_or(Ok(()), Err)?;
+        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
         for feed in &mut self.feeds {
             if feed.status == FeedStatus::Healthy {
                 feed.checked = s("just now");
@@ -1006,18 +1064,26 @@ impl ScreenData for MockBackend {
     }
 
     fn toggle_feed(&mut self, name: &str) -> Result<(), String> {
-        self.feeds_failure.clone().map_or(Ok(()), Err)?;
-        if let Some(feed) = self.feeds.iter_mut().find(|feed| feed.name == name) {
-            feed.status = match feed.status {
-                FeedStatus::Disabled => FeedStatus::Healthy,
-                _ => FeedStatus::Disabled,
-            };
-        }
+        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
+        // The helper's words, from helper_manage::toggle_feed.
+        let feed = self
+            .feeds
+            .iter_mut()
+            .find(|feed| feed.name == name)
+            .ok_or_else(|| format!("there is no source called {name}"))?;
+        feed.status = match feed.status {
+            FeedStatus::Disabled => FeedStatus::Healthy,
+            _ => FeedStatus::Disabled,
+        };
         Ok(())
     }
 
     fn remove_feed(&mut self, name: &str) -> Result<(), String> {
-        self.feeds_failure.clone().map_or(Ok(()), Err)?;
+        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
+        if !self.feeds.iter().any(|feed| feed.name == name) {
+            // What the helper answers for a feed it does not have.
+            return Err(ApiError::NotFound(format!("feed {name}")).to_string());
+        }
         self.feeds.retain(|feed| feed.name != name);
         Ok(())
     }
@@ -1053,22 +1119,9 @@ impl ScreenData for MockBackend {
         self.forms.get(package).cloned()
     }
 
+    /// The helper's own explanation: it names no field to blame.
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
-        RollbackExplanation {
-            steps: vec![
-                (true, s("Settings validated and saved")),
-                (true, s("Service restarted")),
-                (false, s("Health check failed after 30 seconds")),
-                (true, s("Previous settings restored, service healthy")),
-            ],
-            headline: s(reason),
-            hint: if reason.contains(CLASHING_PORT) {
-                format!("API port {CLASHING_PORT} is used by monero-daemon. Pick a different port.")
-            } else {
-                format!("Read the {package} log for more detail.")
-            },
-            blamed_field: reason.contains(CLASHING_PORT).then(|| s("api_port")),
-        }
+        crate::helper_backend::rollback_explanation(package, reason)
     }
 
     fn updates(&self) -> Vec<UpdateItem> {
@@ -1076,7 +1129,7 @@ impl ScreenData for MockBackend {
     }
 
     fn check_updates(&mut self) -> Result<(), String> {
-        self.feeds_failure.clone().map_or(Ok(()), Err)?;
+        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
         self.updates.append(&mut self.published);
         Ok(())
     }
@@ -1092,14 +1145,23 @@ impl ScreenData for MockBackend {
         Some(review)
     }
 
-    fn apply_updates(&mut self, names: &[String], _approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport {
+    fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport {
         let mut results = Vec::new();
         let mut failure = None;
         for name in names {
             let Some(item) = self.updates.iter().find(|item| &item.name == name).cloned() else {
                 continue;
             };
-            if name == "moneropay" {
+            let approved = approvals.iter().any(|(n, _)| n == name);
+            if matches!(item.note, UpdateNote::NewPermission(_)) && !approved {
+                // The helper's refusal, from nodo-helper's updates.rs.
+                results.push(UpdateResult {
+                    name: name.clone(),
+                    applied: false,
+                    version: format!("still on {}", item.from),
+                    note: s("it asks for new permissions, which need your approval"),
+                });
+            } else if name == "moneropay" {
                 results.push(UpdateResult {
                     name: name.clone(),
                     applied: false,
@@ -1155,7 +1217,8 @@ impl ScreenData for MockBackend {
         self.apply_updates(names, approvals)
     }
 
-    fn set_held(&mut self, name: &str, held: bool) {
+    fn set_held(&mut self, name: &str, held: bool) -> Result<(), String> {
+        // As with the helper, an app with no update waiting has nothing to hold.
         if let Some(item) = self.updates.iter_mut().find(|item| item.name == name) {
             item.held = held;
             if held {
@@ -1165,6 +1228,7 @@ impl ScreenData for MockBackend {
                 item.note = UpdateNote::Ready;
             }
         }
+        Ok(())
     }
 
     fn auto_update(&self) -> AutoUpdatePrefs {
@@ -1179,6 +1243,10 @@ impl ScreenData for MockBackend {
     }
 
     fn copy_report(&mut self, subject: &str) -> Result<String, String> {
+        if !self.knobs.capabilities.copy_report {
+            // The helper's answer, from HelperBackend::copy_report.
+            return Err(s("Copying reports is not available yet."));
+        }
         Ok(format!("Mock device: the {subject} report was not copied anywhere."))
     }
 
@@ -1277,7 +1345,7 @@ impl ScreenData for MockBackend {
     }
 
     fn providers(&self) -> Result<Vec<Provider>, String> {
-        match &self.providers_failure {
+        match &self.knobs.providers_failure {
             Some(reason) => Err(reason.clone()),
             None => Ok(sample_providers()),
         }
@@ -1437,7 +1505,11 @@ impl ScreenData for MockBackend {
     }
 
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String> {
-        if self.fail_public_access {
+        if access.require_password && !self.knobs.capabilities.site_password {
+            // The helper's answer, from HelperBackend::set_public_access.
+            return Err(s("A password in front of a site is not available yet. Turn it off to go public."));
+        }
+        if self.knobs.fail_public_access {
             return Err(s("Could not apply the site's protections."));
         }
         self.public_access.insert(s(site), access.clone());
@@ -1472,12 +1544,9 @@ impl ScreenData for MockBackend {
         Ok(())
     }
 
+    /// Only what the helper can give; everything else says it is not available, as there.
     fn document(&self, kind: &DocKind) -> Document {
         match kind {
-            DocKind::Changelog(name) => Document {
-                title: format!("{name} changelog"),
-                lines: vec![s("Fixes and small improvements. See the publisher's notes for details.")],
-            },
             DocKind::AutoUpdateHistory => Document {
                 title: s("Auto-update history"),
                 lines: vec![
@@ -1485,62 +1554,11 @@ impl ScreenData for MockBackend {
                     s("26 October 03:08  monokulo-pay 1.3.2 → 1.4.0  applied"),
                 ],
             },
-            DocKind::Versions(name) => Document {
-                title: format!("{name} versions"),
-                lines: self
-                    .catalog
-                    .iter()
-                    .filter(|pkg| &pkg.id.name == name)
-                    .map(|pkg| format!("{}  from the {} feed", pkg.version, pkg.id.feed))
-                    .collect(),
-            },
-            DocKind::FileList(name) => Document {
-                title: format!("{name} files"),
-                lines: vec![
-                    format!("/opt/nodo/apps/{name}/bin/{name}"),
-                    format!("/opt/nodo/apps/{name}/manifest.toml"),
-                ],
-            },
-            DocKind::InstallLog(name) => Document {
-                title: format!("{name} install log"),
-                lines: vec![
-                    s("verified signature with the pinned key"),
-                    s("no root scripts, all paths allowed"),
-                ],
-            },
             DocKind::FeedPackages(name) => Document {
                 title: format!("Packages in {name}"),
                 lines: vec![s("hash-tools"), s("peer-map"), s("block-stats")],
             },
-            DocKind::ProviderKeys(name) => Document {
-                title: format!("{name} API keys"),
-                lines: vec![
-                    format!("Sign in to your {name} account and open its API settings."),
-                    s("Create a key limited to DNS for this domain, then paste both values here."),
-                ],
-            },
-            DocKind::RouterGuides => Document {
-                title: s("Router guides"),
-                lines: vec![
-                    s("Open your router's admin page and find Port Forwarding, NAT or Virtual Servers."),
-                    s("Add the two TCP rules shown, then run the check again."),
-                ],
-            },
-            DocKind::PublicIpFromIsp => Document {
-                title: s("Ask your ISP for a public IP"),
-                lines: vec![
-                    s("Ask for a public or static IPv4 address, and say that you are behind CGNAT."),
-                    s("Some ISPs offer it free or as an add-on."),
-                ],
-            },
-            DocKind::Ipv6 => Document {
-                title: s("Use IPv6"),
-                lines: vec![s("If your ISP provides IPv6, only IPv6 visitors can reach you this way.")],
-            },
-            DocKind::RelayTunnel => Document {
-                title: s("Connect your own relay tunnel"),
-                lines: vec![s("This needs a server you control, with its own public address.")],
-            },
+            other => crate::helper_backend::unavailable_document(other),
         }
     }
 }
@@ -1661,12 +1679,16 @@ fn sample_review(id: &PackageId, version: &str) -> ReviewData {
         id: id.clone(),
         version: s(version),
         third_party,
-        asks,
         guarantees: vec![
             s("Cannot read other packages' data or secrets"),
             s("Cannot run setup scripts as root or replace system packages"),
         ],
-        approval: None,
+        // What the helper's review carries, which the install must quote back.
+        approval: Some(nodo_api::PermissionApproval {
+            pkgver: format!("{}-{version}", id.name),
+            permissions: asks.iter().map(|ask| ask.text.clone()).collect(),
+        }),
+        asks,
         needs_passphrase: false,
     }
 }
@@ -1712,7 +1734,8 @@ pub fn install_snapshot(id: &PackageId, version: &str, working: usize) -> Instal
             vec![s("fetching and checking the package")]
         },
         outcome: InstallOutcome::InProgress,
-        can_cancel: true,
+        // Only a backend that can cancel sets this, as `MockBackend::start_install` does.
+        can_cancel: false,
     }
 }
 

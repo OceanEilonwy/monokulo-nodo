@@ -225,6 +225,12 @@ fn check_label(id: &str, status: nodo_api::CheckStatus) -> &'static str {
 }
 
 impl HelperBackend {
+    /// What the helper can do. Its install is one request that answers when the install is over,
+    /// so there are no steps to poll and nothing to cancel; reports are not copied anywhere yet,
+    /// and a password in front of a site is not built. Raise these only with the helper.
+    pub const CAPABILITIES: Capabilities =
+        Capabilities { install_progress: false, cancel_install: false, copy_report: false, site_password: false };
+
     /// Certificate rows keyed like the sites, and the ACME choices. Empty when the helper is too
     /// old to report them, so nothing is invented.
     fn certificates(&self) -> (Vec<CertRow>, AcmeView) {
@@ -353,6 +359,10 @@ impl Backend for HelperBackend {
 }
 
 impl ScreenData for HelperBackend {
+    fn capabilities(&self) -> Capabilities {
+        Self::CAPABILITIES
+    }
+
     fn overview(&self) -> Overview {
         // A snapshot starts here, so earlier reasons are dropped and gathered again.
         self.unavailable.borrow_mut().clear();
@@ -543,16 +553,7 @@ impl ScreenData for HelperBackend {
     }
 
     fn explain_rollback(&self, package: &str, reason: &str) -> RollbackExplanation {
-        RollbackExplanation {
-            steps: vec![
-                (true, "New settings checked and saved".to_owned()),
-                (false, format!("{package} did not come back healthy")),
-                (true, "Old settings restored".to_owned()),
-            ],
-            headline: format!("{package} failed with the new settings, so the old ones were put back."),
-            hint: reason.to_owned(),
-            blamed_field: None,
-        }
+        rollback_explanation(package, reason)
     }
 
     fn updates(&self) -> Vec<UpdateItem> {
@@ -584,8 +585,8 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::system_note(self)
     }
 
-    fn set_held(&mut self, name: &str, held: bool) {
-        crate::helper_manage::set_held(self, name, held);
+    fn set_held(&mut self, name: &str, held: bool) -> Result<(), String> {
+        crate::helper_manage::set_held(self, name, held)
     }
 
     fn auto_update(&self) -> AutoUpdatePrefs {
@@ -945,10 +946,7 @@ impl ScreenData for HelperBackend {
     }
 
     fn document(&self, kind: &DocKind) -> Document {
-        if let Some(doc) = crate::helper_manage::document(self, kind) {
-            return doc;
-        }
-        Document { title: format!("{kind:?}"), lines: vec!["Not available yet.".to_owned()] }
+        crate::helper_manage::document(self, kind).unwrap_or_else(|| unavailable_document(kind))
     }
 
     fn ssh_keys(&self) -> Result<Vec<nodo_api::SshKey>, String> {
@@ -1057,6 +1055,28 @@ impl ScreenData for HelperBackend {
             None => SiteId { package: key.to_owned(), site: key.to_owned() },
         }
     }
+}
+
+/// What a settings rollback looked like, from the helper's reason alone: it names no field to
+/// blame. Public so the mock explains a rollback exactly as the device does.
+pub fn rollback_explanation(package: &str, reason: &str) -> RollbackExplanation {
+    RollbackExplanation {
+        steps: vec![
+            (true, "New settings checked and saved".to_owned()),
+            (false, format!("{package} did not come back healthy")),
+            (true, "Old settings restored".to_owned()),
+        ],
+        // The screens quote the headline as what the app said, so it is the reason itself.
+        headline: reason.to_owned(),
+        hint: format!("Read the {package} log for more detail."),
+        blamed_field: None,
+    }
+}
+
+/// A document the helper cannot give: only the update history and a feed's packages exist.
+/// Public so the mock shows the same.
+pub fn unavailable_document(kind: &DocKind) -> Document {
+    Document { title: format!("{kind:?}"), lines: vec!["Not available yet.".to_owned()] }
 }
 
 fn failed_overview(reason: String) -> Overview {

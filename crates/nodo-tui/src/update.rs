@@ -673,7 +673,11 @@ fn overlay_key(app: &mut App, key: KeyEvent) {
 fn on_tick(app: &mut App) -> Vec<Effect> {
     app.ticks += 1;
     match &app.screen {
-        Screen::Installing(snapshot) if snapshot.outcome == InstallOutcome::InProgress => {
+        // Only a backend that reports progress is polled. The helper's install answers once it
+        // is over, and polling it would only queue behind that answer.
+        Screen::Installing(snapshot)
+            if snapshot.outcome == InstallOutcome::InProgress && app.data.capabilities.install_progress =>
+        {
             vec![Effect::PollInstall]
         }
         Screen::Logs(state) if state.follow && app.ticks % (2 * TICKS_PER_SECOND) == 0 => app
@@ -2529,9 +2533,12 @@ fn on_unlock_result(app: &mut App, result: Result<Response, ApiError>) -> Vec<Ef
 }
 
 fn on_install_progress(app: &mut App, snapshot: Option<InstallSnapshot>) {
-    let Some(snapshot) = snapshot else {
+    let Some(mut snapshot) = snapshot else {
         return;
     };
+    // The page offers a cancel only where the backend says it can cancel at all, whatever one
+    // snapshot claims.
+    snapshot.can_cancel &= app.data.capabilities.cancel_install;
     match snapshot.outcome {
         InstallOutcome::Cancelled => {
             if matches!(app.screen, Screen::Installing(_)) {

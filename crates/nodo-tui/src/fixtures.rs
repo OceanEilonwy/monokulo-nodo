@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::Exposure;
 
 use crate::app::*;
-use crate::mock::{install_snapshot, reachability_checks, sample_references, MockBackend};
+use crate::mock::{reachability_checks, sample_references, MockBackend};
 use crate::model::*;
 use crate::runtime::load_snapshot;
 use crate::secret::Input;
@@ -154,9 +154,8 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             };
             Screen::Review(ReviewState::new(data, ReviewPurpose::Install))
         }
-        ScreenId::Installing => {
-            Screen::Installing(install_snapshot(&PackageId::new("official", "moneropay"), "2.7.0", 4))
-        }
+        // What the device shows while the helper installs: it reports no steps until it is over.
+        ScreenId::Installing => Screen::Installing(InstallSnapshot::starting(&PackageId::new("official", "moneropay"), "2.7.0")),
         ScreenId::Unlock => {
             let mut input = Input::secret();
             "twelve chars".chars().for_each(|c| input.push(c));
@@ -199,7 +198,8 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 package: "moneropay".to_owned(),
                 explanation: mock.explain_rollback("moneropay", reason),
                 rows: vec![
-                    DraftRow { label: "API port".to_owned(), from: "5000".to_owned(), to: "18081".to_owned(), blamed: true },
+                    // The helper names no field to blame, so none is marked.
+                    DraftRow { label: "API port".to_owned(), from: "5000".to_owned(), to: "18081".to_owned(), blamed: false },
                     DraftRow { label: "Log level".to_owned(), from: "info".to_owned(), to: "debug".to_owned(), blamed: false },
                 ],
             })
