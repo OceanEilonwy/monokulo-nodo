@@ -203,14 +203,18 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         let label = if index == state.selected { format!("▸ {}{changed_mark}", field.label) } else { format!("  {}", field.label) };
         let picker = field.kind.takes_reference();
         let aside = if picker { vec![t.a(PICK)] } else { Vec::new() };
-        setting_aside(&mut card, t, &label, control(t, state, index), aside, hint(t, state, index));
-        screen.targets.push(Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) }));
-        if picker {
-            screen.targets.push(Target::text(PICK, Click::Pick { index, then: Some(KeyCode::F(4)) }));
+        // The targets go with their rows, so a field scrolled out of view takes its targets along
+        // instead of leaving its "+ reference" to be found at another field's.
+        let rows = setting_aside(&mut card, t, &label, control(t, state, index), aside, hint(t, state, index));
+        card.on_row(rows.label, [Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) })]);
+        if let (true, Some(row)) = (picker, rows.aside) {
+            card.on_row(row, [Target::text(PICK, Click::Pick { index, then: Some(KeyCode::F(4)) })]);
         }
         if let Some(undo) = state.undo_for(index) {
             let text = format!("↺ {}", undo.label);
-            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Ctrl('z'), &mut screen.targets);
+            let (row, mut targets) = (card.next_row(), Vec::new());
+            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Ctrl('z'), &mut targets);
+            card.on_row(row, targets);
             card.blank(t);
         }
         if index == state.selected && state.editor.as_ref().is_some_and(|e| !e.suggestions_closed && e.completing().is_some()) {
@@ -218,20 +222,25 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         }
         if index == state.selected {
             if let Some(menu) = &state.chip_menu {
-                chip_menu_rows(&mut card, t, state, menu, &mut screen.targets);
+                let mut targets = Vec::new();
+                chip_menu_rows(&mut card, t, state, menu, &mut targets);
+                // The actions' row: the last before the menu's closing blank.
+                card.on_row(card.next_row().saturating_sub(2), targets);
             }
         }
     }
     let broken = state.broken();
     let mut targets = Vec::new();
     let buttons = [("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Ctrl('s'))];
+    let at = card.next_row();
     if broken > 0 {
         let plural = if broken == 1 { "reference" } else { "references" };
         card.note_then_buttons(t, vec![t.e(format!("Fix {broken} broken {plural} to save"))], &buttons, &mut targets);
     } else {
         card.buttons(t, &buttons, &mut targets);
     }
-    screen.targets.extend(targets);
+    // Fitting always keeps the buttons, so any of their rows will do.
+    card.on_row(at, targets);
     let keys = if state.chip_menu.is_some() {
         "Keys: ←→ choose  ↵ do it  r replace  t type  x remove  Esc close"
     } else if state.editor.as_ref().is_some_and(|e| e.completing().is_some() && !e.suggestions_closed) {

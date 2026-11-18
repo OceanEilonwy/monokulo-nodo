@@ -113,7 +113,12 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
         Effect::CheckInstall(id) => vec![Event::GateLoaded(backend.install_gate(&id))],
         Effect::StartInstall { id, approval, passphrase } => match backend.start_install(&id, approval.as_ref(), passphrase.as_ref()) {
             Ok(snapshot) => vec![Event::InstallProgress(Some(snapshot))],
-            Err(text) => vec![Event::Failed(text)],
+            // As an outcome, so the install page that is already showing ends with the reason.
+            Err(text) => {
+                let mut snapshot = InstallSnapshot::starting(&id, "");
+                snapshot.outcome = InstallOutcome::Failed(text);
+                vec![Event::InstallProgress(Some(snapshot))]
+            }
         },
         Effect::PollInstall => vec![Event::InstallProgress(backend.poll_install())],
         Effect::CancelInstall => vec![Event::InstallProgress(backend.cancel_install()), refresh(backend)],
@@ -123,16 +128,16 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             vec![Event::FeedTrusted(result), refresh(backend)]
         }
         Effect::RefreshFeeds => {
-            backend.refresh_feeds();
-            vec![refresh(backend)]
+            let result = backend.refresh_feeds();
+            failed_then_refresh(backend, result)
         }
         Effect::ToggleFeed(name) => {
-            backend.toggle_feed(&name);
-            vec![refresh(backend)]
+            let result = backend.toggle_feed(&name);
+            failed_then_refresh(backend, result)
         }
         Effect::RemoveFeed(name) => {
-            backend.remove_feed(&name);
-            vec![refresh(backend)]
+            let result = backend.remove_feed(&name);
+            failed_then_refresh(backend, result)
         }
         Effect::LoadKeyChange(name) => vec![Event::KeyChangeLoaded(backend.key_change(&name))],
         Effect::TrustNewKey { change, typed } => {
@@ -173,7 +178,13 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             // Values with no wire form are stored secrets, and those never change here.
             let changes = values
                 .into_iter()
-                .filter_map(|(name, value)| value.to_input().map(|value| nodo_api::SettingChange { name, value }))
+                .filter_map(|(name, value)| {
+                    let value = match value {
+                        Some(value) => value.to_input()?,
+                        None => nodo_api::SettingInput::Reset,
+                    };
+                    Some(nodo_api::SettingChange { name, value })
+                })
                 .collect();
             match backend.call(Request::ApplySettings { package: package.clone(), changes }) {
                 Ok(Response::RolledBack(rollback)) => {
@@ -184,8 +195,9 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             }
         }
         Effect::CheckUpdates => {
-            backend.check_updates();
-            vec![refresh(backend)]
+            let result = backend.check_updates();
+            // The snapshot first, so the result can say how many updates there are now.
+            vec![refresh(backend), Event::UpdatesChecked(result)]
         }
         Effect::ReviewUpdate { name, batch, pending_reviews, approvals } => {
             vec![Event::UpdateReviewLoaded { review: backend.update_review(&name), batch, pending_reviews, approvals }]
@@ -438,6 +450,13 @@ fn load_usb<T: Backend + ScreenData>(backend: &mut T) -> Result<UsbView, String>
         Some(_) => None,
     };
     Ok(UsbView { drive, list })
+}
+
+/// The failure, if any, as a notice, and then the device state again either way.
+fn failed_then_refresh<T: Backend + ScreenData>(backend: &mut T, result: Result<(), String>) -> Vec<Event> {
+    let mut events: Vec<Event> = result.err().map(Event::Failed).into_iter().collect();
+    events.push(refresh(backend));
+    events
 }
 
 fn service_command<T: Backend + ScreenData>(backend: &mut T, request: Request) -> Vec<Event> {

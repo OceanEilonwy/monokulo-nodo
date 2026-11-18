@@ -678,7 +678,7 @@ impl Manage {
             }
             "feed" => {
                 self.change("Switching the source", move |d| {
-                    d.toggle_feed(&rest);
+                    d.toggle_feed(&rest).map_err(ApiError::Failed)?;
                     Ok(String::new())
                 });
             }
@@ -1203,7 +1203,7 @@ impl Manage {
                     Box::new(move |m: &mut Manage| {
                         let n = name.clone();
                         m.change("Removing the source", move |d| {
-                            d.remove_feed(&n);
+                            d.remove_feed(&n).map_err(ApiError::Failed)?;
                             Ok(String::new())
                         });
                     }),
@@ -1212,7 +1212,7 @@ impl Manage {
             "keep-key" => self.back(),
             "trust-key" => self.keyboard(Editing::TrustName(arg.clone()), &format!("Type {arg} to trust its new key"), "", false, false),
             "refresh-sources" => self.change("Checking sources", |d| {
-                d.refresh_feeds();
+                d.refresh_feeds().map_err(ApiError::Failed)?;
                 Ok(String::new())
             }),
             "public-host" => {
@@ -1221,8 +1221,12 @@ impl Manage {
             }
             "hosting-save" => self.save_hosting(),
             "check-updates" => self.change("Checking for updates", |d| {
-                d.check_updates();
-                Ok(String::new())
+                d.check_updates().map_err(ApiError::Failed)?;
+                // Said out loud, so a check that found nothing still shows it ran.
+                Ok(match d.updates().len() {
+                    0 => "Up to date".to_owned(),
+                    n => format!("{} available", counted(n as u64, "update")),
+                })
             }),
             "apply-updates" => {
                 let names = self.selected_updates.clone();
@@ -1445,7 +1449,17 @@ impl Manage {
                 }
             }
         }
-        let changes: Vec<(String, FieldValue)> = self.edit.changes.clone().into_iter().collect();
+        // An emptied optional field goes back to having no value (`Field::input_for`); `None`.
+        let changes: Vec<(String, Option<FieldValue>)> = self
+            .edit
+            .changes
+            .clone()
+            .into_iter()
+            .map(|(name, v)| {
+                let reset = self.field(&name).is_some_and(|f| f.input_for(&v) == Some(nodo_api::SettingInput::Reset));
+                (name, (!reset).then_some(v))
+            })
+            .collect();
         let apply = move |m: &mut Manage| {
             let package = package.clone();
             let changes = changes.clone();
@@ -1453,7 +1467,13 @@ impl Manage {
             m.run(move |d| {
                 let list: Vec<nodo_api::SettingChange> = changes
                     .iter()
-                    .filter_map(|(name, v)| v.to_input().map(|value| nodo_api::SettingChange { name: name.clone(), value }))
+                    .filter_map(|(name, v)| {
+                        let value = match v {
+                            Some(v) => v.to_input()?,
+                            None => nodo_api::SettingInput::Reset,
+                        };
+                        Some(nodo_api::SettingChange { name: name.clone(), value })
+                    })
                     .collect();
                 let result = d.call(Request::ApplySettings { package: package.clone(), changes: list });
                 let explained = match &result {

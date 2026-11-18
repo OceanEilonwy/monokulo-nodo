@@ -536,6 +536,12 @@ fn stored_for(def: &SettingDef, input: &SettingInput) -> Result<Option<Stored>, 
             "{} is a secret, so it must be sent as one",
             def.name
         )),
+        // An emptied box on an optional setting means "no value". Stored as "", it would fail an
+        // int's parse or reach the package's validator as an empty string, so a cleared SMTP port
+        // or host blocked every save. Clients older than this one still send "" for it.
+        SettingInput::Literal(SettingLiteral::Text(text)) if text.is_empty() && !def.required => {
+            Ok(None)
+        }
         SettingInput::Literal(literal) => {
             let text = match literal {
                 SettingLiteral::Text(text) => text.clone(),
@@ -1278,6 +1284,49 @@ settings = "settings.lua"
             "{:?}",
             h.sys.calls()
         );
+    }
+
+    /// Clearing an optional box sends "". For an int with no default, or a string whose validator
+    /// refuses "", storing it failed the whole save; it now means the setting has no value.
+    #[test]
+    fn an_emptied_optional_setting_has_no_value_rather_than_an_empty_one() {
+        let h = setup();
+        let lua = r#"return { api_version = 1, settings = {
+            { name = "smtp_port", type = "int", label = "SMTP port", min = 1, max = 65535 },
+            { name = "smtp_host", type = "string", label = "SMTP server",
+              validate = function(v) return nodo.matches(v, "^[a-z.]+$"), "must be a host name" end },
+            { name = "name", type = "string", label = "Name", required = true, default = "x" },
+            -- The shop follows it, so it stays.
+            { name = "rpc_port", type = "int", label = "RPC port", default = 18081, public = "rpc-port" },
+        } }"#;
+        h.sys.put("/p/sys/cuprated/settings.lua", lua.as_bytes());
+        h.sys.put("/p/sys/cuprated/Cuprated.toml.in", b"network = \"Mainnet\"\n");
+        apply(
+            &h,
+            "cuprated",
+            vec![change("smtp_port", int(587)), change("smtp_host", text("smtp.example.com"))],
+        )
+        .unwrap();
+        apply(
+            &h,
+            "cuprated",
+            vec![change("smtp_port", text("")), change("smtp_host", text(""))],
+        )
+        .unwrap();
+        let store = stored(&h, "cuprated");
+        assert!(!store.contains("smtp_port") && !store.contains("smtp_host"), "{store}");
+        let current = |name: &str| {
+            form(&h, "cuprated")
+                .fields
+                .into_iter()
+                .find(|f| f.name == name)
+                .map(|f| f.current)
+        };
+        assert_eq!(current("smtp_port"), Some(SettingCurrent::Default));
+        assert_eq!(current("smtp_host"), Some(SettingCurrent::Default));
+        // A required setting keeps taking "" as its value, as before.
+        apply(&h, "cuprated", vec![change("name", text(""))]).unwrap();
+        assert!(stored(&h, "cuprated").contains("name"));
     }
 
     #[test]

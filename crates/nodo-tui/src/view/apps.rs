@@ -434,14 +434,24 @@ pub fn installing(app: &App, t: &Theme, snapshot: &InstallSnapshot) -> Page {
         InstallOutcome::Failed(_) => format!("{name} wasn't installed"),
         InstallOutcome::Cancelled => "Install cancelled".to_owned(),
     };
-    let step = if snapshot.outcome == InstallOutcome::InProgress { format!("   Step {} of {}", (done + 1).min(total), snapshot.steps.len()) } else { String::new() };
+    let step = if snapshot.outcome == InstallOutcome::InProgress && !snapshot.steps.is_empty() {
+        format!("   Step {} of {}", (done + 1).min(total), snapshot.steps.len())
+    } else {
+        String::new()
+    };
     card.row(t, vec![t.b(title), t.d(step)]);
     card.blank(t);
-    let fraction = done as f32 / total as f32;
-    let mut bar = progress(t, fraction, 50.min(card.width.saturating_sub(16)));
-    bar.push(t.d(format!("   {}%", (fraction * 100.0).round())));
-    card.row(t, bar);
-    card.blank(t);
+    // The helper reports no steps until the install is over, so there is no bar to fill until then.
+    if snapshot.steps.is_empty() && snapshot.outcome == InstallOutcome::InProgress {
+        card.row(t, vec![t.a(super::v3::hourglass(app.ticks)), t.n("  Downloading, checking and installing. This can take a few minutes.")]);
+        card.blank(t);
+    } else {
+        let fraction = done as f32 / total as f32;
+        let mut bar = progress(t, fraction, 50.min(card.width.saturating_sub(16)));
+        bar.push(t.d(format!("   {}%", (fraction * 100.0).round())));
+        card.row(t, bar);
+        card.blank(t);
+    }
     for step in &snapshot.steps {
         let (mark, text) = match step.state {
             StepState::Done => (t.o("✓  "), t.n(step.name.clone())),
@@ -454,10 +464,16 @@ pub fn installing(app: &App, t: &Theme, snapshot: &InstallSnapshot) -> Page {
     card.blank(t);
     let mut targets = Vec::new();
     let keys = match &snapshot.outcome {
-        InstallOutcome::InProgress => {
+        InstallOutcome::InProgress if snapshot.can_cancel => {
             card.row(t, vec![t.d("You can leave this page; it carries on. A failed step removes what this install added.")]);
             card.blank(t);
             "Keys: Esc cancel  v full log"
+        }
+        // The helper cannot stop an install part way, so none is offered.
+        InstallOutcome::InProgress => {
+            card.row(t, vec![t.d("You can leave this page; it carries on and says when it is done. A failed step removes what this install added.")]);
+            card.blank(t);
+            "Keys: Esc leave"
         }
         InstallOutcome::Succeeded => {
             card.buttons(t, &[("Done", false, Click::Key(KeyCode::Esc)), ("Set it up", true, Click::Key(KeyCode::Enter))], &mut targets);

@@ -170,6 +170,24 @@ pub struct InstallSnapshot {
     pub steps: Vec<InstallStep>,
     pub details: Vec<String>,
     pub outcome: InstallOutcome,
+    /// Whether the backend can stop this install part way. The helper installs in one request
+    /// and cannot, so the page offers no cancel for it.
+    pub can_cancel: bool,
+}
+
+impl InstallSnapshot {
+    /// What the page shows from the moment Install is confirmed until the backend first reports:
+    /// the helper only answers once the whole install is done, minutes later.
+    pub fn starting(id: &PackageId, version: &str) -> Self {
+        Self {
+            id: id.clone(),
+            version: version.to_owned(),
+            steps: Vec::new(),
+            details: Vec::new(),
+            outcome: InstallOutcome::InProgress,
+            can_cancel: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,8 +368,21 @@ pub struct Field {
     pub label: String,
     pub help: String,
     pub requirement: String,
+    /// Whether the package needs a value. An optional field left empty has none, rather than "".
+    pub required: bool,
     pub kind: FieldKind,
     pub value: FieldValue,
+}
+
+impl Field {
+    /// What saving `value` in this field sends. An emptied optional field goes back to having no
+    /// value: sent as "", an int would fail to parse and a validator would see an empty string.
+    pub fn input_for(&self, value: &FieldValue) -> Option<SettingInput> {
+        match value {
+            FieldValue::Text(text) if text.is_empty() && !self.required => Some(SettingInput::Reset),
+            _ => value.to_input(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -877,9 +908,10 @@ pub trait ScreenData {
     fn feeds(&self) -> Vec<Feed>;
     fn probe_feed(&self, address: &str) -> Result<FeedProbe, String>;
     fn trust_feed(&mut self, probe: &FeedProbe) -> Result<(), String>;
-    fn refresh_feeds(&mut self);
-    fn toggle_feed(&mut self, name: &str);
-    fn remove_feed(&mut self, name: &str);
+    // These say why they failed, so the owner learns a click did not work.
+    fn refresh_feeds(&mut self) -> Result<(), String>;
+    fn toggle_feed(&mut self, name: &str) -> Result<(), String>;
+    fn remove_feed(&mut self, name: &str) -> Result<(), String>;
     fn key_change(&self, feed: &str) -> Option<KeyChange>;
     /// `typed` is the feed name as the user typed it. The helper checks it, and both keys.
     fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String>;
@@ -893,7 +925,8 @@ pub trait ScreenData {
     }
 
     fn updates(&self) -> Vec<UpdateItem>;
-    fn check_updates(&mut self);
+    /// Asks the feeds for new versions. What it found arrives with the next snapshot.
+    fn check_updates(&mut self) -> Result<(), String>;
     fn update_review(&self, name: &str) -> Option<ReviewData>;
     /// `approvals` are the reviews the user confirmed, for updates that ask for more.
     fn apply_updates(&mut self, names: &[String], approvals: &[(String, nodo_api::PermissionApproval)]) -> UpdateReport;

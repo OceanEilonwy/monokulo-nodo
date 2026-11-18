@@ -1364,6 +1364,52 @@ fn an_install_can_be_cancelled() {
     assert!(screen_text(&app).contains("Install cancelled."));
 }
 
+/// The helper installs in one request that answers minutes later. The install page shows as soon
+/// as Install is confirmed, offers no cancel it cannot do, and when the owner leaves it, the
+/// result still reaches them as a notice instead of being dropped.
+#[test]
+fn an_install_shows_at_once_and_reports_its_end_after_the_page_is_left() {
+    let (mut app, _mock) = fixture(ScreenId::Review);
+    app.stack.push(Screen::Home { selected: 0 });
+    update(&mut app, press(RIGHT));
+    let effects = update(&mut app, press(ENTER));
+    assert!(matches!(effects.as_slice(), [Effect::StartInstall { .. }]), "{effects:?}");
+    let Screen::Installing(snapshot) = &app.screen else { panic!("on the install page at once, not {:?}", app.screen.id()) };
+    assert_eq!(snapshot.outcome, InstallOutcome::InProgress);
+    let id = snapshot.id.clone();
+    let screen = screen_text(&app);
+    assert!(screen.contains("This can take a few minutes"), "{screen}");
+    assert!(!screen.contains("cancel"), "no cancel the helper cannot do: {screen}");
+    assert!(update(&mut app, press(ESC)).is_empty(), "Esc leaves rather than cancels");
+    assert_eq!(app.screen.id(), ScreenId::Main);
+
+    let mut done = InstallSnapshot::starting(&id, "1.0");
+    done.outcome = InstallOutcome::Succeeded;
+    update(&mut app, Event::InstallProgress(Some(done.clone())));
+    let notice = app.notice.clone().expect("the result is told");
+    assert_eq!(notice.kind, NoticeKind::Ok);
+    assert!(notice.text.contains(&format!("{} is installed", id.name)), "{}", notice.text);
+
+    done.outcome = InstallOutcome::Failed("the health check failed".into());
+    update(&mut app, Event::InstallProgress(Some(done)));
+    let notice = app.notice.clone().expect("the failure is told");
+    assert_eq!(notice.kind, NoticeKind::Error);
+    assert!(notice.text.contains("the health check failed"), "{}", notice.text);
+}
+
+/// An install the backend refuses ends the install page with the reason, rather than leaving it
+/// spinning.
+#[test]
+fn a_refused_install_ends_the_install_page_with_the_reason() {
+    let (mut app, mut mock) = fixture(ScreenId::Review);
+    let Screen::Review(state) = &mut app.screen else { panic!("the review fixture") };
+    state.data.id.name = "no-such-app".into();
+    keys(&mut app, &mut mock, &[RIGHT, ENTER]);
+    let Screen::Installing(snapshot) = &app.screen else { panic!("on the install page, not {:?}", app.screen.id()) };
+    assert_eq!(snapshot.outcome, InstallOutcome::Failed("unknown package no-such-app".into()));
+    assert!(screen_text(&app).contains("wasn't installed"), "{}", screen_text(&app));
+}
+
 #[test]
 fn install_gates_route_to_the_right_screen() {
     let (mut app, mut mock) = loaded();
@@ -1605,6 +1651,79 @@ fn updating_with_nothing_selected_explains_itself() {
     keys(&mut app, &mut mock, &[SPACE, DOWN, SPACE, ENTER]);
     assert_eq!(app.screen.id(), ScreenId::Updates);
     assert!(screen_text(&app).contains("Tick at least one app first."));
+}
+
+fn updates_state(app: &App) -> &UpdatesState {
+    let Screen::Updates(state) = &app.screen else { panic!("on Updates, not {:?}", app.screen.id()) };
+    state
+}
+
+fn selected_update(app: &App) -> String {
+    app.update_rows()[updates_state(app).selected].name.clone()
+}
+
+/// Check now says what it found, and while it runs the link shows it is working and a second
+/// press does not queue another check. It used to give no word at all, success or failure.
+#[test]
+fn check_now_shows_it_is_running_and_says_what_it_found() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    assert!(screen_text(&app).contains("Check now ›"));
+    let effects = update(&mut app, press(KeyCode::Char('r')));
+    assert_eq!(effects, vec![Effect::CheckUpdates]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Checking…") && !screen.contains("Check now ›"), "{screen}");
+    assert!(update(&mut app, press(KeyCode::Char('r'))).is_empty(), "a second press waits for the first");
+    for event in execute_effect(&mut mock, Effect::CheckUpdates) {
+        dispatch(&mut app, &mut mock, event);
+    }
+    let count = app.update_rows().len();
+    assert!(screen_text(&app).contains(&format!("{count} updates available.")), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("Check now ›"), "the link is back once the check is done");
+
+    mock.updates.clear();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(screen_text(&app).contains("Up to date."), "{}", screen_text(&app));
+}
+
+/// A failed check, and a failed source refresh, switch or removal, say why instead of nothing.
+#[test]
+fn a_failed_check_or_source_change_says_why() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    mock.feeds_failure = Some("official: the feed did not answer".to_owned());
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    let notice = app.notice.clone().expect("told");
+    assert_eq!(notice.kind, NoticeKind::Error);
+    assert!(notice.text.contains("Could not check for updates: official: the feed did not answer"), "{}", notice.text);
+    let name = mock.feeds[0].name.clone();
+    for effect in [Effect::RefreshFeeds, Effect::ToggleFeed(name.clone()), Effect::RemoveFeed(name)] {
+        let events = execute_effect(&mut mock, effect.clone());
+        assert!(
+            events.iter().any(|event| matches!(event, Event::Failed(text) if text.contains("did not answer"))),
+            "{effect:?}: {events:?}"
+        );
+    }
+}
+
+/// After a check, new updates are ticked as when the list opens, ones that went away are
+/// unticked, and the selection stays on the same app though the rows moved.
+#[test]
+fn a_check_ticks_new_updates_and_keeps_the_selection_on_its_app() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    key(&mut app, &mut mock, DOWN);
+    key(&mut app, &mut mock, DOWN);
+    let selected = selected_update(&app);
+    let gone = app.update_rows()[0].name.clone();
+    assert!(updates_state(&app).checked.contains(&gone), "the first update starts ticked");
+    let mut new = mock.updates[0].clone();
+    new.name = "fast-sync".to_owned();
+    new.preselected = true;
+    mock.published.push(new);
+    mock.updates.retain(|item| item.name != gone);
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert_eq!(selected_update(&app), selected, "still on the same app");
+    let checked = &updates_state(&app).checked;
+    assert!(checked.contains(&"fast-sync".to_owned()), "{checked:?}");
+    assert!(!checked.contains(&gone), "{checked:?}");
 }
 
 fn reload(app: &mut App, mock: &mut MockBackend) {

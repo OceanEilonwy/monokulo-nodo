@@ -186,7 +186,7 @@ pub fn field(f: SettingField) -> Field {
         (false, Some(default)) => format!("Default {default}"),
         (false, None) => "Optional".to_owned(),
     };
-    Field { key: f.name, label: f.label, help: f.help, requirement, kind, value }
+    Field { key: f.name, label: f.label, help: f.help, requirement, required: f.required, kind, value }
 }
 
 /// How long ago a Unix time was, in the largest whole unit.
@@ -510,16 +510,16 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::trust_feed(self, probe)
     }
 
-    fn refresh_feeds(&mut self) {
-        let _ = self.ask(Request::RefreshFeeds);
+    fn refresh_feeds(&mut self) -> Result<(), String> {
+        self.ask(Request::RefreshFeeds).map(|_| ()).map_err(|e| e.to_string())
     }
 
-    fn toggle_feed(&mut self, name: &str) {
-        crate::helper_manage::toggle_feed(self, name);
+    fn toggle_feed(&mut self, name: &str) -> Result<(), String> {
+        crate::helper_manage::toggle_feed(self, name)
     }
 
-    fn remove_feed(&mut self, name: &str) {
-        let _ = self.ask(Request::RemoveFeed { name: name.to_owned() });
+    fn remove_feed(&mut self, name: &str) -> Result<(), String> {
+        self.ask(Request::RemoveFeed { name: name.to_owned() }).map(|_| ()).map_err(|e| e.to_string())
     }
 
     fn key_change(&self, feed: &str) -> Option<KeyChange> {
@@ -559,8 +559,8 @@ impl ScreenData for HelperBackend {
         crate::helper_manage::updates(self)
     }
 
-    fn check_updates(&mut self) {
-        crate::helper_manage::check_updates(self);
+    fn check_updates(&mut self) -> Result<(), String> {
+        crate::helper_manage::check_updates(self)
     }
 
     fn update_review(&self, name: &str) -> Option<ReviewData> {
