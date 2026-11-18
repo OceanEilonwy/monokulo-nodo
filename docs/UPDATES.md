@@ -223,6 +223,18 @@ channel, keeps the three newest snapshots and deploys. `publish-snapshot.sh rest
 manifest as needing a restart when the kernel, glibc or runit changed since the previous snapshot.
 The serial is the UTC time it was made (`YYYYMMDDHHMMSS`) and the name the same time
 (`YYYY.MM.DD-HHMMSS`). A branch run builds and tests with a throwaway key and publishes nothing.
+
+**The hardware walk-through gate.** Before `publish` signs, `scripts/walkthrough.sh gate` compares
+the snapshot's `nodo` packages with the pins of the manifest devices have now. A snapshot that
+changes none of them (the weekly one that only refreshes Void's index) goes ahead. One that changes
+any of them is published only when `releases/walkthroughs/` holds a report of the
+[release walk-through](RELEASE_WALKTHROUGH.md) that passed, is at most 30 days old, and ran on a
+NanoPC-T6N with every changed package at exactly the snapshot's version; otherwise the job fails
+and says why. That is the required step before a release: build the image from the commit, walk
+it through on the board (about an hour), commit the report, and run the workflow by hand. A
+manual run may set `walkthrough_waiver` to publish without one in an emergency; the reason is
+shown in the run summary. Within a day of publishing, the previous walk-through's card applies the
+new snapshot through the TUI (the walk-through's steps P01 to P03); if that fails, withdraw it.
 The secrets live in the `github-pages` environment, which only `main` may use.
 
 Both workflows deploy the whole Pages site, so each writes its own half and copies the other half
