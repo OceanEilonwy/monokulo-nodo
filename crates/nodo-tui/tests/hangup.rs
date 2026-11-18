@@ -136,7 +136,10 @@ fn leave_the_tui(leave: Leave) -> ExitStatus {
         }
     }
     wait_for_exit(&mut child, deadline.saturating_duration_since(Instant::now())).unwrap_or_else(|| {
+        // Ignored: only tidying up before the panic below, which is the failure being reported.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = child.kill();
+        #[allow(clippy::let_underscore_must_use)]
         let _ = child.wait();
         panic!("the TUI was still running {limit:?} after the user left");
     })

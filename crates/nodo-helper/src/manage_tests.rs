@@ -1670,3 +1670,6 @@ fn feeds_are_read_again_after_six_hours() {
     state.feeds.get_mut("a").unwrap().enabled = false;
     assert!(!state.refresh_due(NOW), "a disabled feed is never read");
 }
+
+#[path = "tui_contract_tests.rs"]
+mod tui_contract;

@@ -1,6 +1,8 @@
 //! `--screenshot SCENE PATH`: renders one screen, with sample panels like the design's, to a PNG
 //! file, without a display. For reviewing the screen against the design and for the PR.
 
+#![deny(clippy::let_underscore_must_use, unused_must_use)]
+
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -320,6 +322,8 @@ pub fn pixels(name: &str) -> Result<Vec<Rgb8Pixel>, String> {
         w.borrow_mut()
             .get_or_insert_with(|| {
                 let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+                // Ignored: it fails only when a platform is set already, by a scene rendered earlier.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = slint::platform::set_platform(Box::new(Offscreen { window: window.clone() }));
                 window
             })

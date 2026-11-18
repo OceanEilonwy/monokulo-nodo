@@ -164,6 +164,7 @@ pub enum InstallOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "an install's snapshot says how it went, which the owner must be told"]
 pub struct InstallSnapshot {
     pub id: PackageId,
     pub version: String,
@@ -448,7 +449,9 @@ impl FieldPreview {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbackExplanation {
     pub steps: Vec<(bool, String)>,
+    /// What went wrong, in the app's or the helper's own words; the screens quote it.
     pub headline: String,
+    /// What the owner can do about it.
     pub hint: String,
     pub blamed_field: Option<String>,
 }
@@ -504,6 +507,7 @@ pub struct UpdateFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "what an update did, including a rollback, must reach the owner"]
 pub struct UpdateReport {
     pub results: Vec<UpdateResult>,
     pub failure: Option<UpdateFailure>,
@@ -814,6 +818,7 @@ pub struct PublicPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a check is only worth running if its result is shown"]
 pub enum Reachability {
     /// `manual` explains how to test the ports from outside, when nothing outside tested them.
     Checked { checks: Vec<Check>, router: Option<RouterHelp>, plan: Option<PublicPlan>, manual: Vec<String> },
@@ -847,9 +852,28 @@ pub enum DocKind {
     RelayTunnel,
 }
 
+/// What a backend can do beyond asking and answering. The screens read this instead of assuming,
+/// so a test backend that can do more than the device cannot make a screen offer what the device
+/// lacks. The default is the least, which is what the helper does today; `MockBackend` starts from
+/// `HelperBackend::CAPABILITIES` and a test asserts the two stay equal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Capabilities {
+    /// `start_install` answers while the install is still running, and `poll_install` then
+    /// reports its steps. Without it `start_install` answers once the install is over.
+    pub install_progress: bool,
+    /// `cancel_install` can stop an install part way.
+    pub cancel_install: bool,
+    /// `copy_report` puts a report somewhere the owner can fetch it.
+    pub copy_report: bool,
+    /// `set_public_access` can put a password in front of a site.
+    pub site_password: bool,
+}
+
 /// The state every top-level screen reads from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Snapshot {
+    /// What the backend can do, read with the rest so the screens never assume it.
+    pub capabilities: Capabilities,
     pub services: Vec<nodo_api::ServiceStatus>,
     pub overview: Overview,
     pub catalog: Vec<PackageSummary>,
@@ -892,6 +916,8 @@ impl Snapshot {
 
 /// Screen data outside `nodo_api`. Errors are text because they are only ever shown.
 pub trait ScreenData {
+    /// No default, so every backend has to say what it can do.
+    fn capabilities(&self) -> Capabilities;
     fn overview(&self) -> Overview;
     fn catalog(&self) -> Vec<PackageSummary>;
     fn package_detail(&self, id: &PackageId) -> Option<PackageDetail>;
@@ -902,7 +928,9 @@ pub trait ScreenData {
         approval: Option<&nodo_api::PermissionApproval>,
         passphrase: Option<&Secret>,
     ) -> Result<InstallSnapshot, String>;
+    /// `None` unless [`Capabilities::install_progress`].
     fn poll_install(&mut self) -> Option<InstallSnapshot>;
+    /// `None` unless [`Capabilities::cancel_install`].
     fn cancel_install(&mut self) -> Option<InstallSnapshot>;
 
     fn feeds(&self) -> Vec<Feed>;
@@ -943,7 +971,9 @@ pub trait ScreenData {
     fn system_note(&self) -> Option<String> {
         None
     }
-    fn set_held(&mut self, name: &str, held: bool);
+    /// Says why when the helper could not record the hold, so the list does not look held
+    /// when it is not.
+    fn set_held(&mut self, name: &str, held: bool) -> Result<(), String>;
     fn auto_update(&self) -> AutoUpdatePrefs;
     fn save_auto_update(&mut self, prefs: &AutoUpdatePrefs) -> Result<(), String>;
     /// Returns the text to show the user about where the report went.

@@ -36,6 +36,7 @@ pub fn load_snapshot<T: Backend + ScreenData>(backend: &mut T) -> Result<Snapsho
     };
     let (providers, providers_error) = split(backend.providers());
     Ok(Snapshot {
+        capabilities: backend.capabilities(),
         services,
         overview: backend.overview(),
         catalog: backend.catalog(),
@@ -207,8 +208,8 @@ pub fn execute_effect<T: Backend + ScreenData>(backend: &mut T, effect: Effect) 
             vec![Event::UpdatesApplied(report), refresh(backend)]
         }
         Effect::SetHeld { name, held } => {
-            backend.set_held(&name, held);
-            vec![refresh(backend)]
+            let result = backend.set_held(&name, held);
+            failed_then_refresh(backend, result)
         }
         Effect::SaveAutoUpdate(prefs) => {
             vec![Event::AutoUpdateSaved(backend.save_auto_update(&prefs)), refresh(backend)]
@@ -514,6 +515,8 @@ impl EffectWorker {
         thread::spawn(move || {
             for batch in inbox {
                 run_batch(&mut backend, batch, |events| {
+                    // Fails only once the screen has gone, and the send below then ends the thread.
+                    #[allow(clippy::let_underscore_must_use)]
                     let _ = outbox.send(FromWorker::Events(events));
                 });
                 if outbox.send(FromWorker::BatchDone).is_err() {
@@ -603,8 +606,11 @@ pub trait TerminalMode: Send + Sync + 'static {
 /// Writes the sequence that puts a terminal back, ignoring errors, because the peer may be gone.
 /// The keyboard flags are popped first, because a terminal keeps them per screen. Popping them is
 /// harmless where none were pushed: terminals without the kitty protocol ignore it.
+#[allow(clippy::let_underscore_must_use)]
 pub fn write_restore(out: &mut impl Write) {
+    // Ignored: the terminal may have hung up, and there is nobody left to tell.
     let _ = execute!(out, PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen, Show);
+    // Ignored for the same reason.
     let _ = out.flush();
 }
 
@@ -619,11 +625,15 @@ impl TerminalMode for CrosstermMode {
     fn enter(&self) -> io::Result<()> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)?;
+        // Ignored: the flags are a nicety, and a terminal that refuses them still works without.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
         Ok(())
     }
 
     fn leave(&self) {
+        // Ignored: this runs on the way out and from the panic hook, where nothing can report it.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = disable_raw_mode();
         write_restore(&mut io::stdout());
     }
@@ -750,9 +760,11 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
         sync_working(&mut app, &worker);
         if let Some(text) = app.clipboard.take() {
             // Between frames, so it never lands inside one.
+            // A terminal that cannot take this cannot take the next frame either, so it ends the
+            // loop the same way a failed draw does.
             let out = terminal.backend_mut();
-            let _ = out.write_all(crate::clipboard::osc52(&text).as_bytes());
-            let _ = out.flush();
+            out.write_all(crate::clipboard::osc52(&text).as_bytes())?;
+            out.flush()?;
         }
         terminal.draw(|frame| {
             view::render(frame, &app, &theme);

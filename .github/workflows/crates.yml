@@ -40,7 +40,11 @@ jobs:
       - name: Test nodo-api, nodo-helper and nodo-tui
         run: cargo test --locked -p nodo-api -p nodo-helper -p nodo-tui
 
-      # Only the terminal-reading rule from clippy.toml, not the whole of clippy: reading the
-      # terminal anywhere but nodo_tui::input brings back a TUI that spins after a hangup.
-      - name: nodo-tui reads its terminal only through nodo_tui::input
-        run: cargo clippy --locked -p nodo-tui --all-targets -- -A clippy::all -D clippy::disallowed_methods
+      # Only these rules, not the whole of clippy. Reading the terminal anywhere but nodo_tui::input
+      # brings back a TUI that spins after a hangup. A result dropped with `let _ =` or as a bare
+      # statement is how Check now and the source actions failed without a word; one that is right
+      # to drop says why next to an #[allow].
+      - name: nodo-tui reads its terminal only through nodo_tui::input, and drops no result unsaid
+        run: >-
+          cargo clippy --locked -p nodo-tui --all-targets --
+          -A clippy::all -D clippy::disallowed_methods -D clippy::let_underscore_must_use -D unused_must_use

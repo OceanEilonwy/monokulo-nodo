@@ -153,6 +153,8 @@ fn typed_secret() -> Result<Secret, String> {
             Err(e) => break Err(e.to_string()),
         }
     };
+    // Ignored: this fails only when the terminal has gone, and then nobody could read the error.
+    #[allow(clippy::let_underscore_must_use)]
     let _ = crossterm::terminal::disable_raw_mode();
     eprintln!();
     result.map(|()| Secret::new(text.as_str()))

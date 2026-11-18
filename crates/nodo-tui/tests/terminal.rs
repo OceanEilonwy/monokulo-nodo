@@ -111,7 +111,11 @@ fn in_pty(script_line: &str, input: &'static [u8]) -> Option<String> {
     let mut stdin = child.stdin.take().expect("piped");
     let writer = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
+        // Ignored: the program may have quit before reading, and the output it left is what the
+        // test checks.
+        #[allow(clippy::let_underscore_must_use)]
         let _ = stdin.write_all(input);
+        #[allow(clippy::let_underscore_must_use)]
         let _ = stdin.flush();
         std::thread::sleep(std::time::Duration::from_secs(1));
     });

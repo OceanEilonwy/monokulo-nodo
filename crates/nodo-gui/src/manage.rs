@@ -8,6 +8,10 @@
 //! reads and refuses changes until the screen is unlocked with the screen PIN (nodo-helper's
 //! `screen` module). The screen asks for the PIN when a change comes back `Locked`.
 
+// A dropped result is how failures went unreported. Where dropping is right, an #[allow] says why.
+// The crate as a whole cannot deny these, because Slint's generated code breaks them.
+#![deny(clippy::let_underscore_must_use, unused_must_use)]
+
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -440,7 +444,10 @@ impl Manage {
         self.dialog = None;
         self.pin = Pin::default();
         self.run(|d| {
-            let _ = d.call(Request::ScreenLock);
+            // Nobody is looking at management any more, so the log is the one to hear of it.
+            if let Err(e) = d.call(Request::ScreenLock) {
+                crate::log(&format!("the screen did not lock when management closed: {e}"));
+            }
             Box::new(|_: &mut Manage| {})
         });
     }
@@ -2071,7 +2078,9 @@ impl Manage {
         let total = s.steps.len().max(1) as f32;
         rows.insert(0, MRow { title: shared(format!("{} {}", s.id.name, s.version)), progress: done / total, value: shared(format!("{}%", (done / total * 100.0) as i32)), ..row("progress") });
         let footer = match &s.outcome {
-            InstallOutcome::InProgress => buttons(vec![button("install-cancel", "Cancel", 1)]),
+            // Only where the backend can stop it; the helper's install cannot be.
+            InstallOutcome::InProgress if s.can_cancel => buttons(vec![button("install-cancel", "Cancel", 1)]),
+            InstallOutcome::InProgress => text("This can take a few minutes.", 0),
             InstallOutcome::Succeeded => buttons(vec![button(format!("open:app:{}", s.id.name), "Open", 0)]),
             InstallOutcome::Failed(e) => text(e, 3),
             InstallOutcome::Cancelled => text("Cancelled. Nothing was left behind.", 0),
@@ -2397,6 +2406,7 @@ fn load_snapshot(d: &mut dyn Data) -> Result<Snapshot, ApiError> {
         Err(e) => (Vec::new(), Some(e)),
     };
     Ok(Snapshot {
+        capabilities: d.capabilities(),
         services,
         overview: d.overview(),
         catalog: d.catalog(),
