@@ -248,6 +248,8 @@ fn snapshot(id: &PackageId, report: nodo_api::InstallReport) -> InstallSnapshot 
             None => InstallOutcome::Succeeded,
             Some(problem) => InstallOutcome::Failed(problem),
         },
+        // The report comes back when the install is over; there is nothing left to cancel.
+        can_cancel: false,
     }
 }
 
@@ -393,12 +395,12 @@ pub fn trust_feed(b: &HelperBackend, probe: &FeedProbe) -> Result<(), String> {
     text(b.ask(request)).map(|_| ())
 }
 
-pub fn toggle_feed(b: &HelperBackend, name: &str) {
-    if let Ok(Response::Feeds(list)) = b.ask(Request::ListFeeds) {
-        if let Some(f) = list.iter().find(|f| f.name == name) {
-            let _ = b.ask(Request::SetFeedEnabled { name: name.to_owned(), enabled: !f.enabled });
-        }
-    }
+pub fn toggle_feed(b: &HelperBackend, name: &str) -> Result<(), String> {
+    let Response::Feeds(list) = text(b.ask(Request::ListFeeds))? else {
+        return Err("the helper did not list the sources".to_owned());
+    };
+    let f = list.iter().find(|f| f.name == name).ok_or_else(|| format!("there is no source called {name}"))?;
+    text(b.ask(Request::SetFeedEnabled { name: name.to_owned(), enabled: !f.enabled })).map(|_| ())
 }
 
 pub fn key_change(b: &HelperBackend, name: &str) -> Option<KeyChange> {
@@ -546,10 +548,25 @@ pub fn updates(b: &HelperBackend) -> Vec<UpdateItem> {
     rows
 }
 
-pub fn check_updates(b: &HelperBackend) {
-    load_status(b, Request::CheckUpdates);
-    // A failed system check is recorded by the helper and shown in the system line.
-    let _ = b.ask(Request::CheckSystemUpdate);
+pub fn check_updates(b: &HelperBackend) -> Result<(), String> {
+    let apps = match b.ask(Request::CheckUpdates) {
+        Ok(Response::UpdateStatus(status)) => {
+            b.manage.borrow_mut().status = Some(status);
+            Ok(())
+        }
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(e) => {
+            b.missing(Area::Updates, &e);
+            Err(e.to_string())
+        }
+    };
+    // The helper also records a failed system check for the system line, but the owner who
+    // pressed Check now is told here too. A helper without system updates has nothing to say.
+    let system = match b.ask(Request::CheckSystemUpdate) {
+        Ok(_) | Err(ApiError::NotImplemented(_)) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    };
+    apps.and(system)
 }
 
 /// The system update the user selected, as a result row.

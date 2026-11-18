@@ -79,12 +79,16 @@ pub struct Card {
     /// The row the keyboard focus is on.
     focus_at: Option<usize>,
     surface: Color,
+    /// Click targets with the row each is drawn on. Targets are found by their text, so one on a
+    /// row that fitting cuts must go too: left in, it finds the same text further down (every
+    /// field's "+ reference") and takes the targets after it with it.
+    targets: Vec<(usize, Target)>,
 }
 
 impl Card {
     pub fn new(t: &Theme, page_width: u16) -> Self {
         let width = usize::from(page_width).saturating_sub(2 * MARGIN.len());
-        Card { width, rows: Vec::new(), buttons_at: None, focus_at: None, surface: t.card }
+        Card { width, rows: Vec::new(), buttons_at: None, focus_at: None, surface: t.card, targets: Vec::new() }
     }
 
     /// One row of the card. Text too wide for the card wraps at spaces onto more card rows,
@@ -239,6 +243,16 @@ impl Card {
         targets.push(Target::card_row(find, click));
     }
 
+    /// The index the next row gets, for tying targets to it (`on_row`).
+    pub fn next_row(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Ties click targets to the row they are drawn on, so they go when fitting cuts that row.
+    pub fn on_row(&mut self, row: usize, targets: impl IntoIterator<Item = Target>) {
+        self.targets.extend(targets.into_iter().map(|target| (row, target)));
+    }
+
     /// Marks the next row as the one the keyboard focus is on, so fitting keeps it in view.
     pub fn focus_here(&mut self) {
         self.focus_at = Some(self.rows.len());
@@ -262,6 +276,15 @@ impl Card {
         let tail_rows: Vec<Item> = self.rows.split_off(body);
         let kept: Vec<Item> = self.rows.drain(start..start + head).collect();
         self.rows = kept;
+        // The kept rows move up to the top, and the tail comes after the "more" row.
+        self.targets = std::mem::take(&mut self.targets)
+            .into_iter()
+            .filter_map(|(row, target)| match row {
+                _ if row >= body => Some((row - body + head + 1, target)),
+                _ if (start..start + head).contains(&row) => Some((row - start, target)),
+                _ => None,
+            })
+            .collect();
         let at = self.rows.len();
         let arrow = if start > 0 { "↕" } else { "↓" };
         self.row(t, vec![t.d(format!("{arrow} {hidden} more — scroll or make the window taller"))]);
@@ -271,6 +294,11 @@ impl Card {
 
     pub fn items(self) -> Vec<Item> {
         self.rows
+    }
+
+    /// The rows and the targets tied to them, with each target's row.
+    pub fn into_parts(self) -> (Vec<Item>, Vec<(usize, Target)>) {
+        (self.rows, self.targets)
     }
 
     /// The row the keyboard focus is on, if any.
@@ -348,13 +376,17 @@ pub fn button_target(t: &Theme, label: &str, primary: bool, width: usize, under:
     button(t, label, primary, width, under)
 }
 
+/// The hourglass that marks running work, turning every half second.
+pub fn hourglass(ticks: u64) -> &'static str {
+    if (ticks / (crate::app::TICKS_PER_SECOND / 2).max(1)) % 2 == 0 { "⧗" } else { "⧖" }
+}
+
 /// A pressed button whose work is running: the hourglass, turning every half second, in place of
 /// the focus mark before its label, on a dim raised fill. As wide as the button it replaces.
 pub fn pending_button(t: &Theme, label: &str, width: usize, under: Color, ticks: u64) -> Vec<Span<'static>> {
     let bare = label.trim_start_matches('!');
     let bare = bare.strip_prefix("▸ ").unwrap_or(bare);
-    let glyph = if (ticks / (crate::app::TICKS_PER_SECOND / 2).max(1)) % 2 == 0 { "⧗" } else { "⧖" };
-    let text = format!("{glyph} {bare}");
+    let text = format!("{} {bare}", hourglass(ticks));
     if t.is_mono() {
         return vec![Span::styled(format!("[{}]", centred(&text, width)), Style::new().add_modifier(Modifier::DIM))];
     }
@@ -598,10 +630,17 @@ pub fn setting(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'stati
     setting_aside(card, t, label, control, Vec::new(), hint);
 }
 
+/// Where `setting_aside` drew a field's label and its aside, for tying their click targets.
+pub struct SettingRows {
+    pub label: usize,
+    pub aside: Option<usize>,
+}
+
 /// A settings field with `aside`, such as a link, right-aligned under its control: on the help's
 /// first row when both fit there, otherwise on a row of its own under the control.
-pub fn setting_aside(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, aside: Vec<Span<'static>>, hint: Option<Span<'static>>) {
+pub fn setting_aside(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<'static>>, aside: Vec<Span<'static>>, hint: Option<Span<'static>>) -> SettingRows {
     let room = card.inner();
+    let mut rows = SettingRows { label: card.next_row(), aside: None };
     // The help lines up with the label's text, after the focus marker's column.
     let indent = label.chars().take_while(|c| matches!(c, ' ' | '▸')).count();
     let left = room.saturating_sub(width_of(&control) + SETTING_GAP);
@@ -630,26 +669,33 @@ pub fn setting_aside(card: &mut Card, t: &Theme, label: &str, control: Vec<Span<
     let mut aside = (!aside.is_empty()).then_some(aside);
     let first_fits = |first: &[Span<'static>], aside: &[Span<'static>]| width_of(first) + SETTING_GAP + width_of(aside) <= room;
     if let Some(side) = aside.take_if(|side| help.first().is_none_or(|first| !first_fits(first, side))) {
+        rows.aside = Some(card.next_row());
         card.row_end(t, Vec::new(), side);
     }
     for (index, spans) in help.into_iter().enumerate() {
         match aside.take().filter(|_| index == 0) {
-            Some(side) => card.row_end(t, spans, side),
+            Some(side) => {
+                rows.aside = Some(card.next_row());
+                card.row_end(t, spans, side);
+            }
             None => card.row(t, spans),
         }
     }
     card.blank(t);
+    rows
 }
 
 impl Screen3 {
     /// Several cards stacked with a blank row between them. When they do not all fit, the cards
     /// that would fall off the bottom are left out and a dim "↓ N more — scroll" row takes their
     /// place inside the list, a row clear of the keys. Targets are in drawing order: what comes
-    /// before, the cards, what comes after; the caller pushes them that way.
+    /// before, the cards, what comes after; the caller pushes them that way. Targets tied to a
+    /// card's rows (`Card::on_row`) follow `self.targets` and are dropped with rows scrolled away.
     pub fn stack(self, t: &Theme, cards: Vec<Card>, keys: &str, w: u16, h: u16) -> Page {
         let avail = usize::from(h).saturating_sub(usize::from(STRIP_ROWS) + 1 + rows_of(&self.before, w));
         let total = cards.len();
         let mut rows: Vec<(usize, Item)> = Vec::new();
+        let mut card_targets: Vec<(usize, Target)> = Vec::new();
         let mut focus: Option<usize> = None;
         for (index, card) in cards.into_iter().enumerate() {
             if index > 0 {
@@ -658,9 +704,13 @@ impl Screen3 {
             if let Some(at) = card.focus_row() {
                 focus = Some(rows.len() + at);
             }
-            rows.extend(card.items().into_iter().map(|item| (index, item)));
+            let (card_rows, targets) = card.into_parts();
+            let offset = rows.len();
+            card_targets.extend(targets.into_iter().map(|(row, target)| (offset + row, target)));
+            rows.extend(card_rows.into_iter().map(|item| (index, item)));
         }
         let mut items = self.before;
+        let mut shown_rows = 0..rows.len();
         if rows.len() + rows_of(&self.after, w) <= avail {
             items.extend(rows.into_iter().map(|(_, item)| item));
             items.extend(self.after);
@@ -668,6 +718,7 @@ impl Screen3 {
             let visible = avail.saturating_sub(3).max(1);
             // The window scrolls with the keyboard focus, keeping a row of context under it.
             let start = focus.map_or(0, |f| (f + 2).saturating_sub(visible)).min(rows.len().saturating_sub(visible));
+            shown_rows = start..start + visible;
             let shown: Vec<(usize, Item)> = rows.into_iter().skip(start).collect();
             let seen = shown.iter().take(visible).map(|(card, _)| *card).max().map_or(0, |c| c + 1);
             let more_below = shown.len() > visible;
@@ -686,18 +737,22 @@ impl Screen3 {
         }
         let mut page = self.page.plain(items).footer(keys_line(t, keys));
         page.targets = self.targets;
+        page.targets.extend(card_targets.into_iter().filter(|(row, _)| shown_rows.contains(row)).map(|(_, target)| target));
         page
     }
 
-    /// One card, fitted: like `finish`, with the targets already in `self.targets` in order.
+    /// One card, fitted: like `finish`, with the targets already in `self.targets` in order and
+    /// then those tied to the card's rows that fitting kept.
     pub fn card(self, t: &Theme, mut card: Card, keys: &str, w: u16, h: u16) -> Page {
         let used = usize::from(STRIP_ROWS) + 1 + rows_of(&self.before, w) + rows_of(&self.after, w);
         card.fit(t, usize::from(h).saturating_sub(used));
+        let (rows, card_targets) = card.into_parts();
         let mut items = self.before;
-        items.extend(card.items());
+        items.extend(rows);
         items.extend(self.after);
         let mut page = self.page.plain(items).footer(keys_line(t, keys));
         page.targets = self.targets;
+        page.targets.extend(card_targets.into_iter().map(|(_, target)| target));
         page
     }
 }

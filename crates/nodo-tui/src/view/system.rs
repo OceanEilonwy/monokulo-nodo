@@ -142,8 +142,9 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         let label = if update.note == UpdateNote::RestartNeeded { "Update and restart" } else { "Update the Nodo" };
         let mut targets = Vec::new();
         card.row_with_button(t, vec![t.d(note)], label, true, Click::Pick { index, then: Some(KeyCode::Char('n')) }, &mut targets);
+        // On the last row drawn: the button gets a row of its own when it does not fit beside.
+        card.on_row(card.next_row() - 1, targets);
         card.blank(t);
-        screen.targets.extend(targets);
         cards.push(card);
     }
 
@@ -177,22 +178,23 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             (_, true) => t.d("held back"),
             _ => note,
         };
+        let row = card.next_row();
         card.row(t, vec![lead, tick(t, ticked), t.n("  "), name, t.d(pad(&format!("{}  →  {}", item.from, item.to), 22)), note]);
-        screen.targets.push(Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' ')))));
+        card.on_row(row, [Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' '))))]);
     }
     card.blank(t);
     let count = apps.iter().filter(|(_, item)| state.checked.contains(&item.name)).count();
-    let mut targets = Vec::new();
     if !apps.is_empty() {
+        let mut targets = Vec::new();
         let label = match count {
             0 => "Update apps".to_owned(),
             1 => "Update 1 app".to_owned(),
             n => format!("Update {n} apps"),
         };
         card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(app).is_none(), Click::Key(KeyCode::Enter), &mut targets);
+        card.on_row(card.next_row() - 1, targets);
         card.blank(t);
     }
-    screen.targets.extend(targets);
     cards.push(card);
     let mut after_targets = Vec::new();
     let mut after = vec![Item::Blank];
@@ -200,10 +202,18 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         0 => "automatic updates are off".to_owned(),
         n => format!("automatic for {n}"),
     };
-    after.push(Item::Text(ratatui::text::Line::from(vec![margin(t), t.a("Automatic updates ›"), t.d(format!("  {auto}")), t.n("     "), t.a("Undo an update ›"), t.n("     "), t.a("Check now ›")])));
+    // While a check runs, the link says so in place, and is not a target until it is done.
+    let checking = super::pending().filter(|(click, _)| *click == key('r')).map(|(_, ticks)| ticks);
+    let check = match checking {
+        Some(ticks) => t.d(format!("{} Checking…", super::v3::hourglass(ticks))),
+        None => t.a("Check now ›"),
+    };
+    after.push(Item::Text(ratatui::text::Line::from(vec![margin(t), t.a("Automatic updates ›"), t.d(format!("  {auto}")), t.n("     "), t.a("Undo an update ›"), t.n("     "), check])));
     after_targets.push(Target::text("Automatic updates ›", key('a')));
     after_targets.push(Target::text("Undo an update ›", key('z')));
-    after_targets.push(Target::text("Check now ›", key('r')));
+    if checking.is_none() {
+        after_targets.push(Target::text("Check now ›", key('r')));
+    }
     if let Some(note) = &app.data.system_note {
         after.push(Item::Blank);
         after.push(quiet(t, note));
