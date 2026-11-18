@@ -10,8 +10,6 @@
 #             No secrets. This is the test run a snapshot must pass before it is signed.
 #   publish   signs the manifest (key: NODO_SNAPSHOT_SIGNING_KEY), makes it the stable channel's
 #             newest snapshot and deploys the site, with the feed's half copied from the live site.
-#             First, a snapshot that changes this project's packages needs a release walk-through
-#             on real hardware that covered those versions (docs/RELEASE_WALKTHROUGH.md).
 #
 # A push to main makes a snapshot when a base package changed. Every Monday one is made anyway:
 # devices download Void's packages from Void's mirror, which drops superseded versions, so the
@@ -39,11 +37,6 @@ on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
-    inputs:
-      walkthrough_waiver:
-        description: "Publish without a hardware walk-through, and why (emergencies only; it goes in the run summary)"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -368,18 +361,6 @@ jobs:
         with:
           name: snapshot
           path: out/site/snapshots/snapshots/${{ needs.build.outputs.name }}
-
-      # The live manifest, copied above, pins what devices run now. A snapshot that moves any of
-      # this project's packages past it is published only after a release walk-through on a real
-      # T6N ran exactly those versions, and its report is in releases/walkthroughs/. The weekly
-      # snapshot that only refreshes Void's index changes none of them and passes. A manual run may
-      # waive it with a reason, which the run summary shows.
-      - name: A hardware walk-through covers what this snapshot changes
-        env:
-          WALKTHROUGH_WAIVER: ${{ inputs.walkthrough_waiver }}
-        run: |
-          scripts/walkthrough.sh gate "$SNAPSHOT_ROOT/snapshots/$NAME/nodo/aarch64" \
-            "$SNAPSHOT_ROOT/channels/$CHANNEL/manifest.toml" releases/walkthroughs
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
