@@ -973,8 +973,9 @@ pub enum ProviderStage {
     Pick,
     /// The domain and key for the chosen company.
     Key,
-    /// Connected. Holds the provider's name and the domains its key controls.
-    Done { provider: String, domains: Vec<String> },
+    /// Connected. Holds the provider's name, the domains its key controls that sites can use, and
+    /// the providers already holding the rest (the same account connected twice, most often).
+    Done { provider: String, domains: Vec<String>, held_by: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

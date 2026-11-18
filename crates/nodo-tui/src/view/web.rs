@@ -387,6 +387,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 Item::Blank,
                 heading(t, "Domain providers"),
                 quiet(t, "The companies that hold your web addresses. Add each once; then any app can use their domains."),
+                quiet(t, MISSING_DOMAIN),
                 Item::Blank,
             ];
             after.push(Item::Blank);
@@ -482,17 +483,22 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             ];
             "Keys: Tab next box  ↵ connect  Esc back"
         }
-        ProviderStage::Done { provider, domains } => {
+        ProviderStage::Done { provider, domains, held_by } => {
             card.row(t, vec![t.o("✓  "), t.b(format!("{provider} is connected"))]);
             card.blank(t);
             if domains.is_empty() {
-                card.row(t, vec![t.d("   Its domains are already used through another provider.")]);
+                // Seen when the same account is connected a second time, hoping it would find more.
+                let others = if held_by.is_empty() { "another provider".to_owned() } else { held_by.join(" and ") };
+                card.row(t, vec![t.d(format!("   Every domain this key can change is already connected through {others}."))]);
+                card.row(t, vec![t.d("   If it is the same account, remove this one: it adds nothing.")]);
             } else {
                 card.row(t, vec![t.d("   Apps can now use these web addresses:")]);
                 for domain in domains {
                     card.row(t, vec![t.n(format!("   {domain}"))]);
                 }
             }
+            card.blank(t);
+            card.row(t, vec![t.d(format!("   {MISSING_DOMAIN}"))]);
             card.blank(t);
             let back = state.return_to.as_ref().map_or("Done".to_owned(), |site| format!("Back to {site}"));
             card.buttons(t, &[(back.as_str(), true, Click::Key(KeyCode::Enter))], &mut ct);
@@ -504,6 +510,10 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     screen.after = after;
     screen.finish(t, card, ct, after_targets, keys, w, h)
 }
+
+/// Providers list only the domains a key may change, and some (Porkbun) need that allowed per
+/// domain. Connecting the same account again finds nothing more, which is what owners try first.
+const MISSING_DOMAIN: &str = "Missing a domain? Allow the key to change it in the provider's account (Porkbun: API Access, on each domain), then look again (r) under Domain providers.";
 
 fn check_symbol(t: &Theme, state: CheckState) -> Span<'static> {
     match state {
