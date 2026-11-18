@@ -206,15 +206,15 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         // The targets go with their rows, so a field scrolled out of view takes its targets along
         // instead of leaving its "+ reference" to be found at another field's.
         let rows = setting_aside(&mut card, t, &label, control(t, state, index), aside, hint(t, state, index));
-        card.on_row(rows.label, [Target::card_row(field.label.clone(), Click::Pick { index, then: Some(KeyCode::Enter) })]);
+        for (at, text) in rows.label_lines.iter().enumerate() {
+            card.on_row(rows.label + at, [Target::card_row(text.clone(), Click::Pick { index, then: Some(KeyCode::Enter) })]);
+        }
         if let (true, Some(row)) = (picker, rows.aside) {
             card.on_row(row, [Target::text(PICK, Click::Pick { index, then: Some(KeyCode::F(4)) })]);
         }
         if let Some(undo) = state.undo_for(index) {
             let text = format!("↺ {}", undo.label);
-            let (row, mut targets) = (card.next_row(), Vec::new());
-            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Ctrl('z'), &mut targets);
-            card.on_row(row, targets);
+            card.link_row(t, vec![t.n("   "), t.a(text.clone())], &text, Click::Ctrl('z'));
             card.blank(t);
         }
         if index == state.selected && state.editor.as_ref().is_some_and(|e| !e.suggestions_closed && e.completing().is_some()) {
@@ -222,25 +222,20 @@ pub fn settings(app: &App, t: &Theme, state: &SettingsState) -> Page {
         }
         if index == state.selected {
             if let Some(menu) = &state.chip_menu {
-                let mut targets = Vec::new();
-                chip_menu_rows(&mut card, t, state, menu, &mut targets);
-                // The actions' row: the last before the menu's closing blank.
-                card.on_row(card.next_row().saturating_sub(2), targets);
+                chip_menu_rows(&mut card, t, state, menu);
             }
+            // The control, help and any menu are kept in view with the label.
+            card.focus_ends_here();
         }
     }
     let broken = state.broken();
-    let mut targets = Vec::new();
     let buttons = [("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Ctrl('s'))];
-    let at = card.next_row();
     if broken > 0 {
         let plural = if broken == 1 { "reference" } else { "references" };
-        card.note_then_buttons(t, vec![t.e(format!("Fix {broken} broken {plural} to save"))], &buttons, &mut targets);
+        card.note_then_buttons(t, vec![t.e(format!("Fix {broken} broken {plural} to save"))], &buttons);
     } else {
-        card.buttons(t, &buttons, &mut targets);
+        card.buttons(t, &buttons);
     }
-    // Fitting always keeps the buttons, so any of their rows will do.
-    card.on_row(at, targets);
     let keys = if state.chip_menu.is_some() {
         "Keys: ←→ choose  ↵ do it  r replace  t type  x remove  Esc close"
     } else if state.editor.as_ref().is_some_and(|e| e.completing().is_some() && !e.suggestions_closed) {
@@ -270,7 +265,7 @@ fn suggestion_rows(card: &mut Card, t: &Theme, state: &SettingsState, suggestion
 }
 
 /// What one reference is, and what can be done with it, opened by Enter or a click on the field.
-fn chip_menu_rows(card: &mut Card, t: &Theme, state: &SettingsState, menu: &crate::app::ChipMenu, targets: &mut Vec<Target>) {
+fn chip_menu_rows(card: &mut Card, t: &Theme, state: &SettingsState, menu: &crate::app::ChipMenu) {
     let index = state.selected;
     let pieces = state.draft[index].pieces().unwrap_or_default();
     let Some((app_id, setting)) = crate::model::refs(&pieces).get(menu.chip).map(|(a, s)| (a.to_string(), s.to_string())) else {
@@ -286,15 +281,15 @@ fn chip_menu_rows(card: &mut Card, t: &Theme, state: &SettingsState, menu: &crat
     }
     card.row(t, first);
     // The actions in a fixed order, the highlighted one drawn as the primary button.
-    let mut spans = Vec::new();
+    let (mut spans, mut targets) = (Vec::new(), Vec::new());
     for (at, (label, key)) in crate::app::CHIP_ACTIONS.iter().zip(['r', 't', 'x']).enumerate() {
         if at > 0 {
             spans.push(t.n("   "));
         }
         let width = label.chars().count() + 6;
-        spans.extend(super::v3::button_target(t, label, at == menu.choice, width, t.card, &Click::Key(KeyCode::Char(key)), targets));
+        spans.extend(super::v3::button_target(t, label, at == menu.choice, width, t.card, &Click::Key(KeyCode::Char(key)), &mut targets));
     }
-    card.row_end(t, vec![t.n("   ")], spans);
+    card.row_end_with(t, vec![t.n("   ")], spans, targets);
     card.blank(t);
 }
 
@@ -315,9 +310,7 @@ fn confirm_save(app: &App, t: &Theme, state: &SettingsState, bullets: &[String])
         card.row(t, vec![t.n("•  "), t.n(bullet.clone())]);
     }
     card.blank(t);
-    let mut targets = Vec::new();
-    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Key(KeyCode::Enter))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Save", true, Click::Key(KeyCode::Enter))]);
     screen.card(t, card, "Keys: ↵ save  Esc back to the form", w, h)
 }
 
@@ -345,8 +338,7 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
     let mut search = vec![t.d(pad("Search", 9))];
     let placeholder = if state.query.text().is_empty() && state.list_focused { "apps, settings, descriptions or values" } else { "" };
     search.extend(inset(t, if placeholder.is_empty() { state.query.text() } else { placeholder }, 38, None, !state.list_focused));
-    card.row(t, search);
-    screen.targets.push(field_target("Search", 9, 38));
+    card.row_with(t, search, [field_target("Search", 9, 38)]);
     card.blank(t);
     if visible.iter().any(|(_, verdict)| verdict.is_err()) && visible.iter().any(|(_, v)| v.is_ok()) {
         let words = match state.field_kind {
@@ -406,11 +398,10 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
         } else {
             vec![lead, name, badge, public, t.d(pad(&clip(&about, about_width), about_width + 2)), end]
         };
-        card.row(t, row);
+        card.row_with(t, row, [Target::card_row(option.path(), Click::Pick { index, then: Some(KeyCode::Enter) })]);
         if narrow {
             card.row(t, vec![t.n("    "), t.d(clip(&about, card.inner().saturating_sub(4)))]);
         }
-        screen.targets.push(Target::card_row(option.path(), Click::Pick { index, then: Some(KeyCode::Enter) }));
     }
     if visible.is_empty() {
         card.row(t, vec![t.d(if state.list.options.is_empty() { "No other app offers a setting yet." } else { "Nothing matches that search." })]);
@@ -443,9 +434,7 @@ fn grant(app: &App, t: &Theme, state: &ReferenceState, option: &ReferenceOption)
     }
     card.row(t, vec![t.n(format!("{} receives it when it starts. You can take this back in its settings.", state.package))]);
     card.blank(t);
-    let mut targets = Vec::new();
-    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Grant", true, Click::Key(KeyCode::Enter))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Grant", true, Click::Key(KeyCode::Enter))]);
     screen.card(t, card, "Keys: ↵ grant  Esc cancel", w, h)
 }
 
@@ -474,10 +463,8 @@ pub fn apply_failed(app: &App, t: &Theme, state: &ApplyFailedState) -> Page {
         card.row(t, vec![t.d(state.explanation.hint.clone())]);
     }
     card.blank(t);
-    let mut targets = Vec::new();
-    card.link_row(t, vec![t.a("Show log ›")], "Show log ›", Click::Key(KeyCode::Char('l')), &mut targets);
+    card.link_row(t, vec![t.a("Show log ›")], "Show log ›", Click::Key(KeyCode::Char('l')));
     card.blank(t);
-    card.buttons(t, &[("Keep as it is", false, Click::Key(KeyCode::Char('x'))), ("Edit again", true, Click::Key(KeyCode::Enter))], &mut targets);
-    screen.targets.extend(targets);
+    card.buttons(t, &[("Keep as it is", false, Click::Key(KeyCode::Char('x'))), ("Edit again", true, Click::Key(KeyCode::Enter))]);
     screen.card(t, card, "Keys: ↵ edit again  l log  x keep as it is  Esc back", w, h)
 }

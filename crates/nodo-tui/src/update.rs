@@ -1566,9 +1566,14 @@ fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
     match (&state.form.fields[index].kind, &state.draft[index]) {
         (FieldKind::Toggle, FieldValue::Bool(value)) => state.draft[index] = FieldValue::Bool(!*value),
         (FieldKind::Choice(options), FieldValue::Text(current)) => {
-            let position = options.iter().position(|option| option == current).unwrap_or(0);
             let len = options.len() as isize;
-            let next = (position as isize + direction).rem_euclid(len) as usize;
+            // An optional choice with no default has no value yet: the first step lands on the
+            // first choice (or, backwards, the last), not one past it.
+            let next = match options.iter().position(|option| option == current) {
+                Some(position) => (position as isize + direction).rem_euclid(len) as usize,
+                None if direction < 0 => options.len() - 1,
+                None => 0,
+            };
             state.draft[index] = FieldValue::Text(options[next].clone());
         }
         // A secret with a reference is replaced by typing a new secret.

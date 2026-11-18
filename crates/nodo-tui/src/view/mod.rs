@@ -102,13 +102,8 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Rollbacks(state) => v3::modern(app, t, more::rollbacks(t, state)),
         Screen::Network(state) => v3::modern(app, t, network::network(t, state)),
     };
-    if let Some(notice) = &app.notice {
-        let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {
-            NoticeKind::Info => ("▸", |t, text| t.i(text)),
-            NoticeKind::Ok => ("✓", |t, text| t.o(text)),
-            NoticeKind::Error => ("✕", |t, text| t.e(text)),
-        };
-        page.footer.insert(0, Item::Text(Line::from(span(t, format!("{symbol} {}", notice.text)))));
+    for (index, note) in notes(app, t).into_iter().enumerate() {
+        page.footer.insert(index, note);
     }
     // The busy mark goes in front of the header's right-hand text instead of taking a footer row:
     // requests run often (following a log polls constantly), and a row that comes and goes made
@@ -117,18 +112,6 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         let mut spans = vec![t.d("⧗ Working…"), Span::raw("   ")];
         spans.append(&mut page.right.spans);
         page.right = Line::from(spans);
-    }
-    let area_shown = match &app.screen {
-        Screen::Search(_) => Some(Area::Catalog),
-        Screen::Feeds { .. } | Screen::AddFeed(_) => Some(Area::Feeds),
-        Screen::Updates(_) => Some(Area::Updates),
-        Screen::AutoUpdate(_) => Some(Area::AutoUpdate),
-        Screen::WebProviders(_) => Some(Area::Providers),
-        Screen::WebCheck(_) => Some(Area::Reachability),
-        _ => None,
-    };
-    if let Some(reason) = area_shown.and_then(|area| app.data.unavailable(area)) {
-        page.footer.insert(0, Item::Text(Line::from(t.e(format!("▲ Not available yet: {reason}")))));
     }
     let v3_screen = true;
     let footer_rows = page.footer.len() as u16;
@@ -165,6 +148,34 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     hit::paint_hover(frame.buffer_mut(), &hits, app.hover, t);
     *app.hits.borrow_mut() = hits;
     report
+}
+
+/// The lines `render` puts above a page's keys: why this screen's data is missing, then the
+/// notice. Pages that fit themselves to the screen count them (`v3::Screen3`), or the keys would
+/// push the bottom of the page, with its buttons, off the screen.
+pub(crate) fn notes(app: &App, t: &Theme) -> Vec<Item> {
+    let mut notes = Vec::new();
+    let area_shown = match &app.screen {
+        Screen::Search(_) => Some(Area::Catalog),
+        Screen::Feeds { .. } | Screen::AddFeed(_) => Some(Area::Feeds),
+        Screen::Updates(_) => Some(Area::Updates),
+        Screen::AutoUpdate(_) => Some(Area::AutoUpdate),
+        Screen::WebProviders(_) => Some(Area::Providers),
+        Screen::WebCheck(_) => Some(Area::Reachability),
+        _ => None,
+    };
+    if let Some(reason) = area_shown.and_then(|area| app.data.unavailable(area)) {
+        notes.push(Item::Text(Line::from(t.e(format!("▲ Not available yet: {reason}")))));
+    }
+    if let Some(notice) = &app.notice {
+        let (symbol, span): (&str, fn(&Theme, String) -> Span<'static>) = match notice.kind {
+            NoticeKind::Info => ("▸", |t, text| t.i(text)),
+            NoticeKind::Ok => ("✓", |t, text| t.o(text)),
+            NoticeKind::Error => ("✕", |t, text| t.e(text)),
+        };
+        notes.push(Item::Text(Line::from(span(t, format!("{symbol} {}", notice.text)))));
+    }
+    notes
 }
 
 fn draw_too_small(frame: &mut Frame, area: Rect, t: &Theme) {
