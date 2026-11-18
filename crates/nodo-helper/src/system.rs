@@ -65,6 +65,9 @@ pub trait System: Send + Sync {
     /// The text `sv status` printed. A nonzero exit is not an error, because it is how `sv`
     /// reports a service that is not supervised.
     fn sv_status(&self, id: &str) -> SysResult<String>;
+    /// Like [`System::sv_status`], for a service directory named by its path, which answers
+    /// whether a runsv still holds it after its link in the service directory is gone.
+    fn sv_status_dir(&self, dir: &Path) -> SysResult<String>;
 
     fn exists(&self, path: &Path) -> bool;
     /// `None` when the file does not exist.

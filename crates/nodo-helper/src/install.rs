@@ -172,10 +172,16 @@ impl<S: System> Helper<S> {
             self.set_data_layout(id, package.manifest.storage.layout())?;
         }
         self.write_service(id, &artifacts)?;
+        // An update or rollback finds the service enabled, stopped or running as its own flow
+        // wants it, and leaves that alone. Only a service enabled now is made to start.
+        let enabling = self.sys.read_link(&enabled).is_none();
         if held {
             // runsv leaves a service with a `down` file stopped until it is started.
             self.sys
                 .atomic_write(&service.join("down"), b"", CONFIG)?;
+        } else if enabling && self.sys.exists(&service.join("down")) {
+            // Left by a restore that never released it, it would keep this install stopped.
+            self.sys.remove_file(&service.join("down"))?;
         }
         // Settings, including generated secrets, exist before the service first starts.
         for file in plan.map(|plan| plan.files).unwrap_or_default() {
@@ -190,6 +196,10 @@ impl<S: System> Helper<S> {
                 )))
             }
             None => self.sys.symlink(&service, &enabled)?,
+        }
+        // A held service is started by whoever held it, once its storage is filled.
+        if enabling && !held {
+            self.wait_supervised(id)?;
         }
         Ok(Response::Ok)
     }
@@ -347,6 +357,68 @@ mod tests {
         let h = installed();
         by_id(&h).unwrap();
         assert_eq!(by_id(&h), Ok(Response::Ok));
+    }
+
+    #[test]
+    fn a_new_link_is_waited_for_until_runit_picks_it_up() {
+        let h = installed();
+        h.sys.script_status(
+            "shop",
+            &[
+                "warning: shop: unable to open supervise/ok: file does not exist\n",
+                "warning: shop: unable to open supervise/ok: file does not exist\n",
+                "run: shop: (pid 7) 0s; run: log: (pid 6) 0s\n",
+            ],
+        );
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+        assert_eq!(h.sys.sleeps().len(), 2);
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("sv start")), "{:?}", h.sys.calls());
+    }
+
+    /// The race the VM journeys found: removed and installed again within one runsvdir scan, the
+    /// runsv of the removed install still holds the service and keeps it down.
+    #[test]
+    fn a_runsv_left_from_a_removal_is_told_to_start() {
+        let h = installed();
+        h.sys.script_status("shop", &["down: shop: 4s, normally up; run: log: (pid 6) 90s\n"]);
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+        let calls = h.sys.calls();
+        let at = |needle: &str| calls.iter().position(|c| c.starts_with(needle)).unwrap();
+        assert!(at("symlink /service/shop") < at("sv start shop"), "{calls:?}");
+    }
+
+    #[test]
+    fn an_install_runit_never_picks_up_fails() {
+        let h = installed();
+        h.sys.set_status("shop", "warning: shop: runsv not running\n");
+        let Err(ApiError::Failed(message)) = by_id(&h) else {
+            panic!()
+        };
+        assert!(message.contains("did not pick up"), "{message}");
+        assert_eq!(h.sys.sleeps().len(), 14, "bounded");
+    }
+
+    #[test]
+    fn an_already_enabled_service_is_left_as_its_flow_has_it() {
+        let h = installed();
+        by_id(&h).unwrap();
+        h.sys.put("/sv/shop/down", b"");
+        h.sys.set_status("shop", "down: shop: 4s, normally up; run: log: (pid 6) 90s\n");
+        h.sys.clear_calls();
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+        let calls = h.sys.calls();
+        assert!(!calls.iter().any(|c| c.starts_with("sv start")), "{calls:?}");
+        assert!(h.sys.get("/sv/shop/down").is_some());
+    }
+
+    #[test]
+    fn enabling_drops_a_down_file_a_restore_left_behind() {
+        let h = installed();
+        by_id(&h).unwrap();
+        h.sys.remove_file(Path::new("/service/shop")).unwrap();
+        h.sys.put("/sv/shop/down", b"");
+        assert_eq!(by_id(&h), Ok(Response::Ok));
+        assert!(h.sys.get("/sv/shop/down").is_none());
     }
 
     #[test]

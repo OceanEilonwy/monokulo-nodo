@@ -551,6 +551,9 @@ impl<S: System> Helper<S> {
         let enabled = self.paths.service_dir.join(package);
         if self.sys.read_link(&enabled).is_some() {
             self.sys.remove_file(&enabled).map_err(|e| ApiError::Failed(e.0))?;
+            // Before anything else goes, so the removal is over when it answers and an install
+            // of the same app straight after gets a runsv of its own.
+            self.wait_unsupervised(package);
         }
         let manifest = self.paths.app_manifests.join(format!("{package}.toml"));
         if self.sys.exists(&manifest) {
@@ -581,8 +584,9 @@ impl<S: System> Helper<S> {
             return report;
         }
         let enabled = self.paths.service_dir.join(package);
-        if self.sys.read_link(&enabled).is_some() {
-            let _ = self.sys.remove_file(&enabled);
+        if self.sys.read_link(&enabled).is_some() && self.sys.remove_file(&enabled).is_ok() {
+            // So trying the install again straight away is not taken for the same service.
+            self.wait_unsupervised(package);
         }
         let _ = self
             .sys

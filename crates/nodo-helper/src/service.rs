@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use nodo_api::{ApiError, Origin, Response, ServiceState, ServiceStatus};
 use nodo_gen::volume_mount;
@@ -9,6 +10,12 @@ use crate::system::{SvAction, System};
 
 /// A hostile `stop_timeout_secs` must not hold the service lock indefinitely.
 const MAX_STOP_WAIT_SECS: u32 = 600;
+
+/// runsvdir looks for added and removed links in the service directory about every five
+/// seconds, and a runsv it lets go still has to stop its service and logger before it exits, so
+/// fifteen seconds covers a scan with room to spare.
+const SUPERVISOR_ATTEMPTS: u32 = 15;
+const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SvStatus {
@@ -25,6 +32,12 @@ pub(crate) enum SvStatus {
 impl SvStatus {
     pub fn is_running(&self) -> bool {
         matches!(self, SvStatus::Running { .. })
+    }
+
+    /// Whether a runsv answered at all. `sv` words a directory no runsv holds as a warning,
+    /// which parses as unknown.
+    pub fn supervised(&self) -> bool {
+        !matches!(self, SvStatus::Unknown(_))
     }
 
     pub fn uptime_secs(&self) -> Option<u64> {
@@ -169,6 +182,56 @@ impl<S: System> Helper<S> {
 
     pub(crate) fn restart_service(&self, id: &str) -> Result<Response, ApiError> {
         self.service_action(SvAction::ForceRestart, id)
+    }
+
+    /// Waits, after a service's link is gone, until its runsv has exited. runsvdir tells a
+    /// service apart by its directory, not its name, and notices a removed link only at its next
+    /// scan. A link made again under the same name before then points at the same directory, so
+    /// runsvdir takes it for the service its old runsv still holds and starts no new one, while
+    /// that runsv keeps the service stopped as the removal told it. False when the runsv was
+    /// still there at the end; an install that follows then starts it itself.
+    pub(crate) fn wait_unsupervised(&self, id: &str) -> bool {
+        let dir = self.paths.sv_dir.join(id);
+        for attempt in 0..SUPERVISOR_ATTEMPTS {
+            if attempt > 0 {
+                self.sys.sleep(SUPERVISOR_INTERVAL);
+            }
+            match self.sys.sv_status_dir(&dir) {
+                Ok(text) if parse_sv_status(&text).supervised() => {}
+                // An error means sv could not even ask, so there is nothing to wait for.
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// Waits, after a service is linked, until a runsv holds it, and makes sure it is told to
+    /// run. A new runsv starts the service by itself; one left over from an earlier install of
+    /// the same id, which outlived its removal, keeps it stopped until told otherwise. An install
+    /// fails here rather than report a service the supervisor never picked up.
+    pub(crate) fn wait_supervised(&self, id: &str) -> Result<(), ApiError> {
+        for attempt in 0..SUPERVISOR_ATTEMPTS {
+            if attempt > 0 {
+                self.sys.sleep(SUPERVISOR_INTERVAL);
+            }
+            let Ok(text) = self.sys.sv_status(id) else {
+                continue;
+            };
+            match parse_sv_status(&text) {
+                SvStatus::Unknown(_) => continue,
+                SvStatus::Down => {
+                    // Only told to start, not waited for: whether it then runs is what the
+                    // health check that follows an install is for.
+                    let _ = self.sys.sv(SvAction::Start, id, 1);
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            }
+        }
+        Err(ApiError::Failed(format!(
+            "runit did not pick up the {id} service within {} seconds",
+            SUPERVISOR_ATTEMPTS
+        )))
     }
 
     fn service_action(&self, action: SvAction, id: &str) -> Result<Response, ApiError> {

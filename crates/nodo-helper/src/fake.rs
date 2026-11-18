@@ -275,6 +275,22 @@ impl System for FakeSystem {
             .unwrap_or_else(|| format!("run: {id}: (pid 1) 100s; run: log: (pid 2) 100s\n")))
     }
 
+    /// Recorded, so tests see when the helper asked. Scripted and set by the directory's path
+    /// like [`FakeSystem::script_status`]; with nothing set, no runsv holds the directory.
+    fn sv_status_dir(&self, dir: &Path) -> SysResult<String> {
+        let dir = text(dir);
+        self.record(format!("sv status {dir}"))?;
+        let mut state = self.state();
+        if let Some(line) = state.status_script.get_mut(&dir).and_then(VecDeque::pop_front) {
+            return Ok(line);
+        }
+        Ok(state
+            .status
+            .get(&dir)
+            .cloned()
+            .unwrap_or_else(|| format!("warning: {dir}: runsv not running\n")))
+    }
+
     /// A directory exists when any file is inside it, as it would on disk.
     fn exists(&self, path: &Path) -> bool {
         let state = self.state();
