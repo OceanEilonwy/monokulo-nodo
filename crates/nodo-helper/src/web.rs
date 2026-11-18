@@ -280,6 +280,7 @@ impl<I: WebIo> NodoWeb<I> {
                 local_host: None,
                 public_subdomain: None,
                 public_host: s.public_host.clone(),
+                public_aliases: s.public_aliases.clone(),
                 onion_host: self.onion_host(&s.package, &s.service.name),
                 // Rate limiting is always on for public sites.
                 rate_limit: true,
@@ -542,6 +543,11 @@ fn device_address(gateway: Ipv4Addr) -> Option<IpAddr> {
 }
 
 impl<I: WebIo> ExposureApplier for NodoWeb<I> {
+    fn owned_domains(&self) -> Vec<String> {
+        let (store, _) = self.provider_store();
+        store.owned().into_iter().map(|(_, domain)| domain.to_owned()).collect()
+    }
+
     fn apply(&self, input: &WebInput) -> Result<(), String> {
         self.migrate_providers()?;
         let wants_local = input.sites.iter().any(|s| s.exposure.local);

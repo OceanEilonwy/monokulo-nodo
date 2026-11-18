@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod client;
+mod hosts;
 mod manage;
 mod owner;
 pub mod protocol;
@@ -19,6 +20,7 @@ mod system;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use hosts::*;
 pub use manage::*;
 pub use owner::*;
 pub use radio::*;
@@ -28,8 +30,10 @@ pub use system::*;
 /// Version 2 replaced plain passphrase strings with [`Secret`], typed setting values, structured
 /// rollbacks and confirmed exposure changes. Version 3 added [`ServiceStatus::uptime_secs`].
 /// Version 4 added bundles and owner pages: the bundle and owner page facts in [`PackageInfo`],
-/// [`CatalogEntry`] and [`InstallReview`].
-pub const PROTOCOL_VERSION: u8 = 4;
+/// [`CatalogEntry`] and [`InstallReview`]. Version 5 added the names a site also answers at:
+/// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Postcard reads
+/// fields by position, so `#[serde(default)]` alone would not let the old and new forms meet.
+pub const PROTOCOL_VERSION: u8 = 5;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -325,6 +329,9 @@ pub struct SiteInfo {
     pub multi_address: bool,
     pub public_host: Option<String>,
     pub locked: bool,
+    /// The other names the site answers at, each served or redirected to `public_host`.
+    #[serde(default)]
+    pub public_aliases: Vec<PublicAlias>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -815,10 +822,13 @@ pub enum Request {
     CheckDrive,
     RepairDrive(RepairConfirmation),
     ListSites,
-    /// The host the user brought for a site. Going public must then quote it.
+    /// The host the user brought for a site. Going public must then quote it. `aliases` replaces
+    /// the other names the site answers at; `None` keeps the saved ones.
     SetPublicHost {
         site: SiteId,
         host: String,
+        #[serde(default)]
+        aliases: Option<Vec<PublicAlias>>,
     },
     CheckReachability {
         site: SiteId,

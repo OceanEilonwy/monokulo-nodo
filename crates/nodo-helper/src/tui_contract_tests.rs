@@ -37,6 +37,34 @@ fn the_tui_installs_through_the_helper_as_the_mock_does() {
     assert!(!done.can_cancel);
 }
 
+/// A proxy that holds example.com, as the mock's one connected domain.
+struct OwnsExampleCom;
+
+impl crate::exposure::ExposureApplier for OwnsExampleCom {
+    fn apply(&self, _: &crate::exposure::WebInput) -> Result<(), String> {
+        Ok(())
+    }
+    fn owned_domains(&self) -> Vec<String> {
+        vec!["example.com".to_owned()]
+    }
+}
+
+#[test]
+fn the_tui_saves_a_sites_other_names_through_the_helper_as_the_mock_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let (h, _packages) = setup();
+    h.sys.add_manifest(crate::fake::SHOP);
+    let mut h = crate::helper::Helper { exposure: Box::new(OwnsExampleCom), ..h };
+    h.allowed = AllowedUids::new([rustix::process::geteuid().as_raw()]);
+    let path = dir.path().join("helper.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let h = Arc::new(h);
+    std::thread::spawn(move || serve(listener, h));
+    let mut backend = HelperBackend::connect(&path).unwrap();
+    backend.set_public_host("shop/single", "one.example.com", &[]).unwrap();
+    contract::site_aliases(&mut backend, "shop/web", "example.com", "one.example.com");
+}
+
 #[test]
 fn the_tui_hears_the_helper_refuse_what_the_mock_refuses() {
     let dir = tempfile::tempdir().unwrap();

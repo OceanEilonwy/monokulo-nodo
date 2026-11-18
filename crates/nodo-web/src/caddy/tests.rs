@@ -25,6 +25,7 @@ fn site(package: &str, name: &str, port: u16, exposure: Exposure) -> Site {
         local_host: None,
         public_subdomain: None,
         public_host: None,
+        public_aliases: Vec::new(),
         onion_host: None,
         rate_limit: false,
     }
@@ -860,6 +861,9 @@ fn dns_challenge_credentials_cannot_carry_placeholders() {
 fn vm_fixture_matches_the_generator() {
     let mut shop = site("shop", "shop", 3001, all_exposures());
     shop.onion_host = Some(ONION.to_owned());
+    // The bare domain redirects to the shop and a name under a second domain serves it, so the VM
+    // checks both kinds of alias against real Caddy.
+    shop.public_aliases = vec![alias("example.com", AliasMode::Redirect), alias("shop.example.org", AliasMode::Serve)];
     let mut pay = site("pay", "pay", 3002, Exposure { local: true, public: true, ..Exposure::default() });
     pay.state = ServiceState::Stopped;
     let mut vault = site("vault", "vault", 3003, Exposure { public: true, ..Exposure::default() });
@@ -1162,4 +1166,116 @@ fn a_zone_challenge_with_a_bad_name_is_refused() {
         ..settings()
     };
     assert!(generate(&[], &settings).is_err());
+}
+
+fn alias(host: &str, mode: AliasMode) -> PublicAlias {
+    PublicAlias { host: host.to_owned(), mode }
+}
+
+/// `www.example.com` with the bare domain redirecting to it, as most sites with a `www` name want.
+fn www_with_apex_redirect() -> Site {
+    let mut www = site("www", "web", 8001, Exposure { public: true, ..Exposure::default() });
+    www.public_host = Some("www.example.com".to_owned());
+    www.public_aliases = vec![alias("example.com", AliasMode::Redirect)];
+    www
+}
+
+#[test]
+fn an_apex_redirect_alias_answers_308_to_the_primary_keeping_path_and_query() {
+    let plan = generate(&[www_with_apex_redirect()], &settings()).unwrap();
+    assert_eq!(request(&plan, "public", "www.example.com", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8001".into()));
+    assert_eq!(request(&plan, "public", "example.com", "/shop", INTERNET_CLIENT), Outcome::Status("308".into()));
+    let value = json(&plan);
+    let routes = value["apps"]["http"]["servers"]["public"]["routes"].as_array().unwrap();
+    let redirect = routes.iter().find(|r| r["match"][0]["host"] == serde_json::json!(["example.com"])).unwrap();
+    let handler = &redirect["handle"][0]["routes"][0]["handle"][0];
+    assert_eq!(handler["handler"], "static_response");
+    assert_eq!(handler["status_code"], "308");
+    // The request URI is the path with its query, so both survive the redirect.
+    assert_eq!(handler["headers"]["Location"], serde_json::json!(["https://www.example.com{http.request.uri}"]));
+    // The redirect never reaches the upstream, so it needs no admin block or rate limit.
+    assert_eq!(redirect["handle"][0]["routes"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn every_alias_gets_a_certificate_an_sni_entry_an_http_redirect_and_an_address() {
+    let mut www = www_with_apex_redirect();
+    www.public_aliases.push(alias("www.example.org", AliasMode::Serve));
+    let plan = generate(&[www], &settings()).unwrap();
+    let server = &plan.caddy.apps.http.servers["public"];
+    let sni = &server.tls_connection_policies[0].matcher.sni;
+    for host in ["www.example.com", "example.com", "www.example.org"] {
+        assert!(sni.iter().any(|h| h == host), "{host} in {sni:?}");
+        let subjects: Vec<&String> = plan.caddy.apps.tls.as_ref().unwrap().automation.policies.iter().flat_map(|p| &p.subjects).collect();
+        assert!(subjects.contains(&&host.to_owned()), "{host} in {subjects:?}");
+        // Caddy's automatic HTTP to HTTPS redirect covers the names in host matchers.
+        assert!(server.routes.iter().any(|r| r.matchers.iter().any(|m| m.host.iter().any(|h| h == host))), "{host}");
+        assert!(plan.addresses.iter().any(|a| a.host == host && a.kind == AddressKind::Public), "{host}");
+    }
+    assert!(!server.automatic_https.disable && !server.automatic_https.disable_redirects);
+    // The primary stays the site's first public address, which the screens show as its URL.
+    assert_eq!(plan.addresses.iter().find(|a| a.kind == AddressKind::Public).unwrap().host, "www.example.com");
+}
+
+#[test]
+fn a_serving_alias_under_a_second_domain_gets_that_domains_challenge_and_the_same_protections() {
+    let mut pay = site("pay", "web", 8002, Exposure { public: true, ..Exposure::default() });
+    pay.public_host = Some("www.example.com".to_owned());
+    pay.public_aliases = vec![alias("pay.example.org", AliasMode::Serve)];
+    pay.rate_limit = true;
+    let settings = DomainSettings {
+        zone_challenges: vec![
+            ZoneChallenge { zone: "example.com".to_owned(), challenge: cloudflare() },
+            ZoneChallenge { zone: "example.org".to_owned(), challenge: DnsChallenge::Gandi { personal_access_token: Secret::new("pat_0123456789abcdef") } },
+        ],
+        rate_limit: Some(RateLimit::default()),
+        ..settings()
+    };
+    let plan = generate(&[pay], &settings).unwrap();
+    assert_eq!(request(&plan, "public", "pay.example.org", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
+    assert_eq!(request(&plan, "public", "pay.example.org", "/admin", INTERNET_CLIENT), Outcome::Status("404".into()));
+    let value = json(&plan);
+    let policies = value["apps"]["tls"]["automation"]["policies"].as_array().unwrap();
+    let provider_of = |host: &str| {
+        let policy = policies.iter().find(|p| p["subjects"].as_array().unwrap().iter().any(|s| s == host)).unwrap();
+        policy["issuers"][0]["challenges"]["dns"]["provider"]["name"].as_str().map(str::to_owned)
+    };
+    assert_eq!(provider_of("www.example.com").as_deref(), Some("cloudflare"));
+    assert_eq!(provider_of("pay.example.org").as_deref(), Some("gandi"));
+}
+
+#[test]
+fn aliases_are_unique_across_every_site_and_name() {
+    let www = www_with_apex_redirect();
+    // Another site's primary.
+    let mut apex = site("apex", "web", 8003, Exposure { public: true, ..Exposure::default() });
+    apex.public_host = Some("example.com".to_owned());
+    let clash = generate(&[www.clone(), apex], &settings());
+    assert_eq!(clash.unwrap_err(), WebConfigError::DuplicateHost { host: "example.com".to_owned() });
+    // Another site's alias, whatever its mode.
+    let mut other = site("other", "web", 8004, Exposure { public: true, ..Exposure::default() });
+    other.public_host = Some("other.example.com".to_owned());
+    other.public_aliases = vec![alias("example.com", AliasMode::Serve)];
+    assert!(matches!(generate(&[www.clone(), other], &settings()), Err(WebConfigError::DuplicateHost { .. })));
+    // The site's own primary, or the same alias twice.
+    let mut own = www.clone();
+    own.public_aliases.push(alias("www.example.com", AliasMode::Serve));
+    assert!(matches!(generate(&[own], &settings()), Err(WebConfigError::DuplicateHost { .. })));
+    let mut twice = www.clone();
+    twice.public_aliases.push(alias("example.com", AliasMode::Serve));
+    assert!(matches!(generate(&[twice], &settings()), Err(WebConfigError::DuplicateHost { .. })));
+}
+
+#[test]
+fn hostile_alias_names_are_refused_and_aliases_wait_while_the_site_is_not_public() {
+    for bad in ["example.com/x", "{env.HOME}.com", "a b.com", "shop.local", "x"] {
+        let mut www = www_with_apex_redirect();
+        www.public_aliases = vec![alias(bad, AliasMode::Redirect)];
+        assert!(matches!(generate(&[www], &settings()), Err(WebConfigError::InvalidName { field: "public_alias", .. })), "{bad}");
+    }
+    let mut local = www_with_apex_redirect();
+    local.exposure = Exposure { local: true, ..Exposure::default() };
+    let plan = generate(&[local], &settings()).unwrap();
+    assert!(!plan.caddy.apps.http.servers.contains_key("public"));
+    assert!(!plan.addresses.iter().any(|a| a.host == "example.com"));
 }

@@ -83,3 +83,34 @@ pub fn unreadable_source_is_named(backend: &mut impl ScreenData, unreadable: &st
         assert!(!summary.text.contains("Up to date"), "apps from an unread source are not up to date: {}", summary.text);
     }
 }
+
+/// A site's other names: saved and read back, removed, and refused for the same reasons in the
+/// same words. `site` is not public and `domain` is the one connected domain; `other_host` is
+/// another site's address.
+pub fn site_aliases(backend: &mut impl ScreenData, site: &str, domain: &str, other_host: &str) {
+    use nodo_api::{AliasMode, PublicAlias};
+    let alias = |host: &str, mode| PublicAlias { host: host.to_owned(), mode };
+    let primary = format!("www.{domain}");
+    let saved = |backend: &mut dyn FnMut() -> WebOverview| {
+        backend().sites.into_iter().find(|s| s.package == site).map(|s| s.public_aliases).expect("the site is listed")
+    };
+    let names = vec![alias(domain, AliasMode::Redirect), alias(&format!("pay.{domain}"), AliasMode::Serve)];
+    assert_eq!(backend.set_public_host(site, &primary, &names), Ok(()), "an apex redirect and a serving name are saved");
+    assert_eq!(saved(&mut || backend.web()), names, "and read back as saved");
+
+    let refusals = [
+        (vec![alias("elsewhere.invalid", AliasMode::Redirect)], "not under a domain of a connected provider"),
+        (vec![alias(domain, AliasMode::Redirect), alias(domain, AliasMode::Serve)], "listed twice"),
+        (vec![alias(&primary, AliasMode::Serve)], "already the site's main address"),
+        (vec![alias(other_host, AliasMode::Redirect)], "is already an address of"),
+        (vec![alias("Shop.Example", AliasMode::Redirect)], "not a full lowercase domain name"),
+    ];
+    for (aliases, why) in refusals {
+        let result = backend.set_public_host(site, &primary, &aliases);
+        assert!(result.as_ref().is_err_and(|text| text.contains(why)), "{aliases:?} is refused because {why}: {result:?}");
+        assert_eq!(saved(&mut || backend.web()), names, "a refusal leaves the saved names");
+    }
+
+    assert_eq!(backend.set_public_host(site, &primary, &[]), Ok(()), "the names are removed");
+    assert_eq!(saved(&mut || backend.web()), Vec::new());
+}

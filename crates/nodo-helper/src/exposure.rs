@@ -3,11 +3,11 @@ use std::path::Path;
 
 use nodo_api::{
     AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, DnsProviderDetail, DomainProvider, Exposure,
-    LocalNameCheck, LocalSiteStatus, ProviderInfo, PublicConfirmation, ReachabilityCheck, ReachabilityDetail,
-    ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo, WebStatus,
+    LocalNameCheck, LocalSiteStatus, ProviderInfo, PublicAlias, PublicConfirmation, ReachabilityCheck,
+    ReachabilityDetail, ReachabilityReport, Request, Response, Secret, SiteId, SiteInfo, WebStatus,
 };
 use nodo_manifest::WebService;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::catalog::Package;
 use crate::secrets::SecretsKey;
@@ -19,7 +19,52 @@ use crate::system::{System, WriteOptions};
 pub type ExposureState = BTreeMap<String, BTreeMap<String, Exposure>>;
 
 /// The host name the user brought for each site, keyed like [`ExposureState`].
-pub type PublicHosts = BTreeMap<String, BTreeMap<String, String>>;
+pub type PublicHosts = BTreeMap<String, BTreeMap<String, HostEntry>>;
+
+/// One site's entry in `public-hosts.toml`. A site without other names keeps the plain string the
+/// file always held, so the file stays readable by an older helper until an alias is added. With
+/// aliases it is a table:
+///
+/// ```toml
+/// [monokulo-pay]
+/// web = { host = "www.monokulo.com", aliases = [{ host = "monokulo.com", mode = "redirect" }] }
+/// ```
+///
+/// An older helper cannot read that table and takes the whole file for corrupt, so after a
+/// downgrade it refuses to list or change sites until the aliases are removed again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum HostEntry {
+    Host(String),
+    WithAliases {
+        host: String,
+        #[serde(default)]
+        aliases: Vec<PublicAlias>,
+    },
+}
+
+impl HostEntry {
+    pub fn new(host: String, aliases: Vec<PublicAlias>) -> Self {
+        if aliases.is_empty() {
+            HostEntry::Host(host)
+        } else {
+            HostEntry::WithAliases { host, aliases }
+        }
+    }
+
+    pub fn host(&self) -> &str {
+        match self {
+            HostEntry::Host(host) | HostEntry::WithAliases { host, .. } => host,
+        }
+    }
+
+    pub fn aliases(&self) -> &[PublicAlias] {
+        match self {
+            HostEntry::Host(_) => &[],
+            HostEntry::WithAliases { aliases, .. } => aliases,
+        }
+    }
+}
 
 /// One site as the web proxy needs it: what its package declares, plus the user's choices.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +73,8 @@ pub struct WebSite {
     pub service: WebService,
     pub exposure: Exposure,
     pub public_host: Option<String>,
+    /// The other names the site answers at while it is public.
+    pub public_aliases: Vec<PublicAlias>,
     pub locked: bool,
 }
 
@@ -125,6 +172,11 @@ pub trait ExposureApplier: Send + Sync {
     fn device_address(&self) -> Option<String> {
         None
     }
+    /// The domains of the connected providers. A site's other names must be under one, since only
+    /// those can get a DNS record and a DNS-01 certificate. Without a proxy there are none.
+    fn owned_domains(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// The onion addresses Tor has made. Without a proxy there are none.
     fn onion_addresses(&self, _input: &WebInput) -> Result<crate::onion::OnionAddresses, ApiError> {
         Ok(crate::onion::OnionAddresses::default())
@@ -146,24 +198,8 @@ const STATE_FILE: WriteOptions = WriteOptions {
     group: None,
 };
 
-/// A DNS name of at least two labels. Lowercase only, so the typed confirmation compares
-/// exactly with what was stored.
-pub(crate) fn valid_host(host: &str) -> bool {
-    let labels: Vec<&str> = host.split('.').collect();
-    host.len() <= 253
-        && labels.len() >= 2
-        && labels.iter().all(|label| {
-            (1..=63).contains(&label.len())
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        })
-        && !labels
-            .last()
-            .is_some_and(|tld| tld.bytes().all(|b| b.is_ascii_digit()))
-}
+/// The rule lives in nodo-api, so the TUI's test backend checks names exactly as the helper does.
+pub(crate) use nodo_api::valid_public_host as valid_host;
 
 fn find_site<'a>(package: &'a Package, site: &str) -> Result<&'a WebService, ApiError> {
     package
@@ -205,12 +241,9 @@ impl<S: System> Helper<S> {
         Ok(())
     }
 
-    fn saved_host(&self, site: &SiteId) -> Result<Option<String>, ApiError> {
+    fn saved_entry(&self, site: &SiteId) -> Result<Option<HostEntry>, ApiError> {
         let (hosts, _): (PublicHosts, _) = self.load_toml(&self.paths.public_hosts)?;
-        Ok(hosts
-            .get(&site.package)
-            .and_then(|sites| sites.get(&site.site))
-            .cloned())
+        Ok(hosts.get(&site.package).and_then(|sites| sites.get(&site.site)).cloned())
     }
 
     /// Every site of every package, with its saved exposure and host.
@@ -223,9 +256,11 @@ impl<S: System> Helper<S> {
             for web in &package.manifest.web {
                 let get = |id: &str| (package.id().to_owned(), id.to_owned());
                 let (pkg, name) = get(&web.name);
+                let entry = hosts.get(&pkg).and_then(|s| s.get(&name));
                 sites.push(WebSite {
                     exposure: state.get(&pkg).and_then(|s| s.get(&name)).copied().unwrap_or_default(),
-                    public_host: hosts.get(&pkg).and_then(|s| s.get(&name)).cloned(),
+                    public_host: entry.map(|e| e.host().to_owned()),
+                    public_aliases: entry.map(|e| e.aliases().to_vec()).unwrap_or_default(),
                     package: pkg,
                     service: web.clone(),
                     locked,
@@ -390,14 +425,28 @@ impl<S: System> Helper<S> {
             .and_then(|sites| sites.get(&site.site))
             .is_some_and(|old| old.public);
         if exposure.public && !was_public {
-            let Some(host) = self.saved_host(site)? else {
+            let Some(entry) = self.saved_entry(site)? else {
                 return Err(ApiError::NeedsConfirmation(
                     "choose the public host name before going public".to_owned(),
                 ));
             };
-            if confirmation.map(|c| c.typed_host.as_str()) != Some(host.as_str()) {
+            let host = entry.host();
+            if confirmation.map(|c| c.typed_host.as_str()) != Some(host) {
                 return Err(ApiError::NeedsConfirmation(format!(
                     "type {host} exactly to confirm going public"
+                )));
+            }
+            // A name saved while its provider was connected may have lost it since, and without
+            // the provider it would get neither its record nor its certificate.
+            let owned = self.exposure.owned_domains();
+            if let Some(stale) = entry
+                .aliases()
+                .iter()
+                .find(|alias| !owned.iter().any(|domain| nodo_api::host_under(&alias.host, domain)))
+            {
+                return Err(ApiError::Failed(format!(
+                    "{} is not under a domain of a connected provider any more. Remove it, or connect its provider, before going public",
+                    stale.host
                 )));
             }
         }
@@ -427,8 +476,16 @@ impl<S: System> Helper<S> {
         Ok(Response::Ok)
     }
 
-    /// A public site keeps its host, because the user confirmed going public for that name.
-    pub(crate) fn set_public_host(&self, site: &SiteId, host: &str) -> Result<Response, ApiError> {
+    /// A public site keeps its host, because the user confirmed going public for that name. Its
+    /// other names can be removed while it is public, which only takes names away, but not added
+    /// or changed: the going-public confirmation listed every name the site would answer at, so a
+    /// new one waits until the site goes public again. `aliases` of `None` keeps the saved ones.
+    pub(crate) fn set_public_host(
+        &self,
+        site: &SiteId,
+        host: &str,
+        aliases: Option<&[PublicAlias]>,
+    ) -> Result<Response, ApiError> {
         let package = self.package(&site.package)?;
         find_site(&package, &site.site)?;
         if !valid_host(host) {
@@ -443,18 +500,58 @@ impl<S: System> Helper<S> {
             .get(&site.package)
             .and_then(|sites| sites.get(&site.site))
             .is_some_and(|e| e.public);
-        let (mut hosts, _): (PublicHosts, _) = self.load_toml(&self.paths.public_hosts)?;
+        let (mut hosts, previous): (PublicHosts, _) = self.load_toml(&self.paths.public_hosts)?;
         let current = hosts.get(&site.package).and_then(|s| s.get(&site.site));
-        if public && current.map(String::as_str) != Some(host) {
+        if public && current.map(HostEntry::host) != Some(host) {
             return Err(ApiError::Failed(
                 "take the site off its public address before changing the host".to_owned(),
             ));
         }
+        let saved = current.map(|e| e.aliases().to_vec()).unwrap_or_default();
+        let aliases = aliases.map_or_else(|| saved.clone(), <[PublicAlias]>::to_vec);
+        if public && !aliases.iter().all(|alias| saved.contains(alias)) {
+            return Err(ApiError::Failed(
+                "take the site off its public address before adding another name; removing one works while it is public"
+                    .to_owned(),
+            ));
+        }
+        // Every name another site answers at, so two sites never claim one name.
+        let taken: Vec<(String, String)> = hosts
+            .iter()
+            .flat_map(|(package, sites)| sites.iter().map(move |(name, entry)| (package, name, entry)))
+            .filter(|(package, name, _)| **package != site.package || **name != site.site)
+            .flat_map(|(package, name, entry)| {
+                let owner = format!("{package}/{name}");
+                std::iter::once(entry.host().to_owned())
+                    .chain(entry.aliases().iter().map(|a| a.host.clone()))
+                    .map(move |h| (h, owner.clone()))
+            })
+            .collect();
+        nodo_api::check_aliases(host, &aliases, &self.exposure.owned_domains(), &taken)
+            .map_err(ApiError::Failed)?;
+        let changed = aliases != saved;
         hosts
             .entry(site.package.clone())
             .or_default()
-            .insert(site.site.clone(), host.to_owned());
+            .insert(site.site.clone(), HostEntry::new(host.to_owned(), aliases));
         self.save_toml(&self.paths.public_hosts, &hosts)?;
+        if public && changed {
+            // A removed name must stop answering now, not at the next change.
+            let applied = self
+                .web_input(&state)
+                .map_err(|e| e.to_string())
+                .and_then(|input| self.exposure.apply(&input));
+            if let Err(reason) = applied {
+                let restored = match &previous {
+                    Some(bytes) => self.sys.atomic_write(&self.paths.public_hosts, bytes, STATE_FILE),
+                    None => self.sys.remove_file(&self.paths.public_hosts),
+                };
+                return Err(ApiError::Failed(match restored {
+                    Ok(()) => format!("could not apply the change: {reason}"),
+                    Err(e) => format!("could not apply the change: {reason}. The old names could not be restored: {e}"),
+                }));
+            }
+        }
         Ok(Response::Ok)
     }
 
@@ -479,7 +576,12 @@ impl<S: System> Helper<S> {
                     public_host: hosts
                         .get(&id.package)
                         .and_then(|s| s.get(&id.site))
-                        .cloned(),
+                        .map(|e| e.host().to_owned()),
+                    public_aliases: hosts
+                        .get(&id.package)
+                        .and_then(|s| s.get(&id.site))
+                        .map(|e| e.aliases().to_vec())
+                        .unwrap_or_default(),
                     multi_address: web.multi_address,
                     locked,
                     id,
@@ -494,6 +596,7 @@ impl<S: System> Helper<S> {
 mod tests {
     use super::*;
     use crate::fake::{helper, FakeSystem, TestPolicy, SHOP};
+    use nodo_api::AliasMode;
 
     const STATE: &str = "/s/exposure.toml";
     const HOST: &str = "shop.example.com";
@@ -530,8 +633,8 @@ mod tests {
         let sys = FakeSystem::default();
         sys.add_manifest(SHOP);
         let h = helper(sys);
-        h.set_public_host(&site("web"), HOST).unwrap();
-        h.set_public_host(&site("single"), "one.example.com")
+        h.set_public_host(&site("web"), HOST, None).unwrap();
+        h.set_public_host(&site("single"), "one.example.com", None)
             .unwrap();
         h
     }
@@ -654,13 +757,144 @@ mod tests {
             "a b.com",
             "a_b.com",
         ] {
-            assert!(h.set_public_host(&site("web"), bad).is_err(), "{bad}");
+            assert!(h.set_public_host(&site("web"), bad, None).is_err(), "{bad}");
         }
         go(&h, "web", PUBLIC).unwrap();
         assert!(h
-            .set_public_host(&site("web"), "other.example.com")
+            .set_public_host(&site("web"), "other.example.com", None)
             .is_err());
-        assert!(h.set_public_host(&site("web"), HOST).is_ok());
+        assert!(h.set_public_host(&site("web"), HOST, None).is_ok());
+    }
+
+    /// A proxy that owns example.com and example.org and counts how often it was applied.
+    #[derive(Clone, Default)]
+    struct Domains(Arc<std::sync::Mutex<usize>>);
+    impl ExposureApplier for Domains {
+        fn apply(&self, _: &WebInput) -> Result<(), String> {
+            *self.0.lock().unwrap() += 1;
+            Ok(())
+        }
+        fn owned_domains(&self) -> Vec<String> {
+            vec!["example.com".to_owned(), "example.org".to_owned()]
+        }
+    }
+
+    fn with_domains(proxy: &Domains) -> Helper<FakeSystem> {
+        let h = setup();
+        Helper::new(h.sys, h.allowed, Box::new(TestPolicy), Box::new(proxy.clone())).with_paths(h.paths)
+    }
+
+    fn alias(host: &str, mode: AliasMode) -> PublicAlias {
+        PublicAlias { host: host.to_owned(), mode }
+    }
+
+    fn listed(h: &Helper<FakeSystem>, name: &str) -> SiteInfo {
+        let Ok(Response::Sites(sites)) = h.list_sites() else { panic!() };
+        sites.into_iter().find(|s| s.id.site == name).unwrap()
+    }
+
+    const HOSTS: &str = "/s/public-hosts.toml";
+
+    #[test]
+    fn aliases_are_saved_as_a_table_and_a_site_without_them_keeps_the_old_string() {
+        let proxy = Domains::default();
+        let h = with_domains(&proxy);
+        let aliases = [alias("example.com", AliasMode::Redirect), alias("pay.example.org", AliasMode::Serve)];
+        h.set_public_host(&site("web"), "www.example.com", Some(&aliases)).unwrap();
+        let text = String::from_utf8(h.sys.get(HOSTS).unwrap()).unwrap();
+        // The other site keeps the plain string an older helper reads.
+        assert!(text.contains("single = \"one.example.com\""), "{text}");
+        let saved: PublicHosts = toml::from_str(&text).unwrap();
+        assert_eq!(saved["shop"]["web"], HostEntry::WithAliases { host: "www.example.com".into(), aliases: aliases.to_vec() });
+        assert_eq!(listed(&h, "web").public_aliases, aliases);
+        assert_eq!(listed(&h, "single").public_aliases, []);
+        let input = h.current_web_input().unwrap();
+        let web = input.sites.iter().find(|s| s.service.name == "web").unwrap();
+        assert_eq!(web.public_aliases, aliases, "the proxy gets them");
+        // No aliases given keeps them; an empty list removes them and the old form comes back.
+        h.set_public_host(&site("web"), "www.example.com", None).unwrap();
+        assert_eq!(listed(&h, "web").public_aliases, aliases);
+        h.set_public_host(&site("web"), "www.example.com", Some(&[])).unwrap();
+        let text = String::from_utf8(h.sys.get(HOSTS).unwrap()).unwrap();
+        assert!(text.contains("web = \"www.example.com\""), "{text}");
+        assert_eq!(*proxy.0.lock().unwrap(), 0, "nothing public, so nothing to apply");
+    }
+
+    #[test]
+    fn an_old_file_reads_unchanged() {
+        let h = setup();
+        h.sys.put(HOSTS, b"[shop]\nweb = \"shop.example.com\"\n");
+        let web = listed(&h, "web");
+        assert_eq!(web.public_host.as_deref(), Some("shop.example.com"));
+        assert!(web.public_aliases.is_empty());
+    }
+
+    #[test]
+    fn aliases_outside_the_connected_domains_duplicates_and_other_sites_names_are_refused() {
+        let proxy = Domains::default();
+        let h = with_domains(&proxy);
+        let refused = |aliases: &[PublicAlias]| match h.set_public_host(&site("web"), "www.example.com", Some(aliases)) {
+            Err(ApiError::Failed(reason)) => reason,
+            other => panic!("{other:?}"),
+        };
+        assert!(refused(&[alias("example.net", AliasMode::Redirect)]).contains("not under a domain of a connected provider"));
+        assert!(refused(&[alias("a.example.com", AliasMode::Serve), alias("a.example.com", AliasMode::Redirect)]).contains("listed twice"));
+        assert!(refused(&[alias("www.example.com", AliasMode::Serve)]).contains("main address"));
+        assert_eq!(refused(&[alias("one.example.com", AliasMode::Redirect)]), "one.example.com is already an address of shop/single");
+        assert!(refused(&[alias("Example.com", AliasMode::Redirect)]).contains("lowercase"));
+        assert_eq!(listed(&h, "web").public_host.as_deref(), Some(HOST), "a refusal changes nothing");
+        // Without a proxy no domain is connected, so no alias can be checked into place.
+        let bare = setup();
+        assert!(bare.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)])).is_err());
+        // And another site cannot take a name an alias already has.
+        h.set_public_host(&site("web"), "www.example.com", Some(&[alias("example.com", AliasMode::Redirect)])).unwrap();
+        assert!(h.set_public_host(&site("single"), "example.com", None).is_err());
+    }
+
+    #[test]
+    fn while_public_aliases_can_be_removed_and_applied_but_not_added() {
+        let proxy = Domains::default();
+        let h = with_domains(&proxy);
+        let apex = alias("example.com", AliasMode::Redirect);
+        let pay = alias("pay.example.org", AliasMode::Serve);
+        h.set_public_host(&site("web"), HOST, Some(&[apex.clone(), pay.clone()])).unwrap();
+        go(&h, "web", PUBLIC).unwrap();
+        let applied = *proxy.0.lock().unwrap();
+        let added = h.set_public_host(&site("web"), HOST, Some(&[apex.clone(), pay.clone(), alias("b.example.com", AliasMode::Serve)]));
+        assert!(matches!(added, Err(ApiError::Failed(reason)) if reason.contains("before adding another name")));
+        let changed = h.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Serve), pay.clone()]));
+        assert!(changed.is_err(), "a mode change is a new name");
+        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay))).unwrap();
+        assert_eq!(listed(&h, "web").public_aliases, std::slice::from_ref(&pay));
+        assert_eq!(*proxy.0.lock().unwrap(), applied + 1, "a removed name stops answering at once");
+        // Saving the same names again applies nothing.
+        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay))).unwrap();
+        assert_eq!(*proxy.0.lock().unwrap(), applied + 1);
+    }
+
+    #[test]
+    fn going_public_with_a_name_whose_provider_has_gone_is_refused() {
+        let proxy = Domains::default();
+        let h = with_domains(&proxy);
+        // Saved while example.net was connected, by hand here.
+        h.sys.put(HOSTS, b"[shop.web]\nhost = \"shop.example.com\"\naliases = [{ host = \"example.net\", mode = \"redirect\" }]\n");
+        let refused = go(&h, "web", PUBLIC);
+        assert!(matches!(&refused, Err(ApiError::Failed(reason)) if reason.contains("example.net is not under a domain")), "{refused:?}");
+        assert_eq!(h.sys.get(STATE), None);
+        h.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)])).unwrap();
+        go(&h, "web", PUBLIC).unwrap();
+    }
+
+    #[test]
+    fn a_removal_the_proxy_refuses_puts_the_names_back() {
+        let h = setup();
+        let h = with_failing_caddy(h);
+        // Saved by hand: going public through the failing proxy is not possible.
+        h.sys.put(HOSTS, b"[shop.web]\nhost = \"shop.example.com\"\naliases = [{ host = \"example.com\", mode = \"redirect\" }]\n");
+        h.sys.put(STATE, b"[shop.web]\nlocal = false\nonion = false\npublic = true\n");
+        let before = h.sys.get(HOSTS).unwrap();
+        assert!(h.set_public_host(&site("web"), HOST, Some(&[])).is_err());
+        assert_eq!(h.sys.get(HOSTS).unwrap(), before);
     }
 
     #[test]

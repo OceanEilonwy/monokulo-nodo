@@ -251,6 +251,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 host.as_deref(),
                 &app.domain_choices(),
             );
+            state.aliases = site.map(|s| s.public_aliases.clone()).unwrap_or_default();
             state.selected = 2;
             Screen::WebExposure(state)
         }

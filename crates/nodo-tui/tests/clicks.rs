@@ -380,6 +380,7 @@ fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
         state.saved = state.draft.clone();
     }
     screens.push(("long automatic updates".to_owned(), auto));
+    screens.push(("hosting with other names".to_owned(), hosting_with_names(&snapshot, 0)));
     // Each screen on a thread of its own: some 400 states, each clicked target by target.
     let failures: Vec<String> = std::thread::scope(|scope| {
         let workers: Vec<_> = screens
@@ -469,5 +470,86 @@ fn a_sources_switch_and_link_stay_clickable_when_narrow() {
                 assert_eq!(hit_at(&hits, column, row as u16).map(|hit| hit.click), Some(Click::Key(crossterm::event::KeyCode::Char('r'))), "{size:?}");
             }
         }
+    }
+}
+
+/// monokulo-pay's Hosting, going public, with a redirecting and a serving name already listed and
+/// the controls to add another. `focus` is where the keyboard focus starts.
+fn hosting_with_names(snapshot: &nodo_tui::model::Snapshot, focus: usize) -> App {
+    use nodo_api::{AliasMode, PublicAlias};
+    use nodo_tui::app::ExposureState;
+    let mut app = App::new();
+    app.data = snapshot.clone();
+    let site = app.data.web.sites.iter().find(|s| s.package == "monokulo-pay").expect("a sample site").clone();
+    let mut state = ExposureState::new("monokulo-pay", site.exposure, site.public_host.as_deref(), &app.domain_choices());
+    state.draft.public = true;
+    state.aliases = vec![
+        PublicAlias { host: "pay-old.example.com".into(), mode: AliasMode::Redirect },
+        PublicAlias { host: "pay.crowd1.example".into(), mode: AliasMode::Serve },
+    ];
+    state.selected = focus;
+    app.screen = Screen::WebExposure(state);
+    app
+}
+
+/// From the smallest terminal to a large one, each of the other names' controls is on screen
+/// once the focus reaches it, and a click on it does what it says.
+#[test]
+fn a_sites_other_names_click_at_every_size() {
+    use nodo_tui::app::{ExposureState, HostingFocus};
+    let snapshot = {
+        let mut mock = common::forms::crowded();
+        nodo_tui::runtime::load_snapshot(&mut mock).expect("the mock answers")
+    };
+    let state = |app: &App| -> ExposureState {
+        let Screen::WebExposure(state) = &app.screen else { panic!("hosting") };
+        state.clone()
+    };
+    let at = |focus: HostingFocus| {
+        let app = hosting_with_names(&snapshot, 0);
+        state(&app).order().iter().position(|f| *f == focus).expect("in the order")
+    };
+    for size in [(60, 20), (80, 24), (100, 32), (200, 60)] {
+        let click_on = |focus: HostingFocus, label: &str| -> App {
+            let mut app = hosting_with_names(&snapshot, at(focus));
+            app.size = size;
+            let (buffer, _) = draw(&app, size.0, size.1);
+            let screen = common::text(&buffer);
+            let hits = app.hits.borrow().clone();
+            let (row, line) = screen.lines().enumerate().find(|(_, line)| line.contains(label)).unwrap_or_else(|| {
+                panic!("{}x{}: \"{label}\" is on screen with the focus on it:\n{screen}", size.0, size.1)
+            });
+            let column = line[..line.find(label).unwrap()].chars().count() as u16 + 1;
+            assert!(hit_at(&hits, column, row as u16).is_some(), "{}x{}: \"{label}\" is a target:\n{screen}", size.0, size.1);
+            update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row: row as u16 });
+            app
+        };
+        let removed = click_on(HostingFocus::Alias(1), "Remove");
+        assert_eq!(state(&removed).aliases.len(), 1, "{}x{}: a Remove click removes a name", size.0, size.1);
+        let toggled = click_on(HostingFocus::AliasMode, "redirects");
+        assert_eq!(state(&toggled).alias_mode, nodo_api::AliasMode::Serve, "{}x{}", size.0, size.1);
+        let opened = click_on(HostingFocus::AliasDomain, "New name");
+        assert_eq!(state(&opened).focus(), HostingFocus::AliasDomain, "{}x{}", size.0, size.1);
+        let mut typed = hosting_with_names(&snapshot, at(HostingFocus::AliasAddress));
+        for c in "shop2".chars() {
+            update(&mut typed, press(crossterm::event::KeyCode::Char(c)));
+        }
+        typed.size = size;
+        let added = {
+            let mut app = typed;
+            if let Screen::WebExposure(s) = &mut app.screen {
+                s.selected = at(HostingFocus::AliasAdd);
+            }
+            let (buffer, _) = draw(&app, size.0, size.1);
+            let screen = common::text(&buffer);
+            let hits = app.hits.borrow().clone();
+            let (row, line) = screen.lines().enumerate().find(|(_, line)| line.contains("Add this name")).expect("the Add button");
+            let column = line[..line.find("Add this name").unwrap()].chars().count() as u16 + 1;
+            assert!(hit_at(&hits, column, row as u16).is_some(), "{}x{}: Add is a target:\n{screen}", size.0, size.1);
+            update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row: row as u16 });
+            app
+        };
+        let names: Vec<String> = state(&added).aliases.iter().map(|a| a.host.clone()).collect();
+        assert!(names.iter().any(|n| n.starts_with("shop2.")), "{}x{}: Add puts the typed name on the list: {names:?}", size.0, size.1);
     }
 }

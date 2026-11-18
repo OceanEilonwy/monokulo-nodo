@@ -234,7 +234,7 @@ impl<S: System> Helper<S> {
                 exposure,
                 confirmation,
             } => self.set_exposure(&site, exposure, confirmation.as_ref()),
-            Request::SetPublicHost { site, host } => self.set_public_host(&site, &host),
+            Request::SetPublicHost { site, host, aliases } => self.set_public_host(&site, &host, aliases.as_deref()),
             Request::ListSites => self.list_sites(),
             Request::DeviceOverview => self.overview(),
             Request::ListPackages => self.list_packages(),
@@ -381,6 +381,7 @@ mod tests {
             Request::SetPublicHost {
                 site,
                 host: "a.example".into(),
+                aliases: None,
             },
             Request::InstallService {
                 id: "shop".into(),

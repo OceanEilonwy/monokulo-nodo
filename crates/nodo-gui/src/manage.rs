@@ -1531,12 +1531,19 @@ impl Manage {
             self.say("Choose your web address first", true);
             return;
         }
+        // This page edits the main address only, so the other names are sent back as they are.
+        let aliases = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.web.sites.iter().find(|x| x.package == site))
+            .map(|s| s.public_aliases.clone())
+            .unwrap_or_default();
         let apply = move |m: &mut Manage| {
-            let (site, exposure, host) = (site.clone(), exposure, host.clone());
+            let (site, exposure, host, aliases) = (site.clone(), exposure, host.clone(), aliases.clone());
             m.change("Saving hosting", move |d| {
                 let id = d.site_id(&site);
                 if !host.is_empty() && exposure.public {
-                    d.set_public_host(&site, &host).map_err(ApiError::Failed)?;
+                    d.set_public_host(&site, &host, &aliases).map_err(ApiError::Failed)?;
                 }
                 let confirmation = exposure.public.then(|| nodo_api::PublicConfirmation { typed_host: host.clone() });
                 d.call(Request::SetExposure { site: id, exposure, confirmation })?;
@@ -2199,6 +2206,18 @@ impl Manage {
                     selected: -1,
                     ..row("field")
                 });
+                // The other names are shown here and changed on the device's terminal screens.
+                let aliases = s.map(|s| s.public_aliases.clone()).unwrap_or_default();
+                if !aliases.is_empty() {
+                    let names: Vec<String> = aliases
+                        .iter()
+                        .map(|a| match a.mode {
+                            nodo_api::AliasMode::Redirect => format!("{} (redirects here)", a.host),
+                            nodo_api::AliasMode::Serve => format!("{} (same site)", a.host),
+                        })
+                        .collect();
+                    rows.push(line("Also answers at", names.join(", ")));
+                }
             }
         }
         rows.push(buttons(vec![self.change_button("hosting-save", "Save", 0)]));
@@ -2533,6 +2552,17 @@ mod tests {
         m.screen.pin_set = false;
         m.ask_pin("");
         assert!(m.dialog_view().text.contains("screen-pin"));
+    }
+
+    #[test]
+    fn a_sites_page_shows_the_other_names_it_answers_at() {
+        let (mut m, w) = manage();
+        m.act("open:hosting:shop");
+        w.drain_blocking(&mut m);
+        use slint::Model;
+        let page = m.page();
+        let row = page.cards.iter().flat_map(|c| c.rows.iter().collect::<Vec<_>>()).find(|r| r.title.as_str() == "Also answers at").expect("the row");
+        assert_eq!(row.sub.as_str(), "example.com (redirects here)");
     }
 
     #[test]

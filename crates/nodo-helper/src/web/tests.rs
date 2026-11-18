@@ -197,6 +197,7 @@ fn input(local: bool, public: bool) -> WebInput {
             },
             exposure: Exposure { local, onion: false, public },
             public_host: Some("shop.example.com".into()),
+            public_aliases: Vec::new(),
             locked: false,
         }],
         node_onion: None,
@@ -1012,4 +1013,73 @@ fn the_older_request_still_sets_the_first_provider_without_touching_others() {
     assert_eq!(listed.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["cloudflare", "gandi"]);
     let status = web.status(&input(false, true)).unwrap();
     assert_eq!(status.domain.as_deref(), Some("example.com"));
+}
+
+/// The shop at www.example.com with the bare domain redirecting to it and a name under the second
+/// provider's domain serving it, as the owner's own sites are set up.
+fn shop_with_aliases(public: bool) -> WebInput {
+    let mut input = input(false, public);
+    input.sites[0].public_host = Some("www.example.com".into());
+    input.sites[0].public_aliases = vec![
+        nodo_api::PublicAlias { host: "example.com".into(), mode: nodo_api::AliasMode::Redirect },
+        nodo_api::PublicAlias { host: "pay.example.org".into(), mode: nodo_api::AliasMode::Serve },
+    ];
+    input
+}
+
+#[test]
+fn every_alias_gets_its_record_and_its_providers_challenge() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com"]);
+    lists(&web, "gandi", &["example.org"]);
+    web.add_domain_provider("cloudflare", &cloudflare_token(), None, &shop_with_aliases(true)).unwrap();
+    web.add_domain_provider("gandi", &gandi_token(), None, &shop_with_aliases(true)).unwrap();
+    assert_eq!(web.owned_domains(), ["example.com", "example.org"]);
+    web.apply(&shop_with_aliases(true)).unwrap();
+
+    let ddns: toml::Value = toml::from_str(&web.io.get("/secrets/nodo-ddns/config.toml").unwrap()).unwrap();
+    let zones = ddns["zones"].as_array().unwrap();
+    let records = |domain: &str| -> Vec<String> {
+        let zone = zones.iter().find(|z| z["domain"].as_str() == Some(domain)).unwrap();
+        zone["records"].as_array().unwrap().iter().map(|r| r.as_str().unwrap().to_owned()).collect()
+    };
+    // The bare domain is the zone's own record.
+    assert_eq!(records("example.com"), ["@", "www"]);
+    assert_eq!(records("example.org"), ["pay"]);
+
+    let json = caddy_json(&web);
+    let policies = json["apps"]["tls"]["automation"]["policies"].as_array().unwrap().clone();
+    let provider_of = |host: &str| {
+        policies.iter().find(|p| p["subjects"].as_array().unwrap().iter().any(|s| s == host)).unwrap()["issuers"][0]
+            ["challenges"]["dns"]["provider"]["name"]
+            .clone()
+    };
+    assert_eq!(provider_of("www.example.com"), "cloudflare");
+    assert_eq!(provider_of("example.com"), "cloudflare");
+    assert_eq!(provider_of("pay.example.org"), "gandi");
+
+    // The site's address in the status stays its primary.
+    let status = web.status(&shop_with_aliases(true)).unwrap();
+    assert_eq!(status.sites[0].public_url.as_deref(), Some("https://www.example.com"));
+}
+
+#[test]
+fn a_provider_whose_domain_only_an_alias_uses_is_in_use() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com"]);
+    lists(&web, "gandi", &["example.org"]);
+    web.add_domain_provider("cloudflare", &cloudflare_token(), None, &shop_with_aliases(true)).unwrap();
+    web.add_domain_provider("gandi", &gandi_token(), None, &shop_with_aliases(true)).unwrap();
+    let listed = web.list_domain_providers(&shop_with_aliases(true));
+    let org = listed[1].domains.iter().find(|d| d.name == "example.org").unwrap();
+    assert_eq!(org.used_by.len(), 1, "the serving alias uses example.org");
+    let error = web.remove_domain_provider("gandi", &shop_with_aliases(true)).unwrap_err();
+    assert!(error.to_string().contains("pay.example.org"), "{error}");
+    // A refresh that no longer lists example.org keeps it, since the alias still needs it.
+    lists(&web, "gandi", &[]);
+    let refreshed = web.refresh_domain_provider("gandi", &shop_with_aliases(true)).unwrap();
+    assert_eq!(refreshed.domains.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.org"]);
+    assert!(refreshed.problem.is_some());
+    // Off the internet, it can go.
+    web.remove_domain_provider("gandi", &shop_with_aliases(false)).unwrap();
 }

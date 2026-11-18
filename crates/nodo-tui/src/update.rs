@@ -543,7 +543,12 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Logs(state) if state.finding => Some(&mut state.find),
         Screen::AutoUpdate(state) => state.editing_window.as_mut(),
         Screen::Updates(state) => state.passphrase.as_mut().map(|prompt| &mut prompt.input),
-        Screen::WebExposure(state) if state.focus() == HostingFocus::Address && !state.picking => Some(&mut state.sub),
+        Screen::WebExposure(state) if state.list_open() => None,
+        Screen::WebExposure(state) => match state.focus() {
+            HostingFocus::Address => Some(&mut state.sub),
+            HostingFocus::AliasAddress => Some(&mut state.alias_sub),
+            _ => None,
+        },
         Screen::WebProviders(state) if state.stage != ProviderStage::Key => None,
         Screen::WebProviders(state) => match state.focus {
             ProviderFocus::List => None,
@@ -2459,11 +2464,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             Err(text) => fail(app, text),
         },
         Event::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
-        Event::PublicHostSet(result) => {
-            if let Err(text) = result {
-                fail(app, text);
-            }
-        }
+        Event::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
         Event::Reachability { site, going_public, result } => {
             web::on_reachability(app, site, going_public, result);
         }

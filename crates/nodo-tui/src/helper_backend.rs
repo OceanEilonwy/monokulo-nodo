@@ -709,6 +709,7 @@ impl ScreenData for HelperBackend {
                     local_url: live.and_then(|l| l.local_url.clone()).unwrap_or_default(),
                     onion_url: live.and_then(|l| l.onion_url.clone()).unwrap_or_default(),
                     public_host: site.public_host,
+                    public_aliases: site.public_aliases,
                     locked: site.locked,
                     rate_limit_unenforced: live.is_some_and(|l| l.rate_limit_unenforced),
                     local_waiting: live.is_some_and(|l| l.local_waiting),
@@ -905,8 +906,9 @@ impl ScreenData for HelperBackend {
         Reachability::Checked { checks, router, plan, manual: detail.manual_check }
     }
 
-    fn set_public_host(&mut self, site: &str, host: &str) -> Result<(), String> {
-        let request = Request::SetPublicHost { site: self.site_id(site), host: host.to_owned() };
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias]) -> Result<(), String> {
+        let request =
+            Request::SetPublicHost { site: self.site_id(site), host: host.to_owned(), aliases: Some(aliases.to_vec()) };
         self.ask(request).map(|_| ()).map_err(|e| e.to_string())
     }
 

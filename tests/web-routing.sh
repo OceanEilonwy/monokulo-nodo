@@ -149,6 +149,20 @@ done
 for path in /administrator /admin-panel /admins; do
 	expect "neighbouring path is served: $path" 200 "$(pub shop.example.com "$path")"
 done
+# The shop's other names: the bare domain redirects to it, keeping path and query, and a name under
+# a second domain serves it with the same admin block.
+code=$(get webinet -D /tmp/headers --resolve "example.com:443:$wan" "https://example.com/cart?item=2&x=%20")
+grep -qi '^location: https://shop.example.com/cart?item=2&x=%20' /tmp/headers && [ "$code" = 308 ] && ! body_has upstream
+result "a redirect alias answers 308 to the primary with path and query ($code)" "$?"
+code=$(get webinet -D /tmp/headers --resolve "example.com:80:$wan" http://example.com/x)
+grep -qi '^location: https://example.com/x' /tmp/headers && [ "$code" = 308 ]
+result "port 80 sends a redirect alias to https first ($code)" "$?"
+expect "a serving alias reaches the same upstream" 200 "$(pub shop.example.org /a?b=1)"
+body_has "upstream shop /a?b=1"; result "a serving alias is served by the shop upstream" "$?"
+expect "a serving alias hides admin paths too" 404 "$(pub shop.example.org /admin)"
+code=$(get webinet --resolve "example.com:443:$wan" -H "Host: shop.example.org" https://example.com/)
+! body_has upstream && [ "$code" != 200 ]
+result "SNI of a redirect alias cannot reach the site by Host header ($code)" "$?"
 expect "locked site shows the unavailable page" 503 "$(pub vault.example.com /)"
 body_has "This site is unavailable"; result "unavailable page body" "$?"
 expect "stopped site shows the unavailable page" 503 "$(pub pay.example.com /)"
