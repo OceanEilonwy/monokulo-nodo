@@ -749,6 +749,9 @@ pub struct Overview {
     /// app has encrypted storage waiting.
     pub locked: bool,
     pub attention: Vec<Attention>,
+    /// How busy the processor is and how warm it runs. `None` when the helper could not say,
+    /// as one older than this question cannot.
+    pub cpu: Option<nodo_api::CpuStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

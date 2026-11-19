@@ -14,7 +14,7 @@ use nodo_ui_core::screen::Tab;
 use super::{apps, drive};
 use crate::glue::typed_secret;
 use nodo_ui_core::words::{home_card, unlock_lines};
-use nodo_ui_core::words::{app_state, open_url, reach_words, site_address};
+use nodo_ui_core::words::{app_state, cpu_busy_permille, cpu_summary, open_url, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::runner::follow_plain;
 use crate::dest;
@@ -76,6 +76,7 @@ fn usage(value: &str) -> Option<f64> {
 fn device_sections(snapshot: &Snapshot) -> Markup {
     let rows = &snapshot.overview.device;
     let (meters, facts): (Vec<_>, Vec<_>) = rows.iter().partition(|(_, value)| usage(value).is_some());
+    let cpu = snapshot.overview.cpu.as_ref();
     html! {
         div.grid2 {
             section.sec {
@@ -93,11 +94,19 @@ fn device_sections(snapshot: &Snapshot) -> Markup {
                     }
                 }
             }
-            @if !meters.is_empty() {
+            @if cpu.is_some() || !meters.is_empty() {
                 section.sec {
-                    h2 { "Memory and storage" }
+                    h2 { @if cpu.is_some() { "CPU, memory and storage" } @else { "Memory and storage" } }
                     table.kv {
                         tbody {
+                            @if let Some(cpu) = cpu {
+                                @let busy = f64::from(cpu_busy_permille(cpu)) / 1000.0;
+                                @let summary = cpu_summary(cpu);
+                                tr {
+                                    td { "CPU" }
+                                    td { div.meter { meter min="0" max="1" value=(format!("{busy:.3}")) aria-label=(format!("CPU: {summary}")) {} span.sub { (summary) } } }
+                                }
+                            }
                             @for (label, value) in &meters {
                                 @let used = usage(value).unwrap_or_default();
                                 tr {
