@@ -1,0 +1,4 @@
+#!/bin/sh
+# bwrap does not forward signals, and killing it would SIGKILL nodo-web-gui through
+# --die-with-parent.
+exec pkill -TERM -u _nodo_webgui -x nodo-web-gui

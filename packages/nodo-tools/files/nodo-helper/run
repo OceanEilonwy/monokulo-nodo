@@ -41,6 +41,10 @@ gid=$(getent group nodo | cut -d: -f3)
 # The touchscreen (nodo-gui, as _nodo_screen) gets its own socket, where it may always look and
 # may change things only while unlocked with the screen PIN (docs/SCREEN.md).
 screen_uid=$(id -u _nodo_screen 2>/dev/null) && set -- "$@" --screen-uid "$screen_uid"
+# The web GUI (nodo-web-gui, as _nodo_webgui) gets its own socket too, where the helper answers
+# nothing but a login until someone has logged in with the device passphrase
+# (docs/ARCHITECTURE.md, "Web GUI").
+web_uid=$(id -u _nodo_webgui 2>/dev/null) && set -- "$@" --web-uid "$web_uid"
 if [ -n "${DRIVE:-}" ] && [ -n "${DRIVE_MOUNT:-}" ]; then
 	set -- "$@" --drive "$DRIVE" --drive-mount "$DRIVE_MOUNT"
 fi

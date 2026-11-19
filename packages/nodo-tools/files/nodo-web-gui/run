@@ -1,0 +1,36 @@
+#!/bin/sh
+# The web GUI (docs/ARCHITECTURE.md, "Web GUI"): the TUI's screens for a browser on the home
+# network, at https://nodo.local through Caddy. Not enabled here: the helper links and starts it
+# when the owner turns the web GUI on over SSH (nodo-tui --ctl web-gui 1), and stops it again when
+# it is turned off.
+exec 2>&1
+exec </dev/null
+
+# The helper's socket for this account alone. It answers nothing but a login until someone has
+# logged in with the device passphrase.
+socket=/run/nodo/webgui.sock
+if [ ! -S "$socket" ]; then
+	echo "waiting: $socket does not exist, because the helper is not running yet"
+	sleep 5
+	exit 1
+fi
+
+# It keeps nothing on disk and looks nothing up: it gets /usr, and /run/nodo for the socket, which
+# is bound as a directory because the helper makes a new socket each time it starts. The other
+# sockets and files there belong to other accounts and stay closed to this one. It listens only on
+# 127.0.0.1:10082, where the firewall lets only Caddy and root connect, and may send nothing but
+# its answers (/etc/nftables.d/nodo-web-gui.nft). It needs a Unix socket for the helper, so
+# nodo-confine keeps it away from abstract sockets outside its sandbox.
+exec chpst -u _nodo_webgui:_nodo_webgui bwrap \
+	--ro-bind /usr /usr \
+	--symlink usr/bin /bin \
+	--symlink usr/lib /lib \
+	--symlink usr/lib /lib64 \
+	--ro-bind /run/nodo /run/nodo \
+	--proc /proc \
+	--dev /dev \
+	--tmpfs /tmp \
+	--unshare-user --disable-userns \
+	--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup-try \
+	--new-session --die-with-parent \
+	/usr/bin/nodo-confine --unix -- /usr/bin/nodo-web-gui

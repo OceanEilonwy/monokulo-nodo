@@ -12,4 +12,13 @@ table inet monokulo {
 		meta skuid "_caddy" tcp dport { 80, 443 } accept
 		meta skuid "_caddy" drop
 	}
+
+	# The web GUI's process listens on this loopback port (nodo-tools, docs/ARCHITECTURE.md). Only
+	# Caddy, which proxies https://nodo.local to it, and root may connect, so no app reaches its
+	# login page around Caddy. A chain of its own, because a drop in any chain on the hook is
+	# final: an "oifname lo accept" in another fragment's output rules cannot let an app through.
+	chain web_gui_upstream {
+		type filter hook output priority filter; policy accept;
+		oifname "lo" tcp dport 10082 meta skuid != { "root", "_caddy" } drop
+	}
 }
