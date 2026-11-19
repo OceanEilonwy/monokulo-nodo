@@ -36,7 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route(dest::HOME, get(home::show))
         .route(dest::UNLOCK, get(home::unlock_page).post(home::unlock))
         // Apps
-        .route(dest::APPS, get(apps::list))
+        .route(dest::APPS, get(apps::list).post(apps::act_on_ticked))
         .route("/apps/{name}", get(apps::show))
         .route("/apps/{name}/restart", post(apps::restart))
         .route("/apps/{name}/toggle", post(apps::toggle))

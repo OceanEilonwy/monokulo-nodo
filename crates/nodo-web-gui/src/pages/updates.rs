@@ -64,7 +64,7 @@ fn apply_job(step: Step) -> Out {
 
 /// Follows a step of the updates flow: at once when it only loads a review or says something,
 /// as a job when it applies updates.
-fn follow(work: &mut Work<'_>, step: Step) -> Out {
+pub(crate) fn follow(work: &mut Work<'_>, step: Step) -> Out {
     if step.is_long() {
         apply_job(step)
     } else {
