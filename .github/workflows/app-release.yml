@@ -1,6 +1,11 @@
-# Builds a feed app's xbps packages from a release tag of its own repository and attaches them to
-# that tag's GitHub release, where the feed (feed.yml) takes them from. The app's repository calls
-# it, so it runs there, with that repository's token and caches:
+# Builds an app's xbps packages from a release tag of its own repository, signs them into the app's
+# own feed and attaches that feed to the tag's GitHub release. The newest release is the feed:
+#
+#   https://github.com/<owner>/<repo>/releases/latest/download
+#
+# which an owner adds on their device by hand (Sources), confirming the key the app's nodo/README.md
+# names. The app's repository calls this workflow, so it runs there, with that repository's token,
+# caches and key:
 #
 #   jobs:
 #     nodo:
@@ -13,21 +18,19 @@
 #       secrets: inherit
 #
 # The app keeps each recipe in nodo/<package> (template and files/) and the tests of its files in
-# nodo/tests/<crate>/*.rs, run against this repository's crates of that name. Its releases name its
-# versions: v1.2.0 is package version 1.2.0. docs/FEED.md, "Apps from their own repositories",
-# describes the whole flow; scripts/app-release.sh does the work.
+# nodo/tests/<crate>/*.rs, run against this repository's crates of that name, and its feed's public
+# key in nodo/feed-signing-key.pub.pem (on its default branch). Its releases name its versions:
+# v1.2.0 is package version 1.2.0. docs/FEED.md, "App feeds", describes the whole flow;
+# scripts/app-release.sh does the work.
 #
 #   prepare  pin each recipe to the tag (scripts/app-release.sh pin), refuse a version that is not
-#            newer than the live feed's, and run the app's tests
-#   build    the packages for each architecture, exactly as feed.yml builds this repository's own
-#   release  sign the packages into a throwaway feed and run each through the device's own install
-#            review, then attach them to the tag's release (creating it if it does not exist)
-#   notify   start feed.yml here, which publishes them, signed with the feed's key. This needs the
-#            app repository's NODO_DISPATCH_TOKEN secret: a fine-grained token for
-#            OceanEilonwy/monokulo-nodo with Contents read and write. Without it, the feed
-#            publishes them on its next scheduled run, within six hours.
-#
-# Nothing here sees the feed's signing key.
+#            newer than the app's earlier releases carry, and run the app's tests
+#   build    the packages for each architecture with scripts/build-packages.sh
+#   release  run each package through the device's own install review in a throwaway feed; then
+#            sign the feed with the app's key (its NODO_FEED_SIGNING_KEY secret, in that one step
+#            only), check it against nodo/feed-signing-key.pub.pem, attach it to the tag's
+#            release (creating the release if the tag has none), and read it back from GitHub as
+#            a device would
 name: app release
 
 on:
@@ -47,8 +50,9 @@ on:
         type: string
         default: main
     secrets:
-      NODO_DISPATCH_TOKEN:
-        required: false
+      NODO_FEED_SIGNING_KEY:
+        description: The app feed's RSA private key, PEM; its public half is nodo/feed-signing-key.pub.pem
+        required: true
 
 permissions:
   contents: read
@@ -82,11 +86,13 @@ jobs:
 
       - name: Pin the recipes to the tag
         working-directory: nodo
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # shellcheck disable=SC2086 # one word per package
           scripts/app-release.sh pin "$GITHUB_WORKSPACE/app" "$GITHUB_REPOSITORY" "$TAG" $PACKAGES
           # shellcheck disable=SC2086
-          scripts/app-release.sh newer $PACKAGES
+          scripts/app-release.sh newer "$GITHUB_REPOSITORY" "$TAG" $PACKAGES
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -150,7 +156,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
 
-      # As feed.yml's: distfiles, cargo and npm downloads and xbps's package cache, then the
+      # As system.yml's: distfiles, cargo and npm downloads and xbps's package cache, then the
       # compiler caches, then the builder image. They live in the app's repository.
       - name: Restore the build cache
         id: hostdir
@@ -290,36 +296,70 @@ jobs:
           # shellcheck disable=SC2086 # one word per package
           scripts/app-release.sh check $PACKAGES -- aarch64 x86_64
 
-      - name: Attach them to the release
+      # The key's public half from the app's default branch: which key signs the app's feed is the
+      # repository's, not any one tag's.
+      - name: Read the feed's public key
+        id: key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/nodo/feed-signing-key.pub.pem" -q .content | base64 -d > "$RUNNER_TEMP/feed-key.pub.pem"
+          ssh-keygen -i -m PKCS8 -f "$RUNNER_TEMP/feed-key.pub.pem" > "$RUNNER_TEMP/feed-key.ssh"
+          fp=$(ssh-keygen -l -E md5 -f "$RUNNER_TEMP/feed-key.ssh" | sed -n 's/^[0-9]* MD5:\([0-9a-f:]*\) .*/\1/p')
+          [ -n "$fp" ] || { echo "::error::nodo/feed-signing-key.pub.pem is not an RSA public key"; exit 1; }
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+          echo "the feed's key: $fp"
+
+      # The key exists only in this step, in a 0600 file under the runner's temp directory, and
+      # reaches xbps-rindex read-only in a container without network.
+      - name: Sign the feed
+        working-directory: nodo
+        env:
+          NODO_FEED_SIGNING_KEY: ${{ secrets.NODO_FEED_SIGNING_KEY }}
+          FEED_SITE: ${{ github.workspace }}/site
+        run: |
+          [ -n "$NODO_FEED_SIGNING_KEY" ] || { echo "::error::set the NODO_FEED_SIGNING_KEY secret (nodo/README.md)"; exit 1; }
+          # shellcheck disable=SC2086 # one line per package
+          printf '%s\n' $PACKAGES > "$RUNNER_TEMP/packages"
+          umask 077
+          key=$(mktemp "$RUNNER_TEMP/feed-key.XXXXXX")
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$NODO_FEED_SIGNING_KEY" > "$key"
+          FEED_PACKAGES="$RUNNER_TEMP/packages" FEED_SIGNER="${GITHUB_REPOSITORY#*/} feed" \
+            scripts/publish-feed.sh sign "$key" aarch64 x86_64
+
+      - name: Check the signed feed against the app's key
+        working-directory: nodo
+        env:
+          FEED_SITE: ${{ github.workspace }}/site
+          FEED_FINGERPRINT: ${{ steps.key.outputs.fingerprint }}
+        run: FEED_PACKAGES="$RUNNER_TEMP/packages" scripts/publish-feed.sh check aarch64 x86_64
+
+      - name: Attach the feed to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
-              --notes "Packages for monokulo-nodo devices, which install them from https://nodo.monokulo.com/feed."
+              --notes "Includes this app's monokulo-nodo feed: see nodo/README.md to add it to a device."
           fi
-          gh release upload "$TAG" artifacts/nodo-xbps-*/*.xbps --repo "$GITHUB_REPOSITORY" --clobber
-          {
-            echo "## Packages for monokulo-nodo"
-            echo
-            for f in artifacts/nodo-xbps-*/*.xbps; do echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"; done
-            echo
-            echo "Attached to [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)."
-          } >> "$GITHUB_STEP_SUMMARY"
+          gh release upload "$TAG" site/feed/* --repo "$GITHUB_REPOSITORY" --clobber
 
-  notify:
-    needs: release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Start the feed's publish
+      # From the tag's own download address, which the latest one points to once this release is
+      # the newest: through GitHub's redirect to its storage host, exactly as a device reads it.
+      - name: Read the feed back as a device would
+        working-directory: nodo
         env:
-          GH_TOKEN: ${{ secrets.NODO_DISPATCH_TOKEN }}
+          FINGERPRINT: ${{ steps.key.outputs.fingerprint }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::No NODO_DISPATCH_TOKEN secret: the feed publishes $TAG on its next scheduled run, within six hours."
-            exit 0
-          fi
-          gh api repos/OceanEilonwy/monokulo-nodo/dispatches -f event_type=app-released \
-            -f "client_payload[repository]=$GITHUB_REPOSITORY" -f "client_payload[tag]=$TAG"
-          echo "Started the feed's publish for $GITHUB_REPOSITORY $TAG." >> "$GITHUB_STEP_SUMMARY"
+          address="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          for arch in aarch64 x86_64; do
+            cargo run -q --release -p nodo-install --example check-feed -- "$address" "$arch" "$FINGERPRINT"
+          done
+          {
+            echo "## monokulo-nodo feed"
+            echo
+            echo "Add on a device (Sources): \`https://github.com/$GITHUB_REPOSITORY/releases/latest/download\`, key \`$FINGERPRINT\`."
+            echo
+            for f in ../site/feed/*.xbps; do echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"; done
+          } >> "$GITHUB_STEP_SUMMARY"

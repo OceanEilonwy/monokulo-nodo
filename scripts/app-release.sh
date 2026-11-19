@@ -1,17 +1,18 @@
 #!/bin/sh
-# Builds a feed app's packages from its own repository's release tag. The apps of the project's
-# feed (feed/releases) keep their recipes in their own repositories, under nodo/; their release
-# workflow calls .github/workflows/app-release.yml, which runs these steps in a checkout of this
-# repository, then attaches the packages to the app's GitHub release. docs/FEED.md, "Apps from
-# their own repositories", describes the whole flow.
+# Builds an app's packages from a release tag of its own repository. Apps keep their recipes in
+# their own repositories, under nodo/, and publish their own feed: their release workflow calls
+# .github/workflows/app-release.yml, which runs these steps in a checkout of this repository, then
+# signs the packages into a feed with the app's own key and attaches it to the tag's GitHub
+# release, so https://github.com/<owner>/<repo>/releases/latest/download is the app's feed.
+# docs/FEED.md, "App feeds", describes the whole flow.
 #
 #   scripts/app-release.sh pin <app-checkout> <owner/repo> <tag> <package...>
 #       copy <app-checkout>/nodo/<package> to packages/<package>, pinned to the tag: version= from
 #       the tag, _commit= its commit and the source tarball's checksum; and copy the app's tests in
 #       <app-checkout>/nodo/tests/<crate>/*.rs into crates/<crate>/tests
-#   scripts/app-release.sh newer <package...>
-#       refuse a pinned version that is not newer than the one the live feed publishes, which
-#       devices would refuse as a downgrade (or never install, when equal)
+#   scripts/app-release.sh newer <owner/repo> <tag> <package...>
+#       refuse a pinned version that is not newer than every one the repository's other releases
+#       carry, which devices would refuse as a downgrade (or never install, when equal)
 #   scripts/app-release.sh test
 #       run the tests pin copied in, against this repository's crates
 #   scripts/app-release.sh check <package...> -- <arch...>
@@ -28,7 +29,6 @@ set -eu
 cmd=${1:?usage: app-release.sh pin|newer|test|check ...}
 shift
 state=$root/out/app-release
-url=${PAGES_URL:-https://nodo.monokulo.com}
 plain() { case $1 in *[!A-Za-z0-9._-]* | .* | -* | '') echo "bad $2: $1" >&2; exit 2 ;; esac; }
 field() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$1" | head -n 1; }
 
@@ -89,30 +89,41 @@ pin)
 	echo "copied $(wc -l < "$state/tests") test files"
 	;;
 newer)
+	repo=${1:?owner/repo}
+	tag=${2:?the release tag}
+	shift 2
 	[ $# -gt 0 ] || { echo "name the packages" >&2; exit 2; }
-	live=$(mktemp)
-	trap 'rm -f "$live"' EXIT
-	code=$(curl -sS --retry 3 -o "$live" -w '%{http_code}' "$url/files/feed.txt")
-	[ "$code" = 200 ] || [ "$code" = 404 ] || { echo "could not read $url/files/feed.txt: HTTP $code" >&2; exit 1; }
-	[ "$code" = 200 ] || : > "$live"
+	# Every package file the app's other releases carry: the feed a device added is the latest
+	# of them, and any of them may be what it installed.
+	assets=$(gh api --paginate "repos/$repo/releases" \
+		-q ".[] | select(.draft | not) | select(.tag_name != \"$tag\") | .assets[].name")
 	fail=0
 	for pkg in "$@"; do
 		plain "$pkg" package
 		t=$root/packages/$pkg/template
 		new=$(field "$t" version)_$(field "$t" revision)
-		# feed/<pkg>-<version>_<revision>.<arch>.xbps; a version starts with a digit, so mk-pay
-		# never matches mk-pay-something.
-		old=$(sed -n "s|^[0-9a-f]*  feed/$pkg-\([0-9][^/]*_[0-9]*\)\.[a-z0-9_]*\.xbps\$|\1|p" "$live" | sort -u | head -n 1)
-		if [ -z "$old" ]; then
-			echo "$pkg-$new: new to the feed"
+		# <pkg>-<version>_<revision>.<arch>.xbps; a version starts with a digit, so mk-pay never
+		# matches mk-pay-something.
+		olds=$(printf '%s\n' "$assets" | sed -n "s/^$pkg-\([0-9][^/]*_[0-9]*\)\.[a-z0-9_]*\.xbps\$/\1/p" | sort -u)
+		if [ -z "$olds" ]; then
+			echo "$pkg-$new: no earlier release of $repo carries it"
 			continue
 		fi
+		# The newest by xbps' own ordering, then compared with this one.
 		r=0
-		docker run --rm --network none "$VOID_IMAGE" xbps-uhelper cmpver "$new" "$old" || r=$?
+		old=$(docker run --rm --network none -e "NEW=$new" -e "OLDS=$olds" "$VOID_IMAGE" sh -euc '
+			max=
+			for v in $OLDS; do
+				if [ -z "$max" ]; then max=$v; continue; fi
+				c=0; xbps-uhelper cmpver "$v" "$max" || c=$?
+				[ "$c" != 1 ] || max=$v
+			done
+			echo "$max"
+			xbps-uhelper cmpver "$NEW" "$max"') || r=$?
 		if [ "$r" = 1 ]; then
-			echo "$pkg-$new: newer than the feed's $pkg-$old"
+			echo "$pkg-$new: newer than $repo's earlier $pkg-$old"
 		else
-			echo "$pkg-$new is not newer than the feed's $pkg-$old: devices would never install it." \
+			echo "$pkg-$new is not newer than $repo's earlier $pkg-$old: devices would never install it." \
 				"Tag a higher version, or raise revision= in nodo/$pkg/template for the same version." >&2
 			fail=1
 		fi

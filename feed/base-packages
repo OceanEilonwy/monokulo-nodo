@@ -2,7 +2,7 @@
 # snapshots at https://nodo.monokulo.com/snapshots (.github/workflows/system.yml,
 # docs/UPDATES.md). One recipe name from packages/ per line: everything the image installs from
 # this project (scripts/_build-image-inner.sh installs nodo-base, cuprated-service and the board's
-# BOARD_PACKAGES), and their dependencies from packages/. Apps go in feed/packages instead.
+# BOARD_PACKAGES), and their dependencies from packages/. Apps publish their own feeds (docs/FEED.md).
 nodo-base
 nodo-tools
 cuprated

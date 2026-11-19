@@ -772,13 +772,8 @@ fn a_broken_default_feeds_file_is_ignored() {
 fn the_shipped_default_feeds_file_parses() {
     let text = include_str!("../../../packages/nodo-tools/files/default-feeds.toml");
     let defaults = crate::feeds::parse_default_feeds(text).unwrap();
-    assert_eq!(defaults.len(), 1);
-    assert_eq!(defaults[0].name, "monokulo");
-    assert_eq!(defaults[0].address, "https://nodo.monokulo.com/feed");
-    // The key in feed/signing-key.pub.pem, which CI signs the feed with.
-    let pem = include_bytes!("../../../feed/signing-key.pub.pem");
-    let key = nodo_feed::RepoKey::from_pem(pem, "").unwrap();
-    assert_eq!(KeyFingerprint::new(&defaults[0].fingerprint).unwrap(), key.fingerprint);
+    // Apps publish their own feeds, which owners add by hand: images ship none.
+    assert!(defaults.is_empty(), "{defaults:?}");
 }
 
 fn status(h: &Helper<FakeSystem>) -> nodo_api::UpdateStatus {
