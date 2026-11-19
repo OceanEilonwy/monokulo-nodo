@@ -383,9 +383,11 @@ check "the helper reports the node's height and peers" sh -c '
 	ctl node | tee /tmp/e2e.node; grep -q "provider: \"cuprated\"" /tmp/e2e.node && grep -q "height: 1," /tmp/e2e.node &&
 	grep -q "outgoing_peers: 0" /tmp/e2e.node'
 # The real TUI on a pseudo-terminal. It skips unchanged cells with cursor moves, so the screen
-# is compared with escapes and spaces removed.
+# is compared with escapes and spaces removed. timeout needs --foreground: by default it moves the
+# TUI into a process group of its own, which leaves the terminal to the shell, and nodo-tui refuses
+# a terminal another job owns.
 check "Home shows the node's height and peers" sh -c '
-	TERM=xterm script -qc "stty rows 40 cols 120; timeout 10 nodo-tui" /tmp/e2e.tui >/dev/null 2>&1 </dev/null
+	TERM=xterm script -qc "stty rows 40 cols 120; timeout --foreground 10 nodo-tui" /tmp/e2e.tui >/dev/null 2>&1 </dev/null
 	sed "s/\x1b\[[0-9;?]*[a-zA-Z]//g" /tmp/e2e.tui | tr -d " " > /tmp/e2e.tui.txt
 	grep -q "1(synced)" /tmp/e2e.tui.txt && grep -q "0out,0in" /tmp/e2e.tui.txt'
 

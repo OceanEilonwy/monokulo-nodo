@@ -92,6 +92,19 @@ impl Input {
         Ok(Self { terminal, wake, stop })
     }
 
+    /// Whether another job owns the terminal: it is this process's controlling terminal, but this
+    /// process is not in its foreground process group, as under `timeout` without `--foreground`
+    /// or after `nodo-tui &`. Setting raw mode from there makes the kernel stop the process with
+    /// SIGTTOU, and every SIGCONT only retries the change and stops it again. A SIGTERM handled in
+    /// between sets the stop flag that the stopped process never gets to look at, so `timeout` or
+    /// `kill` would leave it stopped for good. A terminal that is not the controlling one has no
+    /// foreground group to check, and changing its modes never stops anyone.
+    pub fn owned_by_another_job(&self) -> bool {
+        // SAFETY: plain calls with no pointers, on a descriptor this value owns.
+        let (foreground, ours) = unsafe { (libc::tcgetpgrp(self.terminal.as_raw_fd()), libc::getpgrp()) };
+        foreground > 0 && foreground != ours
+    }
+
     /// Waits up to `timeout` for the next thing to act on. It never spins: it sleeps in the kernel
     /// until there is input, a signal or a hangup, or the time is up.
     pub fn next(&mut self, timeout: Duration) -> io::Result<Next> {

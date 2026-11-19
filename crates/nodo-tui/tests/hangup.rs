@@ -160,3 +160,72 @@ fn the_tui_ends_cleanly_on_sigterm() {
     let status = leave_the_tui(Leave::Terminate);
     assert!(status.success(), "it unwound and restored the terminal instead of dying: {status:?}");
 }
+
+/// Started on a terminal whose foreground belongs to another job, as under `timeout` without
+/// `--foreground`, the TUI must say so and exit. Setting raw mode from there used to get it stopped
+/// by SIGTTOU, and a SIGTERM only woke it to be stopped again, so `timeout` never ended it.
+#[test]
+fn the_tui_exits_when_another_job_owns_its_terminal() {
+    let (controller, terminal) = pty();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nodo-tui"));
+    command
+        .arg("--mock")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::from(terminal.try_clone().unwrap()))
+        .stdout(Stdio::from(terminal.try_clone().unwrap()))
+        .stderr(Stdio::piped());
+    // nodo-tui runs as the child of a session leader that owns the terminal and stays in front,
+    // in a process group of its own, as `timeout` puts it. The leader passes on how it exited. Its
+    // group must have a parent in the session: in a group without one the kernel fails the mode
+    // change with EIO instead of stopping the process.
+    // SAFETY: only async-signal-safe calls between fork and exec, in both processes.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let tui = libc::fork();
+            if tui < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if tui == 0 {
+                libc::setpgid(0, 0);
+                return Ok(());
+            }
+            // Closes, among the rest, the pipe that spawn() watches to learn that exec happened,
+            // so it returns although this process never execs.
+            for fd in 3..1024 {
+                libc::close(fd);
+            }
+            let mut status = 0;
+            while libc::waitpid(tui, &mut status, 0) < 0 {}
+            libc::_exit(if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { 128 + libc::WTERMSIG(status) });
+        });
+    }
+    let mut child = command.spawn().expect("spawn nodo-tui");
+    drop(command);
+
+    drain(&controller, Duration::from_millis(200));
+    let limit = Duration::from_secs(5);
+    let status = wait_for_exit(&mut child, limit).unwrap_or_else(|| {
+        let leader = child.id();
+        let tui = std::fs::read_to_string(format!("/proc/{leader}/task/{leader}/children")).unwrap_or_default();
+        let state = std::fs::read_to_string(format!("/proc/{}/stat", tui.trim())).unwrap_or_default();
+        // Ignored: only tidying up before the panic below, which is the failure being reported.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = child.kill();
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = child.wait();
+        panic!("the TUI was still there {limit:?} after starting in the background: {state}");
+    });
+    let mut message = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut message).unwrap();
+    assert!(!status.success(), "it cannot have shown anything: {status:?}");
+    assert!(message.contains("foreground"), "it says why it did not open: {message:?}");
+
+    // It left the terminal alone: still in line mode, as the other job had it.
+    // SAFETY: tcgetattr fills a zeroed termios on a descriptor owned here.
+    let mut modes: libc::termios = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::tcgetattr(terminal.as_raw_fd(), &mut modes) }, 0);
+    assert_ne!(modes.c_lflag & libc::ICANON, 0, "the terminal was switched to raw mode");
+}

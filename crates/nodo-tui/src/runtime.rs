@@ -733,6 +733,14 @@ pub fn run<T: Backend + ScreenData + Send + 'static>(
 ) -> io::Result<Exit> {
     // Declared before the guard, so it is dropped after the terminal is restored.
     let mut input = Input::open()?;
+    // Refused rather than left to job control, because a stopped TUI no longer ends on SIGTERM
+    // (see Input::owned_by_another_job). Owners never meet this: a login shell runs it in front.
+    if input.owned_by_another_job() {
+        return Err(io::Error::other(
+            "the terminal belongs to another job, so the screen cannot open. Run nodo-tui in the foreground \
+             (under timeout, use timeout --foreground).",
+        ));
+    }
     let _guard = TerminalGuard::enter(CrosstermMode)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     // ratatui 0.30's Terminal::clear asks the terminal where its cursor is, which a terminal that
