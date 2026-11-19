@@ -10,8 +10,8 @@ use super::pad;
 use super::v3::{field_target, inset, quiet, setting_aside, toggle, trail, Card, Screen3};
 use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState, Tab};
 use crate::hit::{Click, Target};
-use crate::model::*;
-use crate::secret::STORED_MASK;
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::STORED_MASK;
 use crate::theme::Theme;
 
 /// The link on each field that takes a reference, the same as F4 or Ctrl-R.
@@ -54,7 +54,7 @@ pub fn chip_label(app: &str, setting: &str) -> String {
 /// `cursor` draws the caret before that unit, while typing.
 fn pieces_spans(
     t: &Theme,
-    units: &[crate::refs::Unit],
+    units: &[nodo_ui_core::refs::Unit],
     broken: &[bool],
     cursor: Option<usize>,
     focused: bool,
@@ -76,11 +76,11 @@ fn pieces_spans(
             width += 1;
         }
         match unit {
-            crate::refs::Unit::Char(c) => {
+            nodo_ui_core::refs::Unit::Char(c) => {
                 text.push(*c);
                 width += 1;
             }
-            crate::refs::Unit::Ref { app, setting } => {
+            nodo_ui_core::refs::Unit::Ref { app, setting } => {
                 flush(&mut text, &mut spans);
                 let colour = if broken.get(chip).copied().unwrap_or(false) { t.err } else { t.accent };
                 let label = chip_label(app, setting);
@@ -102,8 +102,8 @@ fn pieces_spans(
     spans
 }
 
-fn units_of(pieces: &[Piece]) -> Vec<crate::refs::Unit> {
-    crate::refs::PieceEditor::new(pieces).units
+fn units_of(pieces: &[Piece]) -> Vec<nodo_ui_core::refs::Unit> {
+    nodo_ui_core::refs::PieceEditor::new(pieces).units
 }
 
 fn control(t: &Theme, state: &SettingsState, index: usize) -> Vec<Span<'static>> {
@@ -254,7 +254,7 @@ fn suggestion_rows(card: &mut Card, t: &Theme, state: &SettingsState, suggestion
     let catalog = state.catalog.as_ref().map(|c| c.options.as_slice()).unwrap_or_default();
     for (at, (app_id, setting)) in suggestions.iter().enumerate() {
         let option = catalog.iter().find(|o| &o.app == app_id && &o.setting == setting);
-        let kind = option.map_or("", |o| crate::refs::kind_name(&o.kind));
+        let kind = option.map_or("", |o| nodo_ui_core::refs::kind_name(&o.kind));
         let value = option.and_then(|o| o.value.clone()).unwrap_or_default();
         let lead = if at == selected { t.a("▸ ") } else { t.n("  ") };
         card.row(t, vec![t.n(" ".repeat(10)), lead, t.n(pad(&format!("{app_id}.{setting}"), 28)), t.d(pad(kind, 9)), t.d(shown(&value))]);
@@ -268,7 +268,7 @@ fn suggestion_rows(card: &mut Card, t: &Theme, state: &SettingsState, suggestion
 fn chip_menu_rows(card: &mut Card, t: &Theme, state: &SettingsState, menu: &crate::app::ChipMenu) {
     let index = state.selected;
     let pieces = state.draft[index].pieces().unwrap_or_default();
-    let Some((app_id, setting)) = crate::model::refs(&pieces).get(menu.chip).map(|(a, s)| (a.to_string(), s.to_string())) else {
+    let Some((app_id, setting)) = nodo_ui_core::model::refs(&pieces).get(menu.chip).map(|(a, s)| (a.to_string(), s.to_string())) else {
         return;
     };
     let status = state.preview(index).and_then(|p| p.chips.get(menu.chip).cloned());
@@ -332,7 +332,7 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
     let visible = state.visible();
     let mut card = Card::new(t, w);
     card.blank(t);
-    let kind = crate::refs::kind_name(&state.field_kind);
+    let kind = nodo_ui_core::refs::kind_name(&state.field_kind);
     card.row(t, vec![t.b("Insert a reference   "), t.d(format!("into {} · {} ({kind})", state.package, state.field_label))]);
     card.blank(t);
     let mut search = vec![t.d(pad("Search", 9))];
@@ -379,7 +379,7 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
         let lead = if selected { t.a("▸ ") } else { t.n("  ") };
         let dim = verdict.is_err() && !locked;
         let name = if dim { t.d(pad(&option.path(), path_width)) } else { t.n(pad(&option.path(), path_width)) };
-        let badge = t.d(pad(crate::refs::kind_name(&option.kind), 9));
+        let badge = t.d(pad(nodo_ui_core::refs::kind_name(&option.kind), 9));
         let public = t.d(pad(if option.locked.is_none() { "public" } else { "" }, 8));
         let about = match verdict {
             Err(why) if !locked => why.clone(),

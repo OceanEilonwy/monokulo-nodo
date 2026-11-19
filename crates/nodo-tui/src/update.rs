@@ -7,8 +7,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::{ApiError, Exposure, Response, ServiceState};
 
 use crate::app::*;
-use crate::model::*;
-use crate::secret::{Input, Secret};
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::{Input, Secret};
 
 #[path = "update_more.rs"]
 mod more;
@@ -487,7 +487,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let nodo_update = app.data.updates.iter().any(|item| item.name == crate::model::SYSTEM_BASE && !item.held);
+    let nodo_update = app.data.updates.iter().any(|item| item.name == nodo_ui_core::model::SYSTEM_BASE && !item.held);
     let Screen::System { selected } = &mut app.screen else {
         return Vec::new();
     };
@@ -1407,7 +1407,7 @@ pub fn suggestions(state: &SettingsState) -> Vec<(String, String)> {
     };
     let kind = &state.form.fields[state.selected].kind;
     let assembled = editor.units.len() > query.chars().count() + 2;
-    crate::refs::ordered(kind, crate::refs::search(&catalog.options, &query), assembled)
+    nodo_ui_core::refs::ordered(kind, nodo_ui_core::refs::search(&catalog.options, &query), assembled)
         .into_iter()
         .filter(|(option, verdict)| verdict.is_ok() && option.locked.is_none_or(|l| l.granted))
         .take(5)
@@ -1422,7 +1422,7 @@ fn chip_menu_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Some(menu) = state.chip_menu.as_mut() else {
         return Vec::new();
     };
-    let chips = state.draft[state.selected].pieces().map_or(0, |p| crate::model::refs(&p).len());
+    let chips = state.draft[state.selected].pieces().map_or(0, |p| nodo_ui_core::model::refs(&p).len());
     match key.code {
         KeyCode::Esc => state.chip_menu = None,
         KeyCode::Left | KeyCode::BackTab => menu.choice = menu.choice.saturating_sub(1),
@@ -1471,7 +1471,7 @@ fn chip_action(app: &mut App, chip: usize, choice: usize) -> Vec<Effect> {
         let after = FieldValue::from_pieces(pieces.clone());
         state.draft[index] = after.clone();
         state.undo = Some(Undo { field: index, before, after, label: format!("Use {app_id}.{setting} again") });
-        let mut editor = crate::refs::PieceEditor::new(&crate::model::tidy(pieces));
+        let mut editor = nodo_ui_core::refs::PieceEditor::new(&nodo_ui_core::model::tidy(pieces));
         editor.end();
         state.editor = Some(editor);
     } else {
@@ -1589,7 +1589,7 @@ fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
         (FieldKind::Secret, _) => state.editing = Some(Input::secret()),
         (_, value) => {
             if let Some(pieces) = value.pieces() {
-                state.editor = Some(crate::refs::PieceEditor::new(&pieces));
+                state.editor = Some(nodo_ui_core::refs::PieceEditor::new(&pieces));
             }
         }
     }
@@ -1635,8 +1635,8 @@ pub fn save_consequences(state: &SettingsState) -> Vec<String> {
     for index in state.changed_indices() {
         let Some(pieces) = state.draft[index].pieces() else { continue };
         let was = state.form.fields[index].value.pieces().unwrap_or_default();
-        for (app_id, setting) in crate::model::refs(&pieces) {
-            if !crate::model::refs(&was).contains(&(app_id, setting)) {
+        for (app_id, setting) in nodo_ui_core::model::refs(&pieces) {
+            if !nodo_ui_core::model::refs(&was).contains(&(app_id, setting)) {
                 let line = format!("{package} follows {app_id}'s {setting} when it changes.");
                 if !follows.contains(&line) {
                     follows.push(line);
@@ -2590,7 +2590,7 @@ fn masked_field(value: &FieldValue) -> String {
         FieldValue::Bool(true) => "on".to_owned(),
         FieldValue::Bool(false) => "off".to_owned(),
         FieldValue::SecretUnset => "not set".to_owned(),
-        FieldValue::SecretSet => crate::secret::STORED_MASK.to_owned(),
+        FieldValue::SecretSet => nodo_ui_core::secret::STORED_MASK.to_owned(),
         FieldValue::NewSecret(_) => "new secret".to_owned(),
     }
 }
@@ -3047,7 +3047,7 @@ mod tests {
             validate(&FieldKind::MoneroAddress, &short).as_deref(),
             Some("Address is too short. A Monero address has 95 characters.")
         );
-        let good = FieldValue::Text(crate::mock::sample_address());
+        let good = FieldValue::Text(nodo_ui_core::mock::sample_address());
         assert_eq!(validate(&FieldKind::MoneroAddress, &good), None);
     }
 

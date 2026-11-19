@@ -1,14 +1,14 @@
 //! The TUI's `HelperBackend`, talking to this helper's real request handler over a socket, passes
-//! the same scenarios as the `MockBackend` the TUI's tests drive (`nodo_tui::contract`). Together
+//! the same scenarios as the `MockBackend` the TUI's tests drive (`nodo_ui_core::contract`). Together
 //! with the TUI's test that the mock's capabilities equal `HelperBackend::CAPABILITIES`, a TUI
 //! test cannot pass on behaviour the device does not have.
 
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 
-use nodo_tui::contract;
-use nodo_tui::helper_backend::HelperBackend;
-use nodo_tui::model::{InstallOutcome, PackageId, ScreenData};
+use nodo_ui_core::contract;
+use nodo_ui_core::helper_backend::HelperBackend;
+use nodo_ui_core::model::{InstallOutcome, PackageId, ScreenData};
 
 use super::{setup, FakePackages, FEED};
 use crate::helper::AllowedUids;

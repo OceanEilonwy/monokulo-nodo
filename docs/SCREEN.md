@@ -325,7 +325,7 @@ the black never change.
 The tile grid is always the resting screen. Its top bar has a gear (**Manage**), **Arrange** and
 **Shut down**. Manage opens the same four tabs as the TUI, Home, Apps, Web and System, laid out for
 touch (`ui/manage.slint`, built from page models in `src/manage.rs`). Every screen reads and
-changes the Nodo through nodo-tui's helper backend and data model, so the screen and the TUI show
+changes the Nodo through the helper backend and data model the TUI uses (`crates/nodo-ui-core`), so the screen and the TUI show
 and do the same things. Calls run on a worker thread; the screen returns to the tiles after the idle
 time set in System › Screen.
 

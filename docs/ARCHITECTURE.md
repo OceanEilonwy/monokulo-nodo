@@ -288,7 +288,7 @@ codebase, and signed xbps packages from user-added feeds.
   says `"on"`, or with `"auto"` (the default) in kitty, WezTerm and Ghostty, which bundle the symbols;
   elsewhere they are flat with plain ends.
 - **References in the TUI:** App › Settings fields that take text, a number, a URL or an address hold
-  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-tui/src/refs.rs`):
+  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-ui-core/src/refs.rs`):
   a chip is one cursor step and is only ever made by the picker or a suggestion, so typed `$(` stays text.
   Typing `$(` suggests fitting references at the cursor; Ctrl+R, F4 or a field's "+ reference" link opens
   the one picker, which searches every other app's settings (`ListReferences`) by app, name,
@@ -391,5 +391,9 @@ codebase, and signed xbps packages from user-added feeds.
   differs from its pinned recipe stops a package build, since xbps-src would otherwise compile the
   old recipe; the fix is a `VOID_PACKAGES_REV` with the mirror's versions. Image builds list every
   such difference in `out/images/<board>/void-drift.txt` (`scripts/_void-drift.sh`).
-- `crates/`: the Rust workspace.
+- `crates/`: the Rust workspace. `crates/nodo-ui-core` is what the interfaces share and has no
+  terminal or toolkit in it: the screens' data (`model`), the helper backend (`helper_backend`,
+  `helper_manage`) and its in-memory double (`mock`), the scenarios both must pass (`contract`),
+  and the text and reference editing buffers (`secret`, `refs`). `crates/nodo-tui` (the terminal)
+  and `crates/nodo-gui` (the built-in screen) are built on it, and `nodo-tui` re-exports none of it.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

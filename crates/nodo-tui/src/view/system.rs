@@ -10,7 +10,7 @@ use super::pad;
 use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
 use crate::app::{App, AutoUpdateState, LogsState, Tab, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {

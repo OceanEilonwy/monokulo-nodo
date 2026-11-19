@@ -22,7 +22,7 @@ use slint::Model;
 
 pub const SCENES: [&str; 9] = ["view", "arrange", "drag", "hidden", "add", "confirm", "progress", "failed", "off"];
 
-/// The real management screens, over nodo-tui's mock backend, as the device draws them.
+/// The real management screens, over nodo-ui-core's mock backend, as the device draws them.
 pub const MANAGE_SCENES: &[&str] = &[
     "r-tiles", "r-home", "r-apps", "r-app", "r-settings", "r-field-menu", "r-refs", "r-chips", "r-chip-menu", "r-keyboard", "r-get-apps",
     "r-about", "r-install", "r-sources", "r-add-source", "r-web", "r-hosting", "r-providers", "r-system",
@@ -32,7 +32,7 @@ pub const MANAGE_SCENES: &[&str] = &[
 /// Drives management to the screen a scene shows.
 fn manage_scene(name: &str) -> crate::manage::Manage {
     use crate::manage::{Manage, Worker};
-    let worker = Worker::start(Box::new(nodo_tui::mock::MockBackend::new()));
+    let worker = Worker::start(Box::new(nodo_ui_core::mock::MockBackend::new()));
     let mut m = Manage::new(Some(&worker));
     m.open();
     worker.drain_blocking(&mut m);

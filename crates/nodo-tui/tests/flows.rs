@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::{ApiError, Backend, Exposure, Request, ServiceState, SettingChange, SettingInput, SettingLiteral};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{ctrl, fixture, press};
-use nodo_tui::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
-use nodo_tui::model::*;
+use nodo_ui_core::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
+use nodo_ui_core::model::*;
 use nodo_tui::runtime::{dispatch, execute_effect, load_snapshot};
 use nodo_tui::update::update;
 
@@ -563,7 +563,7 @@ fn a_device_locked_with_no_app_waiting_still_unlocks_from_home_and_from_connect(
 #[test]
 fn hosting_picks_a_domain_from_any_connected_provider() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     app.data = load_snapshot(&mut mock).unwrap();
     let names: Vec<_> = app.domain_choices().into_iter().map(|(d, p)| format!("{d} {p}")).collect();
     assert_eq!(names, ["example.com Porkbun", "example.org Gandi", "myshop.net Gandi"]);
@@ -587,7 +587,7 @@ fn hosting_picks_a_domain_from_any_connected_provider() {
 #[test]
 fn the_providers_list_shows_every_provider_and_removes_one_after_a_confirm() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     app.data = load_snapshot(&mut mock).unwrap();
     key(&mut app, &mut mock, KeyCode::Char('p'));
     let screen = screen_text(&app);
@@ -2161,7 +2161,7 @@ fn backups_open_from_home_and_a_restore_needs_the_passphrase_then_the_typed_word
     assert!(screen_text(&app).contains("passphrase did not open"), "{}", screen_text(&app));
     let Screen::Backup(state) = &mut app.screen else { panic!() };
     state.step =
-        BackupStep::Unlock { name: "nodo-1762560000.nodobak".into(), passphrase: nodo_tui::secret::Input::secret() };
+        BackupStep::Unlock { name: "nodo-1762560000.nodobak".into(), passphrase: nodo_ui_core::secret::Input::secret() };
     state.error = None;
     type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
     key(&mut app, &mut mock, ENTER);
@@ -2849,7 +2849,7 @@ fn an_apex_redirect_is_added_saved_and_listed_on_the_going_public_confirmation()
 #[test]
 fn a_name_under_a_second_providers_domain_can_serve_the_same_site() {
     let (mut app, mut mock) = pay_hosting(|mock| {
-        mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+        mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     });
     focus_on(&mut app, &mut mock, HostingFocus::AliasDomain);
     key(&mut app, &mut mock, ENTER);

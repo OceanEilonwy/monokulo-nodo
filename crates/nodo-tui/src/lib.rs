@@ -10,19 +10,12 @@
 
 pub mod app;
 pub mod clipboard;
-pub mod contract;
 pub mod ctl;
 pub mod fixtures;
-pub mod helper_backend;
 pub mod hit;
 pub mod input;
-pub mod helper_manage;
-pub mod mock;
-pub mod model;
 pub mod proposal;
-pub mod refs;
 pub mod runtime;
-pub mod secret;
 pub mod theme;
 pub mod update;
 pub mod view;

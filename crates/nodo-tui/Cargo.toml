@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 nodo-api = { path = "../nodo-api" }
+nodo-ui-core = { path = "../nodo-ui-core" }
 # ratatui 0.29 pinned unicode-width to 0.2.0, which Slint (nodo-gui) cannot share.
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 # use-dev-tty: crossterm's default (mio) input source spins forever on a hung-up terminal

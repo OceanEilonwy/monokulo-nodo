@@ -14,7 +14,7 @@ use super::pad;
 use super::v3::{heading, inset, line, margin, quiet, tick, trail, Card, Screen3};
 use crate::app::*;
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
 use crate::theme::Theme;
 use nodo_api::AliasMode;
 

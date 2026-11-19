@@ -7,10 +7,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::Exposure;
 
 use crate::app::*;
-use crate::mock::{reachability_checks, sample_references, MockBackend};
-use crate::model::*;
+use nodo_ui_core::mock::{reachability_checks, sample_references, MockBackend};
+use nodo_ui_core::model::*;
 use crate::runtime::load_snapshot;
-use crate::secret::Input;
+use nodo_ui_core::secret::Input;
 use crate::update::search_state;
 
 /// A loaded app on the given screen, plus the device behind it.
@@ -74,12 +74,12 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState { name: sample_app(app), confirm_focused: false }),
         ScreenId::System => Screen::System { selected: 0 },
         // A suite like Pingers, at its review, with Cancel focused.
-        ScreenId::Bundle => Screen::Bundle(Box::new(BundleState::new(crate::mock::sample_bundle_review()))),
+        ScreenId::Bundle => Screen::Bundle(Box::new(BundleState::new(nodo_ui_core::mock::sample_bundle_review()))),
         // A setup page like Pingers', opened with the passphrase.
         ScreenId::OwnerPage => {
             let mut state = OwnerPageState::new("pingers", "Setup");
-            state.held = Some(crate::secret::Secret::new(crate::mock::MOCK_PASSPHRASE));
-            state.view = Some(crate::mock::sample_owner_page());
+            state.held = Some(nodo_ui_core::secret::Secret::new(nodo_ui_core::mock::MOCK_PASSPHRASE));
+            state.view = Some(nodo_ui_core::mock::sample_owner_page());
             Screen::OwnerPage(Box::new(state))
         }
         ScreenId::Network => {

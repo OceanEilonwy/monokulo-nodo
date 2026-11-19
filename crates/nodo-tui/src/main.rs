@@ -7,8 +7,8 @@ use nodo_api::{Backend, DEFAULT_SOCKET};
 use nodo_tui::app::{App, Notice, NoticeKind, ScreenId};
 use nodo_tui::ctl;
 use nodo_tui::fixtures::fixture;
-use nodo_tui::helper_backend::HelperBackend;
-use nodo_tui::mock::{MockBackend, MOCK_PASSPHRASE};
+use nodo_ui_core::helper_backend::HelperBackend;
+use nodo_ui_core::mock::{MockBackend, MOCK_PASSPHRASE};
 use nodo_tui::runtime;
 use nodo_tui::theme::Theme;
 

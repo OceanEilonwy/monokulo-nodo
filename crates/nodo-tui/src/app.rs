@@ -7,8 +7,8 @@
 use crossterm::event::KeyEvent;
 use nodo_api::{ApiError, Exposure, Response};
 
-use crate::model::*;
-use crate::secret::{Input, Secret};
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::{Input, Secret};
 
 /// Below this size the layout cannot show enough context to act safely, so input is refused.
 pub const MIN_WIDTH: u16 = 60;
@@ -621,7 +621,7 @@ pub struct SettingsState {
     /// A secret being typed. Other fields are typed in `editor`.
     pub editing: Option<Input>,
     /// Text and reference chips being typed in the selected field.
-    pub editor: Option<crate::refs::PieceEditor>,
+    pub editor: Option<nodo_ui_core::refs::PieceEditor>,
     /// What the other apps offer to reference, once loaded.
     pub catalog: Option<ReferenceList>,
     /// The latest preview of each field's draft, from the helper.
@@ -776,7 +776,7 @@ pub struct ReferenceState {
 impl ReferenceState {
     /// The options the search shows, in the order they are listed, each with whether it fits.
     pub fn visible(&self) -> Vec<(&ReferenceOption, Result<(), String>)> {
-        crate::refs::ordered(&self.field_kind, crate::refs::search(&self.list.options, self.query.text()), self.assembled)
+        nodo_ui_core::refs::ordered(&self.field_kind, nodo_ui_core::refs::search(&self.list.options, self.query.text()), self.assembled)
     }
 }
 

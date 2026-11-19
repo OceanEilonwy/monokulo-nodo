@@ -10,7 +10,7 @@ use super::pad;
 use super::v3::{field_target, focused, heading_link, inset, link, margin, progress, quiet, trail, trail_actions, Card, Screen3};
 use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewPurpose, ReviewState, SearchState, Tab, UnlockState, APP_SECTIONS};
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
 use crate::theme::Theme;
 
 fn pick(index: usize) -> Click {

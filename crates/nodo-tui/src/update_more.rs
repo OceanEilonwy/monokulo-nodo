@@ -8,7 +8,7 @@ use nodo_api::UpdateOutcome;
 
 use super::{edit_input, fail, notice, open_logs, pop, push, step};
 use crate::app::*;
-use crate::secret::Input;
+use nodo_ui_core::secret::Input;
 
 // Entry points
 

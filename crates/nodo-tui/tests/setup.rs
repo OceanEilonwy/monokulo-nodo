@@ -9,7 +9,7 @@ use crossterm::event::KeyCode;
 use nodo_api::{Request, ServiceState};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{fixture, press};
-use nodo_tui::mock::MockBackend;
+use nodo_ui_core::mock::MockBackend;
 use nodo_tui::runtime::{dispatch, dispatch_async, execute_effect, EffectWorker};
 
 fn first_boot() -> (App, MockBackend) {
@@ -42,7 +42,7 @@ fn to_confirm(app: &mut App, mock: &mut MockBackend) {
     assert_eq!(app.screen.id(), ScreenId::Restore);
     key(app, mock, KeyCode::Enter);
     key(app, mock, KeyCode::Enter);
-    type_text(app, mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    type_text(app, mock, nodo_ui_core::mock::MOCK_PASSPHRASE);
     key(app, mock, KeyCode::Enter);
     assert!(screen_text(app).contains("Set up this device from the backup"), "{}", screen_text(app));
 }
@@ -62,10 +62,10 @@ fn a_new_device_can_be_restored_from_a_usb_backup_instead_of_set_up() {
     assert!(screen.contains("nodo-1762473600.nodobak"), "{screen}");
     key(&mut app, &mut mock, KeyCode::Enter);
     assert!(screen_text(&app).contains("Open this backup"));
-    type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    type_text(&mut app, &mut mock, nodo_ui_core::mock::MOCK_PASSPHRASE);
     // The mock passphrase is the word "monokulo", which the tab strip's device label also holds.
     let drawn = screen_text(&app).replace("monokulo-nodo", "");
-    assert!(!drawn.contains(nodo_tui::mock::MOCK_PASSPHRASE), "the passphrase is never drawn:\n{drawn}");
+    assert!(!drawn.contains(nodo_ui_core::mock::MOCK_PASSPHRASE), "the passphrase is never drawn:\n{drawn}");
     key(&mut app, &mut mock, KeyCode::Enter);
     let screen = screen_text(&app);
     assert!(screen.contains("✓ nodo-1762473600.nodobak verified"), "{screen}");
@@ -122,7 +122,7 @@ fn a_wrong_backup_passphrase_is_said_and_can_be_typed_again() {
     let screen = screen_text(&app);
     assert!(screen.contains("did not open this backup"), "{screen}");
     assert!(screen.contains("Open this backup"), "still asking: {screen}");
-    type_text(&mut app, &mut mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    type_text(&mut app, &mut mock, nodo_ui_core::mock::MOCK_PASSPHRASE);
     key(&mut app, &mut mock, KeyCode::Enter);
     assert!(screen_text(&app).contains("Set up this device from the backup"));
 }
@@ -158,7 +158,7 @@ fn a_drive_that_cannot_be_used_says_why_and_a_failed_restore_can_be_retried() {
 fn to_confirm_from_drives(app: &mut App, mock: &mut MockBackend) {
     key(app, mock, KeyCode::Enter);
     key(app, mock, KeyCode::Enter);
-    type_text(app, mock, nodo_tui::mock::MOCK_PASSPHRASE);
+    type_text(app, mock, nodo_ui_core::mock::MOCK_PASSPHRASE);
     key(app, mock, KeyCode::Enter);
 }
 
@@ -300,7 +300,7 @@ fn a_slow_helper_call_does_not_block_the_screen() {
 #[test]
 fn areas_without_a_backing_system_say_so() {
     let (mut app, mut mock) = fixture(ScreenId::Main);
-    app.data.unavailable = vec![(nodo_tui::model::Area::Feeds, "feeds are not connected yet".to_owned())];
+    app.data.unavailable = vec![(nodo_ui_core::model::Area::Feeds, "feeds are not connected yet".to_owned())];
     // Sources, under Apps › Get apps.
     key(&mut app, &mut mock, KeyCode::Char('2'));
     key(&mut app, &mut mock, KeyCode::Char('g'));

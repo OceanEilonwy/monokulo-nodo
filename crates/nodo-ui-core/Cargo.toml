@@ -1,0 +1,12 @@
+[package]
+name = "nodo-ui-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "What every Monokulo Nodo interface shares: the screens' data, the helper backend and its mock, with no terminal or toolkit"
+
+[dependencies]
+nodo-api = { path = "../nodo-api" }
+zeroize = "1"

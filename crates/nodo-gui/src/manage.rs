@@ -1,6 +1,6 @@
-//! Management on the touchscreen: Home, Apps, Web and System, over nodo-tui's helper backend.
+//! Management on the touchscreen: Home, Apps, Web and System, over nodo-ui-core's helper backend.
 //!
-//! The data and every helper call are nodo-tui's (`ScreenData`, `HelperBackend`), so the screen
+//! The data and every helper call are nodo-ui-core's (`ScreenData`, `HelperBackend`), so the screen
 //! and the terminal show and do the same things. Calls run on a worker thread, because a restart
 //! or an update can take minutes; results come back as closures applied on the UI thread.
 //!
@@ -17,8 +17,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use nodo_api::{ApiError, Backend, Request, Response, ScreenStatus};
-use nodo_tui::model::*;
-use nodo_tui::secret::Secret;
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::Secret;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::{MButton, MCard, MChip, MDialog, MKeyboard, MPicker, MPin, MRow};
@@ -506,7 +506,7 @@ impl Manage {
                 self.run(move |d| {
                     let form = d.settings_form(&package);
                     let refs = match d.call(Request::ListReferences { package: package.clone() }) {
-                        Ok(Response::References(options)) => nodo_tui::helper_backend::reference_list(options),
+                        Ok(Response::References(options)) => nodo_ui_core::helper_backend::reference_list(options),
                         _ => ReferenceList::default(),
                     };
                     // What each stored reference resolves to now, for its chips.
@@ -515,7 +515,7 @@ impl Manage {
                         let Some(input) = f.value.to_input() else { continue };
                         let change = nodo_api::SettingChange { name: f.key.clone(), value: input };
                         if let Ok(Response::SettingPreview(p)) = d.call(Request::PreviewSetting { package: package.clone(), change }) {
-                            previews.insert(f.key.clone(), nodo_tui::helper_backend::field_preview(&f.value, p));
+                            previews.insert(f.key.clone(), nodo_ui_core::helper_backend::field_preview(&f.value, p));
                         }
                     }
                     Box::new(move |m: &mut Manage| {
@@ -987,7 +987,7 @@ impl Manage {
         self.run(move |d| {
             let change = nodo_api::SettingChange { name: key.clone(), value: input };
             let preview = match d.call(Request::PreviewSetting { package, change }) {
-                Ok(Response::SettingPreview(p)) => Some(nodo_tui::helper_backend::field_preview(&value, p)),
+                Ok(Response::SettingPreview(p)) => Some(nodo_ui_core::helper_backend::field_preview(&value, p)),
                 _ => None,
             };
             Box::new(move |m: &mut Manage| {
@@ -2496,7 +2496,7 @@ mod tests {
     use super::*;
 
     fn manage() -> (Manage, Worker) {
-        let worker = Worker::start(Box::new(nodo_tui::mock::MockBackend::new()));
+        let worker = Worker::start(Box::new(nodo_ui_core::mock::MockBackend::new()));
         let mut m = Manage::new(Some(&worker));
         m.open();
         worker.drain_blocking(&mut m);

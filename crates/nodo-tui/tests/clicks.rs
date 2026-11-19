@@ -6,7 +6,7 @@ mod common;
 use common::draw;
 use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, ScreenId, Undo};
 use nodo_tui::fixtures::{fixture, press};
-use nodo_tui::model::FieldValue;
+use nodo_ui_core::model::FieldValue;
 use nodo_tui::hit::{hit_at, Click, Hit};
 use nodo_tui::update::update;
 use ratatui::buffer::Buffer;
@@ -219,8 +219,8 @@ fn undo_link_works_while_a_field_is_being_edited() {
 
 /// A settings form like the handicrafts shop's: far taller than the screen, with a "+ reference"
 /// link on most fields.
-fn long_form() -> nodo_tui::model::SettingsForm {
-    use nodo_tui::model::{Field, FieldKind, SettingsForm};
+fn long_form() -> nodo_ui_core::model::SettingsForm {
+    use nodo_ui_core::model::{Field, FieldKind, SettingsForm};
     let labels = [
         "Public address", "Admin user", "Admin password hash", "Notifications to", "Email", "Send from", "Sender name",
         "Tuta account", "Tuta password", "SMTP server", "SMTP port", "SMTP security", "SMTP user", "SMTP password",
@@ -351,7 +351,7 @@ fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
     let mut screens: Vec<(String, App)> = ScreenId::ALL.into_iter().map(|id| (id.slug().to_owned(), fixture(id).0)).collect();
     // The fixture's own pages: its settings form and its app page.
     let mock = common::forms::crowded();
-    let form = nodo_tui::model::ScreenData::settings_form(&mock, common::forms::ID).expect("installed");
+    let form = nodo_ui_core::model::ScreenData::settings_form(&mock, common::forms::ID).expect("installed");
     let mut settings = App::new();
     settings.screen = Screen::Settings(nodo_tui::app::SettingsState::new(form));
     screens.push(("fixture settings".to_owned(), settings));
@@ -361,7 +361,7 @@ fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
     // The reference picker and automatic updates keep their lists in the screen, not the data.
     let (mut picker, _) = fixture(ScreenId::Reference);
     if let Screen::Reference(state) = &mut picker.screen {
-        state.query = nodo_tui::secret::Input::plain("");
+        state.query = nodo_ui_core::secret::Input::plain("");
         let template = state.list.options[0].clone();
         for n in 0..30 {
             let mut option = template.clone();
@@ -375,7 +375,7 @@ fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
         // On the first app: "How often" only moves the focus, which does nothing where it is.
         state.selected = 1;
         for n in 0..24 {
-            state.draft.packages.insert(0, nodo_tui::model::AutoUpdateEntry::new(&format!("crowd-app-{n:02}"), "community", true, ""));
+            state.draft.packages.insert(0, nodo_ui_core::model::AutoUpdateEntry::new(&format!("crowd-app-{n:02}"), "community", true, ""));
         }
         state.saved = state.draft.clone();
     }
@@ -459,12 +459,12 @@ fn a_sources_switch_and_link_stay_clickable_when_narrow() {
             let screen = common::text(&buffer);
             let lines: Vec<&str> = screen.lines().collect();
             let head = lines.iter().position(|line| line.trim_start().trim_start_matches("▸ ").starts_with(&format!("{} ", feed.name))).unwrap_or_else(|| panic!("{size:?}: {} is on screen:\n{screen}", feed.name));
-            let switch = if feed.status == nodo_tui::model::FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
+            let switch = if feed.status == nodo_ui_core::model::FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
             let column = lines[head].find(switch).unwrap_or_else(|| panic!("{size:?}: {}'s switch is whole on its row:\n{screen}", feed.name));
             let click = hit_at(&hits, lines[head][..column].chars().count() as u16, head as u16).map(|hit| hit.click);
             assert_eq!(click, Some(Click::Pick { index, then: Some(crossterm::event::KeyCode::Char(' ')) }), "{size:?}: {}'s switch", feed.name);
             // At 20 rows the window shows the source's head and address only.
-            if matches!(feed.status, nodo_tui::model::FeedStatus::Unreachable(_)) && size.1 >= 24 {
+            if matches!(feed.status, nodo_ui_core::model::FeedStatus::Unreachable(_)) && size.1 >= 24 {
                 let row = lines.iter().position(|line| line.contains("Try again")).unwrap_or_else(|| panic!("{size:?}: Try again is whole on a row:\n{screen}"));
                 let column = lines[row][..lines[row].find("Try again").unwrap()].chars().count() as u16;
                 assert_eq!(hit_at(&hits, column, row as u16).map(|hit| hit.click), Some(Click::Key(crossterm::event::KeyCode::Char('r'))), "{size:?}");
@@ -475,7 +475,7 @@ fn a_sources_switch_and_link_stay_clickable_when_narrow() {
 
 /// monokulo-pay's Hosting, going public, with a redirecting and a serving name already listed and
 /// the controls to add another. `focus` is where the keyboard focus starts.
-fn hosting_with_names(snapshot: &nodo_tui::model::Snapshot, focus: usize) -> App {
+fn hosting_with_names(snapshot: &nodo_ui_core::model::Snapshot, focus: usize) -> App {
     use nodo_api::{AliasMode, PublicAlias};
     use nodo_tui::app::ExposureState;
     let mut app = App::new();

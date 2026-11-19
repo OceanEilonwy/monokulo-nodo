@@ -13,8 +13,8 @@ use nodo_settings::SettingType;
 use nodo_tui::app::{App, Event, MouseKind, Screen, SettingsState};
 use nodo_tui::fixtures::{ctrl, press};
 use nodo_tui::hit::{hit_at, Click, Hit};
-use nodo_tui::mock::MockBackend;
-use nodo_tui::model::{FieldValue, ScreenData};
+use nodo_ui_core::mock::MockBackend;
+use nodo_ui_core::model::{FieldValue, ScreenData};
 use nodo_tui::runtime::dispatch;
 use nodo_tui::update::update;
 use ratatui::buffer::Buffer;
@@ -288,7 +288,7 @@ fn retype(app: &mut App, mock: &mut MockBackend, text: &str) {
 #[test]
 fn each_optional_kind_edits_clears_and_saves() {
     let text = |s: &str| SettingInput::Literal(SettingLiteral::Text(s.to_owned()));
-    let address = nodo_tui::mock::sample_address();
+    let address = nodo_ui_core::mock::sample_address();
     let cases: [(&str, &str, SettingInput); 6] = [
         ("smtp_port", "587", text("587")),
         ("retries", "3", text("3")),
@@ -406,7 +406,7 @@ fn long_labels_and_help_never_hide_a_value_or_overflow() {
                 FieldValue::Text(text) if text.chars().count() > 34 => text.chars().take(8).collect(),
                 FieldValue::Text(text) => text.clone(),
                 FieldValue::Pieces(pieces) => match pieces.iter().find_map(|p| match p {
-                    nodo_tui::model::Piece::Ref { app, setting } => Some(format!("{app}·{setting}")),
+                    nodo_ui_core::model::Piece::Ref { app, setting } => Some(format!("{app}·{setting}")),
                     _ => None,
                 }) {
                     Some(chip) => chip,

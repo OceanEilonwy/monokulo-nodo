@@ -225,7 +225,7 @@ fn a_long_log_shows_its_newest_lines() {
     let (mut app, _) = fixture(ScreenId::Logs);
     if let nodo_tui::app::Screen::Logs(state) = &mut app.screen {
         state.view.lines = (1..=200)
-            .map(|n| nodo_tui::model::LogLine { kind: nodo_tui::model::LogKind::Info, text: format!("line number {n}") })
+            .map(|n| nodo_ui_core::model::LogLine { kind: nodo_ui_core::model::LogKind::Info, text: format!("line number {n}") })
             .collect();
         state.view.suggestion.clear();
     }
@@ -377,7 +377,7 @@ fn settings_at(width: u16, relabel: &[(usize, &str)], port: Option<&str>) -> Str
             state.form.fields[*index].label = (*label).to_owned();
         }
         if let Some(port) = port {
-            state.draft[1] = nodo_tui::model::FieldValue::Text(port.to_owned());
+            state.draft[1] = nodo_ui_core::model::FieldValue::Text(port.to_owned());
         }
     }
     app.size = (width, 60);

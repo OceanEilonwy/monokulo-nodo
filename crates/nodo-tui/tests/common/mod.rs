@@ -3,7 +3,7 @@
 pub mod forms;
 
 use nodo_tui::app::App;
-use nodo_tui::mock::MockBackend;
+use nodo_ui_core::mock::MockBackend;
 use nodo_tui::runtime::dispatch;
 use nodo_tui::theme::Theme;
 use nodo_tui::view::{self, layout::FitReport};

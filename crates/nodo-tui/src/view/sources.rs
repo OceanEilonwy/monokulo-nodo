@@ -8,7 +8,7 @@ use super::pad;
 use super::v3::{focused, heading, heading_button, inset, key_row, link, quiet, toggle, trail, Card, Screen3};
 use crate::app::{AddFeedState, App, FeedKeyState, Tab};
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {

@@ -9,7 +9,7 @@ use nodo_api::{PairingStage, WifiLink, WifiSecurity};
 
 use super::{notice, pop, push, step};
 use crate::app::*;
-use crate::secret::Input;
+use nodo_ui_core::secret::Input;
 
 pub(super) fn open_network(app: &mut App) -> Vec<Effect> {
     let mut state = NetworkState::new();

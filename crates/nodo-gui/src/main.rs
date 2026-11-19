@@ -445,7 +445,7 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     let dimmer = backlight::Dimmer::new(&config.backlight, Instant::now());
     let layout_seen = modified(&options.layout);
     let socket = std::env::var("NODO_SCREEN_SOCKET").unwrap_or_else(|_| nodo_api::SCREEN_SOCKET.to_owned());
-    let (worker, offline) = match nodo_tui::helper_backend::HelperBackend::connect(Path::new(&socket)) {
+    let (worker, offline) = match nodo_ui_core::helper_backend::HelperBackend::connect(Path::new(&socket)) {
         Ok(backend) => (Some(manage::Worker::start(Box::new(backend))), None),
         Err(e) => {
             log(&format!("management: cannot reach {socket}: {e}"));

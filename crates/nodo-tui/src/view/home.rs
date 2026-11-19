@@ -9,7 +9,7 @@ use super::pad;
 use super::v3::{heading, Card, Screen3};
 use crate::app::{App, HomeItem, Tab};
 use crate::hit::{Click, Target};
-use crate::model::AttentionLevel;
+use nodo_ui_core::model::AttentionLevel;
 use crate::theme::Theme;
 
 /// An app's state in plain words, and whether it is a problem.
@@ -97,7 +97,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
                     .update_rows()
                     .iter()
                     .filter(|u| !u.held)
-                    .map(|u| if u.name == crate::model::SYSTEM_BASE { "the Nodo".to_owned() } else { u.name.clone() })
+                    .map(|u| if u.name == nodo_ui_core::model::SYSTEM_BASE { "the Nodo".to_owned() } else { u.name.clone() })
                     .collect();
                 let count = names.len();
                 (

@@ -2987,7 +2987,7 @@ dependencies = [
  "nodo-panels",
  "nodo-power",
  "nodo-splash",
- "nodo-tui",
+ "nodo-ui-core",
  "png 0.17.16",
  "serde",
  "signal-hook",
@@ -3027,7 +3027,7 @@ dependencies = [
  "nodo-install",
  "nodo-manifest",
  "nodo-settings",
- "nodo-tui",
+ "nodo-ui-core",
  "nodo-update",
  "nodo-web",
  "pbkdf2",
@@ -3145,10 +3145,19 @@ dependencies = [
  "nodo-api",
  "nodo-manifest",
  "nodo-settings",
+ "nodo-ui-core",
  "qrcodegen",
  "ratatui",
  "signal-hook",
  "unicode-width 0.2.3",
+ "zeroize",
+]
+
+[[package]]
+name = "nodo-ui-core"
+version = "0.1.0"
+dependencies = [
+ "nodo-api",
  "zeroize",
 ]
 

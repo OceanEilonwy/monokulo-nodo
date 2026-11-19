@@ -6,8 +6,8 @@ use nodo_api::{Exposure, Origin, ServiceState, ServiceStatus, SettingCurrent, Se
 use nodo_manifest::Manifest;
 use nodo_settings::{DefaultValue, Limits, Schema, SettingDef, SettingType};
 use nodo_tui::app::App;
-use nodo_tui::mock::MockBackend;
-use nodo_tui::model::*;
+use nodo_ui_core::mock::MockBackend;
+use nodo_ui_core::model::*;
 use nodo_tui::runtime::load_snapshot;
 
 pub const ID: &str = "nodo-fixture-forms";
@@ -68,7 +68,7 @@ fn helper_field(def: &SettingDef) -> SettingField {
 pub fn form() -> SettingsForm {
     let schema = schema();
     let public_settings = schema.settings.iter().filter_map(|def| def.public.as_ref().map(|p| format!("{ID}.{p}"))).collect();
-    let fields = schema.settings.iter().map(|def| nodo_tui::helper_backend::field(helper_field(def))).collect();
+    let fields = schema.settings.iter().map(|def| nodo_ui_core::helper_backend::field(helper_field(def))).collect();
     SettingsForm { package: ID.to_owned(), fields, public_settings }
 }
 

@@ -25,7 +25,7 @@ use crossterm::event::KeyCode;
 
 use crate::app::{App, Modal, NoticeKind, Overlay, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
 use crate::hit::{self, Click, Target};
-use crate::model::Area;
+use nodo_ui_core::model::Area;
 use crate::theme::Theme;
 use layout::{draw_boxed, draw_page, FitReport, Item};
 

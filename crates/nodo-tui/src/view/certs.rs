@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
 use crate::app::*;
-use crate::model::*;
+use nodo_ui_core::model::*;
 use crate::theme::Theme;
 
 /// One certificate in a few words, coloured by how it stands.
@@ -86,7 +86,7 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
     }
 
     let focus = |f: DomainFocus| state.focus == f;
-    let field = |f: DomainFocus, label: &str, input: &crate::secret::Input, empty: &str| {
+    let field = |f: DomainFocus, label: &str, input: &nodo_ui_core::secret::Input, empty: &str| {
         let mut value = vec![if input.is_empty() { t.d(empty.to_owned()) } else { t.n(input.display()) }];
         if focus(f) {
             value.push(t.s(" "));

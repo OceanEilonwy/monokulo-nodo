@@ -207,12 +207,12 @@ renderVals() {{ return {{}}; }}
 fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use nodo_tui::app::{Event, Screen};
-    use nodo_tui::mock::MockBackend;
+    use nodo_ui_core::mock::MockBackend;
     use nodo_tui::runtime::dispatch;
 
     fn start() -> (nodo_tui::app::App, MockBackend) {
         let (mut app, mut mock) = nodo_tui::fixtures::fixture(nodo_tui::app::ScreenId::Main);
-        let form = nodo_tui::model::ScreenData::settings_form(&mock, "moneropay");
+        let form = nodo_ui_core::model::ScreenData::settings_form(&mock, "moneropay");
         dispatch(&mut app, &mut mock, Event::SettingsLoaded { package: "moneropay".to_owned(), form });
         (app, mock)
     }
@@ -244,9 +244,9 @@ fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
     let (mut app, mut mock) = start();
     mixed(&mut app, &mut mock);
     if let Screen::Settings(state) = &mut app.screen {
-        state.draft[3] = nodo_tui::model::FieldValue::Pieces(vec![
-            nodo_tui::model::Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
-            nodo_tui::model::Piece::Text("/orders".into()),
+        state.draft[3] = nodo_ui_core::model::FieldValue::Pieces(vec![
+            nodo_ui_core::model::Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
+            nodo_ui_core::model::Piece::Text("/orders".into()),
         ]);
     }
     let value = match &app.screen {
@@ -462,9 +462,9 @@ pub fn real_screens(out: &std::path::Path) {
     scenes.push(("real-web3-provider-done", "Provider connected (real)", app));
     // Two connected providers: Porkbun with example.com, Gandi with the domains its key lists.
     let with_gandi = |id: ScreenId| {
-        use nodo_tui::model::ScreenData;
+        use nodo_ui_core::model::ScreenData;
         let (mut app, mut mock) = fixture(id);
-        let key = nodo_tui::secret::Secret::new("k");
+        let key = nodo_ui_core::secret::Secret::new("k");
         mock.add_provider("Gandi", None, &key, &key).expect("mock provider");
         app.data = nodo_tui::runtime::load_snapshot(&mut mock).expect("snapshot");
         app
