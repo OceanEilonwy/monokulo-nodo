@@ -147,7 +147,7 @@ async fn an_apps_page_acts_through_the_flow_and_says_what_it_answers() {
 
     // Update: with one offered it leads towards the Updates page, without one it says so.
     let update = browser.post("/apps/moneropay/update", &[]).await;
-    assert_eq!(update.location(), "/system", "the Updates page is not built yet; System stands in");
+    assert_eq!(update.location(), "/system/updates?only=moneropay", "the Updates page, with this app ticked");
     browser.post_then("/apps/cuprated/update", &[]).await.assert_has("cuprated is up to date.");
 
     // The rows under it: Logs leads to the app's log; the others say they are not here yet.

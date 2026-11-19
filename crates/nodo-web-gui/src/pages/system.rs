@@ -46,8 +46,7 @@ fn page(snapshot: &Snapshot, web_gui: Option<&WebGuiStatus>) -> Page {
                 @if let UpdateNote::Withdrawal(withdrawn) = &update.note {
                     p { span.warn aria-hidden="true" { "▲ " } "The publisher withdrew " (withdrawn) ", which this Nodo runs." }
                 }
-                // TODO(page): Updates. Until then the terminal interface applies it.
-                p.dim.small { "Updates are reviewed and applied from the terminal interface for now." }
+                div.actions.end { a.btn.primary href=(dest::UPDATES) { "Review" } }
             }
         }
         section.card.flush {
@@ -55,10 +54,11 @@ fn page(snapshot: &Snapshot, web_gui: Option<&WebGuiStatus>) -> Page {
                 @for name in SYSTEM_ROWS {
                     @let summary = system_row_summary(snapshot, name);
                     @match name {
+                        "Updates" => (layout::row(dest::UPDATES, name, &summary, html! {})),
                         "Device logs" => (layout::row(dest::LOGS, name, &summary, html! {})),
                         "About this Nodo" => (layout::row(dest::ABOUT, name, &summary, html! {})),
-                        // TODO(page): Updates (/system/updates), Backups (/system/backups) and
-                        // Network (/system/network). Each row says so until its page exists.
+                        // TODO(page): Backups (/system/backups) and Network (/system/network).
+                        // Each row says so until its page exists.
                         _ => (layout::coming(name, &summary)),
                     }
                 }

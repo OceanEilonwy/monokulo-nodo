@@ -205,17 +205,24 @@ fn kept_review(ctx: &Ctx, id: &PackageId) -> Option<Review> {
     ctx.session.inner().stash.review.clone().filter(|review| review.data.id == *id && review.purpose == ReviewPurpose::Install)
 }
 
-fn review_page(review: &Review) -> Page {
+/// The review of what an app asks for: before an install, or for an update that asks for
+/// something new. The same page, with the words and the ways out of each.
+pub fn review_page(review: &Review) -> Page {
     let data = &review.data;
     let id = &data.id;
-    let here = format!("{}/review", dest::offer(id));
+    let is_update = review.purpose != ReviewPurpose::Install;
+    let (here, cancel, verb) = if is_update {
+        (dest::UPDATE_REVIEW.to_owned(), dest::UPDATES.to_owned(), "Update")
+    } else {
+        (format!("{}/review", dest::offer(id)), dest::offer(id), "Install")
+    };
     let body = html! {
-        h1 { "Install " (id.name) "?" }
+        h1 { @if is_update { "Update " (id.name) " to " (data.version) "?" } @else { "Install " (id.name) "?" } }
         section.card {
             @if data.third_party {
                 p { span.warn aria-hidden="true" { "▲ " } "It comes from " (id.feed) ", a source you added. Nobody has reviewed its code for you." }
             }
-            h3 { "It will be able to" }
+            h3 { @if is_update { "This version newly asks to" } @else { "It will be able to" } }
             ul.bullets {
                 @for ask in &data.asks {
                     li {
@@ -229,20 +236,28 @@ fn review_page(review: &Review) -> Page {
                 }
             }
             @for line in &data.guarantees { p.dim { (line) } }
-            p { a href=(format!("{}/doc/files", dest::offer(id))) { "The files it installs" } }
+            @if !is_update { p { a href=(format!("{}/doc/files", dest::offer(id))) { "The files it installs" } } }
             form.stack method="post" action=(here) {
                 @if review.needs_passphrase() {
                     (layout::passphrase("review-passphrase", "Device passphrase", None, false))
                     p.dim.small { "Its locked storage is made now and opens with your device passphrase." }
                 }
                 div.actions.end {
-                    a.btn href=(dest::offer(id)) { "Cancel" }
-                    button.btn.primary type="submit" { "Install" }
+                    a.btn href=(cancel) { "Cancel" }
+                    button.btn.primary type="submit" { (verb) }
                 }
             }
         }
     };
-    offered(id, format!("Install {}", id.name), Some("Install"), body)
+    if is_update {
+        Page::new(Tab::System, format!("Update {}", id.name), body).trail(&[
+            ("System", dest::SYSTEM),
+            ("Updates", dest::UPDATES),
+            (id.name.as_str(), dest::UPDATE_REVIEW),
+        ])
+    } else {
+        offered(id, format!("Install {}", id.name), Some("Install"), body)
+    }
 }
 
 /// `GET /apps/get/{feed}/{package}/review`.
@@ -265,7 +280,8 @@ pub async fn approve(ctx: Ctx, Path((feed, package)): Path<(String, String)>, Fo
         return crate::ctx::go_to(ctx.htmx, &dest::offer(&id));
     };
     let mut typed = typed_secret(form.passphrase.expose());
-    let step = review.approve(review.needs_passphrase().then_some(&mut typed));
+    // An install's approval reads nothing from the device's state; only an update's does.
+    let step = review.approve(review.needs_passphrase().then_some(&mut typed), &Snapshot::default());
     if step.effects().is_empty() {
         return ctx.respond(follow_plain(step), &here);
     }
@@ -374,8 +390,7 @@ pub async fn after_install(ctx: Ctx, Path((feed, package, what)): Path<(String, 
     // An installed app's own page is where "back" leads; a failed install returns to the offer.
     let back = if report.outcome == InstallOutcome::Succeeded { dest::app(&id.name) } else { dest::offer(&id) };
     let step = if what == "next" {
-        // TODO(page): Settings. `carry_on` opens the new app's settings; until that page is
-        // here the owner lands on the app's page, which lists it.
+        // `carry_on` opens the new app's settings, or says it has none.
         install::carry_on(&report)
     } else {
         install::leave(&report)

@@ -9,8 +9,10 @@ pub mod install;
 pub mod keys;
 pub mod login;
 pub mod logs;
+pub mod settings;
 pub mod sources;
 pub mod system;
+pub mod updates;
 
 use axum::http::StatusCode;
 use maud::html;

@@ -27,6 +27,18 @@
 //! 12. Which calls take long enough to be a job (`long_confirm`) is known only by habit.
 //! 13. `MockBackend` has no `RemovePackage`, so removing an app in `--mock` and in the tests ends
 //!     with the mock's "not available yet".
+//! 15. `chip_label`, `picker_hint`, and the settings pages' own sentences (the grant question,
+//!     the save confirmation's heading, the rolled-back page), from `view/settings.rs`.
+//! 16. `update_note`, and the sentences of the Updates, results, automatic and undo pages, from
+//!     `view/system.rs` and `view/more.rs`; `day` for a rollback's date.
+//! 17. `applies_updates`: whether a step is long is read off its effects.
+//! 18. A frontend without a text cursor has `insert_reference`, but `Settings::pick` and
+//!     `Picker` know only `PickMode::Insert` and `Replace`; "after the text" is remembered here
+//!     (`session::Picking::append`).
+//! 19. `Confirm::DiscardSettings` does not say whose form; the session keeps the app's name
+//!     beside the question (`Pending::subject`).
+//! 20. `Rollbacks::apply` gives no notice for a rollback that the helper refused or took back;
+//!     the result is kept for the page and worded here (`pages::updates::rolled_back_line`).
 //! 14. `Review::approve` takes the passphrase as `Option<&mut Input>`, and `Unlock::submit` as
 //!     `&mut Input`: a frontend that gets text from a form builds an `Input` only to hand it over.
 
@@ -308,8 +320,61 @@ pub fn is_plain_http(address: &str) -> bool {
 pub fn long_confirm(confirm: &Confirm) -> Option<&'static str> {
     match confirm {
         Confirm::RepairDrive => Some("Repairing the filesystem"),
+        Confirm::RollBack { .. } => Some("Rolling back to the version before"),
         _ => None,
     }
+}
+
+/// A reference as a field shows it, from `view/settings.rs`.
+pub fn chip_label(app: &str, setting: &str) -> String {
+    format!("{app}·{setting}")
+}
+
+/// What the picker says above its list, from `view/settings.rs`.
+pub fn picker_hint(kind: &nodo_ui_core::model::FieldKind) -> &'static str {
+    use nodo_ui_core::model::FieldKind;
+    match kind {
+        FieldKind::Number { .. } | FieldKind::Port => "Numbers first; the others are dimmed because a number field can't hold them.",
+        _ => "Those that fit first; the others are dimmed with why.",
+    }
+}
+
+/// What an update's row says after its versions, from `view/system.rs`. The bool marks one that
+/// wants the owner's eye.
+pub fn update_note(item: &UpdateItem) -> (String, bool) {
+    match (&item.note, item.held) {
+        (UpdateNote::Skipped, _) => ("you skipped this version".to_owned(), false),
+        (_, true) => ("held back".to_owned(), false),
+        (UpdateNote::Ready, _) if item.grows.is_some() => ("needs the device passphrase".to_owned(), true),
+        (UpdateNote::Ready, _) => (String::new(), false),
+        (UpdateNote::RestartNeeded, _) => ("needs a restart".to_owned(), false),
+        (UpdateNote::NewPermission(_), _) => ("▲ asks for something new; you'll review it first".to_owned(), true),
+        (UpdateNote::Blocked(reason), _) => (format!("▲ {reason}"), true),
+        (UpdateNote::Withdrawal(_), _) => ("▲ replaces a withdrawn version".to_owned(), true),
+    }
+}
+
+/// A day as `2026-11-07`, from seconds since 1970 (Howard Hinnant's days-to-civil), from
+/// `view/more.rs`.
+pub fn day(at: u64) -> String {
+    let z = (at / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year}-{month:02}-{day:02}")
+}
+
+/// Whether following a step asks the helper to apply updates, which takes minutes. Loading a
+/// review does not.
+pub fn applies_updates(step: &nodo_ui_core::flows::Step) -> bool {
+    step.effects().iter().any(|effect| {
+        matches!(effect, nodo_ui_core::Effect::ApplyUpdates { .. } | nodo_ui_core::Effect::ApplyUpdatesWithPassphrase { .. })
+    })
 }
 
 /// A job that ended without a report, as a notice.

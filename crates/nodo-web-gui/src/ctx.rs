@@ -123,6 +123,10 @@ pub enum Out {
     Reply(Reply),
     /// Another page, with nothing to say.
     Go(String),
+    /// What the closure found must be done takes minutes: start it as a job. For an action that
+    /// is only known to be long once the device was read (updating apps is, loading the review
+    /// one of them needs first is not).
+    Job(JobSpec, Box<dyn FnOnce(&mut Work<'_>) -> Reply + Send>),
 }
 
 /// Why a closure did not run to its answer.
@@ -308,6 +312,7 @@ impl Ctx {
             Ok(Ok(Out::Fragment(markup))) => markup.into_response(),
             Ok(Ok(Out::Reply(reply))) => self.respond(reply, &back),
             Ok(Ok(Out::Go(url))) => go_to(self.htmx, &url),
+            Ok(Ok(Out::Job(spec, work))) => self.job(spec, work).await,
             Ok(Err(stop)) => self.stopped(stop, &back),
             Err(error) => self.stopped(Stop::Failed(format!("The request stopped unexpectedly ({error}).")), &back),
         }
@@ -327,7 +332,7 @@ impl Ctx {
         let mut inner = self.session.inner();
         inner.notices.extend(reply.notices);
         if let Some(question) = reply.question {
-            let pending = inner.ask(question, back, reply.cancel.as_deref().unwrap_or(back));
+            let pending = inner.ask(question, back, reply.cancel.as_deref().unwrap_or(back), reply.subject);
             drop(inner);
             return if self.htmx { layout::dialog(&pending).into_response() } else { see_other(dest::CONFIRM) };
         }

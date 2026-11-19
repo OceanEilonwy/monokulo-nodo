@@ -5,6 +5,7 @@
 //! waiting for an answer, what the helper gave for a page that is shown next (`Stash`), the
 //! unlock card's count of wrong tries, and the job that runs for it.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -12,8 +13,9 @@ use std::time::Duration;
 use axum::http::{header, HeaderMap};
 use nodo_ui_core::exec::Data;
 use nodo_ui_core::flows::unlock::Unlock;
-use nodo_ui_core::flows::{install, Dest, Notice, Question};
-use nodo_ui_core::model::{CapabilityData, Document, FeedProbe, InstallSnapshot, KeyChange, RejectionData};
+use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
+use nodo_ui_core::flows::{install, updates, Dest, Notice, Question};
+use nodo_ui_core::model::{CapabilityData, Document, FeedProbe, InstallSnapshot, KeyChange, RejectionData, UpdateReport};
 
 use crate::clock::Clock;
 use crate::runner::Reply;
@@ -104,6 +106,16 @@ pub struct Pending {
     pub back: String,
     /// The page that asked, where Cancel returns.
     pub cancel: String,
+    /// What it is about, when the flow that asked needs to know on the answer.
+    pub subject: Option<String>,
+}
+
+/// The reference picker open for one field of an app's settings.
+#[derive(Debug, Clone)]
+pub struct Picking {
+    pub picker: Picker,
+    /// The reference goes after what the field holds, instead of taking its place.
+    pub append: bool,
 }
 
 /// What the helper gave for a page that is shown by the next request. Each holds the latest one
@@ -122,6 +134,22 @@ pub struct Stash {
     pub install: Option<InstallSnapshot>,
     /// A text to read, and the page to return to after it.
     pub document: Option<(Document, String)>,
+    /// The settings forms being edited, by app: the draft, the previews and the one step back.
+    /// A form is dropped when it is saved, discarded or left with nothing changed, and with the
+    /// session.
+    pub settings: BTreeMap<String, Settings>,
+    pub picking: Option<Picking>,
+    /// A save the helper took back: why, and what had been changed.
+    pub apply_failed: Option<ApplyFailed>,
+    /// The updates ticked, for the next time the Updates page is drawn. Taken when it is.
+    pub ticks: Option<Vec<String>>,
+    /// A batch of updates waiting for the device passphrase. It holds the approvals the helper
+    /// issued for the reviews, so it is kept here and never rebuilt from what a browser sends.
+    pub batch: Option<updates::Batch>,
+    /// What the last batch of updates came to.
+    pub results: Option<UpdateReport>,
+    /// How the last rollback went, shown once on its page.
+    pub rolled_back: Option<nodo_api::UpdateResult>,
 }
 
 impl Stash {
@@ -135,6 +163,20 @@ impl Stash {
             Dest::MissingCapability(data) => self.capability = Some(data.clone()),
             Dest::Installing(report) => self.install = Some(report.clone()),
             Dest::Document(document) => self.document = Some((document.clone(), back.to_owned())),
+            Dest::UpdatePassphrase(batch) => self.batch = Some(batch.clone()),
+            Dest::UpdateResults(report) => {
+                self.results = Some(report.clone());
+                self.batch = None;
+            }
+            Dest::ApplyFailed(failed) => self.apply_failed = Some(failed.clone()),
+            // The settings page reads its form again unless a draft is open; the Web tab's
+            // destinations have no page here yet.
+            Dest::Settings(_)
+            | Dest::LeaveHosting
+            | Dest::Reachability(_)
+            | Dest::PublicConfirm(_)
+            | Dest::HostingWithProvider { .. }
+            | Dest::WentPublic => {}
             // These carry what their URL carries, or nothing.
             Dest::Back
             | Dest::Apps
@@ -145,8 +187,7 @@ impl Stash {
             | Dest::Sources { .. }
             | Dest::AppPage(_)
             | Dest::Detail(_)
-            | Dest::Bundle(_)
-            | Dest::ApplyUpdates { .. } => {}
+            | Dest::Bundle(_) => {}
         }
     }
 }
@@ -209,9 +250,9 @@ pub struct Inner {
 
 impl Inner {
     /// Keeps a question until it is answered, replacing one still open.
-    pub fn ask(&mut self, question: Question, back: &str, cancel: &str) -> Pending {
+    pub fn ask(&mut self, question: Question, back: &str, cancel: &str, subject: Option<String>) -> Pending {
         self.next_id += 1;
-        let pending = Pending { id: self.next_id, question, back: back.to_owned(), cancel: cancel.to_owned() };
+        let pending = Pending { id: self.next_id, question, back: back.to_owned(), cancel: cancel.to_owned(), subject };
         self.question = Some(pending.clone());
         pending
     }

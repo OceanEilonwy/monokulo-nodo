@@ -6,6 +6,7 @@ use axum::response::Response;
 use axum::Form;
 use maud::html;
 use nodo_ui_core::flows::setup::Setup;
+use nodo_ui_core::flows::updates::Rollbacks;
 use nodo_ui_core::flows::{Confirm, Notice};
 use serde::Deserialize;
 
@@ -15,6 +16,7 @@ use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
 use crate::runner::{no_flow, Reply};
+use crate::session::Pending;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct WorkingQuery {
@@ -50,9 +52,26 @@ pub struct ConfirmForm {
 
 /// Carries out what was confirmed. The flow that asked is told first where it has something to
 /// keep (`confirmed`), and gets the outcomes, since only it knows what some of them mean.
-fn carry_out(work: &mut Work<'_>, confirm: &Confirm) -> Reply {
+fn carry_out(work: &mut Work<'_>, pending: &Pending) -> Reply {
+    let confirm = &pending.question.confirm;
     let step = confirm.step(&work.snapshot);
     match confirm {
+        // The form that was left: its draft goes with the answer.
+        Confirm::DiscardSettings => {
+            if let Some(package) = &pending.subject {
+                work.session.inner().stash.settings.remove(package);
+            }
+            work.run(step, &mut no_flow)
+        }
+        // How the rollback went is the Undo page's to show, where the owner returns.
+        Confirm::RollBack { .. } => {
+            let mut flow = Rollbacks::new();
+            flow.confirmed(confirm);
+            let mut reply = work.run(step, &mut |outcome, _| flow.apply(outcome));
+            reply.notices.extend(flow.error.take().map(Notice::error));
+            work.session.inner().stash.rolled_back = flow.result.take();
+            reply
+        }
         // A key that could not be removed is the keys page's to say; here it is a notice.
         Confirm::RemoveSshKey(_) => {
             let mut setup = Setup::keys();
@@ -73,10 +92,10 @@ pub async fn confirm(ctx: Ctx, Form(form): Form<ConfirmForm>) -> Response {
         ctx.flash(Notice::info("That question was answered already. Nothing was done."));
         return go_to(ctx.htmx, dest::HOME);
     };
-    let confirm = pending.question.confirm.clone();
-    match long_confirm(&confirm) {
-        Some(what) => ctx.job(JobSpec::new(what, pending.back), move |work| carry_out(work, &confirm)).await,
-        None => ctx.with(pending.back, move |work| Out::Reply(carry_out(work, &confirm))).await,
+    let back = pending.back.clone();
+    match long_confirm(&pending.question.confirm) {
+        Some(what) => ctx.job(JobSpec::new(what, back), move |work| carry_out(work, &pending)).await,
+        None => ctx.with(back, move |work| Out::Reply(carry_out(work, &pending))).await,
     }
 }
 

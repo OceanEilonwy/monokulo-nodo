@@ -97,8 +97,7 @@ fn app_page(snapshot: &Snapshot, name: &str) -> Page {
                             span.go {}
                         },
                         "Hosting" => (layout::coming(section, &hosting_summary(snapshot, name))),
-                        // TODO(page): Settings, under /apps/{name}/settings.
-                        "Settings" => (layout::coming(section, "Change how it works")),
+                        "Settings" => (layout::row(&dest::settings(name), section, "Change how it works", html! {})),
                         // TODO(page): the app's setup page for its owner. Its row is named by
                         // the app, so it is whatever is not one of the fixed three.
                         _ => (layout::coming(section, "The steps to set it up, and whether each is done")),

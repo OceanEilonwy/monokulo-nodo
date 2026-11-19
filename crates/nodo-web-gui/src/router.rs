@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 
 use crate::ctx::Polling;
-use crate::pages::{apps, drive, flow, home, install, keys, login, logs, sources, system};
+use crate::pages::{apps, drive, flow, home, install, keys, login, logs, settings, sources, system, updates};
 use crate::security;
 use crate::state::AppState;
 use crate::{assets, dest};
@@ -39,6 +39,14 @@ pub fn router(state: AppState) -> Router {
         .route("/apps/{name}/toggle", post(apps::toggle))
         .route("/apps/{name}/update", post(apps::update))
         .route("/apps/{name}/remove", post(apps::remove))
+        .route("/apps/{name}/settings", get(settings::show).post(settings::act))
+        .route("/apps/{name}/settings/field/{key}", post(settings::change))
+        .route("/apps/{name}/settings/reference", get(settings::reference))
+        .route("/apps/{name}/settings/reference/choose", post(settings::choose))
+        .route("/apps/{name}/settings/reference/grant", post(settings::grant))
+        .route("/apps/{name}/settings/reference/decline", post(settings::decline))
+        .route("/apps/{name}/settings/failed", get(settings::failed))
+        .route("/apps/{name}/settings/failed/keep", post(settings::keep_as_it_is))
         // Get apps and install. `get` is taken here, so an app of that name has no page of
         // its own; no source offers one.
         .route(dest::GET_APPS, get(install::search))
@@ -68,6 +76,16 @@ pub fn router(state: AppState) -> Router {
         // System
         .route(dest::SYSTEM, get(system::show))
         .route(dest::ABOUT, get(system::about))
+        .route(dest::UPDATES, get(updates::show).post(updates::act))
+        .route("/system/updates/changes/{name}", get(updates::changes))
+        .route(dest::UPDATE_REVIEW, get(updates::review).post(updates::approve))
+        .route(dest::UPDATE_PASSPHRASE, get(updates::passphrase).post(updates::submit_passphrase))
+        .route(dest::UPDATE_RESULTS, get(updates::results))
+        .route("/system/updates/results/{what}", post(updates::after_results))
+        .route(dest::AUTO_UPDATE, get(updates::auto_update).post(updates::save_auto_update))
+        .route("/system/auto-update/history", get(updates::auto_update_history))
+        .route(dest::UNDO, get(updates::undo))
+        .route("/system/undo/{package}", post(updates::roll_back))
         .route(dest::LOGS, get(logs::device))
         .route("/system/logs/{source}", get(logs::show))
         .route("/system/logs/{source}/save", post(logs::save))

@@ -6,9 +6,14 @@ use axum::http::StatusCode;
 use common::App;
 use nodo_ui_core::exec::load_snapshot;
 use nodo_ui_core::flows::install::{Review, ReviewPurpose};
+use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow};
+use nodo_ui_core::flows::updates::Batch;
+use nodo_ui_core::flows::web::public::{Found, PublicConfirm};
 use nodo_ui_core::flows::Dest;
 use nodo_ui_core::mock::{sample_bundle_review, MockBackend};
-use nodo_ui_core::model::{Document, InstallGate, InstallSnapshot, PackageId, ScreenData};
+use nodo_ui_core::model::{
+    Document, InstallGate, InstallSnapshot, PackageId, PublicPlan, ScreenData, UpdateReport, UpdateResult,
+};
 use nodo_web_gui::dest;
 
 /// The variant's name. The match is exhaustive, so a destination the core gains does not compile
@@ -31,22 +36,49 @@ fn name(dest: &Dest) -> &'static str {
         Dest::Rejected(_) => "Rejected",
         Dest::MissingCapability(_) => "MissingCapability",
         Dest::Installing(_) => "Installing",
-        Dest::ApplyUpdates { .. } => "ApplyUpdates",
+        Dest::UpdatePassphrase(_) => "UpdatePassphrase",
+        Dest::UpdateResults(_) => "UpdateResults",
+        Dest::Settings(_) => "Settings",
+        Dest::ApplyFailed(_) => "ApplyFailed",
         Dest::Document(_) => "Document",
+        Dest::LeaveHosting => "LeaveHosting",
+        Dest::Reachability(_) => "Reachability",
+        Dest::PublicConfirm(_) => "PublicConfirm",
+        Dest::HostingWithProvider { .. } => "HostingWithProvider",
+        Dest::WentPublic => "WentPublic",
     }
 }
 
 /// How many variants `name` knows, kept beside it.
-const VARIANTS: usize = 18;
+const VARIANTS: usize = 26;
 
 /// Destinations whose own page is not built in this slice. Each is sent to the closest page that
 /// exists, marked `TODO(page)` in `dest::url`; the entry goes when the page comes.
-const NOT_BUILT_YET: [(&str, &str); 4] =
-    [("Updates", "/system"), ("Review of an update", "/system"), ("Bundle", "/apps/get"), ("ApplyUpdates", "/system")];
+const NOT_BUILT_YET: [(&str, &str); 6] = [
+    ("Bundle", "/apps/get"),
+    ("LeaveHosting", "/web"),
+    ("Reachability", "/web"),
+    ("PublicConfirm", "/web"),
+    ("HostingWithProvider", "/web"),
+    ("WentPublic", "/web"),
+];
 
 fn every_destination() -> Vec<(&'static str, Dest)> {
     let mut mock = MockBackend::new();
     let snapshot = load_snapshot(&mut mock).expect("the mock answers");
+    let reachability = mock.reachability("moneropay");
+    let form = mock.settings_form("moneropay").expect("moneropay has settings");
+    let failed = ApplyFailed {
+        package: "moneropay".into(),
+        explanation: mock.explain_rollback("moneropay", "listen tcp :18081: bind: address already in use"),
+        rows: vec![DraftRow { label: "API port".into(), from: "5000".into(), to: "18081".into(), blamed: true }],
+    };
+    let batch = Batch { names: vec!["vault".into()], approvals: Vec::new(), growing: vec!["vault: 256 MB to 512 MB".into()] };
+    let report = UpdateReport {
+        results: vec![UpdateResult { name: "tor".into(), applied: true, version: "0.5.0".into(), note: "Applied".into() }],
+        failure: None,
+    };
+    let plan = PublicPlan { url: "https://pay.example.com".into(), host: "pay.example.com".into(), dns_record: String::new(), firewall: String::new() };
     let feed_of = |name: &str| snapshot.catalog.iter().find(|pkg| pkg.id.name == name).map(|pkg| pkg.id.clone()).expect("on offer");
     let gate = |name: &str| mock.install_gate(&feed_of(name));
     let InstallGate::Review(review) = gate("moneropay") else { panic!("moneropay is reviewed") };
@@ -73,7 +105,15 @@ fn every_destination() -> Vec<(&'static str, Dest)> {
         ("Rejected", Dest::Rejected(rejection)),
         ("MissingCapability", Dest::MissingCapability(capability)),
         ("Installing", Dest::Installing(InstallSnapshot::starting(&moneropay, "2.7.0"))),
-        ("ApplyUpdates", Dest::ApplyUpdates { names: vec!["moneropay".into()], approvals: Vec::new() }),
+        ("UpdatePassphrase", Dest::UpdatePassphrase(batch)),
+        ("UpdateResults", Dest::UpdateResults(report)),
+        ("Settings", Dest::Settings(form)),
+        ("ApplyFailed", Dest::ApplyFailed(failed)),
+        ("LeaveHosting", Dest::LeaveHosting),
+        ("Reachability", Dest::Reachability(Found::of("moneropay", true, &reachability))),
+        ("PublicConfirm", Dest::PublicConfirm(PublicConfirm::new("moneropay", plan))),
+        ("HostingWithProvider", Dest::HostingWithProvider { domains: vec!["example.com".into()] }),
+        ("WentPublic", Dest::WentPublic),
         ("Document", Dest::Document(Document { title: "A report".into(), lines: vec!["one line".into()] })),
     ];
     let mut seen: Vec<&str> = all.iter().map(|(_, dest)| name(dest)).collect();
@@ -108,6 +148,26 @@ async fn every_destination_leads_to_a_page_that_is_served() {
                 }
                 "KeyChange" => {
                     answer.assert_has("is now signed with a different key");
+                }
+                "Updates" => {
+                    answer.assert_has("<h1>Updates</h1>");
+                    // Only the app the owner came for is ticked.
+                    assert_eq!(answer.body.matches(" checked>").count(), 1, "{}", answer.body);
+                }
+                "Review of an update" => {
+                    answer.assert_has("Update moneropay to").assert_has("This version newly asks to");
+                }
+                "UpdatePassphrase" => {
+                    answer.assert_has("vault: 256 MB to 512 MB").assert_has("autocomplete=\"current-password\"");
+                }
+                "UpdateResults" => {
+                    answer.assert_has("1 update is installed").assert_has("tor 0.5.0");
+                }
+                "Settings" => {
+                    answer.assert_has("<h1>Settings</h1>").assert_has("Daemon RPC");
+                }
+                "ApplyFailed" => {
+                    answer.assert_has("didn't start with the new settings").assert_has("API port").assert_has("address already in use");
                 }
                 "Review" => {
                     answer.assert_has("Install moneropay?");

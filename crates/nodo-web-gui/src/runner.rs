@@ -32,6 +32,9 @@ pub struct Reply {
     pub login_required: bool,
     /// Where Cancel on the question leads, when that is not where the reply goes back to.
     pub cancel: Option<String>,
+    /// What the question is about (an app's name), for the flow that asked to find its state
+    /// again when the answer comes.
+    pub subject: Option<String>,
 }
 
 impl Reply {
@@ -51,6 +54,12 @@ impl Reply {
         self
     }
 
+    /// The question on this reply is about `subject`.
+    pub fn about(mut self, subject: impl Into<String>) -> Self {
+        self.subject = Some(subject.into());
+        self
+    }
+
     /// The first error among the notices, for a page that shows it beside a field.
     pub fn error(&self) -> Option<&str> {
         self.notices.iter().find(|n| n.kind == flows::NoticeKind::Error).map(|n| n.text.as_str())
@@ -67,14 +76,18 @@ pub fn no_flow(_: &Outcome, _: &mut Snapshot) -> Step {
 }
 
 /// The flows that keep no state understand their outcomes wherever the owner is, so every page
-/// hands them every outcome. Each answers `Step::Stay` to an outcome that is not its own.
-pub fn shared_apply(outcome: &Outcome) -> Step {
+/// hands them every outcome that its own flow had nothing to say about. Each answers
+/// `Step::Stay` to an outcome that is not its own. `snapshot` is the device as read after the
+/// outcome. A feature whose flow has no state adds its `apply` here.
+pub fn shared_apply(outcome: &Outcome, snapshot: &Snapshot) -> Step {
     let steps: Vec<Step> = [
         flows::apply(outcome),
         flows::sources::apply(outcome),
         flows::install::apply(outcome),
         flows::drive::apply(outcome),
         flows::documents::apply(outcome),
+        flows::settings::apply(outcome),
+        flows::updates::apply(outcome, snapshot),
     ]
     .into_iter()
     .filter(|step| *step != Step::Stay)
@@ -137,9 +150,16 @@ fn follow(
                         *snapshot = (**fresh).clone();
                     }
                     // The results are followed after what the step itself still holds, as the
-                    // terminal interface does when its effects come back from the worker.
-                    queue.push_back(page(&outcome, snapshot));
-                    queue.push_back(shared_apply(&outcome));
+                    // terminal interface does when its effects come back from the worker. The
+                    // page's own flow comes first; an outcome it answers is its own, and the
+                    // flows without state are not asked about it a second time (an approval in
+                    // the reference picker, automatic-update choices saved on their page).
+                    let own = page(&outcome, snapshot);
+                    if own == Step::Stay {
+                        queue.push_back(shared_apply(&outcome, snapshot));
+                    } else {
+                        queue.push_back(own);
+                    }
                 }
             }
         }

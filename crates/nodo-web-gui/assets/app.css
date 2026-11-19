@@ -147,6 +147,23 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .searchbar input { flex: 1; min-width: 0; }
 .stack { display: grid; gap: 14px; }
 
+/* A settings form: one field after the other, each with its own line of things to do. */
+.setting { display: grid; gap: 6px; padding: 14px 0; }
+.setting + .setting { border-top: 1px solid var(--edge); }
+.setting:first-child { padding-top: 0; }
+.setting:last-child { padding-bottom: 0; }
+.setting:target { outline: 2px solid var(--accent); outline-offset: 8px; border-radius: 6px; }
+.setting .actions { gap: 6px 18px; }
+select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--field); color: var(--bright); font: inherit; }
+select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242, 163, 58, 0.22); }
+[aria-invalid="true"] { border-color: var(--err); }
+.switch, .check { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--fg); font-weight: 500; font-size: 1rem; cursor: pointer; }
+input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+.pieces { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pieces input[type="text"] { flex: 1 1 10rem; width: auto; }
+.reference { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tag.warn { background: rgba(242, 163, 58, 0.16); color: var(--accent); }
+
 /* What just happened, said once at the top of the next page. */
 .notices { display: grid; gap: 8px; }
 .notice { display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--r-control); background: var(--info-fill); color: var(--info); border: 1px solid rgba(134, 190, 255, 0.2); }
