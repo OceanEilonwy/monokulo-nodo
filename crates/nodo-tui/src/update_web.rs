@@ -407,7 +407,7 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                         // The keys are stored sealed, so the helper would refuse them. Ask for the
                         // passphrase here; the unlock screen sends Enter back to carry on.
                         let reason = format!("Connecting {} stores its key locked with the device passphrase.", provider.name);
-                        push(app, Screen::Unlock(UnlockState { resume: Some(reason), ..UnlockState::default() }));
+                        push(app, Screen::Unlock(UnlockState::new(Some(reason))));
                         return Vec::new();
                     }
                     return vec![Effect::AddProvider {

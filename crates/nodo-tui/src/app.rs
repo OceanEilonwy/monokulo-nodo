@@ -10,6 +10,8 @@ use nodo_api::Exposure;
 
 use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::flows::services::AppPage;
+use nodo_ui_core::flows::setup::Setup;
+use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
@@ -22,10 +24,6 @@ pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 
 pub const TICKS_PER_SECOND: u64 = 4;
-/// Upper bound of the unlock retry delay. The helper must enforce its own limit as well, because
-/// this one only protects against an impatient user at this screen.
-pub const MAX_UNLOCK_DELAY_SECONDS: u64 = 30;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchState {
     pub query: Input,
@@ -58,51 +56,83 @@ pub enum ReviewPurpose {
     Update { batch: Vec<String>, pending_reviews: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
 }
 
+/// The unlock page: the core's rules, the passphrase box and when the next try is allowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnlockState {
+    pub flow: Unlock,
     pub input: Input,
-    pub error: Option<String>,
-    pub failures: u32,
+    /// The tick from which a try is allowed again, after a wrong passphrase.
     pub retry_at_tick: u64,
-    /// Why a screen sent the owner here. Once unlocked, that screen gets its Enter again, so
-    /// what was asked for carries on without typing it twice.
-    pub resume: Option<String>,
+}
+
+impl UnlockState {
+    /// `resume` is why a screen sent the owner here; see `Unlock::resume`.
+    pub fn new(resume: Option<String>) -> Self {
+        Self { flow: Unlock::new(resume), input: Input::secret(), retry_at_tick: 0 }
+    }
 }
 
 impl Default for UnlockState {
     /// Written out because a derived default would make the passphrase input a plain one.
     fn default() -> Self {
-        Self { input: Input::secret(), error: None, failures: 0, retry_at_tick: 0, resume: None }
+        Self::new(None)
     }
 }
 
+impl std::ops::Deref for UnlockState {
+    type Target = Unlock;
+
+    fn deref(&self) -> &Unlock {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for UnlockState {
+    fn deref_mut(&mut self) -> &mut Unlock {
+        &mut self.flow
+    }
+}
+
+/// What is being typed on a setup page, and the selected key. The page's rules and the keys
+/// themselves are the core's `Setup`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetupStep {
     /// The passphrase twice. `confirming` is true once the first is entered.
     Passphrase { first: Input, second: Input, confirming: bool },
-    Keys { keys: Vec<nodo_api::SshKey>, selected: usize, adding: Option<Input> },
+    Keys { selected: usize, adding: Option<Input> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupState {
+    pub flow: Setup,
+    /// Always the step of `flow.stage`.
     pub step: SetupStep,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl SetupState {
     pub fn passphrase() -> Self {
         let step = SetupStep::Passphrase { first: Input::secret(), second: Input::secret(), confirming: false };
-        Self { step, error: None, busy: false }
+        Self { flow: Setup::passphrase(), step }
     }
 
     pub fn keys() -> Self {
-        Self { step: SetupStep::Keys { keys: Vec::new(), selected: 0, adding: None }, error: None, busy: true }
+        Self { flow: Setup::keys(), step: SetupStep::Keys { selected: 0, adding: None } }
     }
 }
 
-/// The helper enforces this too. Checking here saves a round trip and a KDF run.
-pub const MIN_PASSPHRASE_CHARS: usize = 8;
+impl std::ops::Deref for SetupState {
+    type Target = Setup;
+
+    fn deref(&self) -> &Setup {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for SetupState {
+    fn deref_mut(&mut self) -> &mut Setup {
+        &mut self.flow
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupStep {

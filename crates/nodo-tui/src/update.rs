@@ -4,13 +4,14 @@
 //! such as safe default focus and typed confirmation, live in this file.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, Response, ServiceState};
+use nodo_api::{ApiError, ServiceState};
 
 use crate::app::*;
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::{Input, Secret};
 use nodo_ui_core::{Effect, Outcome};
-use nodo_ui_core::flows::{self, services, Confirm, Dest, Notice, NoticeKind, Question, Step};
+use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
+use nodo_ui_core::flows::{self, services, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -482,8 +483,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         },
         KeyCode::Char('u') => return open_unlock(app),
         KeyCode::Char('k') => {
-            push(app, Screen::Setup(SetupState::keys()));
-            return vec![Effect::LoadSshKeys];
+            return open_ssh_keys(app);
         }
         _ => {}
     }
@@ -609,7 +609,7 @@ fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
         }
         Confirm::RemoveSshKey(_) => {
             if let Screen::Setup(state) = &mut app.screen {
-                state.busy = true;
+                state.flow.confirmed(&confirm);
             }
         }
         _ => {}
@@ -655,7 +655,12 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
                 updates.checked = vec![name];
             }
         }
-        Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState { resume, ..UnlockState::default() })),
+        Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState::new(resume))),
+        // The screen below asked for the unlock on Enter, so it gets its Enter again.
+        Dest::Resume => {
+            pop(app);
+            return on_key(app, KeyEvent::from(KeyCode::Enter));
+        }
     }
     Vec::new()
 }
@@ -730,8 +735,7 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Char('k') => {
-            push(app, Screen::Setup(SetupState::keys()));
-            return vec![Effect::LoadSshKeys];
+            return open_ssh_keys(app);
         }
         KeyCode::Char('b') => return open_backups(app),
         KeyCode::Char('r') => return more::open_rollbacks(app),
@@ -742,15 +746,12 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let Screen::Setup(SetupState { step: stage, error, busy }) = &mut app.screen else {
+    let Screen::Setup(SetupState { flow, step: stage }) = &mut app.screen else {
         return Vec::new();
     };
-    if *busy {
+    if flow.busy {
         return Vec::new();
     }
-    let mut leave = false;
-    let mut restore = false;
-    let mut effects = Vec::new();
     match stage {
         SetupStep::Passphrase { first, second, confirming } => match key.code {
             // A new device can instead be rebuilt from a backup on a USB drive.
@@ -758,29 +759,15 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 first.clear();
                 second.clear();
                 *confirming = false;
-                *error = None;
-                restore = true;
+                flow.error = None;
+                return more::open_restore(app);
             }
-            KeyCode::Enter if !*confirming => {
-                if first.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
-                    *error = Some(format!("Use at least {MIN_PASSPHRASE_CHARS} characters."));
-                } else {
-                    *error = None;
-                    *confirming = true;
-                }
-            }
+            KeyCode::Enter if !*confirming => *confirming = flow.first_entered(&first.secret_value()),
             KeyCode::Enter => {
-                if first.secret_value() != second.secret_value() {
-                    *error = Some("The two passphrases differ. Type them again.".to_owned());
-                    first.clear();
-                    second.clear();
-                    *confirming = false;
-                } else {
-                    *error = None;
-                    *busy = true;
-                    second.clear();
-                    effects.push(Effect::InitEncryption(first.take_secret()));
-                }
+                let effects = flow.choose_passphrase(first, second);
+                // Two that differ are typed again from the first.
+                *confirming = !effects.is_empty();
+                return effects;
             }
             KeyCode::Esc if *confirming => {
                 second.clear();
@@ -790,65 +777,48 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(if *confirming { second } else { first }, key);
             }
         },
-        SetupStep::Keys { keys, selected, adding } => {
+        SetupStep::Keys { selected, adding } => {
             if let Some(input) = adding {
                 match key.code {
                     KeyCode::Enter => {
-                        let line = input.text().trim().to_owned();
+                        let effects = flow.add_key(input.text());
                         *adding = None;
-                        if !line.is_empty() {
-                            *busy = true;
-                            effects.push(Effect::AddSshKey(line));
-                        }
+                        return effects;
                     }
                     KeyCode::Esc => *adding = None,
                     _ => {
                         edit_input(input, key);
                     }
                 }
-                return effects;
+                return Vec::new();
             }
             match key.code {
-                KeyCode::Down | KeyCode::Up => step(selected, keys.len(), key.code == KeyCode::Down),
+                KeyCode::Down | KeyCode::Up => step(selected, flow.keys.len(), key.code == KeyCode::Down),
                 KeyCode::Char('a') => *adding = Some(Input::plain("")),
                 KeyCode::Char('d') => {
-                    if let Some(chosen) = keys.get(*selected) {
-                        let fingerprint = chosen.fingerprint.clone();
-                        app.modal = Some(Modal::ask(Question {
-                            title: "Remove this SSH key?".to_owned(),
-                            body: vec![
-                                format!("{} {}", chosen.algorithm, chosen.comment),
-                                fingerprint.clone(),
-                                "It will no longer be able to log in.".to_owned(),
-                            ],
-                            confirm_label: "Remove".to_owned(),
-                            cancel_is_default: true,
-                            confirm: Confirm::RemoveSshKey(fingerprint),
-                        }));
-                    }
+                    let question = flow.keys.get(*selected).and_then(|chosen| flow.ask_remove_key(&chosen.fingerprint));
+                    app.modal = question.map(Modal::ask);
                 }
-                KeyCode::Esc | KeyCode::Enter => leave = true,
+                KeyCode::Esc | KeyCode::Enter => {
+                    let step = flow.finish();
+                    return follow(app, step);
+                }
                 _ => {}
             }
         }
     }
-    if restore {
-        return more::open_restore(app);
-    }
-    if leave {
-        pop(app);
-        effects.push(Effect::Refresh);
-    }
-    effects
+    Vec::new()
 }
 
 fn open_unlock(app: &mut App) -> Vec<Effect> {
-    if app.is_locked() {
-        push(app, Screen::Unlock(UnlockState::default()));
-    } else {
-        notice(app, NoticeKind::Info, "This device is already unlocked.");
-    }
-    Vec::new()
+    let step = unlock::open(&app.data);
+    follow(app, step)
+}
+
+/// The SSH keys page, from Home or System.
+fn open_ssh_keys(app: &mut App) -> Vec<Effect> {
+    push(app, Screen::Setup(SetupState::keys()));
+    Setup::load_keys()
 }
 
 fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1084,14 +1054,8 @@ fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
-            if ticks < state.retry_at_tick {
-                let seconds = (state.retry_at_tick - ticks).div_ceil(TICKS_PER_SECOND);
-                state.error = Some(format!("Please wait {} before trying again.", counted(seconds, "second")));
-            } else if state.input.is_empty() {
-                state.error = Some("Enter the device passphrase.".to_owned());
-            } else {
-                return vec![Effect::Unlock(state.input.take_secret())];
-            }
+            let wait = state.retry_at_tick.saturating_sub(ticks).div_ceil(TICKS_PER_SECOND);
+            return state.flow.submit(&mut state.input, wait);
         }
         _ => {
             edit_input(&mut state.input, key);
@@ -2254,39 +2218,20 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = flows::apply(&event);
             return follow(app, step);
         }
-        Outcome::UnlockResult(result) => return on_unlock_result(app, result),
-        Outcome::SetupDone(result) => {
+        Outcome::UnlockResult(_) => return on_unlock_result(app, &event),
+        Outcome::SetupDone(_) | Outcome::SshKeysLoaded(_) | Outcome::SshKeyChanged(_) => {
             if let Screen::Setup(state) = &mut app.screen {
-                match result {
-                    Ok(()) => {
-                        *state = SetupState::keys();
-                        notice(app, NoticeKind::Ok, "Device passphrase set. Keep it somewhere safe.");
-                        return vec![Effect::LoadSshKeys];
+                let step = state.flow.apply(&event);
+                // The boxes and the selection follow the page the flow is on now.
+                match (&event, &mut state.step) {
+                    (Outcome::SetupDone(Ok(())), _) => state.step = SetupState::keys().step,
+                    (Outcome::SetupDone(Err(_)), _) => state.step = SetupState::passphrase().step,
+                    (Outcome::SshKeysLoaded(_), SetupStep::Keys { selected, .. }) => {
+                        *selected = (*selected).min(state.flow.keys.len().saturating_sub(1));
                     }
-                    Err(error) => {
-                        *state = SetupState::passphrase();
-                        state.error = Some(error.to_string());
-                    }
+                    _ => {}
                 }
-            }
-        }
-        Outcome::SshKeysLoaded(result) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(list) => {
-                        if let SetupStep::Keys { keys, selected, .. } = &mut state.step {
-                            *selected = (*selected).min(list.len().saturating_sub(1));
-                            *keys = list;
-                        }
-                    }
-                    Err(error) => state.error = Some(error),
-                }
-            }
-        }
-        Outcome::SshKeyChanged(result) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.error = result.err();
+                return follow(app, step);
             }
         }
         Outcome::BackupsLoaded(_)
@@ -2503,41 +2448,17 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     Vec::new()
 }
 
-fn on_unlock_result(app: &mut App, result: Result<Response, ApiError>) -> Vec<Effect> {
+fn on_unlock_result(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
     let ticks = app.ticks;
     let Screen::Unlock(state) = &mut app.screen else {
         return Vec::new();
     };
-    match result {
-        Ok(_) => {
-            let resume = state.resume.is_some();
-            pop(app);
-            // Until the refresh arrives, the snapshot still says locked; the helper has the key now.
-            app.data.overview.locked = false;
-            app.data.overview.unlock_targets.clear();
-            for svc in app.data.services.iter_mut().filter(|svc| svc.state == nodo_api::ServiceState::Locked) {
-                svc.state = nodo_api::ServiceState::Waiting;
-            }
-            if resume {
-                notice(app, NoticeKind::Ok, "Unlocked.");
-                let mut effects = on_key(app, KeyEvent::from(KeyCode::Enter));
-                effects.push(Effect::Refresh);
-                return effects;
-            }
-            notice(app, NoticeKind::Ok, "Unlocked. Services are starting in dependency order.");
-            vec![Effect::Refresh]
-        }
-        Err(error) => {
-            state.failures += 1;
-            let seconds = (1u64 << state.failures.min(16)).min(MAX_UNLOCK_DELAY_SECONDS);
-            state.retry_at_tick = ticks + seconds * TICKS_PER_SECOND;
-            state.error = Some(match error {
-                ApiError::BadPassphrase => "That passphrase did not unlock this device. Try again.".to_owned(),
-                other => format!("Could not unlock: {other}"),
-            });
-            Vec::new()
-        }
+    let failures = state.failures;
+    let step = state.flow.apply(outcome, &mut app.data);
+    if state.failures > failures {
+        state.retry_at_tick = ticks + state.retry_delay_seconds() * TICKS_PER_SECOND;
     }
+    follow(app, step)
 }
 
 fn on_install_progress(app: &mut App, snapshot: Option<InstallSnapshot>) {

@@ -231,9 +231,10 @@ pub(super) fn restore_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 if typed.text().trim() != RESTORE_WORD {
                     state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
                     *field = 0;
-                } else if first.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
+                } else if first.secret_value().expose().chars().count() < nodo_ui_core::flows::setup::MIN_PASSPHRASE_CHARS {
                     state.error = Some(format!(
-                        "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters."
+                        "Choose a new device passphrase of at least {} characters.",
+                        nodo_ui_core::flows::setup::MIN_PASSPHRASE_CHARS
                     ));
                     *field = 1;
                 } else if first.secret_value() != second.secret_value() {

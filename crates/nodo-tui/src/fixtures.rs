@@ -161,13 +161,11 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::Unlock => {
             let mut input = Input::secret();
             "twelve chars".chars().for_each(|c| input.push(c));
-            Screen::Unlock(UnlockState {
-                input,
-                error: Some("That passphrase did not unlock this device. Try again.".to_owned()),
-                failures: 1,
-                retry_at_tick: 0,
-                resume: None,
-            })
+            let mut state = UnlockState::default();
+            state.input = input;
+            state.error = Some("That passphrase did not unlock this device. Try again.".to_owned());
+            state.failures = 1;
+            Screen::Unlock(state)
         }
         ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false },
         ScreenId::AddFeed => Screen::AddFeed(AddFeedState::Confirm {

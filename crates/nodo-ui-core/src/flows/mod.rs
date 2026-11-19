@@ -63,6 +63,8 @@
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
 pub mod services;
+pub mod setup;
+pub mod unlock;
 
 use nodo_api::Exposure;
 
@@ -152,6 +154,9 @@ pub enum Dest {
     /// The page that asks for the device passphrase. `resume` says, in words for the owner, what
     /// sent them there; once unlocked that carries on (`Dest::Resume`).
     Unlock { resume: Option<String> },
+    /// Back to the page that sent the owner to unlock, which now carries on with what it was
+    /// asked: the terminal presses Enter there again, a web page sends its request again.
+    Resume,
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or
