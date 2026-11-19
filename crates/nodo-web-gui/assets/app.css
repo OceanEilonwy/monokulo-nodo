@@ -114,7 +114,7 @@ a.row:hover { background: var(--raised); text-decoration: none; color: var(--fg)
 .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--raised); color: var(--dim); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; vertical-align: middle; }
 
 /* Buttons. Every one is a real button or link, at least 40px tall for a thumb. */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid transparent; border-radius: var(--r-control); background: var(--raised); color: var(--bright); font: inherit; font-weight: 600; cursor: pointer; text-align: center; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid transparent; border-radius: var(--r-control); background: var(--raised); color: var(--bright); font: inherit; font-weight: 600; cursor: pointer; text-align: center; overflow-wrap: normal; }
 .btn:hover { background: var(--hover); color: var(--bright); text-decoration: none; }
 .btn:active { background: var(--pressed); }
 .btn.primary { background: var(--accent); color: var(--on-accent); }
@@ -161,6 +161,7 @@ select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px
 input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
 .pieces { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .pieces input[type="text"] { flex: 1 1 10rem; width: auto; }
+.pieces select { flex: 0 1 auto; width: auto; max-width: 100%; }
 .reference { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .tag.warn { background: rgba(242, 163, 58, 0.16); color: var(--accent); }
 
@@ -233,6 +234,6 @@ input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent);
   .facts { grid-template-columns: 1fr; gap: 0; }
   .facts dd { margin-bottom: 8px; }
   .searchbar { flex-wrap: wrap; }
-  .actions.end .btn, .actions.end form { flex: 1; }
+  .actions.end .btn, .actions.end form { flex: 1 1 auto; }
   .actions.end form .btn { width: 100%; }
 }

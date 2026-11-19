@@ -108,9 +108,10 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
                         div.field {
                             label for="sub" { "Address" }
                             div.pieces {
-                                input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[flow.was_public];
+                                input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[flow.was_public]
+                                    hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
                                 span.dim { "." }
-                                select name="domain" aria-label="Domain" disabled[flow.was_public] {
+                                select name="domain" aria-label="Domain" disabled[flow.was_public] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML" {
                                     @for (domain, _) in &domains { option value=(domain) selected[*domain == flow.domain] { (domain) } }
                                 }
                             }
