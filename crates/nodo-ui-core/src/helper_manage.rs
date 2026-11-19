@@ -897,6 +897,9 @@ pub fn health_rows(health: Option<&HealthSummary>) -> Vec<(String, String)> {
     if let Some(t) = h.temperature_decic {
         rows.push(("Temp".to_owned(), format!("{:.0} °C", f64::from(t) / 10.0)));
     }
+    if let Some(t) = h.ssd_temperature_decic {
+        rows.push(("SSD temp".to_owned(), format!("{:.0} °C", f64::from(t) / 10.0)));
+    }
     if !h.stopped.is_empty() {
         rows.push(("Stopped".to_owned(), format!("{} (disk full)", h.stopped.join(", "))));
     }
@@ -1184,6 +1187,7 @@ mod tests {
             refuse_installs: true,
             time_synced: true,
             temperature_decic: Some(512),
+            ssd_temperature_decic: Some(449),
             boot_fallback: Some("trial boots ran out".into()),
         };
         let status = UpdateStatus {
@@ -1205,6 +1209,7 @@ mod tests {
         assert_eq!(lines[1].level, AttentionLevel::Critical);
         assert!(lines[2].text.contains("on hold"));
         assert_eq!(health_rows(Some(&health))[0].1, "51 °C");
+        assert_eq!(health_rows(Some(&health))[1], ("SSD temp".to_owned(), "45 °C".to_owned()));
     }
 
     #[test]

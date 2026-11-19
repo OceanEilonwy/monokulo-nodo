@@ -40,6 +40,8 @@ struct Report {
     #[serde(default)]
     temperature_c: Option<f64>,
     #[serde(default)]
+    ssd_temperature_c: Option<f64>,
+    #[serde(default)]
     attention: Vec<Note>,
 }
 
@@ -67,6 +69,11 @@ struct Time {
 struct Note {
     severity: String,
     message: String,
+}
+
+/// Degrees to tenths of a degree, the API's unit.
+fn decic(celsius: f64) -> i32 {
+    (celsius * 10.0).round() as i32
 }
 
 fn severity(text: &str) -> HealthSeverity {
@@ -199,6 +206,7 @@ impl<S: System> Helper<S> {
                 refuse_installs: self.installs_refused()?,
                 time_synced: false,
                 temperature_decic: None,
+                ssd_temperature_decic: None,
                 boot_fallback,
             });
         };
@@ -241,7 +249,8 @@ impl<S: System> Helper<S> {
             stopped: report.stopped.iter().map(|s| printable(&s.service)).collect(),
             refuse_installs: report.refuse_installs,
             time_synced: report.time.synced,
-            temperature_decic: report.temperature_c.map(|t| (t * 10.0).round() as i32),
+            temperature_decic: report.temperature_c.map(decic),
+            ssd_temperature_decic: report.ssd_temperature_c.map(decic),
             boot_fallback,
         })
     }

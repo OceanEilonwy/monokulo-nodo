@@ -305,6 +305,9 @@ pub struct HealthSummary {
     pub time_synced: bool,
     /// Tenths of a degree, so the type stays comparable.
     pub temperature_decic: Option<i32>,
+    /// The SSD's own sensor, in tenths of a degree. Absent from older helpers.
+    #[serde(default)]
+    pub ssd_temperature_decic: Option<i32>,
     /// Set when the device fell back to its previous system after a failed one.
     pub boot_fallback: Option<String>,
 }

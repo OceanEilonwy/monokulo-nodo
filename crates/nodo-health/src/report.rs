@@ -1,5 +1,7 @@
 //! The structured report the Home screen reads from `/run/nodo/health.json`.
 
+use std::path::Path;
+
 use serde::Serialize;
 
 use crate::config::AbstractSocketConfig;
@@ -189,6 +191,7 @@ pub struct Report {
     pub logs: LogReport,
     pub time: TimeStatus,
     pub temperature_c: Option<f64>,
+    pub ssd_temperature_c: Option<f64>,
     pub uptime_secs: Option<u64>,
     pub abstract_sockets: AbstractSockets,
     /// Most severe first.
@@ -209,9 +212,37 @@ pub fn meminfo(sys: &dyn System) -> Option<MemoryTotals> {
     Some(MemoryTotals { total_bytes: kib("MemTotal:")? * 1024, available_bytes: kib("MemAvailable:")? * 1024 })
 }
 
+/// The hottest thermal zone, in °C. The board's zones are the SoC package, its CPU clusters, the
+/// GPU and the NPU, and the kernel slows whichever block is hot, so the hottest is the one that
+/// matters; zone 0 alone (the package) reads cooler than a busy CPU cluster. The screen's Device
+/// panel shows the same number (`nodo_panels::source::device`).
 pub fn temperature(sys: &dyn System) -> Option<f64> {
-    let milli: i64 = sys.read("/sys/class/thermal/thermal_zone0/temp".as_ref()).ok().flatten()?.trim().parse().ok()?;
-    Some(milli as f64 / 1000.0)
+    let root = Path::new("/sys/class/thermal");
+    sys.list(root)
+        .ok()?
+        .into_iter()
+        .filter(|entry| entry.name.starts_with("thermal_zone"))
+        .filter_map(|entry| milli_degrees(sys, &root.join(&entry.name).join("temp")))
+        .max()
+        .map(|milli| milli as f64 / 1000.0)
+}
+
+/// The SSD's own sensor, in °C, through the kernel's NVMe hwmon driver (`CONFIG_NVME_HWMON`): the
+/// hottest NVMe drive when there are several, none when no drive reports one.
+pub fn ssd_temperature(sys: &dyn System) -> Option<f64> {
+    let root = Path::new("/sys/class/hwmon");
+    sys.list(root)
+        .ok()?
+        .into_iter()
+        .map(|entry| root.join(&entry.name))
+        .filter(|dir| sys.read(&dir.join("name")).ok().flatten().is_some_and(|name| name.trim() == "nvme"))
+        .filter_map(|dir| milli_degrees(sys, &dir.join("temp1_input")))
+        .max()
+        .map(|milli| milli as f64 / 1000.0)
+}
+
+fn milli_degrees(sys: &dyn System, path: &Path) -> Option<i64> {
+    sys.read(path).ok().flatten()?.trim().parse().ok()
 }
 
 pub fn uptime(sys: &dyn System) -> Option<u64> {
@@ -265,4 +296,38 @@ pub fn attention(
     }
     out.sort_by_key(|a| std::cmp::Reverse(a.severity));
     out
+}
+
+#[cfg(test)]
+mod temperature_tests {
+    use super::{ssd_temperature, temperature};
+    use crate::sys::fake::FakeSystem;
+
+    #[test]
+    fn the_hottest_thermal_zone_counts_not_zone_zero() {
+        let sys = FakeSystem::default();
+        sys.put("/sys/class/thermal/thermal_zone0/temp", "48000\n");
+        sys.put("/sys/class/thermal/thermal_zone1/temp", "61500\n");
+        sys.put("/sys/class/thermal/thermal_zone2/temp", "garbage\n");
+        sys.put("/sys/class/thermal/cooling_device0/cur_state", "0\n");
+        assert_eq!(temperature(&sys), Some(61.5));
+    }
+
+    #[test]
+    fn no_thermal_zone_means_no_temperature() {
+        let sys = FakeSystem::default();
+        sys.put("/sys/class/thermal/cooling_device0/cur_state", "0\n");
+        assert_eq!(temperature(&sys), None);
+        assert_eq!(ssd_temperature(&sys), None);
+    }
+
+    #[test]
+    fn the_ssd_reads_only_nvme_hwmon_sensors() {
+        let sys = FakeSystem::default();
+        sys.put("/sys/class/hwmon/hwmon0/name", "cpu_thermal\n");
+        sys.put("/sys/class/hwmon/hwmon0/temp1_input", "90000\n");
+        sys.put("/sys/class/hwmon/hwmon1/name", "nvme\n");
+        sys.put("/sys/class/hwmon/hwmon1/temp1_input", "44850\n");
+        assert_eq!(ssd_temperature(&sys), Some(44.85));
+    }
 }
