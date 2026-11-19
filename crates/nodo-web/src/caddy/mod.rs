@@ -8,7 +8,6 @@
 //!
 //! - **Public** hosts are served on the router-facing ports 80 and 443. Caddy runs unprivileged, so it
 //!   binds [`CADDY_HTTP_PORT`] and [`CADDY_HTTPS_PORT`], and nftables redirects 80 and 443 to them.
-//!   Admin paths are always blocked here.
 //! - **Local** hosts are served only on the device's second LAN address (see [`crate::local`]), at
 //!   port 443, so their URLs have no port: `https://shop.local`. nftables sends that address's 443 to
 //!   Caddy's [`CADDY_LOCAL_PORT`], which Caddy binds on that address alone, and only for LAN sources.
@@ -22,7 +21,7 @@
 //!
 //! Local hosts used to share the main address with public hosts and relied on a `remote_ip` check. A
 //! router that masquerades forwarded connections makes every internet client look like the router's
-//! LAN address, and that check then let the internet reach local hosts and their admin paths. Now what
+//! LAN address, and that check then let the internet reach local hosts. Now what
 //! a request can reach depends on the address it was sent to. The router forwards only to the main
 //! address, so a forwarded connection can never be addressed to a local host, whatever its source. The
 //! `remote_ip` check stays on local hosts as a second layer. Without a second address, local sites are
@@ -89,8 +88,6 @@ pub enum WebConfigError {
     InvalidName { field: &'static str, value: String },
     #[error("site {site}: upstream is not an allowed address: \"{value}\"")]
     InvalidUpstream { site: String, value: String },
-    #[error("site {site}: admin path is not allowed: \"{value}\"")]
-    InvalidAdminPath { site: String, value: String },
     #[error("site {site} is public, but no domain is connected")]
     NoDomain { site: String },
     #[error("site {site} is tied to one address and cannot use several exposures")]
@@ -481,9 +478,6 @@ pub struct WebPlan {
 struct Resolved<'a> {
     site: &'a Site,
     dial: String,
-    admin_patterns: Vec<String>,
-    /// Also matches an admin path followed by any character that cannot continue a path segment name.
-    admin_regexp: Option<String>,
     local: Option<String>,
     public: Option<String>,
     /// Names that serve the site as `public` does. Empty unless the site is public.
@@ -562,7 +556,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             let served: Vec<String> = std::iter::once(host.clone()).chain(item.serve_aliases.iter().cloned()).collect();
             public_routes.push(host_route(
                 Matcher { host: served, ..Matcher::default() },
-                site_handlers(item, true, limit),
+                site_handlers(item, limit),
             ));
             if !item.redirect_aliases.is_empty() {
                 public_routes.push(host_route(
@@ -599,7 +593,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
                     remote_ip: Some(RemoteIp { ranges: settings.lan_ranges.clone() }),
                     ..Matcher::default()
                 },
-                site_handlers(item, false, None),
+                site_handlers(item, None),
             ));
             local_subjects.push(host.clone());
             plan_addresses.push(address(
@@ -625,7 +619,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
                 Some(host) => {
                     servers.insert(
                         format!("onion-{}", tor_services.len() - 1),
-                        onion_server(listen.clone(), host, site_handlers(item, true, None)),
+                        onion_server(listen.clone(), host, site_handlers(item, None)),
                     );
                     plan_addresses.push(address(AddressKind::Onion, host, format!("http://{host}"), &listen));
                 }
@@ -905,21 +899,6 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         value: quoted(&service.upstream),
     })?;
 
-    let admin_patterns = service
-        .admin_paths
-        .iter()
-        .map(|path| {
-            admin_path_patterns(path).ok_or_else(|| WebConfigError::InvalidAdminPath {
-                site: site_label.clone(),
-                value: quoted(path),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect();
-    let admin_regexp = admin_path_regexp(&service.admin_paths);
-
     let enabled = [site.exposure.local, site.exposure.onion, site.exposure.public];
     if !service.multi_address && enabled.iter().filter(|on| **on).count() > 1 {
         return Err(WebConfigError::SingleAddressOnly { site: site_label });
@@ -1002,8 +981,6 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
     Ok(Resolved {
         site,
         dial,
-        admin_patterns,
-        admin_regexp,
         local,
         public,
         serve_aliases,
@@ -1067,23 +1044,6 @@ fn upstream_dial(site: &Site) -> Option<String> {
 
 fn tcp_port(dial: &str) -> Option<u16> {
     dial.strip_prefix("127.0.0.1:")?.parse().ok()
-}
-
-/// Caddy's path matcher is exact unless it has a wildcard, and `/admin/*` does not match `/admin`, so
-/// both forms are needed. The `;` form covers servers that treat `/admin;x=1` as `/admin`.
-fn admin_path_patterns(path: &str) -> Option<Vec<String>> {
-    let allowed = path.starts_with('/')
-        && !path.contains("//")
-        && path.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~'))
-        && path.split('/').all(|segment| segment != "." && segment != "..");
-    if !allowed {
-        return None;
-    }
-    let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() {
-        return Some(vec!["/*".to_owned()]);
-    }
-    Some(vec![trimmed.to_owned(), format!("{trimmed}/*"), format!("{trimmed};*")])
 }
 
 /// An address Let's Encrypt accepts for its account, in the conservative form the config allows.
@@ -1176,41 +1136,9 @@ fn https_server(listen: String, mut routes: Vec<Route>, hosts: &[String], redire
     }
 }
 
-/// Upstreams differ in what they treat as the same path. Some drop a trailing dot or space, and some
-/// stop at a NUL, so `/admin.`, `/admin%20` and `/admin%00` can reach `/admin`. This blocks the admin
-/// path followed by anything except a letter, digit, `-`, `_` or `~`, at the cost of also refusing
-/// names like `/admin.json` publicly. Call only with paths [`admin_path_patterns`] accepted.
-fn admin_path_regexp(paths: &[String]) -> Option<String> {
-    let alternatives: Vec<String> = paths
-        .iter()
-        .map(|path| path.trim_end_matches('/'))
-        .filter(|path| !path.is_empty())
-        .map(|path| path.replace('.', "\\."))
-        .collect();
-    (!alternatives.is_empty()).then(|| format!("(?i)^(?:{})(?:[^a-z0-9_~-]|$)", alternatives.join("|")))
-}
-
-/// The routes inside one host. `hide_admin` is set for public and onion addresses.
-fn site_handlers(item: &Resolved<'_>, hide_admin: bool, limit: Option<RateLimit>) -> Vec<Route> {
+/// The routes inside one host: every path of the site, the same at every kind of address.
+fn site_handlers(item: &Resolved<'_>, limit: Option<RateLimit>) -> Vec<Route> {
     let mut routes = Vec::new();
-    // Must stay first: it answers the same way whether the upstream is running or not.
-    if hide_admin && !item.admin_patterns.is_empty() {
-        routes.push(Route {
-            matchers: std::iter::once(Matcher { path: item.admin_patterns.clone(), ..Matcher::default() })
-                .chain(item.admin_regexp.iter().map(|pattern| Matcher {
-                    path_regexp: Some(PathRegexp { name: "admin".to_owned(), pattern: pattern.clone() }),
-                    ..Matcher::default()
-                }))
-                .collect(),
-            handle: vec![Handler::StaticResponse {
-                status_code: Some("404".to_owned()),
-                headers: BTreeMap::new(),
-                body: None,
-                abort: false,
-            }],
-            terminal: true,
-        });
-    }
     if let Some(limit) = limit {
         let zone = RateLimitZone {
             key: "{http.request.remote.host}".to_owned(),

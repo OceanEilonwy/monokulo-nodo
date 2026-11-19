@@ -29,14 +29,7 @@ outbound = "internet"
 name = "web"
 upstream = "127.0.0.1:8081"
 suggested_subdomain = "pay"
-# Checkout pages and the plugin API must stay public. Instance administration must not.
-admin_paths = [
-    "/admin",
-    "/admin/*",
-    "/api/v1/admin",
-    "/api/v1/admin/*",
-    "/status/engine",
-    "/status/engine/*",
-]
+# No admin_paths: Monokulo's admin pages and API sit behind its own sign-in and are used from
+# anywhere, as on the router, so the whole site is served at every address the owner gives it.
 # Pages use relative links, and Tor visitors get their own address (onion_uri).
 multi_address = true
