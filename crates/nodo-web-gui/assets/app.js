@@ -8,9 +8,21 @@ document.addEventListener('htmx:after:swap', function () {
   if (answer) answer.focus();
 });
 
+// Cancel takes the dialog away and leaves the page as it is, with whatever is typed into its
+// form. Without this file Cancel is a link that loads the page again.
+function cancel(event) {
+  var dialog = document.getElementById('dialog');
+  if (!dialog || !dialog.firstChild) return false;
+  if (event) event.preventDefault();
+  dialog.replaceChildren();
+  return true;
+}
+
+document.addEventListener('click', function (event) {
+  if (event.target.closest && event.target.closest('#dialog a.btn')) cancel(event);
+});
+
 // Escape answers a question with Cancel.
 document.addEventListener('keydown', function (event) {
-  if (event.key !== 'Escape') return;
-  var cancel = document.querySelector('#dialog a.btn');
-  if (cancel) cancel.click();
+  if (event.key === 'Escape') cancel(event);
 });

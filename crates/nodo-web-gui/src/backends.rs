@@ -80,6 +80,11 @@ impl Backends for MockBackends {
             return Err(ApiError::BadPassphrase);
         }
         let mut backend = MockBackend::new();
+        // One update that grows locked storage, so that the page asking for the passphrase can
+        // be reached under `--mock`; the mock's own updates have none.
+        if let Some(item) = backend.updates.iter_mut().find(|item| item.name == "wallet-relay") {
+            item.grows = Some("256 MB to 512 MB".to_owned());
+        }
         if self.unlock_on_login {
             backend.call(Request::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) })?;
         }

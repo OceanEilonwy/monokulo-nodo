@@ -147,7 +147,7 @@ fn page(snapshot: &Snapshot, ticked: &[String]) -> Page {
                 (layout::row(dest::UNDO, "Undo an update", "Put an app back to the version before", html! {}))
             }
         }
-        @if !snapshot.overview.updates_checked.is_empty() { p.dim.small { "Last checked " (snapshot.overview.updates_checked) "." } }
+        @if !snapshot.overview.updates_checked.is_empty() { p.dim.small { (snapshot.overview.updates_checked) } }
     };
     Page { trail: trail(&[]), ..Page::new(Tab::System, "Updates", body) }
 }
@@ -439,7 +439,9 @@ fn auto_update_page(flow: &AutoUpdate, window: &str) -> Page {
                 }
             }
             div.actions.end {
-                button.btn type="submit" name="do" value="leave" { "Cancel" }
+                // With htmx the question about unsaved choices comes over the form, which keeps
+                // them if the answer is to stay; without, staying shows the stored choices.
+                button.btn type="submit" name="do" value="leave" hx-post=(dest::AUTO_UPDATE) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }
                 button.btn.primary type="submit" name="do" value="save" { "Save" }
             }
         }

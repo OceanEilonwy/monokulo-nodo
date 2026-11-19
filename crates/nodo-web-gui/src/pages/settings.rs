@@ -303,7 +303,9 @@ fn page(flow: &Settings) -> Page {
             div.actions.end {
                 // Without scripts this is how a typed value is checked before saving.
                 noscript { button.btn.quiet type="submit" name="do" value="apply" { "Check what I typed" } }
-                button.btn type="submit" name="do" value="leave" { "Cancel" }
+                // With htmx the question about unsaved changes comes over the form, which keeps
+                // what is typed if the answer is to stay.
+                button.btn type="submit" name="do" value="leave" hx-post=(here) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }
                 button.btn.primary type="submit" name="do" value="save" { "Save" }
             }
         }
