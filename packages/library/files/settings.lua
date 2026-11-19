@@ -9,9 +9,10 @@ return {
       name = "admin_password",
       type = "secret",
       label = "Admin password",
-      help = "Unlocks adding and editing items (the Librarian button). Anyone who can open the "
-        .. "site can browse and lend; only this password edits. Empty, editing stays off "
-        .. "(LIBRARY_ADMIN_PASSWORD).",
+      help = "Unlocks the Librarian's desk: adding and editing items, uploading digital copies "
+        .. "and approving Player accounts. Anyone who can open the site can browse and lend, and "
+        .. "ask for a Player account, which stays waiting until approved here. Empty, the desk "
+        .. "stays locked (LIBRARY_ADMIN_PASSWORD).",
       validate = function(pw)
         return nodo.matches(pw, "^[^\r\n]{8,200}$"), "must be 8 to 200 characters on one line"
       end,
@@ -51,8 +52,8 @@ return {
       type = "bool",
       label = "Online lookups",
       help = "Fills in details from Open Library, Google Books, MusicBrainz, TMDb and a barcode "
-        .. "database while adding items. The searched title or barcode is sent to them "
-        .. "(LIBRARY_LOOKUPS).",
+        .. "database while adding items, and track details from MusicBrainz in the upload "
+        .. "studio. The searched title, artist or barcode is sent to them (LIBRARY_LOOKUPS).",
       default = true,
     },
     {

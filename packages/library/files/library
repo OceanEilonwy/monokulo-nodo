@@ -1,7 +1,7 @@
 #!/bin/sh
 # Turns the package's settings (NODO_*) into the Library's own LIBRARY_* variables, keeps its data
-# (database, photos, search model, session key) in the data directory, which the sandbox mounts as
-# $HOME, and becomes the Library. A manifest's arguments cannot name the data directory, and an
+# (database, photos, digital copies under media/, search model, session key) in the data directory,
+# which the sandbox mounts as $HOME, and becomes the Library. A manifest's arguments cannot name the data directory, and an
 # optional setting with no value is simply absent from the environment.
 #
 # Passwords travel in the environment, never as arguments, so they don't show in the process list.
@@ -28,7 +28,8 @@ onoff() { # onoff NODO_NAME LIBRARY_NAME: a bool setting as on/off
 	esac
 }
 
-# Only the Library's own variables reach it, whatever else is set.
+# Only the Library's own variables reach it, whatever else is set. That includes
+# LIBRARY_ACCOUNT_PASSWORD, which only the create-account command reads.
 for name in $(env | sed -n 's/^\(LIBRARY_[A-Z0-9_]*\)=.*/\1/p'); do
 	unset "$name"
 done
@@ -44,5 +45,9 @@ for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
 done
 unset value
 
-# There is no config file on the device; settings come from the environment above.
+# There is no config file on the device; settings come from the environment above. The settings
+# the Library takes only from a config file keep their defaults: anyone may ask for a Player
+# account and a librarian approves each one on the desk (turning requests off would leave only
+# the command line, which the device does not offer), new accounts are offered as "child" access,
+# and an upload may be up to 20000 MB, more than the volume holds anyway.
 exec "$(dirname "$0")/../libexec/library" --config "$HOME/library.toml" serve --data-dir "$HOME" "$@"

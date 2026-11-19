@@ -15,7 +15,7 @@ fn files() -> PathBuf {
 
 fn manifest() -> Manifest {
     let text = std::fs::read_to_string(files().join("manifest.toml")).unwrap();
-    Manifest::parse(&text.replace("@VERSION@", "0.1.0")).unwrap()
+    Manifest::parse(&text.replace("@VERSION@", "0.1.0.20261119")).unwrap()
 }
 
 #[test]
@@ -26,7 +26,8 @@ fn the_manifest_passes_feed_validation_and_names_its_files() {
     assert!(files().join("library").exists());
     assert!(m.needs.is_empty());
     assert!(m.storage.encrypted, "the catalogue, borrowers' names and photos are user data");
-    assert_eq!(m.storage.size_mib, Some(4096), "room for photos and the search model");
+    assert_eq!(m.storage.size_mib, Some(16384), "room for digital copies, photos and the search model");
+    assert_eq!(m.storage.layout(), 2, "the first start adds the accounts and digital copies schema");
     assert_eq!(m.network.outbound, Outbound::Internet, "lookups and the model's first download");
     assert!(m.network.inbound.is_empty(), "visitors come through the proxy only");
     assert_eq!(m.web.len(), 1);
@@ -108,6 +109,7 @@ fn the_launcher_maps_settings_and_keeps_data_in_home() {
             ("NODO_ONLINE_LOOKUPS", "false"),
             ("NODO_UNRELATED", "x"),
             ("LIBRARY_ADMIN_PASSWORD_HASH", "smuggled"),
+            ("LIBRARY_ACCOUNT_PASSWORD", "smuggled"),
         ]),
         format!(
             "{args}LIBRARY_ADMIN_PASSWORD=pa$(ss) word\nLIBRARY_LOOKUPS=off\nLIBRARY_LOOKUP_CONTACT=https://example.org\n\
@@ -115,4 +117,26 @@ fn the_launcher_maps_settings_and_keeps_data_in_home() {
         ),
         "passwords pass through untouched, and nothing else from the environment reaches the app"
     );
+}
+
+#[test]
+fn the_recipe_builds_the_player_into_the_server_and_sorts_above_the_last_version() {
+    let template = std::fs::read_to_string(files().join("../template")).unwrap();
+    let line = |key: &str| {
+        template.lines().find_map(|l| l.strip_prefix(key)).unwrap_or_else(|| panic!("no {key}")).to_owned()
+    };
+    // The server embeds player/dist when it compiles, so the Player must be built before cargo runs,
+    // from the lock file, with Node pinned by checksum like the Rust toolchain.
+    let build = template.split("do_build()").nth(1).unwrap();
+    let (npm, cargo) = (build.find("npm run --prefix player build").unwrap(), build.find("\"${CARGO}\" build").unwrap());
+    assert!(npm < cargo, "the Player is built before the server");
+    assert!(template.contains("npm ci --prefix player"), "npm installs exactly the lock file");
+    assert!(build.contains("--locked"));
+    assert!(template.contains("_node_sum=") && template.contains("${_node_sum}"));
+    assert_eq!(line("_commit=").len(), 40, "a full commit id");
+    // 0.1.0_1 was the version before, and devices refuse a downgrade. A date after a fourth dot
+    // sorts above it in xbps' order, where a pre suffix would sort below.
+    let shipped = format!("{}_{}", line("version="), line("revision="));
+    assert_eq!(nodo_feed::compare_versions(&shipped, "0.1.0_1"), Some(std::cmp::Ordering::Greater), "{shipped}");
+    assert_eq!(nodo_feed::compare_versions("0.1.0pre20261119_1", "0.1.0_1"), Some(std::cmp::Ordering::Less));
 }
