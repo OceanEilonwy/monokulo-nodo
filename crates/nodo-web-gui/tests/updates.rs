@@ -72,7 +72,7 @@ async fn the_page_ticks_what_is_safe_and_holds_releases_and_checks() {
     assert_eq!(browser.post(UPDATES, &[("do", "check"), ("tick", "wallet-relay")]).await.location(), "/working");
     assert_eq!(browser.wait_for_job().await.location(), UPDATES);
     let checked = browser.get(UPDATES).await;
-    checked.assert_has("available.").assert_has("0.4.8  →  0.4.9");
+    checked.assert_has("available.").assert_has(r#"<td class="mono">0.4.8</td><td class="mono">0.4.9</td>"#);
     assert!(ticked(&checked.body, "tor") && ticked(&checked.body, "wallet-relay") && !ticked(&checked.body, "cuprated"));
 }
 
@@ -121,7 +121,7 @@ async fn a_batch_is_reviewed_asks_for_the_passphrase_and_only_the_passphrase_com
 
     assert_eq!(browser.post("/system/updates/results/leave", &[]).await.location(), UPDATES);
     let page = browser.get(UPDATES).await;
-    page.assert_has("2.7.0  →  2.7.1").assert_lacks(r#"name="tick" value="wallet-relay""#);
+    page.assert_has(r#"<td class="mono">2.7.0</td><td class="mono">2.7.1</td>"#).assert_lacks(r#"name="tick" value="wallet-relay""#);
     assert_eq!(browser.get("/system/updates/results").await.location(), UPDATES);
 }
 

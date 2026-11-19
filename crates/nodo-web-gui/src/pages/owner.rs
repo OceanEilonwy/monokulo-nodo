@@ -17,7 +17,7 @@ use maud::{html, Markup, PreEscaped};
 use nodo_api::{OwnerCheck, OwnerCheckState, OwnerItem, OwnerStepState};
 use nodo_ui_core::flows::owner_page::{self, OwnerPage};
 use nodo_ui_core::flows::Step;
-use nodo_ui_core::screen::Tab;
+use nodo_ui_core::model::Snapshot;
 
 use super::PassForm;
 use crate::glue::typed_secret;
@@ -117,13 +117,13 @@ fn item(item: &OwnerItem) -> Markup {
     }
 }
 
-fn page(flow: &OwnerPage) -> Page {
+fn page(snapshot: &Snapshot, flow: &OwnerPage) -> Page {
     let here = url(&flow.package);
     let body = match &flow.view {
         // The gate: the page holds the app's secrets, so the device passphrase opens it.
         None => html! {
-            h1 { (flow.title) }
             section.card {
+                h2 { (flow.title) }
                 p { (nodo_ui_core::flows::owner_page::WHY_PASSPHRASE) }
                 p.dim { "The passphrase is kept on the Nodo while the page is open, to read it again, and dropped when you close it. Reading the page may check its sites first, up to half a minute." }
                 form.stack method="post" action=(here) {
@@ -137,7 +137,7 @@ fn page(flow: &OwnerPage) -> Page {
         },
         Some(view) => html! {
             div.head {
-                h1 { (view.title) }
+                h2 { (view.title) }
                 div.actions {
                     (layout::post(&format!("{here}/refresh"), "Read it again", "btn"))
                     (layout::post(&format!("{here}/close"), "Close", "btn primary"))
@@ -162,7 +162,7 @@ fn page(flow: &OwnerPage) -> Page {
         },
     };
     let status = if flow.view.is_none() && flow.error.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
-    Page::new(Tab::Apps, format!("{} · {}", flow.package, flow.title), body)
+    super::apps::app_frame(snapshot, &flow.package, "Setup", None, format!("{} · {}", flow.package, flow.title), body)
         .trail(&[("Apps", dest::APPS), (&flow.package, &dest::app(&flow.package)), (&flow.title, &here)])
         .status(status)
 }
@@ -171,7 +171,7 @@ fn page(flow: &OwnerPage) -> Page {
 /// setup page says so on its own page.
 pub async fn show(ctx: Ctx, Path(name): Path<String>) -> Response {
     ctx.with(dest::app(&name), move |work| match kept(work, &name) {
-        Some(flow) => Out::Page(page(&flow)),
+        Some(flow) => Out::Page(page(&work.snapshot, &flow)),
         // Opened through the flow, which knows whether the app has such a page and its name.
         None => Out::Reply(work.run(owner_page::open(&work.snapshot, &name), &mut crate::runner::no_flow)),
     })
@@ -189,7 +189,7 @@ pub async fn unlock(ctx: Ctx, Path(name): Path<String>, Form(form): Form<PassFor
         if reply.login_required {
             return Out::Reply(reply);
         }
-        let shown = page(&flow);
+        let shown = page(&work.snapshot, &flow);
         // A refusal is said once.
         flow.error = None;
         keep(work, &flow);

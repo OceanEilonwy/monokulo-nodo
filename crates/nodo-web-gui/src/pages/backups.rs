@@ -27,7 +27,7 @@ use nodo_ui_core::Effect;
 use crate::glue::typed_secret;
 use crate::ctx::{Ctx, JobSpec, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 
 type Posted = Vec<(String, String)>;
 
@@ -91,9 +91,9 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
     let where_to = if flow.target.is_some() { "the USB drive" } else { "this device" };
     let body = match &flow.stage {
         Stage::List => html! {
-            div.head {
-                h1 { "Backups" }
-                form.actions method="post" action=(here) { (button("reload", "Look again", "btn quiet")) }
+            div.tools {
+                p.grow.sub { "Make one now, or on a schedule." }
+                form.actions method="post" action=(here) { (button("reload", "Look again", "btn")) }
             }
             (problem)
             section.card.flush {
@@ -194,7 +194,8 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
         },
     };
     let status = if flow.error.is_some() && flow.stage != Stage::List { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
-    Page::new(Tab::System, "Backups", body).trail(&[("System", dest::SYSTEM), ("Backups", dest::BACKUPS)]).status(status)
+    let page = Page::new(Tab::System, "Backups", body).trail(&[("System", dest::SYSTEM), ("Backups", dest::BACKUPS)]).status(status);
+    if flow.stage == Stage::List { page.head(layout::heading("Backups", None)).sub(Sub::Backups) } else { page }
 }
 
 /// `GET /system/backups`. On the lists, both are read again.

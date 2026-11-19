@@ -90,92 +90,111 @@ fn form(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Markup {
     let domains = snapshot.domain_choices();
     let provider = domains.iter().find(|(domain, _)| *domain == flow.domain).map(|(_, provider)| provider.as_str());
     let tick = |name: &str, on: bool, label: &str, about: Markup| {
+        let id = format!("reach-{name}");
         html! {
-            div.setting {
-                label.check {
-                    input type="checkbox" name=(name) value="on" checked[on] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
-                    strong { (label) }
+            div.frow {
+                label for=(id) { (label) }
+                div.fld {
+                    span.check {
+                        input type="checkbox" id=(id) name=(name) value="on" checked[on] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
+                    }
+                    p.hint { (about) }
                 }
-                p.dim { (about) }
             }
         }
     };
     html! {
         form.stack #hosting method="post" action=(here) {
             (layout::hidden("ticks", "1"))
-            section.card {
-                (tick("local", flow.draft.local, "Home network", html! {
-                    "Phones and computers on your Wi-Fi." @if let Some(url) = local_url { "   " span.mono { (url) } }
-                    @if site.is_some_and(|site| site.local_waiting) { "   Waiting for a home address" }
-                }))
-                (tick("onion", flow.draft.onion, "Tor", html! { "A private link that opens in Tor Browser. It doesn't reveal your home." }))
-                (tick("public", flow.draft.public, "Internet", html! { "Anyone, at a web address you own." }))
-                @if rows.contains(&Row::AddProvider) {
-                    div.setting {
-                        p { "To use a web address you own, first add the company you bought it from." }
-                        p.dim { "You'll come back here when it's added." }
-                        div.actions { button.btn.primary type="submit" name="do" value="add-provider" { "Add a provider" } }
-                    }
-                }
-                @if rows.contains(&Row::Domain) {
-                    div.setting {
-                        @if let Some(provider) = provider { p.dim { "Provider   " (provider) } }
-                        div.field {
-                            label for="sub" { "Address" }
-                            div.pieces {
-                                input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[public_now]
-                                    hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
-                                span.dim { "." }
-                                select name="domain" aria-label="Domain" disabled[public_now] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML" {
-                                    @for (domain, _) in &domains { option value=(domain) selected[*domain == flow.domain] { (domain) } }
-                                }
+            section.sec {
+                h2 { "Who can open it" }
+                div.body {
+                    (tick("local", flow.draft.local, "Home network", html! {
+                        "Phones and computers on your Wi-Fi." @if let Some(url) = local_url { "   " span.mono { (url) } }
+                        @if site.is_some_and(|site| site.local_waiting) { "   Waiting for a home address" }
+                    }))
+                    (tick("onion", flow.draft.onion, "Tor", html! { "A private link that opens in Tor Browser. It doesn't reveal your home." }))
+                    (tick("public", flow.draft.public, "Internet", html! { "Anyone, at a web address you own." }))
+                    @if rows.contains(&Row::AddProvider) {
+                        div.frow {
+                            span.lab { "Provider" }
+                            div.fld {
+                                p { "To use a web address you own, first add the company you bought it from." }
+                                p.hint { "You'll come back here when it's added." }
+                                button.btn.primary type="submit" name="do" value="add-provider" { "Add a provider" }
                             }
-                            p.hint {
-                                "https://" (flow.host()) "   Leave the box empty for " (flow.domain) " itself."
-                                @if public_now { " To change the address, take the site off the internet first." }
-                            }
-                        }
-                        p.warn { "Visitors will be able to see your home's internet address." }
-                        @if flow.draft.onion { p.dim { "With Tor on too, visitors could tell the two addresses are the same app." } }
-                        @if site.is_some_and(|site| site.rate_limit_unenforced) { p.dim { "Repeated requests can't be slowed down for this app." } }
-                    }
-                    div.setting {
-                        @if !flow.aliases.is_empty() || adding { h3 { "Also answers at" } }
-                        @for row in &rows {
-                            @if let Row::Alias(index) = row {
-                                @let alias = &flow.aliases[*index];
-                                div.head {
-                                    p { span.mono { (alias.host) } span.dim { "   " @if alias.mode == AliasMode::Redirect { "redirects to " (flow.host()) } @else { "shows the same site" } } }
-                                    button.btn.link type="submit" name="do" value=(format!("remove-alias:{}", alias.host)) { "Remove" }
-                                }
-                            }
-                        }
-                        @if adding {
-                            (layout::hidden("adding", "1"))
-                            div.field {
-                                label for="alias" { "New name" }
-                                div.pieces {
-                                    input type="text" id="alias" name="alias" value="" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="example.com"
-                                        aria-invalid=[flow.alias_error.as_ref().map(|_| "true")] aria-describedby=[flow.alias_error.as_ref().map(|_| "alias-problem")];
-                                    select name="mode" aria-label="What the name does" {
-                                        option value="redirect" { "redirects here" }
-                                        option value="serve" { "shows the same site" }
-                                    }
-                                    button.btn type="submit" name="do" value="add-alias" { "Add this name" }
-                                    button.btn.quiet type="submit" name="do" value="close-alias" { "Cancel the new name" }
-                                }
-                                @if let Some(problem) = &flow.alias_error { p.problem #alias-problem { "✕ " (problem) } }
-                            }
-                        } @else if rows.contains(&Row::NewAlias) {
-                            div.actions { button.btn type="submit" name="do" value="open-alias" { "Add another address" } }
-                        }
-                        @if !added_now.is_empty() {
-                            p.dim.small { (flow.site) " is on the internet, so a new name goes on it as soon as it is saved. Save asks first." }
                         }
                     }
                 }
             }
-            div.actions.end {
+            @if rows.contains(&Row::Domain) {
+                section.sec {
+                    h2 { "Address" }
+                    div.body {
+                        @if let Some(provider) = provider {
+                            div.frow { span.lab { "Provider" } div.fld { p { (provider) } } }
+                        }
+                        div.frow {
+                            label for="sub" { "Address" }
+                            div.fld {
+                                div.inl {
+                                    input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[public_now]
+                                        hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
+                                    span.dim { "." }
+                                    select name="domain" aria-label="Domain" disabled[public_now] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML" {
+                                        @for (domain, _) in &domains { option value=(domain) selected[*domain == flow.domain] { (domain) } }
+                                    }
+                                }
+                                p.hint {
+                                    "https://" (flow.host()) "   Leave the box empty for " (flow.domain) " itself."
+                                    @if public_now { " To change the address, take the site off the internet first." }
+                                }
+                                p.warn { "Visitors will be able to see your home's internet address." }
+                                @if flow.draft.onion { p.hint { "With Tor on too, visitors could tell the two addresses are the same app." } }
+                                @if site.is_some_and(|site| site.rate_limit_unenforced) { p.hint { "Repeated requests can't be slowed down for this app." } }
+                            }
+                        }
+                        div.frow {
+                            span.lab { @if !flow.aliases.is_empty() || adding { "Also answers at" } }
+                            div.fld {
+                                @for row in &rows {
+                                    @if let Row::Alias(index) = row {
+                                        @let alias = &flow.aliases[*index];
+                                        div.inl {
+                                            span.mono { (alias.host) }
+                                            span.sub { @if alias.mode == AliasMode::Redirect { "redirects to " (flow.host()) } @else { "shows the same site" } }
+                                            button.btn.danger type="submit" name="do" value=(format!("remove-alias:{}", alias.host)) { "Remove" }
+                                        }
+                                    }
+                                }
+                                @if adding {
+                                    (layout::hidden("adding", "1"))
+                                    div.field {
+                                        label for="alias" { "New name" }
+                                        div.inl {
+                                            input type="text" id="alias" name="alias" value="" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="example.com"
+                                                aria-invalid=[flow.alias_error.as_ref().map(|_| "true")] aria-describedby=[flow.alias_error.as_ref().map(|_| "alias-problem")];
+                                            select name="mode" aria-label="What the name does" {
+                                                option value="redirect" { "redirects here" }
+                                                option value="serve" { "shows the same site" }
+                                            }
+                                            button.btn type="submit" name="do" value="add-alias" { "Add this name" }
+                                            button.btn.quiet type="submit" name="do" value="close-alias" { "Cancel the new name" }
+                                        }
+                                        @if let Some(problem) = &flow.alias_error { p.problem #alias-problem { "✕ " (problem) } }
+                                    }
+                                } @else if rows.contains(&Row::NewAlias) {
+                                    button.btn.link type="submit" name="do" value="open-alias" { "Add another address" }
+                                }
+                                @if !added_now.is_empty() {
+                                    p.hint { (flow.site) " is on the internet, so a new name goes on it as soon as it is saved. Save asks first." }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div.applybar {
                 noscript { button.btn.quiet type="submit" name="do" value="apply" { "Show what this needs" } }
                 a.btn href=(dest::app(&flow.site)) { "Cancel" }
                 @if rows.contains(&Row::Save) {
@@ -187,12 +206,9 @@ fn form(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Markup {
 }
 
 fn page(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Page {
-    let body = html! {
-        h1 { "Hosting" }
-        p.lead { "Choose who can open " (flow.site) ". Any combination works." }
-        (form(snapshot, flow, adding))
-    };
-    Page { trail: trail(&flow.site, None), ..Page::new(Tab::Apps, format!("{} hosting", flow.site), body) }
+    let desc = format!("Choose who can open {}. Any combination works.", flow.site);
+    let page = super::apps::app_frame(snapshot, &flow.site, "Hosting", Some(&desc), format!("{} hosting", flow.site), form(snapshot, flow, adding));
+    Page { trail: trail(&flow.site, None), ..page }
 }
 
 /// `GET /apps/{name}/hosting`.
@@ -336,19 +352,30 @@ pub async fn check(ctx: Ctx, Path(name): Path<String>) -> Response {
     };
     let body = html! {
         h1 { (title) }
-        section.card {
-            ul.bullets {
-                @for check in &found.checks {
-                    li {
-                        @match check.state {
-                            CheckState::Passed => span.ok aria-hidden="true" { "✓" },
-                            CheckState::Failed => span.err aria-hidden="true" { "✕" },
-                            CheckState::Unknown => span.warn aria-hidden="true" { "?" },
+        section.sec {
+            h2 { "Reachability check" (layout::post(&format!("{here}/again"), "Check again", "btn")) }
+            div.tbox {
+                table {
+                    thead { tr { th { "Check" } th { "Result" } th { "Detail" } } }
+                    tbody {
+                        @for check in &found.checks {
+                            tr {
+                                td { (check.text) }
+                                td {
+                                    @match check.state {
+                                        CheckState::Passed => (layout::label("ok", "✓ Passed")),
+                                        CheckState::Failed => (layout::label("bad", "✕ Failed")),
+                                        CheckState::Unknown => (layout::label("warn", "? Not sure")),
+                                    }
+                                }
+                                td.sub { (check.note) }
+                            }
                         }
-                        span { (check.text) @if !check.note.is_empty() { span.note { "   " (check.note) } } }
                     }
                 }
             }
+        }
+        section.card {
             @if let Some(router) = &found.router {
                 p { "Your router needs to send web visitors to the Nodo. In its settings, forward:" }
                 dl.facts {
@@ -369,7 +396,6 @@ pub async fn check(ctx: Ctx, Path(name): Path<String>) -> Response {
             p.dim { "A private Tor link works without any of this." }
             div.actions.end {
                 a.btn.quiet href=(dest::hosting(&name)) { "Back" }
-                (layout::post(&format!("{here}/again"), "Check again", "btn"))
                 @if found.can_continue() { (layout::post(&format!("{here}/continue"), "Continue anyway", "btn")) }
                 (layout::post(&format!("{here}/tor"), "Use Tor instead", "btn primary"))
             }
@@ -461,7 +487,6 @@ pub async fn cgnat(ctx: Ctx, Path(name): Path<String>) -> Response {
             }
             div.actions.end {
                 a.btn.quiet href=(dest::hosting(&name)) { "Back" }
-                (layout::post(&format!("{here}/again"), "Check again", "btn"))
             }
         }
     };

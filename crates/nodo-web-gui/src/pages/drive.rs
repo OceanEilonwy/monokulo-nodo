@@ -10,7 +10,7 @@ use nodo_ui_core::screen::Tab;
 
 use crate::ctx::{Ctx, JobSpec, Out};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{no_flow, Reply};
 
 fn action(name: &str) -> String {
@@ -54,7 +54,6 @@ pub fn card(failure: &DriveFailure) -> Markup {
 pub async fn show(ctx: Ctx) -> Response {
     ctx.with(dest::SYSTEM, |work| {
         let body = html! {
-            h1 { "Data drive" }
             @match &work.snapshot.overview.drive {
                 Some(failure) => (card(failure)),
                 None => section.card {
@@ -64,7 +63,7 @@ pub async fn show(ctx: Ctx) -> Response {
                 },
             }
         };
-        Out::Page(Page::new(Tab::System, "Data drive", body).trail(&[("System", dest::SYSTEM), ("Data drive", dest::DRIVE)]))
+        Out::Page(Page::new(Tab::System, "Data drive", body).trail(&[("System", dest::SYSTEM), ("Data drive", dest::DRIVE)]).head(layout::heading("Data drive", None)).sub(Sub::Drive))
     })
     .await
 }

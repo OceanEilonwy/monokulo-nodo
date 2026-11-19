@@ -22,7 +22,7 @@ use crate::glue::typed_secret;
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
 use crate::hints::{self, Radio};
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{follow_plain, Reply};
 
 type Posted = Vec<(String, String)>;
@@ -198,9 +198,8 @@ fn status(flow: &Network) -> Markup {
 
 fn page(flow: &Network, radio: Radio) -> Page {
     let here = dest::NETWORK;
+    let head = layout::heading("Network", Some("The cable works by itself. Wi-Fi and Bluetooth stay off until you turn them on here."));
     let body = html! {
-        h1 { "Network" }
-        p.lead { "The cable works by itself. Wi-Fi and Bluetooth stay off until you turn them on here." }
         @if let Some(error) = &flow.error {
             p.notice.error { "✕ " (error) }
             // What the refusal points at, as the button that does it.
@@ -233,7 +232,7 @@ fn page(flow: &Network, radio: Radio) -> Page {
             ul.bullets { @for line in ABOUT_WIRELESS { li { span.dim aria-hidden="true" { "·" } span { (line) } } } }
         }
     };
-    let page = Page::new(Tab::System, "Network", body).trail(&[("System", dest::SYSTEM), ("Network", dest::NETWORK)]);
+    let page = Page::new(Tab::System, "Network", body).trail(&[("System", dest::SYSTEM), ("Network", dest::NETWORK)]).head(head).sub(Sub::Network);
     if flow.pairing_running() || flow.waiting_for_address() { page.waiting() } else { page }
 }
 
