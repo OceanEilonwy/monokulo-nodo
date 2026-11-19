@@ -9,6 +9,7 @@ use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
 use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
@@ -24,36 +25,63 @@ pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 
 pub const TICKS_PER_SECOND: u64 = 4;
+/// Get apps: the search box, which of the box and the list has the focus, and the chosen row.
+/// What narrows the list besides the words typed is the core's `Search`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchState {
+    pub flow: Search,
     pub query: Input,
     /// Letters filter while the query has focus and act as shortcuts once the list has focus.
     pub list_focused: bool,
     pub selected: usize,
-    pub feed_filter: Option<String>,
 }
 
+impl std::ops::Deref for SearchState {
+    type Target = Search;
+
+    fn deref(&self) -> &Search {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for SearchState {
+    fn deref_mut(&mut self) -> &mut Search {
+        &mut self.flow
+    }
+}
+
+/// The review page: what is reviewed and what approving does are the core's `Review`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewState {
-    pub data: ReviewData,
+    pub flow: Review,
     /// False until the user moves to it, so a stray Enter cancels.
     pub confirm_focused: bool,
-    pub purpose: ReviewPurpose,
     /// Shown after confirming a package whose new encrypted storage needs the device passphrase.
     pub passphrase: Option<Input>,
 }
 
 impl ReviewState {
     pub fn new(data: ReviewData, purpose: ReviewPurpose) -> Self {
-        Self { data, confirm_focused: false, purpose, passphrase: None }
+        Self::of(Review::new(data, purpose))
+    }
+
+    pub fn of(flow: Review) -> Self {
+        Self { flow, confirm_focused: false, passphrase: None }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReviewPurpose {
-    Install,
-    /// `approvals` gathers each confirmed review, which the helper requires for those updates.
-    Update { batch: Vec<String>, pending_reviews: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
+impl std::ops::Deref for ReviewState {
+    type Target = Review;
+
+    fn deref(&self) -> &Review {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ReviewState {
+    fn deref_mut(&mut self) -> &mut Review {
+        &mut self.flow
+    }
 }
 
 /// The unlock page: the core's rules, the passphrase box and when the next try is allowed.
@@ -1449,7 +1477,7 @@ impl App {
     }
 
     pub fn search_results(&self, state: &SearchState) -> Vec<&PackageSummary> {
-        self.data.search_results(state.query.text(), state.feed_filter.as_deref())
+        state.flow.results(&self.data, state.query.text())
     }
 }
 

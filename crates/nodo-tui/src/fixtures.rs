@@ -12,6 +12,7 @@ use nodo_ui_core::model::*;
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::exec::load_snapshot;
+use nodo_ui_core::flows::install::ReviewPurpose;
 use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 

@@ -62,6 +62,7 @@
 //! **Tests.** Each flow has unit tests here against `MockBackend`: actions are run with
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
+pub mod install;
 pub mod services;
 pub mod setup;
 pub mod sources;
@@ -70,7 +71,9 @@ pub mod unlock;
 use nodo_api::Exposure;
 
 use crate::effect::ExposureAfter;
-use crate::model::{DriveAction, FeedProbe, KeyChange, Snapshot};
+use crate::model::{
+    CapabilityData, DriveAction, FeedProbe, InstallSnapshot, KeyChange, PackageDetail, RejectionData, Snapshot,
+};
 use crate::{Effect, Outcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +167,27 @@ pub enum Dest {
     ConfirmSource(FeedProbe),
     /// The decision about a source whose signing key changed.
     KeyChange(KeyChange),
+    /// The sources, with the one named chosen.
+    Sources { select: Option<String> },
+    /// An installed app's own page, by name.
+    AppPage(String),
+    /// An app's details, among the apps on offer.
+    Detail(PackageDetail),
+    /// What an app asks for, to approve or not.
+    Review(install::Review),
+    /// A suite of apps installed together, to review.
+    Bundle(Box<nodo_api::BundleReview>),
+    /// Why a package cannot be installed at all.
+    Rejected(RejectionData),
+    /// What a package needs that the node installed now lacks.
+    MissingCapability(CapabilityData),
+    /// The page of the install under way, showing this report. A frontend already on that page
+    /// shows the report in place.
+    Installing(InstallSnapshot),
+    /// A batch of updates was approved and goes on to be applied. Until the updates' own flow is
+    /// here, the frontend applies it, asking for the device passphrase when one of them grows
+    /// encrypted storage.
+    ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or

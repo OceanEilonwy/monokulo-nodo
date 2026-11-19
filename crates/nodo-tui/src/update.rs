@@ -8,9 +8,10 @@ use nodo_api::{ApiError, ServiceState};
 
 use crate::app::*;
 use nodo_ui_core::model::*;
-use nodo_ui_core::secret::{Input, Secret};
+use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
+use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::{self, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -183,7 +184,7 @@ fn logs_state(selected: usize) -> LogsState {
 }
 
 pub fn search_state(focus_query: bool) -> SearchState {
-    SearchState { query: Input::plain(""), list_focused: !focus_query, selected: 0, feed_filter: None }
+    SearchState { flow: Search::default(), query: Input::plain(""), list_focused: !focus_query, selected: 0 }
 }
 
 fn switch_tab(app: &mut App, tab: Tab) -> Vec<Effect> {
@@ -664,6 +665,22 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
             }
         }
         Dest::KeyChange(change) => push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None })),
+        Dest::Sources { select } => {
+            let selected = select.and_then(|name| app.data.feeds.iter().position(|feed| feed.name == name)).unwrap_or(0);
+            return open_sources(app, selected);
+        }
+        Dest::AppPage(name) => {
+            switch_tab(app, Tab::Apps);
+            push(app, Screen::AppPage(AppPageState::new(&name)));
+        }
+        Dest::Detail(detail) => push(app, Screen::Detail(detail)),
+        Dest::Review(review) => push(app, Screen::Review(ReviewState::of(review))),
+        Dest::Bundle(review) => owner::open_bundle(app, *review),
+        Dest::Rejected(data) => push(app, Screen::Rejected(data)),
+        Dest::MissingCapability(data) => push(app, Screen::Capability(CapabilityState { data, choice: 0 })),
+        // The install's page takes the place of the review that started it.
+        Dest::Installing(report) => app.screen = Screen::Installing(report),
+        Dest::ApplyUpdates { names, approvals } => return apply_batch(app, names, approvals),
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -692,11 +709,7 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
     match &app.screen {
         // Only a backend that reports progress is polled. The helper's install answers once it
         // is over, and polling it would only queue behind that answer.
-        Screen::Installing(snapshot)
-            if snapshot.outcome == InstallOutcome::InProgress && app.data.capabilities.install_progress =>
-        {
-            vec![Effect::PollInstall]
-        }
+        Screen::Installing(snapshot) => install::poll(snapshot, &app.data.capabilities),
         Screen::Logs(state) if state.follow && app.ticks % (2 * TICKS_PER_SECOND) == 0 => app
             .data
             .log_sources
@@ -869,7 +882,6 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let state_snapshot = state.clone();
     let results: Vec<PackageId> =
         app.search_results(&state_snapshot).iter().map(|pkg| pkg.id.clone()).collect();
-    let feeds: Vec<String> = app.data.feeds.iter().map(|feed| feed.name.clone()).collect();
     let Screen::Search(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -878,7 +890,7 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Esc if state.query.is_empty() && state.feed_filter.is_none() => pop(app),
         KeyCode::Esc => {
             state.query.clear();
-            state.feed_filter = None;
+            state.flow.clear();
             state.list_focused = false;
             state.selected = 0;
         }
@@ -886,7 +898,7 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('s') if state.list_focused || key.modifiers.contains(KeyModifiers::CONTROL) => return open_sources(app, 0),
         KeyCode::Enter => {
             if let Some(id) = results.get(state.selected) {
-                return vec![Effect::LoadDetail(id.clone())];
+                return install::detail(id);
             }
         }
         KeyCode::Down | KeyCode::Up => {
@@ -914,18 +926,11 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('i') => {
             if let Some(id) = results.get(state.selected) {
-                return vec![Effect::CheckInstall(id.clone())];
+                return install::check(id);
             }
         }
         KeyCode::Char('f') => {
-            let position = state
-                .feed_filter
-                .as_ref()
-                .and_then(|current| feeds.iter().position(|feed| feed == current));
-            state.feed_filter = match position {
-                None => feeds.first().cloned(),
-                Some(index) => feeds.get(index + 1).cloned(),
-            };
+            state.flow.next_source(&app.data);
             state.selected = 0;
         }
         KeyCode::Char('q') => app.should_quit = true,
@@ -942,16 +947,14 @@ fn detail_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     match key.code {
-        KeyCode::Char('i') if !detail.installed => vec![Effect::CheckInstall(detail.id.clone())],
-        KeyCode::Char('o') if detail.installed => {
-            let name = detail.id.name.clone();
-            switch_tab(app, Tab::Apps);
-            push(app, Screen::AppPage(AppPageState::new(&name)));
-            Vec::new()
+        KeyCode::Char('i') => install::install(detail),
+        KeyCode::Char('o') => {
+            let step = install::open_installed(detail);
+            follow(app, step)
         }
-        KeyCode::Char('s') if detail.installed => vec![Effect::OpenSettings(detail.id.name.clone())],
-        KeyCode::Char('v') => vec![Effect::ShowDocument(DocKind::Versions(detail.id.name.clone()))],
-        KeyCode::Char('c') => vec![Effect::ShowDocument(DocKind::Changelog(detail.id.name.clone()))],
+        KeyCode::Char('s') => install::settings(detail),
+        KeyCode::Char('v') => install::versions(detail),
+        KeyCode::Char('c') => install::changelog(detail),
         KeyCode::Char('h') if detail.installed => {
             let package = detail.id.name.clone();
             web::hosting_from_detail(app, &package)
@@ -971,13 +974,10 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(input) = state.passphrase.as_mut() {
         match key.code {
             KeyCode::Esc => state.passphrase = None,
-            KeyCode::Enter if input.is_empty() => {
-                notice(app, NoticeKind::Info, "Enter the device passphrase to create its encrypted storage.");
-            }
             KeyCode::Enter => {
-                let passphrase = Some(input.take_secret());
-                state.passphrase = None;
-                return start_install(app, passphrase);
+                // An empty box is refused with a remark and stays open.
+                let step = state.flow.approve(Some(input));
+                return follow(app, step);
             }
             _ => {
                 edit_input(input, key);
@@ -987,70 +987,36 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     match key.code {
         KeyCode::Left | KeyCode::Right => state.confirm_focused = !state.confirm_focused,
-        KeyCode::Char('d') => {
-            return vec![Effect::ShowDocument(DocKind::FileList(state.data.id.name.clone()))];
-        }
+        KeyCode::Char('d') => return state.flow.files(),
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
             if !state.confirm_focused {
                 pop(app);
                 return Vec::new();
             }
-            match state.purpose.clone() {
-                ReviewPurpose::Install if state.data.needs_passphrase => {
-                    state.passphrase = Some(Input::secret());
-                }
-                ReviewPurpose::Install => return start_install(app, None),
-                ReviewPurpose::Update { batch, mut pending_reviews, mut approvals } => {
-                    if let Some(approval) = state.data.approval.clone() {
-                        approvals.push((state.data.id.name.clone(), approval));
-                    }
-                    if pending_reviews.is_empty() {
-                        return apply_batch(app, batch, approvals);
-                    }
-                    let name = pending_reviews.remove(0);
-                    pop(app);
-                    return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals }];
-                }
+            if state.flow.needs_passphrase() {
+                state.passphrase = Some(Input::secret());
+                return Vec::new();
             }
+            let step = state.flow.approve(None);
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
 }
 
-/// Leaves the review for the install page right away. With the helper the install is one request
-/// that answers when it is over, so without this the review sat there for minutes looking stuck.
-fn start_install(app: &mut App, passphrase: Option<Secret>) -> Vec<Effect> {
-    let Screen::Review(state) = &app.screen else {
-        return Vec::new();
-    };
-    let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
-    app.screen = Screen::Installing(InstallSnapshot::starting(&id, &state.data.version));
-    vec![Effect::StartInstall { id, approval, passphrase }]
-}
-
 fn installing_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Installing(snapshot) = &app.screen else {
         return Vec::new();
     };
-    let name = snapshot.id.name.clone();
-    match (&snapshot.outcome, key.code) {
-        (_, KeyCode::Char('v')) => vec![Effect::ShowDocument(DocKind::InstallLog(name))],
-        (InstallOutcome::InProgress, KeyCode::Esc) if snapshot.can_cancel => vec![Effect::CancelInstall],
-        // It cannot be stopped, so Esc only leaves the page; the result comes as a notice.
-        (InstallOutcome::InProgress, KeyCode::Esc) => {
-            pop(app);
-            Vec::new()
-        }
-        (InstallOutcome::Succeeded, KeyCode::Enter) => vec![Effect::OpenSettings(name)],
-        (InstallOutcome::InProgress, _) => Vec::new(),
-        (_, KeyCode::Esc | KeyCode::Enter) => {
-            pop(app);
-            vec![Effect::Refresh]
-        }
-        _ => Vec::new(),
-    }
+    let step = match key.code {
+        KeyCode::Char('v') => return install::log(snapshot),
+        KeyCode::Esc => install::leave(snapshot),
+        KeyCode::Enter => install::carry_on(snapshot),
+        _ => return Vec::new(),
+    };
+    follow(app, step)
 }
 
 fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -2030,11 +1996,10 @@ fn rejected_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     // There is deliberately no key here that installs anything.
     match key.code {
-        KeyCode::Char('y') => vec![Effect::CopyReport(format!("{} rejection", data.id.name))],
+        KeyCode::Char('y') => install::report_rejection(data),
         KeyCode::Char('f') => {
-            let feed = data.id.feed.clone();
-            let selected = app.data.feeds.iter().position(|entry| entry.name == feed).unwrap_or(0);
-            open_sources(app, selected)
+            let step = install::rejected_source(data);
+            follow(app, step)
         }
         KeyCode::Esc => {
             pop(app);
@@ -2054,21 +2019,15 @@ fn capability_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => match state.choice {
             0 => pop(app),
             1 => {
-                let note = state.data.compatible_note.clone();
-                notice(app, NoticeKind::Info, format!("No compatible version: {note}."));
+                let step = install::compatible_version(&state.data);
+                return follow(app, step);
             }
-            _ => {
-                let node = state.data.alternative_node.clone();
-                return vec![Effect::CheckInstall(PackageId::new("official", &node))];
-            }
+            _ => return install::install_alternative(&state.data),
         },
         _ => {}
     }
     Vec::new()
 }
-
-
-
 
 fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let acme = app.data.web.acme.clone();
@@ -2235,17 +2194,22 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
         | Outcome::WifiChanged { .. }
         | Outcome::WifiScanned(_)
         | Outcome::BluetoothChanged { .. } => return net::on_result(app, event),
-        Outcome::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
-        Outcome::DetailLoaded(None) => fail(app, "No details are available for that package."),
-        Outcome::GateLoaded(gate) => match gate {
-            InstallGate::Review(data) => push(app, Screen::Review(ReviewState::new(data, ReviewPurpose::Install))),
-            InstallGate::Bundle(review) => owner::open_bundle(app, review),
-            InstallGate::Rejected(data) => push(app, Screen::Rejected(data)),
-            InstallGate::MissingCapability(data) => {
-                push(app, Screen::Capability(CapabilityState { data, choice: 0 }));
-            }
-        },
-        Outcome::InstallProgress(snapshot) => on_install_progress(app, snapshot),
+        Outcome::DetailLoaded(_) | Outcome::GateLoaded(_) | Outcome::UpdateReviewLoaded { .. } => {
+            let step = install::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::InstallProgress(Some(report)) => {
+            // A review still on screen when a report that is not a cancel arrives becomes the
+            // install's page, as the install's own page does.
+            let on_install_page = match &app.screen {
+                Screen::Installing(_) => true,
+                Screen::Review(_) => report.outcome != InstallOutcome::Cancelled,
+                _ => false,
+            };
+            let step = install::progress(&report, &app.data.capabilities, on_install_page);
+            return follow(app, step);
+        }
+        Outcome::InstallProgress(None) => {}
         Outcome::UpdatesChecked(report) => {
             let summary = report.summary(app.update_rows().len(), &app.data.feeds);
             let kind = match (summary.trouble, summary.found) {
@@ -2342,13 +2306,6 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
         Outcome::SettingsRolledBack { package, explanation } => {
             on_settings_rolled_back(app, package, explanation);
         }
-        Outcome::UpdateReviewLoaded { review, batch, pending_reviews, approvals } => match review {
-            Some(data) => push(
-                app,
-                Screen::Review(ReviewState::new(data, ReviewPurpose::Update { batch, pending_reviews, approvals })),
-            ),
-            None => fail(app, "That update could not be reviewed, so nothing was applied."),
-        },
         Outcome::UpdatesApplied(report) => {
             if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
                 pop(app);
@@ -2430,37 +2387,6 @@ fn on_unlock_result(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
         state.retry_at_tick = ticks + state.retry_delay_seconds() * TICKS_PER_SECOND;
     }
     follow(app, step)
-}
-
-fn on_install_progress(app: &mut App, snapshot: Option<InstallSnapshot>) {
-    let Some(mut snapshot) = snapshot else {
-        return;
-    };
-    // The page offers a cancel only where the backend says it can cancel at all, whatever one
-    // snapshot claims.
-    snapshot.can_cancel &= app.data.capabilities.cancel_install;
-    match snapshot.outcome {
-        InstallOutcome::Cancelled => {
-            if matches!(app.screen, Screen::Installing(_)) {
-                pop(app);
-            }
-            notice(app, NoticeKind::Info, "Install cancelled. What it added was removed.");
-        }
-        _ => match &mut app.screen {
-            Screen::Installing(current) => *current = snapshot,
-            Screen::Review(_) => app.screen = Screen::Installing(snapshot),
-            // The owner left the install page while it ran, so say how it ended wherever they are.
-            _ => match &snapshot.outcome {
-                InstallOutcome::Succeeded => notice(
-                    app,
-                    NoticeKind::Ok,
-                    format!("{} is installed. Open it from Apps to set it up.", snapshot.id.name),
-                ),
-                InstallOutcome::Failed(reason) => fail(app, format!("{} wasn't installed: {reason}", snapshot.id.name)),
-                InstallOutcome::InProgress | InstallOutcome::Cancelled => {}
-            },
-        },
-    }
 }
 
 fn masked_field(value: &FieldValue) -> String {
