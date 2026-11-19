@@ -14,10 +14,32 @@ pub enum HomeItem {
     App(String),
 }
 
+/// What the owner meets where Home is: the first of these that applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Landing {
+    /// The device has no passphrase yet: first setup comes before anything else.
+    Setup,
+    /// The data drive is missing or cannot be used: what is wrong with it, and what can be done.
+    NoDrive,
+    Home,
+}
+
 /// The rows of the app page, in order.
 pub const APP_SECTIONS: [&str; 3] = ["Hosting", "Settings", "Logs"];
 
 impl Snapshot {
+    /// Where the owner lands: first setup on a device without a passphrase, the data drive's
+    /// page while the drive is missing, Home otherwise.
+    pub fn landing(&self) -> Landing {
+        if self.overview.setup_needed { Landing::Setup } else { self.landing_once_set_up() }
+    }
+
+    /// The same without first setup: what is under its page, and what every interface that
+    /// only exists on a device that is set up shows.
+    pub fn landing_once_set_up(&self) -> Landing {
+        if self.overview.drive.is_some() { Landing::NoDrive } else { Landing::Home }
+    }
+
     /// The sites that are online somewhere: on the home network, Tor or the internet.
     pub fn active_sites(&self) -> Vec<&Site> {
         self.web.sites.iter().filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public).collect()
@@ -93,5 +115,22 @@ impl Snapshot {
         let mut rows: Vec<String> = self.owner_pages.iter().filter(|(p, _)| p == name).map(|(_, t)| t.clone()).collect();
         rows.extend(APP_SECTIONS.iter().map(|s| (*s).to_owned()));
         rows
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_comes_before_a_missing_drive_and_that_before_home() {
+        let mut snapshot = Snapshot::default();
+        assert_eq!(snapshot.landing(), Landing::Home);
+        snapshot.overview.drive = Some(DriveFailure { message: "not connected".into(), checks: Vec::new(), waiting: String::new() });
+        assert_eq!((snapshot.landing(), snapshot.landing_once_set_up()), (Landing::NoDrive, Landing::NoDrive));
+        snapshot.overview.setup_needed = true;
+        assert_eq!((snapshot.landing(), snapshot.landing_once_set_up()), (Landing::Setup, Landing::NoDrive));
+        snapshot.overview.drive = None;
+        assert_eq!((snapshot.landing(), snapshot.landing_once_set_up()), (Landing::Setup, Landing::Home));
     }
 }

@@ -2357,7 +2357,9 @@ impl Manage {
 
     fn home(&self, snap: &Snapshot) -> Page {
         let mut cards = Vec::new();
-        if let Some(drive) = &snap.overview.drive {
+        // The screen only manages a device that is set up, so first setup is never met here.
+        let missing = snap.overview.drive.as_ref().filter(|_| snap.landing_once_set_up() == nodo_ui_core::queries::Landing::NoDrive);
+        if let Some(drive) = missing {
             let mut rows = vec![text(&drive.message, 0)];
             for c in &drive.checks {
                 let (mark, tone) = check_mark(c.state);

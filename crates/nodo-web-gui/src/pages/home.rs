@@ -8,7 +8,7 @@ use maud::{html, Markup};
 use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::{unlock as unlock_flow, Dest, Step};
 use nodo_ui_core::model::{AttentionLevel, Snapshot};
-use nodo_ui_core::queries::HomeItem;
+use nodo_ui_core::queries::{HomeItem, Landing};
 use nodo_ui_core::screen::Tab;
 
 use super::drive;
@@ -68,7 +68,13 @@ fn page(work: &mut Work<'_>) -> Page {
     };
     let body = html! {
         h1 { (title) }
-        @if let Some(failure) = &snapshot.overview.drive { (drive::card(failure)) }
+        // Where the terminal shows the drive's page in Home's place, the drive's card takes the
+        // top here. First setup cannot be due: the web GUI is only on once it is done.
+        @match (snapshot.landing(), &snapshot.overview.drive) {
+            (Landing::NoDrive, Some(failure)) => (drive::card(failure)),
+            (Landing::Setup, _) => p.notice.error { "✕ This Nodo is not set up yet. Set it up on the device or over SSH." },
+            _ => {},
+        }
         @for item in &needs {
             @if let Some((head, body, label)) = home_card(snapshot, item) {
                 @match item {

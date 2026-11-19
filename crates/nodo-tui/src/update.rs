@@ -20,7 +20,7 @@ use nodo_ui_core::flows::updates::{self, AutoUpdate};
 use nodo_ui_core::flows::web::certs;
 use nodo_ui_core::flows::web::domain;
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
-use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
+use nodo_ui_core::queries::{HomeItem, Landing, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 use nodo_ui_core::words::SYSTEM_ROWS;
 
@@ -135,10 +135,10 @@ fn step(selected: &mut usize, len: usize, down: bool) {
 }
 
 fn home_screen(app: &App) -> Screen {
-    if app.data.overview.drive.is_some() {
-        Screen::NoDrive { choice: 0 }
-    } else {
-        Screen::Home { selected: 0 }
+    // First setup, when it is due, is put on top of this by `on_refreshed`.
+    match app.data.landing_once_set_up() {
+        Landing::NoDrive => Screen::NoDrive { choice: 0 },
+        Landing::Home | Landing::Setup => Screen::Home { selected: 0 },
     }
 }
 
@@ -1817,7 +1817,7 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         _ => None,
     };
     app.data = snapshot;
-    if app.data.overview.setup_needed && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
+    if app.data.landing() == Landing::Setup && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
         push(app, Screen::Setup(SetupState::passphrase()));
         return;
     }
@@ -1827,7 +1827,7 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     let sites = app.data.web.sites.len();
     let update_rows: Vec<String> = app.update_rows().iter().map(|item| item.name.clone()).collect();
     let rows = update_rows.len();
-    let drive_missing = app.data.overview.drive.is_some();
+    let drive_missing = app.data.landing_once_set_up() == Landing::NoDrive;
     let clamp = |index: &mut usize, len: usize| *index = (*index).min(len.saturating_sub(1));
     match &mut app.screen {
         Screen::Home { .. } if drive_missing => app.screen = Screen::NoDrive { choice: 0 },
