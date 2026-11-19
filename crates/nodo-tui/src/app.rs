@@ -1565,12 +1565,16 @@ pub struct Overlay {
 }
 
 /// A button whose press started work that is still running: it is drawn with the hourglass and
-/// cannot be pressed again until a result arrives, the screen changes or the worker goes idle.
+/// cannot be pressed again until the screen changes or the worker has nothing left to do. A result
+/// alone does not end it, since it may start the next step of the same work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pending {
     /// What the button does, which is how the view finds it.
     pub click: crate::hit::Click,
     pub screen: ScreenId,
+    /// The step the work is on, such as "Checking…", shown in place of the label when the work has
+    /// several slow steps; otherwise the button keeps its label.
+    pub step: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -584,7 +584,7 @@ fn app_rows_cut_the_tagline_before_the_status_at_80() {
 }
 
 #[test]
-fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result() {
+fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_once_its_work_is_done() {
     use crossterm::event::KeyCode;
     use nodo_tui::app::{Effect, Event, MouseKind};
     use nodo_tui::fixtures::press;
@@ -592,7 +592,7 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result
     use nodo_tui::update::update;
 
     let theme = Theme::truecolor();
-    let (mut app, _) = fixture(ScreenId::Unlock);
+    let (mut app, mut mock) = fixture(ScreenId::Unlock);
     // Past the fixture's wait after a wrong passphrase.
     app.ticks = 1_000;
     for c in "correct horse".chars() {
@@ -610,8 +610,14 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result
     assert!(unlock(&app).is_none(), "a pending button is not a target");
     assert!(update(&mut app, press(KeyCode::Enter)).is_empty(), "its key is ignored while it runs");
 
-    update(&mut app, Event::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned()))));
-    assert_eq!(app.pending, None, "the result ends it");
+    // A result alone may be only the first step of the work, so it leaves the mark; once nothing
+    // is left to run, it goes.
+    let result = Event::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned())));
+    let mut after = app.clone();
+    assert!(update(&mut after, result.clone()).is_empty());
+    assert!(after.pending.is_some(), "the result alone leaves it to the runtime");
+    nodo_tui::runtime::dispatch(&mut app, &mut mock, result);
+    assert_eq!(app.pending, None, "the work is done");
     let screen = text(&draw_with(&app, &theme, 100, 32));
     assert!(!screen.contains('⧗'), "{screen}");
 

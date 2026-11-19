@@ -36,12 +36,36 @@ pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
         }
         other => on_result(app, other),
     };
-    // A result ends the work a button started, and a button on another screen is not that one.
-    // The runtime also clears it whenever the worker is idle, so it can never stay stuck.
-    if !input || app.screen.id() != before {
+    // A button on another screen is not the one that was pressed. A result alone does not end the
+    // work, though: it may be only the first step, as with Check and save, which saves the names
+    // and only then runs the checks, or one of several effects in a batch. The runtime clears the
+    // mark once the worker has nothing left to do, so the button stays busy for the whole chain.
+    if app.screen.id() != before {
         app.pending = None;
+    } else if !input {
+        follow_step(app, &effects);
     }
     effects
+}
+
+/// Names what the pending button is waiting on next, when a result has started its next step.
+fn follow_step(app: &mut App, effects: &[Effect]) {
+    if let (Some(pending), Some(step)) = (app.pending.as_mut(), step_of(effects)) {
+        pending.step = Some(step);
+    }
+}
+
+/// What a batch of effects is doing, in a word for a busy button. Only the steps of a chain that
+/// takes long enough for the owner to wonder have one; any other button keeps its own label.
+fn step_of(effects: &[Effect]) -> Option<&'static str> {
+    // A batch that saves and then checks spends nearly all its time checking.
+    if effects.iter().any(|effect| matches!(effect, Effect::CheckReachability { .. })) {
+        return Some("Checking…");
+    }
+    effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::SetPublicHost { .. } | Effect::SetExposure { .. }))
+        .then_some("Saving…")
 }
 
 /// The pending button on the current screen, while no modal covers it.
@@ -88,7 +112,7 @@ fn pressed(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             .map(|hit| hit.click.clone())
     };
     if let Some(click) = button {
-        app.pending = Some(Pending { click, screen: before });
+        app.pending = Some(Pending { click, screen: before, step: step_of(&effects) });
     }
     effects
 }
@@ -1894,7 +1918,7 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('r') => {
             // Check now is a link, not a button, so it is marked as running here: it shows the
             // hourglass and a second press waits for the first instead of queueing another check.
-            app.pending = Some(Pending { click: crate::hit::Click::Key(KeyCode::Char('r')), screen: ScreenId::Updates });
+            app.pending = Some(Pending { click: crate::hit::Click::Key(KeyCode::Char('r')), screen: ScreenId::Updates, step: None });
             return vec![Effect::CheckUpdates];
         }
         KeyCode::Char('h') => {
@@ -2924,7 +2948,7 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
             let effects = click(app, hit.click.clone());
             // A button that started work shows it until the work is done (`App::pending`).
             if hit.button.is_some() && !effects.is_empty() && !modal && app.modal.is_none() && app.screen.id() == before {
-                app.pending = Some(Pending { click: hit.click, screen: before });
+                app.pending = Some(Pending { click: hit.click, screen: before, step: step_of(&effects) });
             }
             effects
         }
