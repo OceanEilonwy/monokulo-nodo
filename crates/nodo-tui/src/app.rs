@@ -9,6 +9,8 @@ use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
 use nodo_ui_core::flows::backup::{self, Backups, Restore};
+use nodo_ui_core::flows::bundle::Bundle;
+use nodo_ui_core::flows::owner_page::OwnerPage;
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::network::{self, Network};
@@ -27,7 +29,7 @@ use nodo_ui_core::flows::{Confirm, Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::{ScreenId, Tab};
-use nodo_ui_core::secret::{Input, Secret};
+use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
 /// Below this size the layout cannot show enough context to act safely, so input is refused.
@@ -1086,94 +1088,59 @@ impl std::ops::Deref for AppPageState {
     }
 }
 
-/// Where installing a bundle stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BundleStep {
-    /// The apps it installs with their permissions, the grants and the data drive choices.
-    Review,
-    /// The settings the bundle asks for once, before anything installs.
-    Answers,
-    /// The device passphrase, for new encrypted storage or a secret answer while locked.
-    Passphrase,
-    /// The helper is installing.
-    Installing,
-    Done(nodo_api::BundleReport),
-}
-
-/// Installing a suite of apps together, from the review of the head that declares it.
+/// Installing a suite of apps together: the focus, the boxes and the scroll. The steps and what
+/// each one checks are the core's `Bundle`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleState {
-    pub review: nodo_api::BundleReview,
-    pub step: BundleStep,
+    pub flow: Bundle,
     /// In the review: an index into the data drive toggles, then Cancel, then Continue. In the
     /// questions: the field.
     pub focus: usize,
-    /// Per `review.data_drive`: keep that app's data on the data drive. On by default when one
-    /// is present.
-    pub drive: Vec<bool>,
-    /// One per ask, in order. A secret ask is a masked field.
+    /// One per ask, in order, as the core makes them.
     pub answers: Vec<Input>,
     pub passphrase: Input,
-    pub error: Option<String>,
     /// Rows scrolled past in a long review or result.
     pub scroll: usize,
 }
 
 impl BundleState {
     pub fn new(review: nodo_api::BundleReview) -> Self {
-        let drive = vec![review.data_drive_present; review.data_drive.len()];
-        let answers = review.asks.iter().map(|a| if a.secret { Input::secret() } else { Input::plain("") }).collect();
-        let focus = drive.len();
-        Self { review, step: BundleStep::Review, focus, drive, answers, passphrase: Input::secret(), error: None, scroll: 0 }
-    }
-
-    /// The asks the owner answers: those for apps not installed yet.
-    pub fn open_asks(&self) -> Vec<usize> {
-        (0..self.review.asks.len()).filter(|&i| !self.review.asks[i].skipped).collect()
+        let flow = Bundle::new(review);
+        let answers = flow.answer_boxes();
+        let focus = flow.drive.len();
+        Self { flow, focus, answers, passphrase: Input::secret(), scroll: 0 }
     }
 
     /// The review's Cancel button, after the toggles; Continue is the one after it.
     pub fn cancel_index(&self) -> usize {
-        self.drive.len()
-    }
-
-    /// The apps this install puts their data on the data drive for.
-    pub fn chosen_drive(&self) -> Vec<String> {
-        self.review.data_drive.iter().zip(&self.drive).filter(|(_, on)| **on).map(|(id, _)| id.clone()).collect()
-    }
-
-    /// The answers as the helper takes them, every value a secret.
-    pub fn answers_for_helper(&self) -> Vec<nodo_api::BundleAnswer> {
-        self.open_asks()
-            .into_iter()
-            .map(|i| {
-                let ask = &self.review.asks[i];
-                nodo_api::BundleAnswer {
-                    package: ask.package.clone(),
-                    setting: ask.setting.clone(),
-                    value: nodo_api::Secret::new(self.answers[i].secret_value().expose()),
-                }
-            })
-            .collect()
+        self.flow.drive.len()
     }
 }
 
-/// An app's setup page: the passphrase first, then the checklist. The passphrase stays in memory
-/// only while the page is open, so `r` can fetch it again; leaving the page drops it.
+impl std::ops::Deref for BundleState {
+    type Target = Bundle;
+
+    fn deref(&self) -> &Bundle {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BundleState {
+    fn deref_mut(&mut self) -> &mut Bundle {
+        &mut self.flow
+    }
+}
+
+/// An app's setup page: the passphrase box, the scroll and the chosen copy target. The gate, the
+/// page and the passphrase held to read it again are the core's `OwnerPage`; leaving the page
+/// drops them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerPageState {
-    pub package: String,
-    /// The row's name on the app's page, such as "Setup".
-    pub title: String,
+    pub flow: OwnerPage,
     pub passphrase: Input,
-    pub held: Option<Secret>,
-    pub view: Option<nodo_api::OwnerPageView>,
-    pub error: Option<String>,
-    /// A fetch is under way.
-    pub loading: bool,
     /// Rows scrolled past.
     pub scroll: usize,
-    /// An index into the core's `documents::copy_targets`.
+    /// An index into the flow's `copy_targets`.
     pub focus: usize,
     /// The copy target last copied, for the "Copied" note.
     pub copied: Option<usize>,
@@ -1183,23 +1150,29 @@ pub struct OwnerPageState {
 
 impl OwnerPageState {
     pub fn new(package: &str, title: &str) -> Self {
-        Self {
-            package: package.to_owned(),
-            title: title.to_owned(),
-            passphrase: Input::secret(),
-            held: None,
-            view: None,
-            error: None,
-            loading: false,
-            scroll: 0,
-            focus: 0,
-            copied: None,
-            follow: false,
-        }
+        Self::of(OwnerPage::new(package, title))
+    }
+
+    pub fn of(flow: OwnerPage) -> Self {
+        Self { flow, passphrase: Input::secret(), scroll: 0, focus: 0, copied: None, follow: false }
     }
 }
 
-/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
+impl std::ops::Deref for OwnerPageState {
+    type Target = OwnerPage;
+
+    fn deref(&self) -> &OwnerPage {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for OwnerPageState {
+    fn deref_mut(&mut self) -> &mut OwnerPage {
+        &mut self.flow
+    }
+}
+
+/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels./// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppRemoveState {
     pub name: String,

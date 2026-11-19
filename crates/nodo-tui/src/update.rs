@@ -12,6 +12,7 @@ use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::backup::{self, Backups};
+use nodo_ui_core::flows::bundle::BundleStep;
 use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::logs::{self, Logs};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked};
@@ -496,12 +497,12 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Backup(state) => backup_input(&mut state.step),
         Screen::Restore(state) => more::restore_input(&mut state.step),
         Screen::Network(state) => net::network_input(state),
-        Screen::Bundle(state) => match state.step {
-            BundleStep::Answers => state.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
+        Screen::Bundle(state) => match state.flow.step {
+            BundleStep::Answers => state.flow.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
             BundleStep::Passphrase => Some(&mut state.passphrase),
             _ => None,
         },
-        Screen::OwnerPage(state) if state.view.is_none() => Some(&mut state.passphrase),
+        Screen::OwnerPage(state) if state.flow.view.is_none() => Some(&mut state.passphrase),
         _ => None,
     }
 }
@@ -612,6 +613,7 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::Detail(detail) => push(app, Screen::Detail(detail)),
         Dest::Review(review) => push(app, Screen::Review(ReviewState::of(review))),
         Dest::Bundle(review) => owner::open_bundle(app, *review),
+        Dest::OwnerPage(page) => owner::show_owner_page(app, page),
         Dest::Rejected(data) => push(app, Screen::Rejected(data)),
         Dest::MissingCapability(data) => push(app, Screen::Capability(CapabilityState { data, choice: 0 })),
         // The install's page takes the place of the review that started it.
@@ -2006,8 +2008,8 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = documents::apply(&event);
             return follow(app, step);
         }
-        Outcome::BundleInstalled(result) => owner::on_bundle_installed(app, result),
-        Outcome::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
+        Outcome::BundleInstalled(_) => return owner::on_bundle_installed(app, &event),
+        Outcome::OwnerPageLoaded { .. } => return owner::on_owner_page(app, &event),
     }
     Vec::new()
 }

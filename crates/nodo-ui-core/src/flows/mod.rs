@@ -63,11 +63,13 @@
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
 pub mod backup;
+pub mod bundle;
 pub mod documents;
 pub mod drive;
 pub mod install;
 pub mod logs;
 pub mod network;
+pub mod owner_page;
 pub mod services;
 pub mod settings;
 pub mod setup;
@@ -183,8 +185,10 @@ pub enum Dest {
     Detail(PackageDetail),
     /// What an app asks for, to approve or not.
     Review(install::Review),
-    /// A suite of apps installed together, to review.
+    /// A suite of apps installed together, to review: the page of a new `bundle::Bundle`.
     Bundle(Box<nodo_api::BundleReview>),
+    /// An app's setup page for the owner, which opens at its passphrase gate.
+    OwnerPage(owner_page::OwnerPage),
     /// Why a package cannot be installed at all.
     Rejected(RejectionData),
     /// What a package needs that the node installed now lacks.

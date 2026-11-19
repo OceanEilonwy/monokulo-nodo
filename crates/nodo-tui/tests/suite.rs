@@ -4,7 +4,8 @@ mod common;
 
 use common::{draw, screen_text, send, text, type_text};
 use crossterm::event::KeyCode;
-use nodo_tui::app::{App, BundleStep, Event, MouseKind, Screen};
+use nodo_tui::app::{App, Event, MouseKind, Screen};
+use nodo_ui_core::flows::bundle::BundleStep;
 use nodo_tui::fixtures::{fixture, press};
 use nodo_ui_core::mock::{sample_bundle_review, sample_owner_page, MockBackend, MOCK_PASSPHRASE};
 use nodo_ui_core::model::{PackageId, ScreenData};
