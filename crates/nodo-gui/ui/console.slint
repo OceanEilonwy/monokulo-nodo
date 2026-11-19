@@ -1,0 +1,1977 @@
+// The device console (docs/design/device-console/*.dc.html): Status, Services, Network and
+// Device beside a rail, and what is shown over them (the passphrase, the Wi-Fi keyboard, the
+// screen PIN, the one-time web password code, a question, the Wi-Fi, logo and web sheets).
+//
+// The design is drawn at half size, 960 x 540: every measure here is the design's doubled, with
+// type kept at 30 px or more and body text at 36 px. Touch targets come from the Touch global,
+// which Rust sets from src/geometry.rs (`geometry::console`), where the tests hold them to a
+// finger's size. Every tap reports an action id; Rust (src/console.rs) decides what it does.
+
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+import "fonts/JetBrainsMono-Regular.ttf";
+import "fonts/JetBrainsMono-Bold.ttf";
+
+export global C {
+    out property <color> ground: #000000;
+    out property <color> rail: #050505;
+    out property <color> card: #0d0d0d;
+    out property <color> raised: #141414;
+    out property <color> button: #1a1a1a;
+    out property <color> key: #1c1c1c;
+    out property <color> selected: #242424;
+    out property <color> mark: #262626;
+    out property <color> line: #1f1f1f;
+    out property <color> fg: #f2f2f2;
+    out property <color> soft: #d9d9d9;
+    out property <color> dim: #b3b3b3;
+    out property <color> faint: #8c8c8c;
+    out property <color> chevron: #6e6e6e;
+    out property <color> off: #4c4c4c;
+    out property <color> accent: #ff6600;
+    out property <color> on-accent: #000000;
+    out property <color> warm: #ff8c3a;
+    out property <color> ok: #74e3ba;
+    out property <color> ok-fill: #123a2c;
+    out property <color> bad: #ffa194;
+    out property <color> bad-fill: #3d1714;
+    out property <color> neg: #ff9a8c;
+    out property <color> neg-fill: #2a1513;
+    out property <color> stop: #c62828;
+    out property <string> ui: "Inter";
+    out property <string> mono: "JetBrains Mono";
+}
+
+// Rust sets these from geometry::console at start; the defaults are the same values.
+export global Touch {
+    in property <length> rail-item: 152px;
+    in property <length> button: 104px;
+    in property <length> row: 104px;
+    in property <length> service-row: 124px;
+    in property <length> switch-w: 144px;
+    in property <length> switch-h: 88px;
+    in property <length> segment: 88px;
+    in property <length> key-unlock: 132px;
+    in property <length> key-text: 132px;
+    in property <length> pin-key: 184px;
+    in property <length> eye: 96px;
+    in property <length> web-chip: 104px;
+}
+
+// Icons from the design, on a 24 x 24 grid.
+export global Icons {
+    out property <string> status: "M3 12h4l3-8 4 16 3-8h4";
+    out property <string> services: "M3 3h7v7h-7z M14 3h7v7h-7z M3 14h7v7h-7z M14 14h7v7h-7z";
+    out property <string> network: "M5 12.5a10 10 0 0 1 14 0 M8.5 16a5 5 0 0 1 7 0 M12 19.5h0.01 M2 9a14.5 14.5 0 0 1 20 0";
+    out property <string> device: "M4 6h10 M4 12h4 M12 12h8 M4 18h12 M14 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0 M8 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0 M16 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0";
+    out property <string> lock: "M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2z M8 11v-3a4 4 0 0 1 8 0v3";
+    out property <string> power: "M12 3v9 M6.3 7.5a8 8 0 1 0 11.4 0";
+    out property <string> restart: "M21 12a9 9 0 1 1 -3 -6.7 M21 4v5h-5";
+    out property <string> cross: "M6 6l12 12 M18 6l-12 12";
+    out property <string> check: "M5 12l5 5 9 -10";
+    out property <string> dash: "M6 12h12";
+    out property <string> chevron: "M9 6l6 6 -6 6";
+    out property <string> key: "M4 15a4 4 0 1 0 8 0a4 4 0 1 0 -8 0 M11 12l9 -9 M17 6l3 3";
+    out property <string> terminal: "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2z M7 9l3 3 -3 3 M13 15h4";
+    out property <string> pin: "M7 4h10a3 3 0 0 1 3 3v10a3 3 0 0 1 -3 3h-10a3 3 0 0 1 -3 -3v-10a3 3 0 0 1 3 -3z M8 12h0.01 M12 12h0.01 M16 12h0.01";
+    out property <string> qr: "M3 3h7v7h-7z M14 3h7v7h-7z M3 14h7v7h-7z M14 14h3v3h-3z M20 20h1";
+    out property <string> sun: "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0 M12 2v2 M12 20v2 M2 12h2 M20 12h2";
+    out property <string> shift: "M12 4l8 8h-4v7h-8v-7h-4z";
+    out property <string> delete: "M21 5h-12l-6 7 6 7h12z M17 9l-6 6 M11 9l6 6";
+    out property <string> eye: "M2 12s3.5 -7 10 -7 10 7 10 7 -3.5 7 -10 7 -10 -7 -10 -7z M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0";
+}
+
+export struct CAlert { title: string, text: string, tone: int, button: string, id: string }
+export struct CTile { label: string, value: string, unit: string, chip: string, chip-tone: int, id: string }
+export struct CStatus { heading: string, alerts: [CAlert], tiles: [CTile] }
+export struct CWeb { url: string, host: string, note: string, qr: image }
+// tone: 0 off, 1 running, 2 waits, 3 failing
+export struct CService { id: string, initial: string, name: string, state: string, tone: int, on: bool, selected: bool }
+export struct CKv { label: string, value: string, mono: bool }
+export struct CServices {
+    count: string,
+    rows: [CService],
+    has-detail: bool,
+    initial: string,
+    name: string,
+    sub: string,
+    chip: string,
+    chip-tone: int,
+    kvs: [CKv],
+    can-restart: bool,
+}
+// kind: 0 not checked, 1 passed, 2 failed
+export struct CStep { name: string, detail: string, value: string, kind: int }
+export struct CNetwork { steps: [CStep], title: string, text: string, tone: int, fixed: bool, ok: bool }
+export struct CDevice { subtitle: string, network-note: string, wifi-note: string, off-index: int, off-label: string, brightness: string }
+export struct CKeyboard {
+    title: string,
+    sub: string,
+    label: string,
+    text: string,
+    error: string,
+    secret: bool,
+    reveal: bool,
+    shift: bool,
+    symbols: bool,
+    done: string,
+    // The 40 keys above the bottom row, ten a row, as they read now.
+    keys: [string],
+}
+export struct CPin { sub: string, digits: int, wrong: bool, busy: bool }
+export struct CReset { code: string, page: string, qr: image }
+export struct CDialog { title: string, text: string, danger: bool, yes: string }
+export struct CWifi { ssid: string, note: string, joined: bool }
+export struct CWifiSheet { available: bool, on: bool, note: string, rows: [CWifi] }
+export struct CLogo { text: bool, shimmer: bool, name: bool }
+
+component T inherits Text {
+    color: C.fg;
+    font-family: C.ui;
+    font-size: 36px;
+    vertical-alignment: center;
+}
+
+export component Icon inherits Path {
+    in property <string> d;
+    in property <color> tint: C.fg;
+    in property <length> size: 56px;
+    in property <float> weight: 2;
+    width: size;
+    height: size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: d;
+    stroke: tint;
+    stroke-width: size / 24 * weight;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+}
+
+// kind: 0 plain, 1 primary (orange), 2 negative, 3 stop (red, white text)
+export component Btn inherits Rectangle {
+    in property <string> label;
+    in property <int> kind: 0;
+    in property <bool> enabled: true;
+    in property <length> font: 36px;
+    callback clicked();
+    height: Touch.button;
+    min-width: max(Touch.button, t.preferred-width + 88px);
+    border-radius: 32px;
+    background: !enabled ? C.raised : kind == 1 ? (ta.pressed ? #e65c00 : C.accent) : kind == 2 ? C.neg-fill : kind == 3 ? C.stop : (ta.pressed ? C.off : C.button);
+    t := T {
+        text: label;
+        font-size: font;
+        font-weight: 600;
+        horizontal-alignment: center;
+        color: !enabled ? C.chevron : kind == 1 ? C.on-accent : kind == 2 ? C.neg : kind == 3 ? #ffffff : C.fg;
+    }
+    ta := TouchArea {
+        enabled: enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <int> tone;
+    width: t.preferred-width + 48px;
+    height: 52px;
+    border-radius: 26px;
+    background: tone == 1 ? C.ok-fill : tone == 3 ? C.bad-fill : tone == 2 ? #1f0d00 : C.mark;
+    t := T {
+        text: label;
+        font-size: 30px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        color: tone == 1 ? C.ok : tone == 3 ? C.bad : tone == 2 ? C.warm : C.dim;
+    }
+}
+
+component Switch inherits Rectangle {
+    in property <bool> on;
+    callback toggled();
+    width: Touch.switch-w;
+    height: Touch.switch-h;
+    border-radius: self.height / 2;
+    background: on ? C.accent : C.off;
+    Rectangle {
+        x: on ? parent.width - self.width - 10px : 10px;
+        y: 10px;
+        width: parent.height - 20px;
+        height: parent.height - 20px;
+        border-radius: self.height / 2;
+        background: on ? C.on-accent : #e6e6e6;
+    }
+    TouchArea {
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+// A QR code on its white card: the card is the quiet zone.
+component Qr inherits Rectangle {
+    in property <image> code;
+    in property <length> side: 440px;
+    in property <length> pad: 20px;
+    width: side;
+    height: side;
+    border-radius: pad * 1.8;
+    background: #ffffff;
+    Image {
+        x: pad;
+        y: pad;
+        width: parent.width - 2 * pad;
+        height: parent.height - 2 * pad;
+        source: code;
+        image-rendering: pixelated;
+    }
+}
+
+// The small "Manage via web" in a page's header: its QR, which opens the full one.
+component WebChip inherits Rectangle {
+    in property <image> code;
+    callback clicked();
+    width: Touch.web-chip + 24px + label.preferred-width + 32px;
+    height: Touch.web-chip;
+    border-radius: 28px;
+    background: ta.pressed ? C.selected : C.card;
+    HorizontalLayout {
+        padding: 8px;
+        padding-right: 32px;
+        spacing: 24px;
+        Qr {
+            code: root.code;
+            side: Touch.web-chip - 16px;
+            pad: 6px;
+        }
+        label := T {
+            text: "Manage via web";
+            font-size: 30px;
+            font-weight: 600;
+            color: C.dim;
+        }
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component RailItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> on;
+    in property <bool> logo;
+    callback clicked();
+    width: Touch.rail-item;
+    height: Touch.rail-item;
+    border-radius: 36px;
+    background: on ? C.accent : ta.pressed ? C.selected : transparent;
+    VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+        HorizontalLayout {
+            alignment: center;
+            if logo: Image {
+                source: @image-url("logo.svg");
+                width: 68px;
+                height: 68px;
+            }
+            if !logo: Icon {
+                d: icon;
+                tint: on ? C.on-accent : C.dim;
+            }
+        }
+        T {
+            text: label;
+            font-size: 30px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            color: on ? C.on-accent : C.dim;
+        }
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Rail inherits Rectangle {
+    in property <int> page;
+    callback act(string);
+    width: 208px;
+    background: C.rail;
+    RailItem {
+        x: (parent.width - self.width) / 2;
+        y: 20px;
+        label: "Home";
+        logo: true;
+        clicked => {
+            root.act("home");
+        }
+    }
+    VerticalLayout {
+        x: 0;
+        y: 20px + Touch.rail-item;
+        width: parent.width;
+        height: parent.height - 2 * (20px + Touch.rail-item);
+        alignment: center;
+        spacing: 28px;
+        for item[i] in [
+            { label: "Status", icon: Icons.status },
+            { label: "Services", icon: Icons.services },
+            { label: "Network", icon: Icons.network },
+            { label: "Device", icon: Icons.device },
+        ]: HorizontalLayout {
+            alignment: center;
+            RailItem {
+                label: item.label;
+                icon: item.icon;
+                on: i == root.page;
+                clicked => {
+                    root.act("page:" + i);
+                }
+            }
+        }
+    }
+}
+
+component PageHeader inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> note;
+    in property <bool> note-mono;
+    in property <image> web;
+    in property <bool> web-shown: true;
+    callback act(string);
+    height: 104px;
+    spacing: 32px;
+    T {
+        text: title;
+        font-size: 60px;
+        font-weight: 700;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    if note != "": T {
+        text: note;
+        font-size: 30px;
+        font-family: note-mono ? C.mono : C.ui;
+        color: C.dim;
+    }
+    if web-shown: VerticalLayout {
+        alignment: center;
+        WebChip {
+            code: root.web;
+            clicked => {
+                root.act("web");
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- Status
+
+component AlertCard inherits Rectangle {
+    in property <CAlert> a;
+    callback act(string);
+    min-height: 168px;
+    border-radius: 44px;
+    background: a.tone == 3 ? #1f0f0d : #1f0d00;
+    border-width: 4px;
+    border-color: a.tone == 3 ? #6a2a24 : #803300;
+    HorizontalLayout {
+        padding-left: 40px;
+        padding-right: 36px;
+        padding-top: 28px;
+        padding-bottom: 28px;
+        spacing: 32px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            horizontal-stretch: 1;
+            T {
+                text: a.title;
+                font-size: 42px;
+                font-weight: 700;
+                color: a.tone == 3 ? C.bad : C.warm;
+                wrap: word-wrap;
+            }
+            if a.text != "": T {
+                text: a.text;
+                font-size: 30px;
+                color: C.dim;
+                wrap: word-wrap;
+            }
+        }
+        if a.button != "": VerticalLayout {
+            alignment: center;
+            Btn {
+                label: a.button;
+                kind: 1;
+                clicked => {
+                    root.act(a.id);
+                }
+            }
+        }
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <CTile> t;
+    callback act(string);
+    border-radius: 36px;
+    background: ta.pressed && t.id != "" ? C.selected : C.card;
+    VerticalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 24px;
+        padding-bottom: 24px;
+        spacing: 8px;
+        alignment: center;
+        T {
+            text: t.label;
+            font-size: 30px;
+            color: C.dim;
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            T {
+                text: t.value;
+                font-family: C.mono;
+                font-size: 44px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            if t.unit != "": T {
+                text: t.unit;
+                font-family: C.mono;
+                font-size: 30px;
+                color: C.dim;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if t.chip != "": VerticalLayout {
+                alignment: center;
+                Chip {
+                    label: t.chip;
+                    tone: t.chip-tone;
+                }
+            }
+        }
+    }
+    ta := TouchArea {
+        enabled: t.id != "";
+        clicked => {
+            root.act(t.id);
+        }
+    }
+}
+
+component WebCard inherits Rectangle {
+    in property <CWeb> web;
+    in property <length> qr-side: 440px;
+    border-radius: 44px;
+    background: C.card;
+    VerticalLayout {
+        padding: 40px;
+        padding-top: 36px;
+        spacing: 20px;
+        T {
+            text: "Manage via web";
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Qr {
+                code: web.qr;
+                side: qr-side;
+            }
+        }
+        T {
+            text: web.url;
+            font-family: C.mono;
+            font-weight: 700;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        T {
+            text: web.host;
+            font-family: C.mono;
+            font-size: 30px;
+            color: C.dim;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+        T {
+            text: web.note;
+            font-size: 30px;
+            color: C.dim;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component StatusPage inherits Rectangle {
+    in property <CStatus> s;
+    in property <CWeb> web;
+    callback act(string);
+    HorizontalLayout {
+        padding-left: 52px;
+        padding-right: 52px;
+        padding-top: 44px;
+        padding-bottom: 44px;
+        spacing: 32px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 24px;
+            HorizontalLayout {
+                height: 104px;
+                T {
+                    text: s.heading;
+                    font-size: 60px;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+            }
+            for a in s.alerts: AlertCard {
+                a: a;
+                act(id) => {
+                    root.act(id);
+                }
+            }
+            GridLayout {
+                spacing: 24px;
+                vertical-stretch: 1;
+                Row {
+                    if s.tiles.length > 0: Tile {
+                        t: s.tiles[0];
+                        act(id) => {
+                            root.act(id);
+                        }
+                    }
+                    if s.tiles.length > 1: Tile {
+                        t: s.tiles[1];
+                    }
+                }
+                Row {
+                    if s.tiles.length > 2: Tile {
+                        t: s.tiles[2];
+                    }
+                    if s.tiles.length > 3: Tile {
+                        t: s.tiles[3];
+                    }
+                }
+            }
+        }
+        WebCard {
+            width: 600px;
+            web: root.web;
+        }
+    }
+}
+
+// ------------------------------------------------------------------- Services
+
+component Mark inherits Rectangle {
+    in property <string> letter;
+    in property <bool> large;
+    width: large ? 112px : 80px;
+    height: self.width;
+    border-radius: large ? 32px : 24px;
+    background: large ? #2a2a2a : C.mark;
+    T {
+        text: letter;
+        font-family: C.mono;
+        font-size: large ? 48px : 34px;
+        font-weight: 700;
+        color: #e6e6e6;
+        horizontal-alignment: center;
+    }
+}
+
+component ServiceRow inherits Rectangle {
+    in property <CService> r;
+    callback act(string);
+    height: Touch.service-row;
+    border-radius: 32px;
+    background: r.selected ? C.selected : ta.pressed ? C.raised : transparent;
+    ta := TouchArea {
+        clicked => {
+            root.act("select:" + r.id);
+        }
+    }
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 12px;
+        spacing: 24px;
+        VerticalLayout {
+            alignment: center;
+            Mark {
+                letter: r.initial;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            T {
+                text: r.name;
+                font-weight: 600;
+                overflow: elide;
+            }
+            T {
+                text: r.state;
+                font-size: 30px;
+                font-weight: 600;
+                overflow: elide;
+                color: r.tone == 1 ? C.ok : r.tone == 3 ? C.bad : r.tone == 2 ? C.warm : C.dim;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Switch {
+                on: r.on;
+                toggled => {
+                    root.act("switch:" + r.id);
+                }
+            }
+        }
+    }
+}
+
+component ServicesPage inherits Rectangle {
+    in property <CServices> s;
+    in property <image> web;
+    callback act(string);
+    VerticalLayout {
+        padding-left: 52px;
+        padding-right: 52px;
+        padding-top: 44px;
+        padding-bottom: 44px;
+        spacing: 28px;
+        PageHeader {
+            title: "Services";
+            note: s.count;
+            web: root.web;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        HorizontalLayout {
+            spacing: 32px;
+            vertical-stretch: 1;
+            Rectangle {
+                width: 700px;
+                border-radius: 44px;
+                background: C.card;
+                Flickable {
+                    x: 20px;
+                    y: 20px;
+                    width: parent.width - 40px;
+                    height: parent.height - 40px;
+                    content-height: list.preferred-height;
+                    list := VerticalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        for r in s.rows: ServiceRow {
+                            r: r;
+                            act(id) => {
+                                root.act(id);
+                            }
+                        }
+                    }
+                }
+            }
+            if s.has-detail: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 44px;
+                background: C.card;
+                VerticalLayout {
+                    padding-left: 40px;
+                    padding-right: 40px;
+                    padding-top: 36px;
+                    padding-bottom: 36px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        spacing: 28px;
+                        padding-bottom: 8px;
+                        Mark {
+                            letter: s.initial;
+                            large: true;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            T {
+                                text: s.name;
+                                font-size: 52px;
+                                font-weight: 700;
+                                overflow: elide;
+                            }
+                            if s.sub != "": T {
+                                text: s.sub;
+                                font-size: 30px;
+                                color: C.dim;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Chip {
+                                label: s.chip;
+                                tone: s.chip-tone;
+                            }
+                        }
+                    }
+                    for kv in s.kvs: HorizontalLayout {
+                        spacing: 32px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        T {
+                            width: 260px;
+                            text: kv.label;
+                            color: C.dim;
+                        }
+                        T {
+                            horizontal-stretch: 1;
+                            text: kv.value;
+                            font-family: kv.mono ? C.mono : C.ui;
+                            font-size: kv.mono ? 32px : 36px;
+                            overflow: elide;
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        alignment: end;
+                        Btn {
+                            label: "Restart";
+                            enabled: s.can-restart;
+                            clicked => {
+                                root.act("restart:" + s.name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- Network
+
+component StepRow inherits Rectangle {
+    in property <CStep> st;
+    in property <bool> last;
+    height: 132px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 28px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 72px;
+                height: 72px;
+                border-radius: 36px;
+                background: st.kind == 1 ? C.ok-fill : st.kind == 2 ? C.bad-fill : C.mark;
+                Icon {
+                    d: st.kind == 1 ? Icons.check : st.kind == 2 ? Icons.cross : Icons.dash;
+                    size: 40px;
+                    weight: 3;
+                    tint: st.kind == 1 ? C.ok : st.kind == 2 ? C.bad : C.faint;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            T {
+                text: st.name;
+                font-weight: 600;
+            }
+            if st.detail != "": T {
+                text: st.detail;
+                font-size: 30px;
+                color: C.dim;
+                overflow: elide;
+            }
+        }
+        if st.value != "": T {
+            text: st.value;
+            font-family: C.mono;
+            font-size: 30px;
+            color: C.dim;
+        }
+    }
+    if !last: Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        background: C.line;
+    }
+}
+
+component NetworkPage inherits Rectangle {
+    in property <CNetwork> n;
+    in property <image> web;
+    callback act(string);
+    VerticalLayout {
+        padding-left: 52px;
+        padding-right: 52px;
+        padding-top: 44px;
+        padding-bottom: 44px;
+        spacing: 28px;
+        PageHeader {
+            title: "Network check";
+            web: root.web;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        HorizontalLayout {
+            spacing: 32px;
+            vertical-stretch: 1;
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 44px;
+                background: C.card;
+                VerticalLayout {
+                    padding-left: 32px;
+                    padding-right: 32px;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    alignment: start;
+                    for st[i] in n.steps: StepRow {
+                        st: st;
+                        last: i == n.steps.length - 1;
+                    }
+                }
+            }
+            Rectangle {
+                width: 600px;
+                border-radius: 44px;
+                background: C.card;
+                VerticalLayout {
+                    padding-left: 36px;
+                    padding-right: 36px;
+                    padding-top: 32px;
+                    padding-bottom: 32px;
+                    spacing: 20px;
+                    T {
+                        text: n.title;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                        color: n.tone == 3 ? C.bad : n.tone == 1 ? C.ok : C.fg;
+                    }
+                    T {
+                        text: n.text;
+                        font-size: 30px;
+                        color: C.dim;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    if !n.ok: Btn {
+                        label: "Use a public name server";
+                        kind: 1;
+                        font: 34px;
+                        clicked => {
+                            root.act("net-public-dns");
+                        }
+                    }
+                    if !n.ok: Btn {
+                        label: "Renew address";
+                        clicked => {
+                            root.act("net-renew");
+                        }
+                    }
+                    if n.fixed: Btn {
+                        label: "Undo";
+                        clicked => {
+                            root.act("net-undo-dns");
+                        }
+                    }
+                    if !n.fixed: Btn {
+                        label: "Check again";
+                        clicked => {
+                            root.act("net-check");
+                        }
+                    }
+                    if n.ok: Btn {
+                        label: "Done";
+                        kind: 1;
+                        clicked => {
+                            root.act("net-done");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- Device
+
+component Group inherits T {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: C.faint;
+    height: 52px;
+    vertical-alignment: bottom;
+}
+
+// tone: 0 plain, 1 recovery (orange icon), 2 negative
+component ListRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> note;
+    in property <int> tone;
+    in property <bool> chevron: true;
+    in property <bool> first;
+    callback clicked();
+    height: Touch.row;
+    background: ta.pressed ? C.raised : transparent;
+    if !first: Rectangle {
+        y: 0;
+        height: 2px;
+        background: C.line;
+    }
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 28px;
+        spacing: 28px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                d: icon;
+                size: 48px;
+                tint: tone == 1 ? C.warm : tone == 2 ? C.bad : C.soft;
+            }
+        }
+        T {
+            text: label;
+            font-weight: 600;
+            horizontal-stretch: 1;
+            color: tone == 2 ? C.bad : C.fg;
+            overflow: elide;
+        }
+        if note != "": T {
+            text: note;
+            font-size: 30px;
+            color: C.dim;
+        }
+        if chevron: VerticalLayout {
+            alignment: center;
+            Icon {
+                d: Icons.chevron;
+                size: 40px;
+                weight: 2.4;
+                tint: C.chevron;
+            }
+        }
+    }
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component List inherits Rectangle {
+    border-radius: 36px;
+    background: C.card;
+    clip: true;
+}
+
+component DevicePage inherits Rectangle {
+    in property <CDevice> d;
+    in property <image> web;
+    callback act(string);
+    VerticalLayout {
+        padding-left: 52px;
+        padding-right: 52px;
+        padding-top: 40px;
+        padding-bottom: 40px;
+        spacing: 24px;
+        PageHeader {
+            title: "Device";
+            note: d.subtitle;
+            note-mono: true;
+            web: root.web;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        HorizontalLayout {
+            spacing: 32px;
+            vertical-stretch: 1;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: start;
+                spacing: 12px;
+                Group {
+                    text: "GET BACK IN";
+                }
+                List {
+                    VerticalLayout {
+                        ListRow {
+                            first: true;
+                            icon: Icons.key;
+                            label: "Reset web password";
+                            note: "One-time QR";
+                            tone: 1;
+                            clicked => {
+                                root.act("reset-web");
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.terminal;
+                            label: "Reset SSH access";
+                            note: "Remove all keys";
+                            tone: 1;
+                            clicked => {
+                                root.act("reset-ssh");
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.pin;
+                            label: "Screen PIN";
+                            note: "Change";
+                            tone: 1;
+                            clicked => {
+                                root.act("change-pin");
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.qr;
+                            label: "Web admin address";
+                            note: "Show QR";
+                            clicked => {
+                                root.act("web");
+                            }
+                        }
+                    }
+                }
+                Group {
+                    text: "NETWORK";
+                }
+                List {
+                    VerticalLayout {
+                        ListRow {
+                            first: true;
+                            icon: Icons.status;
+                            label: "Network check";
+                            note: d.network-note;
+                            clicked => {
+                                root.act("page:2");
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.network;
+                            label: "Wi-Fi";
+                            note: d.wifi-note;
+                            clicked => {
+                                root.act("wifi");
+                            }
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: start;
+                spacing: 12px;
+                Group {
+                    text: "SCREEN";
+                }
+                List {
+                    VerticalLayout {
+                        VerticalLayout {
+                            padding-left: 32px;
+                            padding-right: 32px;
+                            padding-top: 28px;
+                            padding-bottom: 24px;
+                            spacing: 20px;
+                            HorizontalLayout {
+                                T {
+                                    text: "Turn display off after";
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                T {
+                                    text: d.off-label;
+                                    font-size: 30px;
+                                    color: C.dim;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                for o[i] in ["1 min", "5 min", "15 min", "1 hour", "Never"]: Rectangle {
+                                    height: Touch.segment;
+                                    border-radius: 24px;
+                                    background: i == d.off-index ? C.accent : C.key;
+                                    T {
+                                        text: o;
+                                        font-size: 30px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        color: i == d.off-index ? C.on-accent : #e6e6e6;
+                                    }
+                                    TouchArea {
+                                        clicked => {
+                                            root.act("display-off:" + i);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.sun;
+                            label: "Brightness";
+                            note: d.brightness;
+                            chevron: false;
+                            clicked => {
+                                root.act("brightness");
+                            }
+                        }
+                    }
+                }
+                Group {
+                    text: "THIS DEVICE";
+                }
+                List {
+                    VerticalLayout {
+                        ListRow {
+                            first: true;
+                            icon: Icons.restart;
+                            label: "Restart";
+                            chevron: false;
+                            clicked => {
+                                root.act("power");
+                            }
+                        }
+                        ListRow {
+                            icon: Icons.power;
+                            label: "Shut down";
+                            tone: 2;
+                            chevron: false;
+                            clicked => {
+                                root.act("power");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- Over the pages
+
+// The keys of both full-screen keyboards: four rows of ten from Rust, then Shift, #+=, space
+// and delete.
+component Keys inherits Rectangle {
+    in property <CKeyboard> kb;
+    in property <length> key-h;
+    in property <length> font: 48px;
+    callback key(string);
+    property <length> gap: 16px;
+    property <length> kw: (self.width - 9 * gap) / 10;
+    height: 5 * key-h + 4 * gap;
+    for k[i] in kb.keys: Rectangle {
+        x: Math.mod(i, 10) * (kw + gap);
+        y: Math.floor(i / 10) * (key-h + gap);
+        width: kw;
+        height: key-h;
+        border-radius: 28px;
+        background: kt.pressed ? C.off : C.key;
+        T {
+            text: k;
+            font-size: font;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+        kt := TouchArea {
+            clicked => {
+                root.key("kb:" + k);
+            }
+        }
+    }
+    for f[j] in [
+        { id: "shift", span: 2, at: 0 },
+        { id: "symbols", span: 1, at: 2 },
+        { id: "space", span: 5, at: 3 },
+        { id: "back", span: 2, at: 8 },
+    ]: Rectangle {
+        x: f.at * (kw + gap);
+        y: 4 * (key-h + gap);
+        width: f.span * kw + (f.span - 1) * gap;
+        height: key-h;
+        border-radius: 28px;
+        background: ft.pressed ? C.off : (f.id == "shift" && kb.shift) || (f.id == "symbols" && kb.symbols) ? C.accent : C.card;
+        if f.id == "shift": Icon {
+            d: Icons.shift;
+            size: 52px;
+            tint: kb.shift ? C.on-accent : C.soft;
+        }
+        if f.id == "back": Icon {
+            d: Icons.delete;
+            size: 52px;
+            tint: C.soft;
+        }
+        if f.id == "symbols" || f.id == "space": T {
+            text: f.id == "space" ? "space" : kb.symbols ? "abc" : "#+=";
+            font-size: 36px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            color: f.id == "symbols" && kb.symbols ? C.on-accent : C.soft;
+        }
+        ft := TouchArea {
+            clicked => {
+                root.key(f.id);
+            }
+        }
+    }
+}
+
+component UnlockView inherits Rectangle {
+    in property <CKeyboard> kb;
+    callback key(string);
+    background: C.ground;
+    TouchArea { }
+    VerticalLayout {
+        padding: 32px;
+        spacing: 24px;
+        HorizontalLayout {
+            spacing: 28px;
+            height: 96px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    d: Icons.lock;
+                    size: 68px;
+                    tint: C.warm;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                T {
+                    text: kb.title;
+                    font-size: 52px;
+                    font-weight: 700;
+                }
+                T {
+                    text: kb.error != "" ? kb.error : kb.sub;
+                    font-size: 30px;
+                    color: kb.error != "" ? C.bad : C.dim;
+                    overflow: elide;
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 24px;
+            height: 128px;
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 32px;
+                background: C.card;
+                border-width: 4px;
+                border-color: C.accent;
+                HorizontalLayout {
+                    padding-left: 36px;
+                    padding-right: 16px;
+                    spacing: 24px;
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+                        alignment: start;
+                        T {
+                            text: kb.text;
+                            font-family: C.mono;
+                            font-size: 52px;
+                            font-weight: 700;
+                            letter-spacing: kb.reveal ? 0px : 6px;
+                            overflow: elide;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 6px;
+                                height: 56px;
+                                background: C.accent;
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: Touch.eye;
+                            height: Touch.eye;
+                            border-radius: 24px;
+                            background: kb.reveal ? C.selected : C.button;
+                            Icon {
+                                d: Icons.eye;
+                                size: 48px;
+                                tint: C.soft;
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.key("eye");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Leave it locked";
+                    clicked => {
+                        root.key("cancel");
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: kb.done;
+                    kind: 1;
+                    clicked => {
+                        root.key("done");
+                    }
+                }
+            }
+        }
+        Keys {
+            kb: root.kb;
+            key-h: Touch.key-unlock;
+            key(k) => {
+                root.key(k);
+            }
+        }
+    }
+}
+
+component KeyboardView inherits Rectangle {
+    in property <CKeyboard> kb;
+    callback key(string);
+    background: C.ground;
+    TouchArea { }
+    VerticalLayout {
+        padding: 32px;
+        spacing: 28px;
+        HorizontalLayout {
+            spacing: 24px;
+            height: 168px;
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 36px;
+                background: C.card;
+                border-width: 4px;
+                border-color: C.accent;
+                VerticalLayout {
+                    padding-left: 36px;
+                    padding-right: 36px;
+                    alignment: center;
+                    spacing: 4px;
+                    T {
+                        text: kb.error != "" ? kb.error : kb.label;
+                        font-size: 30px;
+                        font-weight: 600;
+                        color: kb.error != "" ? C.bad : C.warm;
+                        overflow: elide;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        T {
+                            text: kb.text;
+                            font-family: C.mono;
+                            font-size: 56px;
+                            font-weight: 500;
+                            overflow: elide;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 6px;
+                                height: 60px;
+                                background: C.accent;
+                            }
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: "Cancel";
+                    height: 112px;
+                    clicked => {
+                        root.key("cancel");
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    label: kb.done;
+                    kind: 1;
+                    height: 112px;
+                    clicked => {
+                        root.key("done");
+                    }
+                }
+            }
+        }
+        Keys {
+            kb: root.kb;
+            key-h: Touch.key-text;
+            font: 52px;
+            key(k) => {
+                root.key(k);
+            }
+        }
+    }
+}
+
+component PinView inherits Rectangle {
+    in property <CPin> pin;
+    callback key(string);
+    background: C.ground;
+    TouchArea { }
+    HorizontalLayout {
+        padding-left: 112px;
+        padding-right: 112px;
+        padding-top: 80px;
+        padding-bottom: 80px;
+        spacing: 80px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 36px;
+            Image {
+                source: @image-url("logo.svg");
+                width: 128px;
+                height: 128px;
+            }
+            T {
+                text: "Enter the screen PIN";
+                font-size: 72px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            T {
+                text: pin.wrong ? "That's not the PIN" : pin.busy ? "Checking…" : pin.sub;
+                color: pin.wrong ? C.bad : C.dim;
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 32px;
+                for i in 6: Rectangle {
+                    width: 52px;
+                    height: 52px;
+                    border-radius: 26px;
+                    background: i < pin.digits ? C.accent : transparent;
+                    border-width: i < pin.digits ? 0px : 6px;
+                    border-color: #5c5c5c;
+                }
+            }
+            T {
+                text: "The PIN guards changes made on this screen. It is not the device passphrase.";
+                font-size: 30px;
+                color: C.dim;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 24px;
+            for row in [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["cancel", "0", "back"]]: HorizontalLayout {
+                spacing: 24px;
+                for k in row: Rectangle {
+                    width: 256px;
+                    height: Touch.pin-key;
+                    border-radius: 40px;
+                    background: pk.pressed ? C.off : k == "cancel" || k == "back" ? C.card : C.key;
+                    if k != "back": T {
+                        text: k == "cancel" ? "Cancel" : k;
+                        font-family: k == "cancel" ? C.ui : C.mono;
+                        font-size: k == "cancel" ? 40px : 72px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        color: k == "cancel" ? C.soft : C.fg;
+                    }
+                    if k == "back": Icon {
+                        d: Icons.delete;
+                        size: 64px;
+                        tint: C.soft;
+                    }
+                    pk := TouchArea {
+                        enabled: !pin.busy;
+                        clicked => {
+                            root.key("pin:" + k);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ResetView inherits Rectangle {
+    in property <CReset> r;
+    callback act(string);
+    background: C.ground;
+    TouchArea { }
+    HorizontalLayout {
+        padding-left: 104px;
+        padding-right: 104px;
+        padding-top: 72px;
+        padding-bottom: 72px;
+        spacing: 88px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 28px;
+            alignment: center;
+            HorizontalLayout {
+                spacing: 20px;
+                alignment: start;
+                Icon {
+                    d: Icons.check;
+                    size: 44px;
+                    weight: 3;
+                    tint: C.ok;
+                }
+                T {
+                    text: "Old web password removed";
+                    font-size: 32px;
+                    font-weight: 700;
+                    color: C.ok;
+                }
+            }
+            T {
+                text: "Scan to set a new one";
+                font-size: 68px;
+                font-weight: 700;
+            }
+            T {
+                text: "Open the link on your phone or computer and choose a new password. It works once, for the next 15 minutes.";
+                font-size: 34px;
+                color: C.dim;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: code.preferred-width + 80px;
+                    height: 116px;
+                    border-radius: 36px;
+                    background: C.card;
+                    code := T {
+                        text: r.code;
+                        font-family: C.mono;
+                        font-size: 76px;
+                        font-weight: 700;
+                        letter-spacing: 4px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+            T {
+                text: "Or go to " + r.page + " and type the code.";
+                font-size: 34px;
+                color: C.dim;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 24px; }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 24px;
+                Btn {
+                    label: "Done";
+                    kind: 1;
+                    clicked => {
+                        root.act("reset-done");
+                    }
+                }
+                Btn {
+                    label: "New code";
+                    clicked => {
+                        root.act("reset-new");
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Qr {
+                code: r.qr;
+                side: 640px;
+                pad: 28px;
+            }
+        }
+    }
+}
+
+// A card over a dimmed page: a question, or one of the sheets.
+component Sheet inherits Rectangle {
+    in property <string> title;
+    in property <bool> closable: true;
+    in property <bool> danger;
+    callback close();
+    background: #000000c8;
+    TouchArea { }
+    body := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 1240px;
+        height: content.preferred-height;
+        border-radius: 44px;
+        background: C.card;
+        border-width: 2px;
+        border-color: danger ? #6a2a24 : C.mark;
+        content := VerticalLayout {
+            padding: 56px;
+            spacing: 28px;
+            HorizontalLayout {
+                spacing: 24px;
+                T {
+                    text: title;
+                    font-size: 48px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                    color: danger ? C.bad : C.fg;
+                }
+                if closable: Btn {
+                    label: "Close";
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+            @children
+        }
+    }
+}
+
+component SwitchRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> note;
+    in property <bool> on;
+    callback toggled();
+    height: Touch.row;
+    spacing: 24px;
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        T {
+            text: label;
+            font-weight: 600;
+        }
+        if note != "": T {
+            text: note;
+            font-size: 30px;
+            color: C.dim;
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        Switch {
+            on: root.on;
+            toggled => {
+                root.toggled();
+            }
+        }
+    }
+}
+
+export component ConsoleView inherits Rectangle {
+    in property <int> page;
+    // 0 none, 1 unlock, 2 keyboard, 3 pin, 4 reset, 5 dialog, 6 wifi, 7 logo, 8 web
+    in property <int> overlay;
+    in property <CStatus> status;
+    in property <CWeb> web;
+    in property <CServices> services;
+    in property <CNetwork> network;
+    in property <CDevice> device;
+    in property <CKeyboard> keyboard;
+    in property <CPin> pin;
+    in property <CReset> reset;
+    in property <CDialog> dialog;
+    in property <CWifiSheet> wifi;
+    in property <CLogo> logo;
+    in property <string> toast;
+    in property <bool> toast-error;
+    callback act(string);
+    callback key(string);
+    background: C.ground;
+
+    Rail {
+        x: 0;
+        y: 0;
+        height: parent.height;
+        page: root.page;
+        act(id) => {
+            root.act(id);
+        }
+    }
+    Rectangle {
+        x: 208px;
+        y: 0;
+        width: parent.width - 208px;
+        height: parent.height;
+        if page == 0: StatusPage {
+            s: root.status;
+            web: root.web;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        if page == 1: ServicesPage {
+            s: root.services;
+            web: root.web.qr;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        if page == 2: NetworkPage {
+            n: root.network;
+            web: root.web.qr;
+            act(id) => {
+                root.act(id);
+            }
+        }
+        if page == 3: DevicePage {
+            d: root.device;
+            web: root.web.qr;
+            act(id) => {
+                root.act(id);
+            }
+        }
+    }
+
+    if overlay == 1: UnlockView {
+        kb: root.keyboard;
+        key(k) => {
+            root.key(k);
+        }
+    }
+    if overlay == 2: KeyboardView {
+        kb: root.keyboard;
+        key(k) => {
+            root.key(k);
+        }
+    }
+    if overlay == 3: PinView {
+        pin: root.pin;
+        key(k) => {
+            root.key(k);
+        }
+    }
+    if overlay == 4: ResetView {
+        r: root.reset;
+        act(id) => {
+            root.act(id);
+        }
+    }
+    if overlay == 5: Sheet {
+        title: root.dialog.title;
+        danger: root.dialog.danger;
+        closable: false;
+        T {
+            text: root.dialog.text;
+            color: C.dim;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 24px;
+            if root.dialog.yes != "": Btn {
+                label: "Cancel";
+                clicked => {
+                    root.act("dialog-close");
+                }
+            }
+            Btn {
+                label: root.dialog.yes != "" ? root.dialog.yes : "OK";
+                kind: root.dialog.danger && root.dialog.yes != "" ? 3 : 1;
+                clicked => {
+                    root.act(root.dialog.yes != "" ? "dialog-yes" : "dialog-close");
+                }
+            }
+        }
+    }
+    if overlay == 6: Sheet {
+        title: "Wi-Fi";
+        close => {
+            root.act("sheet-close");
+        }
+        if root.wifi.available: SwitchRow {
+            label: "Wi-Fi";
+            on: root.wifi.on;
+            toggled => {
+                root.act("wifi-toggle");
+            }
+        }
+        if root.wifi.note != "": T {
+            text: root.wifi.note;
+            font-size: 30px;
+            color: C.dim;
+            wrap: word-wrap;
+        }
+        for w in root.wifi.rows: Rectangle {
+            height: Touch.row;
+            border-radius: 28px;
+            background: wt.pressed ? C.selected : C.raised;
+            HorizontalLayout {
+                padding-left: 32px;
+                padding-right: 28px;
+                spacing: 24px;
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    T {
+                        text: w.ssid;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                }
+                T {
+                    text: w.note;
+                    font-size: 30px;
+                    color: C.dim;
+                }
+                if w.joined: VerticalLayout {
+                    alignment: center;
+                    Chip {
+                        label: "Joined";
+                        tone: 1;
+                    }
+                }
+                if !w.joined: VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        d: Icons.chevron;
+                        size: 40px;
+                        weight: 2.4;
+                        tint: C.chevron;
+                    }
+                }
+            }
+            wt := TouchArea {
+                enabled: !w.joined;
+                clicked => {
+                    root.act("wifi-join:" + w.ssid);
+                }
+            }
+        }
+    }
+    if overlay == 7: Sheet {
+        title: "Nodo logo tile";
+        close => {
+            root.act("sheet-close");
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            for o[i] in ["Drawn", "Text"]: Rectangle {
+                height: Touch.segment;
+                border-radius: 24px;
+                background: (i == 1) == root.logo.text ? C.accent : C.key;
+                T {
+                    text: o;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    color: (i == 1) == root.logo.text ? C.on-accent : #e6e6e6;
+                }
+                TouchArea {
+                    clicked => {
+                        root.act("logo-style:" + i);
+                    }
+                }
+            }
+        }
+        SwitchRow {
+            label: "Shimmer";
+            note: "The boot splash's glint, on the text style";
+            on: root.logo.shimmer;
+            toggled => {
+                root.act("logo-shimmer");
+            }
+        }
+        SwitchRow {
+            label: "Show the name";
+            on: root.logo.name;
+            toggled => {
+                root.act("logo-name");
+            }
+        }
+    }
+    if overlay == 8: Sheet {
+        title: "Manage via web";
+        close => {
+            root.act("sheet-close");
+        }
+        HorizontalLayout {
+            spacing: 48px;
+            Qr {
+                code: root.web.qr;
+                side: 520px;
+                pad: 24px;
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                T {
+                    text: root.web.url;
+                    font-family: C.mono;
+                    font-size: 44px;
+                    font-weight: 700;
+                    wrap: char-wrap;
+                }
+                T {
+                    text: root.web.host;
+                    font-family: C.mono;
+                    font-size: 30px;
+                    color: C.dim;
+                    wrap: word-wrap;
+                }
+                T {
+                    text: root.web.note;
+                    font-size: 30px;
+                    color: C.dim;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    if root.toast != "": Rectangle {
+        x: 208px + (parent.width - 208px - self.width) / 2;
+        y: parent.height - 152px;
+        width: min(1500px, toast-text.preferred-width + 96px);
+        height: 104px;
+        border-radius: 32px;
+        background: root.toast-error ? C.neg-fill : C.button;
+        border-width: 2px;
+        border-color: root.toast-error ? #6a2a24 : C.mark;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        toast-text := T {
+            text: root.toast;
+            font-size: 34px;
+            horizontal-alignment: center;
+            color: root.toast-error ? C.neg : C.fg;
+        }
+    }
+}

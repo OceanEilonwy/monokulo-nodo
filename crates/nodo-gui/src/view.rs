@@ -16,14 +16,18 @@ use crate::{ButtonView, CellView, GhostView, MainWindow, PickerRowView, RowView,
 
 pub mod colour {
     use slint::Color;
-    pub const FG: Color = Color::from_rgb_u8(0xD7, 0xDA, 0xDC);
-    pub const BRIGHT: Color = Color::from_rgb_u8(0xF4, 0xF5, 0xF6);
-    pub const DIM: Color = Color::from_rgb_u8(0x80, 0x88, 0x8E);
-    pub const BORDER: Color = Color::from_rgb_u8(0x3A, 0x40, 0x45);
-    pub const OK: Color = Color::from_rgb_u8(0x6F, 0xD6, 0xB3);
-    pub const ACCENT: Color = Color::from_rgb_u8(0xF2, 0xA3, 0x3A);
-    pub const ERR: Color = Color::from_rgb_u8(0xFF, 0x8A, 0x7A);
-    pub const INFO: Color = Color::from_rgb_u8(0x86, 0xBE, 0xFF);
+    // The design's: OLED black, neutral greys, Monero orange, and green and red for state only.
+    pub const FG: Color = Color::from_rgb_u8(0xF2, 0xF2, 0xF2);
+    pub const BRIGHT: Color = Color::from_rgb_u8(0xF2, 0xF2, 0xF2);
+    pub const DIM: Color = Color::from_rgb_u8(0xB3, 0xB3, 0xB3);
+    /// A tile has no outline unless it warns, fails or is selected.
+    pub const BORDER: Color = Color::from_rgb_u8(0x26, 0x26, 0x26);
+    pub const OK: Color = Color::from_rgb_u8(0x5F, 0xD3, 0xA8);
+    pub const ACCENT: Color = Color::from_rgb_u8(0xFF, 0x66, 0x00);
+    pub const WARM: Color = Color::from_rgb_u8(0xFF, 0x8C, 0x3A);
+    pub const ERR: Color = Color::from_rgb_u8(0xFF, 0xA1, 0x94);
+    /// Work in progress, such as a node that syncs: the accent, as the design draws it.
+    pub const INFO: Color = ACCENT;
 }
 
 use colour::*;
@@ -84,7 +88,7 @@ impl Tile {
             package: String::new(),
             dot: None,
             outline: BORDER,
-            outline_width: 2.0,
+            outline_width: 0.0,
             big: String::new(),
             unit: String::new(),
             big_colour: BRIGHT,
@@ -148,16 +152,16 @@ impl Tile {
 }
 
 // Heights in a tile's content, from the .slint file: what decides how many rows fit.
-const CONTENT_TOP: f32 = 52.0;
+const CONTENT_TOP: f32 = 68.0;
 const CONTENT_BOTTOM: f32 = 16.0;
-const BIG_HEIGHT: f32 = 92.0;
-const COMPACT_HEIGHT: f32 = 54.0;
+const BIG_HEIGHT: f32 = 112.0;
+const COMPACT_HEIGHT: f32 = 76.0;
 const BAR_HEIGHT: f32 = 22.0;
-const ROW_HEIGHT: f32 = 30.0;
+const ROW_HEIGHT: f32 = 42.0;
 const ROWS_GAP: f32 = 14.0;
-const SPARK_HEIGHT: f32 = 60.0 + 44.0 + 8.0;
-const NOTE_HEIGHT: f32 = 32.0;
-const PACKAGE_HEIGHT: f32 = 30.0;
+const SPARK_HEIGHT: f32 = 48.0 + 52.0 - CONTENT_BOTTOM + 8.0;
+const NOTE_HEIGHT: f32 = 40.0;
+const PACKAGE_HEIGHT: f32 = 44.0;
 
 /// Scales a series to its own range, newest values last, as many as the width shows well.
 fn spark(series: &[f64], width: f32) -> Vec<f32> {
@@ -195,10 +199,13 @@ fn viewing_tile(app: &App, index: usize, now: Instant) -> Tile {
         t.package = p.key.package.clone();
     }
     t.outline = match status {
-        Some(Status::Warn) => ACCENT,
+        Some(Status::Warn) => WARM,
         Some(Status::Error) => ERR,
         _ => BORDER,
     };
+    if matches!(status, Some(Status::Warn | Status::Error)) {
+        t.outline_width = 4.0;
+    }
     if matches!(status, Some(Status::Warn | Status::Error)) && !stale {
         t.title_colour = t.outline;
     }
@@ -227,7 +234,7 @@ fn viewing_tile(app: &App, index: usize, now: Instant) -> Tile {
         t.big = big.clone();
         t.unit = output.unit.clone().unwrap_or_default();
         t.big_colour = lit(match status {
-            Some(Status::Warn) => ACCENT,
+            Some(Status::Warn) => WARM,
             Some(Status::Error) => ERR,
             Some(Status::Idle) => DIM,
             _ => BRIGHT,
@@ -241,7 +248,7 @@ fn viewing_tile(app: &App, index: usize, now: Instant) -> Tile {
         }
     }
     if p.w >= 4 && !output.series.is_empty() {
-        t.series = spark(&output.series, rect.w - 48.0);
+        t.series = spark(&output.series, rect.w - 80.0);
         t.series_colour = lit(status_colour(status));
     }
     t.note = if stale {
@@ -280,7 +287,7 @@ fn arranging_tile(app: &App, index: usize) -> Tile {
     let mut t = Tile::empty(geometry::cells(p.x, p.y, p.w, p.h), app.title_of(&p.key).to_uppercase());
     t.arranging = true;
     t.selected = selected;
-    t.title_colour = if selected { ACCENT } else { FG };
+    t.title_colour = if selected { ACCENT } else { DIM };
     if selected {
         t.outline = ACCENT;
         t.outline_width = 4.0;
@@ -422,16 +429,18 @@ pub fn buttons(app: &App, now: Instant) -> Vec<ButtonLine> {
     list.into_iter()
         .map(|(b, rect)| {
             let (label, count, sub, kind, icon) = match b {
-                Button::Manage => ("Manage".to_string(), String::new(), "", 0, 2),
+                Button::Manage => (String::new(), String::new(), "", 0, 2),
                 Button::LogoOptions => ("Logo options".to_string(), String::new(), "", 0, 2),
-                Button::Arrange => ("Arrange".to_string(), String::new(), "", 0, 3),
-                Button::ShutDown => (app.button_label(b, now), String::new(), "", 1, 0),
+                Button::Arrange => (String::new(), String::new(), "", 0, 3),
+                Button::Lock => (String::new(), String::new(), "", if app.locked { 7 } else { 0 }, 4),
+                Button::ShutDown => (String::new(), String::new(), "", 1, 5),
                 Button::Hide | Button::Cancel => (app.button_label(b, now), String::new(), "", 2, 0),
                 Button::Undo => (app.button_label(b, now), String::new(), "", 4, 0),
                 Button::Add => ("+ Add panel".to_string(), app.hidden().len().to_string(), "", 2, 0),
                 Button::Save => (app.button_label(b, now), String::new(), "", 3, 0),
-                Button::KeepRunning => (app.button_label(b, now), String::new(), "keep running", 6, 0),
-                Button::ConfirmShutDown => (app.button_label(b, now), String::new(), "stop everything safely", 5, 0),
+                Button::KeepRunning => (app.button_label(b, now), String::new(), "", 6, 6),
+                Button::Restart => (app.button_label(b, now), String::new(), "", 6, 7),
+                Button::ConfirmShutDown => (app.button_label(b, now), String::new(), "", 5, 5),
                 Button::Back => (app.button_label(b, now), String::new(), "", 6, 0),
             };
             ButtonLine { rect, label, count, sub: sub.to_string(), kind, icon }
@@ -453,16 +462,16 @@ pub struct StepLine {
 /// The shutdown screen: its title and subtitle, a line per service, the bar and its note.
 pub fn shutdown(app: &App) -> (String, String, Vec<StepLine>, f32, String) {
     let s = &app.shutdown;
-    let title = if s.error.is_some() { "The Nodo did not shut down" } else { "Shutting down safely…" };
+    let title = if s.error.is_some() { "The Nodo did not shut down" } else { "Shutting down" };
     let subtitle = match &s.error {
         Some(error) => format!("{error}. It is still running: try again, or ask over SSH."),
-        None => "Do not unplug yet".to_string(),
+        None => "Safe to unplug once the screen goes dark.".to_string(),
     };
     let mut steps = Vec::new();
     for step in &s.services {
         let (mark, colour, state) = match step.state {
             StepState::Stopped => ("✓", OK, "stopped".to_string()),
-            StepState::TimedOut => ("…", ACCENT, "still saving; stopped at power off".to_string()),
+            StepState::TimedOut => ("…", WARM, "still saving; stopped at power off".to_string()),
             StepState::Stopping if step.name == "cuprated" || step.name == "monerod" => ("…", INFO, "saving its database".to_string()),
             StepState::Stopping => ("…", INFO, "stopping".to_string()),
         };
@@ -470,28 +479,16 @@ pub fn shutdown(app: &App) -> (String, String, Vec<StepLine>, f32, String) {
         let state_colour = if colour == OK { DIM } else { colour };
         steps.push(StepLine { mark, mark_colour: colour, name: step.name.clone(), name_colour: FG, state, state_colour, time });
     }
-    let disk = if s.synced { ("✓", OK, "saved") } else if s.syncing { ("…", INFO, "writing") } else { ("·", DIM, "waiting") };
-    steps.push(StepLine {
-        mark: disk.0,
-        mark_colour: disk.1,
-        name: "saving files to disk".into(),
-        name_colour: if disk.1 == DIM { DIM } else { FG },
-        state: disk.2.into(),
-        state_colour: if disk.1 == OK { DIM } else { disk.1 },
-        time: String::new(),
-    });
-    steps.push(StepLine { mark: "·", mark_colour: DIM, name: "turning off".into(), name_colour: DIM, state: "waiting".into(), state_colour: DIM, time: String::new() });
     let done = s.stopped() + usize::from(s.synced);
     let progress = if s.total > 0 { done as f32 / (s.total + 1) as f32 } else { 0.0 };
-    let waiting: Vec<&str> = s.services.iter().filter(|x| x.state == StepState::Stopping).map(|x| x.name.as_str()).collect();
     let note = if s.total == 0 {
-        String::new()
+        "Stopping services".to_string()
+    } else if s.total == s.stopped() && !s.synced {
+        "Saving files to disk".to_string()
     } else if s.total == s.stopped() {
-        "every service stopped".to_string()
-    } else if waiting.len() <= 2 && !waiting.is_empty() {
-        format!("{} of {} services stopped · waiting for {}", s.stopped(), s.total, waiting.join(" and "))
+        "Turning off".to_string()
     } else {
-        format!("{} of {} services stopped", s.stopped(), s.total)
+        format!("Stopping services · {} of {}", s.stopped(), s.total)
     };
     (title.to_string(), subtitle, steps, progress, note)
 }
@@ -624,6 +621,7 @@ impl Presenter {
             highlighted: p.highlighted,
         });
 
+        set!(get_power_note, set_power_note, SharedString::from(app.power_note.clone().unwrap_or_default()));
         if app.mode == Mode::ShuttingDown {
             let (title, subtitle, steps, progress, note) = shutdown(app);
             set!(get_shutdown_title, set_shutdown_title, SharedString::from(title));
@@ -721,13 +719,13 @@ mod tests {
             app.power_event(nodo_power::Event::parse(line).unwrap());
         }
         let (title, subtitle, steps, progress, note) = shutdown(&app);
-        assert_eq!(title, "Shutting down safely…");
-        assert_eq!(subtitle, "Do not unplug yet");
+        assert_eq!(title, "Shutting down");
+        assert_eq!(subtitle, "Safe to unplug once the screen goes dark.");
         assert_eq!(steps[0].state, "saving its database");
         assert_eq!(steps[1].time, "0.3 s");
-        assert_eq!(steps.len(), 4);
+        assert_eq!(steps.len(), 2);
         assert!((progress - 1.0 / 3.0).abs() < 1e-6);
-        assert_eq!(note, "1 of 2 services stopped · waiting for cuprated");
+        assert_eq!(note, "Stopping services · 1 of 2");
         assert_eq!(mode_number(&app), 4);
         app.power_event(nodo_power::Event::Off);
         assert_eq!(mode_number(&app), 5);

@@ -320,48 +320,47 @@ the black never change.
 - `nodo-splash --preview` prints the logo at rest and mid-glint in 24-bit colour, for a desktop
   terminal.
 
-## Managing the Nodo on the screen
+## The device console
 
-The tile grid is always the resting screen. Its top bar has a gear (**Manage**), **Arrange** and
-**Shut down**. Manage opens the same four tabs as the TUI, Home, Apps, Web and System, laid out for
-touch (`ui/manage.slint`, built from page models in `src/manage.rs`). The screen is a thin
-frontend over `crates/nodo-ui-core`: what an action does, what is asked first, what a result means
-and the wording of consequences are the core's flows, the same ones the TUI uses, so the screen and
-the TUI follow the same rules. `manage.rs` keeps the pages, the keyboard, the pickers and the
-dialog. Calls run on the core's worker thread; the screen returns to the tiles after the idle time
-set in System › Screen.
+The device's screen is a console, not a second admin (design: `docs/design/device-console/`,
+screenshots in its `shots/`). The tile grid is always the resting screen. Its top bar has
+**Manage** (sliders), **Arrange**, the device lock (orange while the device waits for its
+passphrase; it opens the passphrase) and **Shut down**. Manage opens the console: a rail with
+Home (back to the tiles), **Status**, **Services**, **Network** and **Device**
+(`ui/console.slint`, `src/console.rs`). It is a thin frontend over `crates/nodo-ui-core`, whose
+flows say what an action does and what a result means, the same ones the TUI and the web GUI use.
+Calls run on the core's worker thread; the console goes back to the tiles after two idle minutes.
 
-System also has a row for the web GUI that says whether it is on and where it answers. It is
-shown only: the web GUI is turned on and off over SSH, and the helper refuses the switch from the
-screen's socket.
+- **Status** counts what needs the owner (an unlock after a restart, a missing data drive, a
+  service that keeps stopping, the health monitor's notes) without naming apps, and shows the
+  internet link, the data drive, the temperature and memory.
+- **Services** turns a service on or off and restarts it, and shows its read-only details: its
+  addresses on the home network, the internet and Tor, its version and uptime.
+- **Network** checks the network step by step (link, address, router, names, internet) and joins
+  Wi-Fi with a passphrase (Device › Wi-Fi).
+- **Device** gets the owner back in (a one-time code to reset the web password, removing every SSH
+  key, the screen PIN), shows the web admin's QR code, sets when the display turns off and its
+  brightness, and restarts or shuts down after a confirmation.
 
-What the touchscreen has no page for is done in the terminal, and the screen says so: bundles, an
-app's setup page, an update that asks for a new permission or grows encrypted storage (neither is
-ever applied from the screen), a site's other names, restoring a backup and Bluetooth.
+Every page points to the web admin with a QR code of its address ("Manage via web"). Apps,
+settings, hosting, updates, backups and logs are managed there, not on the screen.
 
-- **Settings and references.** Any text, number or address field can hold text, one
-  `$(app.setting)` reference or text mixed with references. References are chips showing what
-  they resolve to now (the helper's `PreviewSetting`); a broken one is red and its reason is in the
-  field's menu. Tapping a field offers Insert a reference (one generic picker over everything
-  `ListReferences` offers that fits the field), Replace…, Type a value instead and an undo. A secret
-  or non-public setting asks to allow it first (`SetGrant`). A value that does not fit its field
-  says why under the field, and Save refuses until it does. Saving lists new dependencies and
-  access first.
-- **Putting a site on the internet.** Save applies the home network and Tor choices, saves the
-  address and runs the reachability check. Only when the check passes does the confirmation come,
-  in a dialog that starts on Cancel, and going on means typing the address on the keyboard. A
-  failed check lists what failed and offers to check again.
-- **The on-screen keyboard** types values; `$(` in a field opens the reference picker. Paste is not
-  offered: the screen has no clipboard.
-- **System › Screen** sets the brightness, how far idle dims it, when management goes back to the
-  tiles, and the logo tile's options. They are kept in `/var/lib/nodo-screen/gui.toml`.
+Some of the design needs helper calls that do not exist yet: resetting the web password, removing
+every SSH key (the helper refuses to remove the last one), changing the screen PIN from the screen,
+restarting the device, the router, names and internet steps of the network check, switching to a
+public name server, renewing the address and a service's ports. Each is a method of
+`src/missing.rs`, which on the device says it is not available yet.
+
+Device › Screen's choices are kept in `/var/lib/nodo-screen/gui.toml`. "Turn display off after"
+turns the backlight off after that long without a touch (it still dims first, as set under
+Backlight); the first touch only lights it again.
 
 ### The Nodo logo tile
 
 A built-in tile, offered like any panel, from 2 x 2 up to the whole 8 x 4 grid (a wallpaper). It
 draws the vector logo or, in the Text style, the boot splash's block logo with the splash's glint
 crossing it once every four seconds (nodo-splash's grid and frames). While arranging with it
-selected, **Logo options** opens System › Screen.
+selected, **Logo options** opens its style, shimmer and name.
 
 ### Changes need the screen PIN
 
@@ -371,7 +370,7 @@ checked with SO_PEERCRED):
 
 - Requests that only read are always answered. Everything else is refused with `Locked` until the
   screen is unlocked with the 6-digit **screen PIN**; an unlock lasts until the screen has been
-  idle five minutes, and the lock pill (Locked / Unlocked) locks it again at once. A change that
+  idle five minutes, and leaving the console locks it again at once. A change that
   is refused opens the PIN pad, and runs again once the PIN is given, with whatever was typed for
   it.
 - The PIN is set or cleared over SSH with the device passphrase: `nodo-tui --ctl screen-pin` (or

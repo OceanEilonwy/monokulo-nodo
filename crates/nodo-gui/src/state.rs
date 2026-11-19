@@ -1,11 +1,11 @@
 //! The screen's state and what touches, clicks and keys do to it. Nothing here draws or does I/O.
 //!
 //! The same behaviour as nodo-screen's (the terminal variant), with positions in pixels:
-//! - viewing: tiles, with ☰ Arrange and ⏻ Shut down in the top bar;
+//! - viewing: tiles, with Manage, Arrange, the device lock and ⏻ Shut down in the top bar;
 //! - arranging: drag a tile to move it, drag its ⇲ corner to resize it, with Hide (then Undo),
 //!   + Add panel and Save in the top bar;
 //! - adding: a list of the panels not on the screen;
-//! - shutting down: a confirmation, then each service stopping, then "Safe to unplug".
+//! - shutting down: Cancel, Restart or Shut down, then each service stopping, then "Safe to unplug".
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -34,8 +34,10 @@ pub enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
-    /// Opens management (the gear).
+    /// Opens the console on Status (the sliders).
     Manage,
+    /// The device lock: unlocks after a restart.
+    Lock,
     Arrange,
     /// While arranging with the logo tile selected.
     LogoOptions,
@@ -47,8 +49,9 @@ pub enum Button {
     Save,
     /// Closes the list of panels to add.
     Cancel,
-    /// The confirmation's two buttons.
+    /// The power screen's three choices.
     KeepRunning,
+    Restart,
     ConfirmShutDown,
     /// Back to the panels after a shutdown that could not start.
     Back,
@@ -61,7 +64,11 @@ pub enum Effect {
     SaveLayout,
     PowerOff,
     OpenManage,
-    /// Opens System › Screen, where the logo tile's options are.
+    /// Opens the device passphrase, from the lock in the top bar.
+    OpenUnlock,
+    /// Restarts the device, from the power screen.
+    RestartDevice,
+    /// Opens the logo tile's options.
     LogoOptions,
 }
 
@@ -204,6 +211,10 @@ pub struct App {
     /// The keyboard moved through the list, so its row is highlighted; a finger needs no highlight.
     pub picker_keys: bool,
     pub shutdown: Shutdown,
+    /// The device waits for its passphrase: the lock in the top bar is lit.
+    pub locked: bool,
+    /// Said under the power screen's choices, such as why Restart did nothing.
+    pub power_note: Option<String>,
     press: Option<Instant>,
 }
 
@@ -227,6 +238,8 @@ impl App {
             logo: LogoLook::default(),
             picker_keys: false,
             shutdown: Shutdown::default(),
+            locked: false,
+            power_note: None,
             press: None,
         }
     }
@@ -262,6 +275,8 @@ impl App {
     pub fn button_label(&self, button: Button, now: Instant) -> String {
         match button {
             Button::Manage => "Manage".into(),
+            Button::Lock => if self.locked { "Locked" } else { "Unlocked" }.into(),
+            Button::Restart => "Restart".into(),
             Button::LogoOptions => "Logo options".into(),
             Button::Arrange => "Arrange".into(),
             Button::ShutDown => "⏻ Shut down".into(),
@@ -277,7 +292,7 @@ impl App {
             Button::Save => "Save".into(),
             Button::Cancel => "Cancel".into(),
             Button::KeepRunning => "Cancel".into(),
-            Button::ConfirmShutDown => "⏻ Shut down".into(),
+            Button::ConfirmShutDown => "Shut down".into(),
             Button::Back => "Back to the panels".into(),
         }
     }
@@ -285,7 +300,7 @@ impl App {
     /// The top bar's buttons and their rectangles, right-aligned.
     pub fn banner_buttons(&self, now: Instant) -> Vec<(Button, Rect)> {
         let list: Vec<(Button, f32)> = match self.mode {
-            Mode::View => vec![(Button::Manage, 224.0), (Button::Arrange, 224.0), (Button::ShutDown, 260.0)],
+            Mode::View => [Button::Manage, Button::Arrange, Button::Lock, Button::ShutDown].map(|b| (b, geometry::ICON_BUTTON)).to_vec(),
             Mode::Edit => {
                 let mut list = Vec::new();
                 if self.selected.and_then(|i| self.layout.placements.get(i)).is_some_and(|p| p.key == logo_key()) {
@@ -311,8 +326,8 @@ impl App {
     pub fn screen_buttons(&self) -> Vec<(Button, Rect)> {
         match self.mode {
             Mode::Confirm => {
-                let (cancel, go) = geometry::confirm_buttons();
-                vec![(Button::KeepRunning, cancel), (Button::ConfirmShutDown, go)]
+                let [cancel, restart, go] = geometry::confirm_buttons();
+                vec![(Button::KeepRunning, cancel), (Button::Restart, restart), (Button::ConfirmShutDown, go)]
             }
             Mode::ShuttingDown if self.shutdown.error.is_some() => vec![(Button::Back, geometry::back_button())],
             _ => Vec::new(),
@@ -437,13 +452,16 @@ impl App {
     pub fn act(&mut self, button: Button, now: Instant) -> Effect {
         match button {
             Button::Manage => return Effect::OpenManage,
+            Button::Lock => return Effect::OpenUnlock,
             Button::LogoOptions => return Effect::LogoOptions,
             Button::Arrange => self.start_editing(),
             Button::ShutDown => {
                 self.mode = Mode::Confirm;
+                self.power_note = None;
                 self.press = None;
             }
             Button::KeepRunning => self.mode = Mode::View,
+            Button::Restart => return Effect::RestartDevice,
             Button::ConfirmShutDown => {
                 self.mode = Mode::ShuttingDown;
                 self.shutdown = Shutdown::default();
@@ -765,6 +783,7 @@ pub(crate) mod tests {
         }
         app.mode = Mode::Confirm;
         check(&app);
+        assert_eq!(app.screen_buttons().len(), 3, "Cancel, Restart and Shut down");
     }
 
     #[test]
@@ -890,6 +909,8 @@ pub(crate) mod tests {
         assert_eq!(app.mode, Mode::View, "cancelled");
         tap(&mut app, Button::ShutDown);
         assert_eq!(app.mode, Mode::Confirm, "one tap only asks");
+        assert_eq!(tap(&mut app, Button::Restart), Effect::RestartDevice, "the screen's owner restarts it");
+        assert_eq!(app.mode, Mode::Confirm);
         assert_eq!(tap(&mut app, Button::ConfirmShutDown), Effect::PowerOff);
         for line in ["services 2", "stopping cuprated", "stopping mk-pay", "stopped mk-pay 300", "timeout cuprated 300000", "syncing", "synced 4"] {
             app.power_event(PowerEvent::parse(line).unwrap());

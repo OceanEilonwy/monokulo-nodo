@@ -1,27 +1,35 @@
-// nodo-gui: the built-in screen's package panels (docs/SCREEN.md).
+// nodo-gui: the built-in screen's tiles and the device console (docs/SCREEN.md).
 //
-// The design is docs/design/tui/ScreenTilesOled*.dc.html and ScreenShutdown*.dc.html, drawn at
-// half size: every measure here is the design's doubled. Rust computes every rectangle a finger
-// can hit (src/geometry.rs) and passes it in; this file only draws. One TouchArea over the whole
-// window hands every press, drag and release to Rust.
+// The design is docs/design/device-console/*.dc.html (Glance, PowerOff, ShuttingDown for this
+// file; the console is ui/console.slint), drawn at half size: every measure here is the design's
+// doubled. Rust computes every rectangle a finger can hit on the tiles screen (src/geometry.rs)
+// and passes it in; this file only draws. One TouchArea over the whole window hands every press,
+// drag and release to Rust.
 
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
 import "fonts/JetBrainsMono-Regular.ttf";
 import "fonts/JetBrainsMono-Bold.ttf";
-import { ManageView, MButton, MChip, MRow, MCard, MDialog, MPicker, MKeyboard, MPin } from "manage.slint";
-export { MButton, MChip, MRow, MCard, MDialog, MPicker, MKeyboard, MPin }
+import { ConsoleView, Icon, Icons, Touch, CAlert, CTile, CStatus, CWeb, CService, CKv, CServices, CStep, CNetwork, CDevice, CKeyboard, CPin, CReset, CDialog, CWifi, CWifiSheet, CLogo } from "console.slint";
+export { Touch, CAlert, CTile, CStatus, CWeb, CService, CKv, CServices, CStep, CNetwork, CDevice, CKeyboard, CPin, CReset, CDialog, CWifi, CWifiSheet, CLogo }
 
 export global Palette {
     out property <color> ground: #000000;
-    out property <color> fg: #D7DADC;
-    out property <color> bright: #F4F5F6;
-    out property <color> dim: #80888E;
-    out property <color> border: #3A4045;
-    out property <color> track: #2A2F33;
-    out property <color> ok: #6FD6B3;
-    out property <color> accent: #F2A33A;
-    out property <color> err: #FF8A7A;
-    out property <color> info: #86BEFF;
-    out property <color> off-border: #7A3A33;
+    out property <color> card: #0d0d0d;
+    out property <color> button: #1a1a1a;
+    out property <color> fg: #f2f2f2;
+    out property <color> bright: #f2f2f2;
+    out property <color> dim: #b3b3b3;
+    out property <color> border: #262626;
+    out property <color> track: #262626;
+    out property <color> ok: #5fd3a8;
+    out property <color> accent: #ff6600;
+    out property <color> warm: #ff8c3a;
+    out property <color> err: #ffa194;
+    out property <color> neg: #ff9a8c;
+    out property <color> neg-fill: #2a1513;
+    out property <color> stop: #c62828;
 }
 
 export struct RowView {
@@ -75,8 +83,10 @@ export struct CellView {
     h: length,
 }
 
-// kind: 0 plain, 1 shut down (red outline), 2 light outline, 3 save (blue), 4 undo (amber),
-// 5 shut down for sure (red), 6 large light outline. icon: 0 none, 1 the three lines of Arrange.
+// kind: 0 plain, 1 shut down (red on dark red), 2 light (as plain), 3 save (orange), 4 undo
+// (orange outline), 5 shut down for sure (red), 6 a large choice on the power screen, 7 the lit
+// lock (orange). icon: 0 none, 1 the three lines, 2 sliders (Manage), 3 grid (Arrange), 4 lock,
+// 5 power, 6 cross, 7 restart. A button without a label shows its icon alone.
 export struct ButtonView {
     x: length,
     y: length,
@@ -209,21 +219,6 @@ component DashedBox inherits Rectangle {
     }
 }
 
-// The three lines of ☰, which JetBrains Mono does not have.
-component MenuIcon inherits Rectangle {
-    in property <color> icon-color;
-    width: 28px;
-    height: 24px;
-    for i in 3: Rectangle {
-        x: 0;
-        y: i * 10px;
-        width: parent.width;
-        height: 4px;
-        border-radius: 2px;
-        background: icon-color;
-    }
-}
-
 // ⇲: an arrow into the bottom-right corner, which JetBrains Mono does not have either.
 component GripIcon inherits Path {
     width: 44px;
@@ -235,88 +230,64 @@ component GripIcon inherits Path {
     stroke-width: 5px;
 }
 
-component GearIcon inherits Path {
-    in property <color> tint: Palette.fg;
-    width: 30px;
-    height: 30px;
-    viewbox-width: 24;
-    viewbox-height: 24;
-    fill: tint;
-    fill-rule: evenodd;
-    commands: "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z";
-}
-component GridIcon inherits Rectangle {
-    in property <color> tint: Palette.fg;
-    width: 28px;
-    height: 28px;
-    for j in [0, 1, 2, 3]: Rectangle {
-        x: Math.mod(j, 2) * 16px;
-        y: Math.floor(j / 2) * 16px;
-        width: 12px;
-        height: 12px;
-        border-radius: 3px;
-        border-width: 2.5px;
-        border-color: tint;
-    }
-}
-
 component Btn inherits Rectangle {
     in property <ButtonView> b;
-    property <bool> filled: b.kind == 3 || b.kind == 4 || b.kind == 5;
-    property <color> fill: b.kind == 3 ? Palette.info : b.kind == 4 ? Palette.accent : b.kind == 5 ? Palette.err : transparent;
-    property <color> text-color: filled ? Palette.ground : b.kind == 1 ? Palette.err : Palette.fg;
-    property <bool> large: b.kind >= 5;
+    property <bool> large: b.kind == 5 || b.kind == 6;
+    property <color> text-color: b.kind == 3 ? #000000 : b.kind == 5 ? #ffffff : b.kind == 1 ? Palette.neg : b.kind == 4 || b.kind == 7 ? Palette.warm : Palette.fg;
+    property <string> path: b.icon == 2 ? Icons.device : b.icon == 3 ? Icons.services : b.icon == 4 ? Icons.lock : b.icon == 5 ? Icons.power : b.icon == 6 ? Icons.cross : b.icon == 7 ? Icons.restart : "M4 6h16 M4 12h16 M4 18h16";
     x: b.x;
     y: b.y;
     width: b.w;
     height: b.h;
-    border-radius: 16px;
-    border-width: 4px;
-    border-color: filled ? fill : b.kind == 1 ? Palette.off-border : b.kind == 0 ? Palette.border : Palette.fg;
-    background: filled ? fill : transparent;
-    VerticalLayout {
+    border-radius: large ? 44px : 32px;
+    border-width: b.kind == 4 ? 4px : b.kind == 6 ? 4px : 0px;
+    border-color: b.kind == 4 ? Palette.accent : Palette.border;
+    background: b.kind == 3 ? Palette.accent : b.kind == 5 ? Palette.stop : b.kind == 1 ? Palette.neg-fill : b.kind == 4 ? transparent : b.kind == 6 ? Palette.card : Palette.button;
+    if large: VerticalLayout {
         alignment: center;
-        spacing: 4px;
-        HorizontalLayout {
+        spacing: 20px;
+        if b.icon > 0: HorizontalLayout {
             alignment: center;
-            spacing: 16px;
-            if b.icon == 1: VerticalLayout {
-                alignment: center;
-                MenuIcon {
-                    icon-color: text-color;
-                }
-            }
-            if b.icon == 2: VerticalLayout {
-                alignment: center;
-                GearIcon {
-                    tint: text-color;
-                }
-            }
-            if b.icon == 3: VerticalLayout {
-                alignment: center;
-                GridIcon {
-                    tint: text-color;
-                }
-            }
-            Text {
-                text: b.label;
-                font-size: large ? 40px : 26px;
-                font-weight: 700;
-                color: text-color;
-                vertical-alignment: center;
-            }
-            if b.count != "": Text {
-                text: b.count;
-                font-size: 26px;
-                color: Palette.dim;
-                vertical-alignment: center;
+            Icon {
+                d: path;
+                size: 72px;
+                tint: b.icon == 7 ? Palette.warm : text-color;
             }
         }
-        if b.sub != "": Text {
-            text: b.sub;
-            font-size: 22px;
-            color: filled ? Palette.ground : Palette.dim;
+        Text {
+            text: b.label;
+            font-family: "Inter";
+            font-size: 38px;
+            font-weight: 600;
+            color: text-color;
             horizontal-alignment: center;
+        }
+    }
+    if !large: HorizontalLayout {
+        alignment: center;
+        spacing: 16px;
+        if b.icon > 0: VerticalLayout {
+            alignment: center;
+            Icon {
+                d: path;
+                size: 44px;
+                tint: text-color;
+            }
+        }
+        if b.label != "": Text {
+            text: b.label;
+            font-family: "Inter";
+            font-size: 36px;
+            font-weight: 600;
+            color: text-color;
+            vertical-alignment: center;
+        }
+        if b.count != "": Text {
+            text: b.count;
+            font-family: "JetBrains Mono";
+            font-size: 32px;
+            color: b.kind == 3 ? #000000 : Palette.dim;
+            vertical-alignment: center;
         }
     }
 }
@@ -340,10 +311,11 @@ component Tile inherits Rectangle {
     y: t.y;
     width: t.w;
     height: t.h;
-    border-radius: 20px;
+    border-radius: 44px;
     border-width: t.outline-width;
     border-color: t.outline;
-    background: Palette.ground;
+    // The logo tile is a wallpaper: no card behind it.
+    background: t.logo > 0 && !t.arranging ? Palette.ground : Palette.card;
     clip: true;
 
     if t.logo > 0 && !t.arranging: VerticalLayout {
@@ -376,41 +348,45 @@ component Tile inherits Rectangle {
 
     // Title row: the name in capitals and a status dot.
     Text {
-        x: 24px;
-        y: 16px;
-        width: parent.width - 80px;
+        x: 40px;
+        y: 20px;
+        width: parent.width - 100px;
         text: t.title;
-        font-size: 22px;
-        font-weight: 700;
-        letter-spacing: 1.3px;
+        font-family: "Inter";
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: 2px;
         color: t.title-color;
         overflow: elide;
     }
-    if t.dot && !t.arranging: Text {
-        x: parent.width - 24px - self.width;
-        y: 12px;
-        text: "●";
-        font-size: 24px;
-        color: t.dot-color;
+    if t.dot && !t.arranging: Rectangle {
+        x: parent.width - 40px - self.width;
+        y: 34px;
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        background: t.dot-color;
     }
 
     if t.arranging: VerticalLayout {
-        x: 24px;
-        y: 52px;
-        width: parent.width - 48px;
+        x: 40px;
+        y: 68px;
+        width: parent.width - 80px;
         alignment: start;
         Text {
             text: t.size-text;
-            font-size: 24px;
+            font-family: "Inter";
+            font-size: 30px;
             color: t.selected ? Palette.accent : Palette.dim;
             wrap: word-wrap;
         }
     }
     if t.arranging && t.selected: Text {
-        x: 24px;
-        y: parent.height - 16px - 12px - self.height;
+        x: 40px;
+        y: parent.height - 24px - self.height;
         text: "drag to move";
-        font-size: 24px;
+        font-family: "Inter";
+        font-size: 30px;
         color: Palette.dim;
     }
     if t.arranging && t.selected: Rectangle {
@@ -419,21 +395,22 @@ component Tile inherits Rectangle {
         width: 104px;
         height: 104px;
         background: Palette.accent;
-        border-top-left-radius: 20px;
-        border-bottom-right-radius: 20px;
+        border-top-left-radius: 44px;
+        border-bottom-right-radius: 44px;
         GripIcon { }
     }
 
     if !t.arranging: VerticalLayout {
-        x: 24px;
-        y: 52px;
-        width: parent.width - 48px;
-        height: parent.height - 52px - 16px;
+        x: 40px;
+        y: 68px;
+        width: parent.width - 80px;
+        height: parent.height - 68px - 16px;
         alignment: start;
         spacing: 0px;
         if t.message != "": Text {
             text: t.message;
-            font-size: 24px;
+            font-family: "Inter";
+            font-size: 30px;
             color: t.message-color;
             wrap: word-wrap;
         }
@@ -443,7 +420,7 @@ component Tile inherits Rectangle {
             padding-top: 6px;
             Text {
                 text: t.big;
-                font-size: t.compact ? 36px : 68px;
+                font-size: t.compact ? 60px : 88px;
                 font-weight: 700;
                 color: t.big-color;
                 vertical-alignment: bottom;
@@ -451,10 +428,11 @@ component Tile inherits Rectangle {
             }
             if t.unit != "": VerticalLayout {
                 alignment: end;
-                padding-bottom: t.compact ? 4px : 10px;
+                padding-bottom: t.compact ? 8px : 18px;
                 Text {
                     text: t.unit;
-                    font-size: 26px;
+                    font-family: "Inter";
+                    font-size: 30px;
                     color: Palette.dim;
                 }
             }
@@ -462,14 +440,16 @@ component Tile inherits Rectangle {
         if t.bar-shown: Rectangle {
             height: 22px;
             Rectangle {
-                y: 16px;
-                height: 6px;
+                y: 6px;
+                height: 16px;
+                border-radius: 8px;
                 background: Palette.track;
             }
             Rectangle {
                 x: 0;
-                y: 16px;
-                height: 6px;
+                y: 6px;
+                height: 16px;
+                border-radius: 8px;
                 width: parent.width * Math.min(1, Math.max(0, t.bar));
                 background: t.bar-color;
             }
@@ -478,17 +458,18 @@ component Tile inherits Rectangle {
             height: 14px;
         }
         for row in t.rows: HorizontalLayout {
-            height: 30px;
+            height: 42px;
             spacing: 16px;
             Text {
                 text: row.label;
-                font-size: 24px;
+                font-family: "Inter";
+                font-size: 32px;
                 color: Palette.dim;
                 overflow: elide;
             }
             Text {
                 text: row.value;
-                font-size: 24px;
+                font-size: 32px;
                 color: t.value-color;
                 horizontal-alignment: right;
                 horizontal-stretch: 1;
@@ -497,24 +478,26 @@ component Tile inherits Rectangle {
         }
         if t.note != "": Text {
             text: t.note;
-            font-size: 24px;
+            font-family: "Inter";
+            font-size: 30px;
             color: t.note-color;
             overflow: elide;
         }
     }
     if !t.arranging && t.series.length > 0: Sparkline {
-        x: 24px;
-        y: parent.height - 44px - 60px;
-        width: parent.width - 48px;
-        height: 60px;
+        x: 40px;
+        y: parent.height - 52px - 48px;
+        width: parent.width - 80px;
+        height: 48px;
         values: t.series;
         bar-color: t.series-color;
     }
     if !t.arranging && t.package != "": Text {
-        x: parent.width - 24px - self.width;
-        y: parent.height - 10px - self.height;
+        x: parent.width - 40px - self.width;
+        y: parent.height - 12px - self.height;
         text: t.package;
-        font-size: 20px;
+        font-family: "Inter";
+        font-size: 30px;
         color: Palette.dim;
     }
 }
@@ -529,7 +512,7 @@ component PickerRow inherits Rectangle {
         x: 0;
         y: parent.height - self.height - 8px;
         text: line.title;
-        font-size: 22px;
+        font-size: 30px;
         font-weight: 700;
         letter-spacing: 1.3px;
         color: Palette.dim;
@@ -568,14 +551,14 @@ component PickerRow inherits Rectangle {
                 spacing: 6px;
                 Text {
                     text: line.title;
-                    font-size: 30px;
+                    font-size: 36px;
                     font-weight: 700;
                     color: line.highlighted ? Palette.accent : Palette.bright;
                     overflow: elide;
                 }
                 Text {
                     text: line.detail;
-                    font-size: 24px;
+                    font-size: 30px;
                     color: Palette.dim;
                     overflow: elide;
                 }
@@ -583,9 +566,9 @@ component PickerRow inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 Text {
-                    width: 220px;
+                    width: 260px;
                     text: line.sizes;
-                    font-size: 24px;
+                    font-size: 30px;
                     color: Palette.dim;
                 }
             }
@@ -594,12 +577,11 @@ component PickerRow inherits Rectangle {
                 Rectangle {
                     width: 240px;
                     height: 96px;
-                    border-radius: 16px;
-                    border-width: 4px;
-                    border-color: Palette.fg;
+                    border-radius: 32px;
+                    background: Palette.button;
                     Text {
                         text: "+ Add";
-                        font-size: 26px;
+                        font-size: 36px;
                         font-weight: 700;
                         color: Palette.fg;
                     }
@@ -616,13 +598,13 @@ export component MainWindow inherits Window {
     default-font-family: "JetBrains Mono";
     title: "nodo-gui";
 
-    // 0 tiles, 1 arranging, 2 adding a panel, 3 confirm shut down, 4 shutting down, 5 off.
+    // 0 tiles, 1 arranging, 2 adding a panel, 3 the power screen, 4 shutting down, 5 off.
     in property <int> mode: 0;
     in property <string> host: "monokulo-nodo";
     in property <string> address;
     in property <string> day;
     in property <string> time;
-    // Arranging's line in the top bar: a hint in grey or a refusal in amber.
+    // Arranging's line in the top bar: a hint in grey or a refusal in orange.
     in property <string> hint;
     in property <bool> hint-is-warning;
     in property <length> header-text-width: 1000px;
@@ -634,6 +616,8 @@ export component MainWindow inherits Window {
     in property <[ButtonView]> buttons;
     in property <[PickerRowView]> picker;
     in property <string> picker-hint;
+    // Said under the power screen's choices, such as why Restart did nothing.
+    in property <string> power-note;
     in property <string> shutdown-title;
     in property <string> shutdown-subtitle;
     in property <bool> shutdown-failed;
@@ -647,69 +631,74 @@ export component MainWindow inherits Window {
     // The key's text and whether shift was held; returns whether it was used.
     callback key(string, bool) -> bool;
 
-    // Management, over the tiles while open (manage.slint).
-    in property <bool> manage-open;
-    in property <int> m-tab;
-    in property <[string]> m-badges: ["", "", "", ""];
-    in property <bool> m-unlocked;
-    in property <bool> m-pin-set;
-    in property <[string]> m-crumbs;
-    in property <string> m-title;
-    in property <[MButton]> m-actions;
-    in property <[MCard]> m-cards;
-    in property <string> m-toast;
-    in property <bool> m-toast-error;
-    in property <MDialog> m-dialog;
-    in property <MPicker> m-picker;
-    in property <MKeyboard> m-keyboard;
-    in property <MPin> m-pin;
-    in-out property <length> m-scroll;
-    callback m-act(string);
-    callback m-toggled(string, bool);
-    callback m-segment(string, int);
-    callback m-tab-clicked(int);
-    callback m-crumb(int);
-    callback m-key(string);
+    // The console, over the tiles while open (console.slint).
+    in property <bool> c-open;
+    in property <int> c-page;
+    in property <int> c-overlay;
+    in property <CStatus> c-status;
+    in property <CWeb> c-web;
+    in property <CServices> c-services;
+    in property <CNetwork> c-network;
+    in property <CDevice> c-device;
+    in property <CKeyboard> c-keyboard;
+    in property <CPin> c-pin;
+    in property <CReset> c-reset;
+    in property <CDialog> c-dialog;
+    in property <CWifiSheet> c-wifi;
+    in property <CLogo> c-logo;
+    in property <string> c-toast;
+    in property <bool> c-toast-error;
+    callback c-act(string);
+    callback c-key(string);
 
-    // The top bar, left part: what the screen is, or what arranging is doing.
+    // The top bar, left of its buttons: the device and the clock, or what arranging is doing.
     HorizontalLayout {
-        x: 36px;
-        y: 24px;
+        x: 40px;
+        y: 32px;
         width: header-text-width;
-        height: 88px;
-        spacing: 24px;
-        alignment: start;
-        if mode == 0: Text {
-            text: host;
-            font-size: 26px;
-            font-weight: 700;
-            color: Palette.fg;
-            vertical-alignment: center;
+        height: 112px;
+        spacing: 32px;
+        alignment: mode == 0 ? LayoutAlignment.stretch : LayoutAlignment.start;
+        if mode == 0: VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("logo.svg");
+                width: 80px;
+                height: 80px;
+            }
         }
-        if mode == 0: Text {
-            text: address;
-            font-size: 24px;
-            color: Palette.dim;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        if mode == 0: Rectangle {
-            horizontal-stretch: 1;
+        if mode == 0: VerticalLayout {
+            alignment: center;
+            Text {
+                text: host;
+                font-family: "Inter";
+                font-size: 40px;
+                font-weight: 700;
+                color: Palette.fg;
+            }
+            Text {
+                text: address;
+                font-size: 30px;
+                color: Palette.dim;
+                overflow: elide;
+            }
         }
         if mode == 0: HorizontalLayout {
-            spacing: 16px;
-            alignment: end;
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 20px;
             Text {
-                text: day;
-                font-size: 26px;
+                text: time;
+                font-size: 60px;
+                font-weight: 700;
                 color: Palette.fg;
                 vertical-alignment: center;
             }
             Text {
-                text: time;
-                font-size: 26px;
-                font-weight: 700;
-                color: Palette.fg;
+                text: day;
+                font-family: "Inter";
+                font-size: 30px;
+                color: Palette.dim;
                 vertical-alignment: center;
             }
         }
@@ -717,35 +706,40 @@ export component MainWindow inherits Window {
             alignment: center;
             Rectangle {
                 background: Palette.accent;
-                width: badge.preferred-width + 24px;
-                height: badge.preferred-height + 4px;
+                border-radius: 24px;
+                width: badge.preferred-width + 48px;
+                height: 72px;
                 badge := Text {
                     text: "Arrange";
-                    font-size: 26px;
+                    font-family: "Inter";
+                    font-size: 36px;
                     font-weight: 700;
-                    color: Palette.ground;
+                    color: #000000;
                 }
             }
         }
         if mode == 1: Text {
             text: hint;
-            font-size: 24px;
-            color: hint-is-warning ? Palette.accent : Palette.dim;
+            font-family: "Inter";
+            font-size: 30px;
+            color: hint-is-warning ? Palette.warm : Palette.dim;
             vertical-alignment: center;
             horizontal-stretch: 1;
             overflow: elide;
         }
         if mode == 2: Text {
             text: "Add a panel";
-            font-size: 36px;
+            font-family: "Inter";
+            font-size: 48px;
             font-weight: 700;
             color: Palette.bright;
             vertical-alignment: center;
         }
         if mode == 2: Text {
             text: picker-hint;
-            font-size: 24px;
-            color: hint-is-warning ? Palette.accent : Palette.dim;
+            font-family: "Inter";
+            font-size: 30px;
+            color: hint-is-warning ? Palette.warm : Palette.dim;
             vertical-alignment: center;
             horizontal-stretch: 1;
             overflow: elide;
@@ -758,6 +752,7 @@ export component MainWindow inherits Window {
             y: c.y;
             width: c.w;
             height: c.h;
+            r: 44px;
             dash-color: Palette.track;
         }
         for t in tiles: Tile {
@@ -768,6 +763,7 @@ export component MainWindow inherits Window {
             y: target.y;
             width: target.w;
             height: target.h;
+            r: 44px;
             dash-color: Palette.accent;
         }
         if ghost.shown: Rectangle {
@@ -775,25 +771,27 @@ export component MainWindow inherits Window {
             y: ghost.y;
             width: ghost.w;
             height: ghost.h;
-            border-radius: 20px;
+            border-radius: 44px;
             border-width: 2px;
             border-color: Palette.dim;
-            background: #D7DADC10;
+            background: #f2f2f218;
             opacity: 0.85;
             Text {
-                x: 24px;
-                y: 16px;
+                x: 40px;
+                y: 20px;
                 text: ghost.title;
-                font-size: 22px;
-                font-weight: 700;
-                letter-spacing: 1.3px;
+                font-family: "Inter";
+                font-size: 30px;
+                font-weight: 600;
+                letter-spacing: 2px;
                 color: Palette.fg;
             }
             Text {
-                x: 24px;
-                y: 56px;
+                x: 40px;
+                y: 68px;
                 text: ghost.size-text;
-                font-size: 24px;
+                font-family: "Inter";
+                font-size: 30px;
                 color: Palette.dim;
             }
         }
@@ -805,145 +803,119 @@ export component MainWindow inherits Window {
         }
     }
 
+    // The power screen (PowerOff.dc.html); its three choices are buttons from Rust.
     if mode == 3: Rectangle {
+        Icon {
+            x: (parent.width - self.width) / 2;
+            y: 170px;
+            d: Icons.power;
+            size: 112px;
+            tint: Palette.neg;
+        }
         Text {
             x: 0;
-            y: 300px;
+            y: 310px;
             width: parent.width;
             horizontal-alignment: center;
-            text: "Shut down the Nodo?";
-            font-size: 60px;
+            text: "Turn off the Nodo?";
+            font-family: "Inter";
+            font-size: 68px;
             font-weight: 700;
             color: Palette.bright;
         }
         Text {
-            x: 0;
-            y: 400px;
-            width: parent.width;
+            x: (parent.width - self.width) / 2;
+            y: 418px;
+            width: 1120px;
             horizontal-alignment: center;
-            text: "Every service stops and saves its data first: cuprated can take a few minutes while it syncs.";
-            font-size: 28px;
+            text: "Every service stops, and the web admin goes offline. After a restart, encrypted services wait until you unlock again.";
+            font-family: "Inter";
+            font-size: 36px;
             color: Palette.dim;
-        }
-        HorizontalLayout {
-            x: 0;
-            y: 444px;
-            width: parent.width;
-            alignment: center;
-            Text {
-                text: "Unplug only when the screen says ";
-                font-size: 28px;
-                color: Palette.dim;
-            }
-            Text {
-                text: "Safe to unplug";
-                font-size: 28px;
-                color: Palette.fg;
-            }
-            Text {
-                text: ".";
-                font-size: 28px;
-                color: Palette.dim;
-            }
+            wrap: word-wrap;
         }
         Text {
             x: 0;
-            y: 516px;
+            y: 886px;
             width: parent.width;
             horizontal-alignment: center;
-            text: "To start it again, unplug it and plug it back in.";
-            font-size: 24px;
+            text: "Safe to unplug once the screen goes dark.";
+            font-family: "Inter";
+            font-size: 30px;
             color: Palette.dim;
+        }
+        if power-note != "": Text {
+            x: 0;
+            y: 950px;
+            width: parent.width;
+            horizontal-alignment: center;
+            text: power-note;
+            font-family: "Inter";
+            font-size: 30px;
+            color: Palette.warm;
         }
     }
 
+    // Shutting down (ShuttingDown.dc.html), or why it did not.
     if mode == 4: VerticalLayout {
         x: 0;
         y: 0;
         width: parent.width;
         height: shutdown-failed ? 820px : parent.height;
         alignment: center;
-        spacing: 32px;
+        spacing: 36px;
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("logo.svg");
+                width: 144px;
+                height: 144px;
+            }
+        }
         Text {
             horizontal-alignment: center;
             text: shutdown-title;
-            font-size: 52px;
+            font-family: "Inter";
+            font-size: 68px;
             font-weight: 700;
             color: Palette.bright;
         }
-        Text {
+        if shutdown-failed: Text {
             horizontal-alignment: center;
             text: shutdown-subtitle;
-            font-size: 28px;
-            font-weight: 700;
+            font-family: "Inter";
+            font-size: 36px;
             color: Palette.err;
             wrap: word-wrap;
-        }
-        HorizontalLayout {
-            alignment: center;
-            Rectangle {
-                width: 1120px;
-                border-width: 2px;
-                border-radius: 20px;
-                border-color: Palette.border;
-                VerticalLayout {
-                    padding-top: 28px;
-                    padding-bottom: 28px;
-                    padding-left: 40px;
-                    padding-right: 40px;
-                    for s in steps: HorizontalLayout {
-                        height: 52px;
-                        spacing: 28px;
-                        Text {
-                            width: 28px;
-                            text: s.mark;
-                            font-size: 28px;
-                            color: s.mark-color;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: s.name;
-                            font-size: 28px;
-                            color: s.name-color;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: s.state;
-                            font-size: 28px;
-                            color: s.state-color;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            width: 112px;
-                            text: s.time;
-                            font-size: 28px;
-                            color: Palette.dim;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-            }
         }
         if !shutdown-failed: HorizontalLayout {
             alignment: center;
             Rectangle {
-                width: 1200px;
-                height: 8px;
+                width: 1040px;
+                height: 24px;
+                border-radius: 12px;
                 background: Palette.track;
+                clip: true;
                 Rectangle {
                     x: 0;
                     width: parent.width * Math.min(1, Math.max(0, progress));
-                    background: Palette.info;
+                    border-radius: 12px;
+                    background: Palette.accent;
                 }
             }
         }
         if !shutdown-failed: Text {
             horizontal-alignment: center;
             text: progress-note;
-            font-size: 24px;
+            font-family: "Inter";
+            font-size: 36px;
+            color: Palette.dim;
+        }
+        if !shutdown-failed: Text {
+            horizontal-alignment: center;
+            text: shutdown-subtitle;
+            font-family: "Inter";
+            font-size: 30px;
             color: Palette.dim;
         }
     }
@@ -963,16 +935,18 @@ export component MainWindow inherits Window {
                 border-radius: 96px;
                 border-width: 6px;
                 border-color: Palette.ok;
-                Text {
-                    text: "✓";
-                    font-size: 104px;
-                    color: Palette.ok;
+                Icon {
+                    d: Icons.check;
+                    size: 120px;
+                    weight: 2.5;
+                    tint: Palette.ok;
                 }
             }
         }
         Text {
             horizontal-alignment: center;
             text: "Safe to unplug";
+            font-family: "Inter";
             font-size: 80px;
             font-weight: 700;
             color: Palette.ok;
@@ -980,13 +954,15 @@ export component MainWindow inherits Window {
         Text {
             horizontal-alignment: center;
             text: "Every service stopped and its data is saved.\nThe screen may stay lit: the Nodo is off.";
-            font-size: 28px;
+            font-family: "Inter";
+            font-size: 36px;
             color: Palette.dim;
         }
         Text {
             horizontal-alignment: center;
             text: "To start it again, plug it back in.";
-            font-size: 24px;
+            font-family: "Inter";
+            font-size: 30px;
             color: Palette.dim;
         }
     }
@@ -1016,35 +992,29 @@ export component MainWindow inherits Window {
         }
     }
 
-    if manage-open: ManageView {
+    if c-open: ConsoleView {
         width: root.width;
         height: root.height;
-        tab: root.m-tab;
-        badges: root.m-badges;
-        unlocked: root.m-unlocked;
-        pin-set: root.m-pin-set;
-        crumbs: root.m-crumbs;
-        title: root.m-title;
-        actions: root.m-actions;
-        cards: root.m-cards;
-        toast: root.m-toast;
-        toast-error: root.m-toast-error;
-        dialog: root.m-dialog;
-        picker: root.m-picker;
-        keyboard: root.m-keyboard;
-        pin: root.m-pin;
-        scroll-y <=> root.m-scroll;
-        act(id) => { root.m-act(id); }
-        toggled(id, on) => { root.m-toggled(id, on); }
-        segment(id, n) => { root.m-segment(id, n); }
-        tab-clicked(i) => { root.m-tab-clicked(i); }
-        crumb(i) => { root.m-crumb(i); }
-        key(k) => { root.m-key(k); }
+        page: root.c-page;
+        overlay: root.c-overlay;
+        status: root.c-status;
+        web: root.c-web;
+        services: root.c-services;
+        network: root.c-network;
+        device: root.c-device;
+        keyboard: root.c-keyboard;
+        pin: root.c-pin;
+        reset: root.c-reset;
+        dialog: root.c-dialog;
+        wifi: root.c-wifi;
+        logo: root.c-logo;
+        toast: root.c-toast;
+        toast-error: root.c-toast-error;
+        act(id) => { root.c-act(id); }
+        key(k) => { root.c-key(k); }
     }
 
     init => {
         keys.focus();
     }
 }
-export { DesignBoard } from "design.slint";
-export { DesignBoard2 } from "design2.slint";
