@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nodo_api::protocol::{self, CallResult, ProtocolError, MAX_REQUEST};
-use nodo_api::{action_name, ApiError};
+use nodo_api::{action_name, ApiError, Request};
 use rustix::net::sockopt::socket_peercred;
 
 use crate::helper::Helper;
@@ -28,16 +28,89 @@ fn respond(stream: &mut UnixStream, result: &CallResult) -> Result<(), ProtocolE
     protocol::write_frame(stream, &protocol::encode_response(result)?)
 }
 
+/// Which socket a connection arrived on, and with it who may use it and for what.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Socket {
+    /// The main socket: every allowed uid, and everything an owner may do.
+    Main,
+    /// The touchscreen's socket: only this uid, within what [`crate::screen`] allows.
+    Screen(u32),
+    /// The web GUI's socket: only this uid, within what [`crate::webgui`] allows.
+    Web(u32),
+}
+
+impl Socket {
+    /// For the log, before the action name.
+    fn label(self, uid: u32) -> String {
+        match self {
+            Socket::Main => format!("uid {uid}"),
+            Socket::Screen(_) => "screen".to_owned(),
+            Socket::Web(_) => "web".to_owned(),
+        }
+    }
+
+    fn admits<S: System>(self, helper: &Helper<S>, uid: u32) -> bool {
+        match self {
+            Socket::Main => helper.allows(uid),
+            Socket::Screen(only) | Socket::Web(only) => uid == only,
+        }
+    }
+
+    fn handle<S: System>(self, helper: &Helper<S>, uid: u32, request: Request) -> CallResult {
+        match self {
+            Socket::Main => helper.handle(uid, request),
+            Socket::Screen(_) => helper.handle_screen(uid, request),
+            Socket::Web(_) => helper.handle_web(uid, request),
+        }
+    }
+}
+
+/// Serves one connection on the main socket.
+pub fn serve_connection<S: System>(
+    helper: &Helper<S>,
+    stream: UnixStream,
+    uid: u32,
+) -> Result<(), ProtocolError> {
+    serve_on(helper, stream, uid, Socket::Main)
+}
+
+/// Serves one connection on the screen's socket. Only `screen_uid` is answered, and only within
+/// what [`crate::screen`] allows.
+pub fn serve_screen_connection<S: System>(
+    helper: &Helper<S>,
+    stream: UnixStream,
+    uid: u32,
+    screen_uid: u32,
+) -> Result<(), ProtocolError> {
+    serve_on(helper, stream, uid, Socket::Screen(screen_uid))
+}
+
+/// Serves one connection on the web GUI's socket. Only `web_uid` is answered, and only within
+/// what [`crate::webgui`] allows.
+pub fn serve_web_connection<S: System>(
+    helper: &Helper<S>,
+    stream: UnixStream,
+    uid: u32,
+    web_uid: u32,
+) -> Result<(), ProtocolError> {
+    serve_on(helper, stream, uid, Socket::Web(web_uid))
+}
+
 /// Serves one connection. A denied peer gets its answer before any of its bytes are read, so an
 /// unauthorized user cannot reach the parser at all.
-pub fn serve_connection<S: System>(
+fn serve_on<S: System>(
     helper: &Helper<S>,
     mut stream: UnixStream,
     uid: u32,
+    socket: Socket,
 ) -> Result<(), ProtocolError> {
     stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
-    if !helper.allows(uid) {
-        eprintln!("nodo-helper: denied connection from uid {uid}");
+    if !socket.admits(helper, uid) {
+        match socket {
+            Socket::Main => eprintln!("nodo-helper: denied connection from uid {uid}"),
+            Socket::Screen(_) => eprintln!("nodo-helper: denied screen connection from uid {uid}"),
+            Socket::Web(_) => eprintln!("nodo-helper: denied web connection from uid {uid}"),
+        }
         return respond(&mut stream, &Err(ApiError::Denied));
     }
     stream.set_read_timeout(Some(IDLE_TIMEOUT))?;
@@ -56,44 +129,10 @@ pub fn serve_connection<S: System>(
         drop(frame);
         // Only the action name, as requests can hold the passphrase and setting values.
         let action = action_name(&request);
-        let result = helper.handle(uid, request);
-        eprintln!("nodo-helper: uid {uid} {action}: {}", outcome(&result));
+        let result = socket.handle(helper, uid, request);
+        eprintln!("nodo-helper: {} {action}: {}", socket.label(uid), outcome(&result));
         respond(&mut stream, &result)?;
         // After the answer is out, so the client learns what the update did.
-        helper.restart_if_updated();
-    }
-}
-
-/// Serves one connection on the screen's socket. Only `screen_uid` is answered, and only within
-/// what [`crate::screen`] allows.
-pub fn serve_screen_connection<S: System>(
-    helper: &Helper<S>,
-    mut stream: UnixStream,
-    uid: u32,
-    screen_uid: u32,
-) -> Result<(), ProtocolError> {
-    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
-    if uid != screen_uid {
-        eprintln!("nodo-helper: denied screen connection from uid {uid}");
-        return respond(&mut stream, &Err(ApiError::Denied));
-    }
-    stream.set_read_timeout(Some(IDLE_TIMEOUT))?;
-    loop {
-        let Some(frame) = protocol::read_frame(&mut stream, MAX_REQUEST)? else {
-            return Ok(());
-        };
-        let request = match protocol::decode_request(&frame) {
-            Ok(request) => request,
-            Err(e) => {
-                respond(&mut stream, &Err(ApiError::Failed(e.to_string())))?;
-                return Err(e);
-            }
-        };
-        drop(frame);
-        let action = action_name(&request);
-        let result = helper.handle_screen(uid, request);
-        eprintln!("nodo-helper: screen {action}: {}", outcome(&result));
-        respond(&mut stream, &result)?;
         helper.restart_if_updated();
     }
 }
@@ -128,7 +167,7 @@ pub fn serve<S: System + 'static>(
     listener: UnixListener,
     helper: Arc<Helper<S>>,
 ) -> io::Result<()> {
-    serve_with(listener, helper, None)
+    serve_with(listener, helper, Socket::Main)
 }
 
 /// Like [`serve`], for the screen's socket: every connection is handled as the screen.
@@ -137,13 +176,22 @@ pub fn serve_screen<S: System + 'static>(
     helper: Arc<Helper<S>>,
     screen_uid: u32,
 ) -> io::Result<()> {
-    serve_with(listener, helper, Some(screen_uid))
+    serve_with(listener, helper, Socket::Screen(screen_uid))
+}
+
+/// Like [`serve`], for the web GUI's socket: every connection is handled as the web GUI.
+pub fn serve_web<S: System + 'static>(
+    listener: UnixListener,
+    helper: Arc<Helper<S>>,
+    web_uid: u32,
+) -> io::Result<()> {
+    serve_with(listener, helper, Socket::Web(web_uid))
 }
 
 fn serve_with<S: System + 'static>(
     listener: UnixListener,
     helper: Arc<Helper<S>>,
-    screen_uid: Option<u32>,
+    socket: Socket,
 ) -> io::Result<()> {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
@@ -165,10 +213,7 @@ fn serve_with<S: System + 'static>(
             let _slot = slot;
             let result = peer_uid(&stream)
                 .map_err(ProtocolError::from)
-                .and_then(|uid| match screen_uid {
-                    Some(screen) => serve_screen_connection(&helper, stream, uid, screen),
-                    None => serve_connection(&helper, stream, uid),
-                });
+                .and_then(|uid| serve_on(&helper, stream, uid, socket));
             if let Err(e) = result {
                 eprintln!("nodo-helper: connection ended: {e}");
             }
@@ -183,7 +228,7 @@ mod tests {
     use crate::fake::{helper, FakeSystem, SHOP};
     use crate::helper::AllowedUids;
     use nodo_api::client::HelperClient;
-    use nodo_api::{Backend, Request, Response};
+    use nodo_api::{Backend, Response};
     use rustix::process::geteuid;
     use std::io::{Read, Write};
 
@@ -280,6 +325,88 @@ mod tests {
         let mut rest = Vec::new();
         stream.read_to_end(&mut rest).unwrap();
         assert!(rest.is_empty());
+    }
+
+    /// A set-up device with the web GUI on, serving one connection on the web GUI's socket.
+    fn spawn_web_server(web_uid: u32) -> (UnixStream, std::thread::JoinHandle<()>) {
+        let (client, server) = UnixStream::pair().unwrap();
+        let handle = std::thread::spawn(move || {
+            let sys = FakeSystem::default();
+            sys.add_manifest(SHOP);
+            let h = helper(sys);
+            h.init_device(&nodo_api::Secret::new("correct horse battery")).unwrap();
+            h.handle(1000, Request::SetWebGui(true)).unwrap();
+            let uid = peer_uid(&server).unwrap();
+            let _ = serve_web_connection(&h, server, uid, web_uid);
+        });
+        (client, handle)
+    }
+
+    #[test]
+    fn the_web_socket_answers_only_the_web_guis_account() {
+        // Another account, even one the main socket would serve, is denied before it is read.
+        let (mut stream, handle) = spawn_web_server(own_uid() + 1);
+        let frame = protocol::read_frame(&mut stream, protocol::MAX_RESPONSE).unwrap().unwrap();
+        assert_eq!(protocol::decode_response(&frame).unwrap(), Err(ApiError::Denied));
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).unwrap();
+        assert!(rest.is_empty());
+        handle.join().unwrap();
+
+        let (stream, handle) = spawn_web_server(own_uid() + 1);
+        let mut client = HelperClient::from_stream(stream);
+        assert_eq!(
+            client.call(Request::WebGuiLogin { passphrase: nodo_api::Secret::new("correct horse battery") }),
+            Err(ApiError::Denied)
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn the_web_socket_serves_its_account_through_the_gate() {
+        let (stream, handle) = spawn_web_server(own_uid());
+        let mut client = HelperClient::from_stream(stream);
+        // Closed: the typed refusal reaches the client whole, so it can tell it from any other.
+        let refused = client.call(Request::ListServices).unwrap_err();
+        assert!(refused.is_web_login_required(), "{refused:?}");
+        let Ok(Response::WebGui(closed)) = client.call(Request::WebGuiStatus) else { panic!() };
+        assert!(closed.enabled && !closed.open);
+        assert_eq!(
+            client.call(Request::WebGuiLogin { passphrase: nodo_api::Secret::new("nope nope nope") }),
+            Err(ApiError::BadPassphrase)
+        );
+        let Ok(Response::WebGui(opened)) =
+            client.call(Request::WebGuiLogin { passphrase: nodo_api::Secret::new("correct horse battery") })
+        else {
+            panic!()
+        };
+        assert!(opened.open);
+        let Ok(Response::Services(list)) = client.call(Request::ListServices) else { panic!() };
+        assert_eq!(list[0].id, "shop");
+        // The switch is not the web GUI's, and the main socket's account rules do not apply here.
+        assert_eq!(client.call(Request::SetWebGui(false)), Err(ApiError::Denied));
+        assert_eq!(client.call(Request::WebGuiLogout), Ok(Response::Ok));
+        assert!(client.call(Request::ListServices).unwrap_err().is_web_login_required());
+        drop(client);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn each_socket_keeps_to_its_own_rules() {
+        // The same uid, three sockets: only the main one lets it act without a login or a PIN.
+        let sys = FakeSystem::default();
+        sys.add_manifest(SHOP);
+        let mut h = helper(sys);
+        h.allowed = AllowedUids::new([own_uid()]);
+        let uid = own_uid();
+        let stop = || Request::StopService { id: "shop".into() };
+        assert!(Socket::Main.admits(&h, uid) && Socket::Screen(uid).admits(&h, uid) && Socket::Web(uid).admits(&h, uid));
+        assert!(!Socket::Screen(uid + 1).admits(&h, uid) && !Socket::Web(uid + 1).admits(&h, uid));
+        assert!(!Socket::Main.admits(&h, uid + 1));
+        assert_eq!(Socket::Main.handle(&h, uid, stop()), Ok(Response::Ok));
+        assert!(matches!(Socket::Screen(uid).handle(&h, uid, stop()), Err(ApiError::Locked(_))));
+        assert!(Socket::Web(uid).handle(&h, uid, stop()).unwrap_err().is_web_login_required());
+        assert_eq!((Socket::Main.label(7), Socket::Screen(7).label(7), Socket::Web(7).label(7)), ("uid 7".into(), "screen".into(), "web".into()));
     }
 
     #[test]

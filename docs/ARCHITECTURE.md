@@ -64,7 +64,9 @@ codebase, and signed xbps packages from user-added feeds.
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
   nodo-autoupdate at boot; the helper starts the web services when sites need them. The helper also
   serves the touchscreen (nodo-gui, as `_nodo_screen`) on `/run/nodo/screen.sock`, where reading is
-  always allowed and changes need the screen PIN (docs/SCREEN.md, "Changes need the screen PIN"). They also
+  always allowed and changes need the screen PIN (docs/SCREEN.md, "Changes need the screen PIN"),
+  and the web GUI (as `_nodo_webgui`) on `/run/nodo/webgui.sock`, where nothing is allowed before
+  a login (see Web GUI). They also
   start udevd, which loads the board's driver modules and firmware and handles USB hotplug, and
   `nodo-sound` for the mixer state; [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) lists the hardware
   setup. The helper's run script does not rely on udev's `/dev/disk` links: it takes the data
@@ -315,7 +317,8 @@ codebase, and signed xbps packages from user-added feeds.
   owner's domain. Records need the sealed provider credentials, so while locked they wait for the
   unlock and `LocalSiteStatus` says why in plain words; while the address is gone they are left
   alone rather than removed and written again.
-- **Local CA trust page:** While any `.local` site uses Caddy's internal CA, Caddy serves a plain
+- **Local CA trust page:** While any `.local` site uses Caddy's internal CA, or the web GUI is on
+  (see Web GUI), Caddy serves a plain
   HTTP page at `http://nodo.local` (also by the bare local address) on the local address's port
   80, which nftables sends to a listener bound to that address alone, for LAN sources only. It
   offers the root in DER and PEM, its SHA-256 fingerprint, and short install steps per platform.
@@ -375,6 +378,57 @@ codebase, and signed xbps packages from user-added feeds.
   root service whose socket only `_nodo_screen` may open and which accepts only `poweroff`: it stops
   every service (cuprated given five minutes to save), syncs and turns the device off.
   [SCREEN.md](SCREEN.md) is the contract.
+- **Web GUI:** The TUI's screens in a browser on the home network, at `https://nodo.local`, for the
+  owner. It is off until the owner turns it on over SSH (`nodo-tui --ctl web-gui 1`, `SetWebGui`),
+  which needs the device passphrase to be set up, and only SSH turns it on or off: the main socket
+  alone takes `SetWebGui`, never the touchscreen and never the web GUI itself. The choice is
+  `/var/lib/nodo/web-gui.toml`; backups do not carry it, so a restored device starts with it off.
+  `WebGuiStatus` (`--ctl web-gui-status`) says whether it is on, its address while it is served, and
+  whether it waits for the local address, on every socket. `nodo-web-gui` (nodo-tools) runs as
+  `_nodo_webgui` in a bubblewrap sandbox with `nodo-confine`, like the other device services, seeing
+  only `/usr`, `/run/nodo` and its own socket directory of the device's files. Its runit service is in
+  no board's list: the helper links and starts it when the web GUI is turned on and stops it when it is
+  turned off, as it does Caddy and nodo-localnet, and brings it to the saved choice when the helper
+  starts. It listens only on a Unix socket, `/run/nodo-web-gui/http.sock`, never on the network, and
+  keeps nothing on disk. The helper serves it on a third socket, `/run/nodo/webgui.sock` (0600, owned
+  by `_nodo_webgui`, made only with `--web-uid`), and answers only that uid there. Until someone has
+  logged in, that socket answers `WebGuiLogin` and `WebGuiStatus` (then only on or off) and refuses
+  everything else, reads included, with `Locked("web login required")`: a web process nobody has logged
+  into can do nothing. The login opens a gate in the helper's memory. It closes on `WebGuiLogout`, 12
+  hours after the last login, 15 minutes after the last request finished with none still running (so a
+  long backup does not close it under itself), when the web GUI is turned off, and when the helper
+  restarts. While open, the socket takes what the main socket takes from an owner, SSH keys included,
+  except the requests only root sends (`LocalAddressChanged`, `RunAutoUpdate`, `RunSystemUpdate`), the
+  touchscreen's own `ScreenUnlock` and `ScreenLock`, and `SetWebGui`. The login is the device
+  passphrase; there is no separate web password. `WebGuiLogin` checks it with the unlock's growing
+  delay (2 s doubling to 60 s) but under its own failure count and lock, so guesses at the login page
+  never hold the lock the owner's own unlock over SSH waits on, and neither count raises the other. A
+  right passphrase also unlocks a locked device, taking the unlock's lock only for the mounts.
+  Passphrases asked for again in the TUI (backups, owner pages, growing storage, the screen PIN) are
+  asked for again in the browser and count with the unlock's. While it is on and the device has its
+  local address, `nodo.local` is one more host on the local listener (port 10444 on that address,
+  reached as 443, for LAN sources only), with Caddy's internal CA, proxied to that socket. It is
+  reached by name only: `https://` with the bare local address is not served, because a browser sends
+  no server name for an address and the listener's TLS policies answer only the names they know. The
+  plain HTTP trust page still answers by the bare address. It needs no `.local` site: on its own it
+  turns on the local listener, the internal CA, the trust page (which then links to it), the local
+  firewall block, the mDNS name and nodo-localnet. Without a local address it waits like a local site
+  and is never served on the main address. Off, the generated Caddy config and firewall are exactly
+  what they were before it existed. No site may use `nodo.local` on the local network while it is on.
+  The socket's directory, `/run/nodo-web-gui` (2750, `_nodo_webgui:_caddy`, made by both run scripts so
+  Caddy's sandbox has it whichever starts first), lets only the web GUI's account and Caddy's group in,
+  and being setgid gives the socket Caddy's group, which `nodo-web-gui` opens to it with mode 0660. So
+  an installed app can neither reach the login page around Caddy nor put a socket of its own where
+  Caddy looks, which a loopback port would have allowed; a site's own socket upstream must be under
+  `/run/apps`. `_nodo_webgui` may send nothing on the network (`web_gui_output` in nodo-tools' firewall
+  fragment, a chain of its own on the output hook, where a drop is final whatever another fragment's
+  rules accept). The web GUI cannot be reached from the Internet or through Tor, turn itself on or off,
+  act before a login or after the gate has closed, run as root, or read anything on the device but the
+  helper's answers. Turning it on has a price. Until then the device passphrase can only be tried by
+  someone who already has an SSH key on the device. With the web GUI on, anyone on the home network can
+  try it at the login page. The delay (up to 60 s per wrong guess, about 1,400 guesses a day) and the
+  8-character minimum are what stand in the way, and since the web GUI can add and remove SSH keys like
+  the TUI can, the passphrase alone then leads to a shell. That is why it is off by default.
 - **Logging in over SSH** opens `nodo-tui` (`/etc/profile.d/nodo-tui.sh`, from `nodo-tools`).
   Only an interactive login shell on a terminal does: `ssh nodo some-command`, scp and sftp are
   untouched, and a shell started from that login does not open it again. Quitting it (`q`) leaves

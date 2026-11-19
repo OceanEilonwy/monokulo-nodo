@@ -364,6 +364,13 @@ mod tests {
                 package: "a".into(),
                 passphrase: Secret::new("p"),
             },
+            Request::WebGuiLogin {
+                passphrase: Secret::new("p"),
+            },
+            Request::WebGuiLogout,
+            Request::WebGuiStatus,
+            Request::SetWebGui(true),
+            Request::SetWebGui(false),
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -864,10 +871,40 @@ mod tests {
                     ],
                 }],
             })),
+            Ok(Response::WebGui(WebGuiStatus {
+                enabled: true,
+                url: Some(WEBGUI_URL.into()),
+                waiting: false,
+                open: true,
+            })),
+            Ok(Response::WebGui(WebGuiStatus {
+                enabled: true,
+                url: None,
+                waiting: true,
+                open: false,
+            })),
+            Err(ApiError::web_login_required()),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();
             assert_eq!(decode_response(&bytes).unwrap(), result);
+        }
+    }
+
+    /// The web GUI requests were appended, so a helper from before them still reads every older
+    /// request at its old position, and the protocol version stays.
+    #[test]
+    fn web_gui_variants_sit_after_every_older_one() {
+        let position = |request: &Request| encode_request(request).unwrap()[1];
+        let owner_page = position(&Request::OwnerPage { package: String::new(), passphrase: Secret::new("") });
+        let appended = [
+            Request::WebGuiLogin { passphrase: Secret::new("") },
+            Request::WebGuiLogout,
+            Request::WebGuiStatus,
+            Request::SetWebGui(true),
+        ];
+        for (offset, request) in appended.iter().enumerate() {
+            assert_eq!(usize::from(position(request)), usize::from(owner_page) + 1 + offset, "{request:?}");
         }
     }
 

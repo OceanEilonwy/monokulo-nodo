@@ -7,13 +7,15 @@ version=0.1.0
 revision=33
 archs="aarch64 x86_64"
 build_style=cargo
+# TODO(nodo-web-gui): add "-p nodo-web-gui" here together with the crate (crates/nodo-web-gui). Its
+# service, account and firewall rules below are already in place; only the binary is missing.
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash"
 # terminus-font is what nodo-screen-font builds the screen's console font from.
 hostmakedepends="pkg-config terminus-font"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library. nodo-gui
 # reads the touchscreen through libinput (with udev and xkbcommon) and finds fonts with fontconfig.
 makedepends="libzstd-devel libinput-devel libxkbcommon-devel eudev-libudev-devel fontconfig-devel"
-depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow"
+depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow procps-ng"
 short_desc="Root helper service and terminal interface for monokulo-nodo"
 maintainer="monokulo-nodo <noreply@localhost>"
 license="GPL-3.0-or-later"
@@ -24,12 +26,15 @@ conf_files="/etc/nodo/system-update.toml"
 font_dirs="/usr/share/fonts/nodo"
 # Package settings code runs as this account, never as root. xbps turns the name into a
 # shell variable, so it cannot contain a dash.
-system_accounts="_nodo_settings _nodo_screen"
+system_accounts="_nodo_settings _nodo_screen _nodo_webgui"
 _nodo_settings_homedir="/var/empty"
 # The screen's panels (docs/SCREEN.md) run as this account. Its only extra groups are input, for the
 # touchscreen, and video, for nodo-gui to draw on the display; nodo-screen's run script hands it tty1.
 _nodo_screen_homedir="/var/lib/nodo-screen"
 _nodo_screen_groups="input,video"
+# The web GUI (docs/ARCHITECTURE.md) runs as this account, in no extra group. It keeps nothing on
+# disk, so it has no home of its own; the helper gives it a socket that nobody else may open.
+_nodo_webgui_homedir="/var/empty"
 # Members of nodo may use the helper (root always may). gpu may open the GPU's render nodes (a
 # udev rule on the T6N boards gives them to it). No account is a member: a service runs with it,
 # through chpst in its generated run script, only when the owner approved the GPU for it.
@@ -43,6 +48,7 @@ make_dirs="/var/lib/nodo 0755 root root
  /var/log/nodo-screen 0750 root root
  /var/log/nodo-gui 0750 root root
  /var/log/nodo-power 0750 root root
+ /var/log/nodo-web-gui 0750 root root
  /var/lib/nodo/wifi 0700 root root
  /etc/nodo 0755 root root"
 
@@ -116,6 +122,16 @@ do_install() {
 	vsv nodo-screen
 	vsv nodo-gui
 	vsv nodo-power
+	# The web GUI, off until the owner turns it on over SSH: the helper links and starts the
+	# service then, so no board enables it. bwrap does not forward signals, hence control/t.
+	# TODO(nodo-web-gui): add "vbin target/${RUST_TARGET}/release/nodo-web-gui" here together with
+	# the crate. Until then the service has no program to run, and turning the web GUI on leaves
+	# it restarting.
+	vsv nodo-web-gui
+	vmkdir etc/sv/nodo-web-gui/control
+	vinstall ${FILESDIR}/nodo-web-gui/control/t 755 etc/sv/nodo-web-gui/control
+	# The web GUI's process may send nothing on the network.
+	vinstall ${FILESDIR}/nodo-web-gui.nft 644 etc/nftables.d
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
 	vinstall ${FILESDIR}/cuprated/settings.lua 644 usr/share/nodo/packages/cuprated

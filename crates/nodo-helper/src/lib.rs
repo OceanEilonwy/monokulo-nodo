@@ -46,6 +46,7 @@ mod updates;
 pub mod usb;
 mod volumes;
 pub mod web;
+pub mod webgui;
 pub mod wifi;
 pub mod worker;
 mod wpa;

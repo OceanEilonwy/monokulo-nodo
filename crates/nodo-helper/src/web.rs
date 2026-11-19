@@ -175,6 +175,9 @@ const CADDY: &str = "nodo-caddy";
 const DDNS: &str = "nodo-ddns";
 const MDNS: &str = "nodo-mdns";
 const LOCALNET: &str = "nodo-localnet";
+/// The web GUI's own process (nodo-tools). It runs exactly while the owner has the web GUI on.
+const WEBGUI: &str = "nodo-web-gui";
+const WEBGUI_MISSING: &str = "the web GUI is not installed on this device";
 const TOR: &str = "tor";
 const ROOT_ONLY: Owner = (0o600, "root", "root");
 const TORRC_HEADER: &str =
@@ -252,7 +255,7 @@ impl<I: WebIo> NodoWeb<I> {
         hostname_ok(&host).then_some(host)
     }
 
-    fn settings(&self, key: Option<&SecretsKey>) -> DomainSettings {
+    fn settings(&self, key: Option<&SecretsKey>, web_gui: bool) -> DomainSettings {
         let stored = self.acme_stored();
         DomainSettings {
             domain: self.credentials().map(|c| c.domain),
@@ -263,6 +266,7 @@ impl<I: WebIo> NodoWeb<I> {
             acme: self.acme_config(&stored),
             local_domain: stored.local_domain,
             trust_dir: self.paths.trust_dir.to_string_lossy().into_owned(),
+            web_gui,
             ..DomainSettings::default()
         }
     }
@@ -286,7 +290,8 @@ impl<I: WebIo> NodoWeb<I> {
                 rate_limit: true,
             })
             .collect();
-        let mut plan = caddy::generate(&sites, &self.settings(input.secrets.as_deref())).map_err(|e| e.to_string())?;
+        let settings = self.settings(input.secrets.as_deref(), input.web_gui);
+        let mut plan = caddy::generate(&sites, &settings).map_err(|e| e.to_string())?;
         self.add_node_onion(&mut plan, input);
         Ok(plan)
     }
@@ -311,6 +316,17 @@ impl<I: WebIo> NodoWeb<I> {
         records.sort();
         records.dedup();
         records
+    }
+
+    /// Brings the web GUI's service up or down. A device without it (an older nodo-tools) has
+    /// nothing to stop, and cannot have it turned on.
+    fn web_gui_service(&self, up: bool) -> Result<(), String> {
+        if !self.io.service_installed(WEBGUI) {
+            return if up { Err(WEBGUI_MISSING.to_owned()) } else { Ok(()) };
+        }
+        // Stopping is asked for even when it looks stopped, as a service that keeps failing to start
+        // is down between its attempts.
+        self.io.service(WEBGUI, up, false)
     }
 
     fn wait_for(&self, ready: impl Fn() -> bool) {
@@ -550,7 +566,16 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
 
     fn apply(&self, input: &WebInput) -> Result<(), String> {
         self.migrate_providers()?;
-        let wants_local = input.sites.iter().any(|s| s.exposure.local);
+        // Turned off, the web GUI stops first, before anything that could fail: off must hold.
+        // Turned on where its service is missing, nothing is changed at all.
+        if input.web_gui && !self.io.service_installed(WEBGUI) {
+            return Err(WEBGUI_MISSING.to_owned());
+        }
+        if !input.web_gui {
+            self.web_gui_service(false)?;
+        }
+        // The web GUI is served on the local address like a local site, so it needs one too.
+        let wants_local = input.web_gui || input.sites.iter().any(|s| s.exposure.local);
         if self.io.service_installed(LOCALNET) {
             self.io.service(LOCALNET, wants_local, false)?;
             if wants_local {
@@ -573,7 +598,20 @@ impl<I: WebIo> ExposureApplier for NodoWeb<I> {
         self.apply_trust(&plan, true)?;
         self.apply_local_names(&plan, input.secrets.as_deref());
         self.record_applied(&plan)?;
-        self.apply_ddns(&plan, input.secrets.as_deref())
+        self.apply_ddns(&plan, input.secrets.as_deref())?;
+        // Turned on, the web GUI starts last, once its route and the firewall are in place.
+        self.web_gui_service(input.web_gui)
+    }
+
+    fn web_gui_url(&self, input: &WebInput) -> Option<String> {
+        if !input.web_gui {
+            return None;
+        }
+        self.plan(input).ok()?.local.web_gui_url
+    }
+
+    fn sync_web_gui_service(&self, input: &WebInput) -> Result<(), String> {
+        self.web_gui_service(input.web_gui)
     }
 
     fn unlocked(&self, input: &WebInput) -> Result<(), String> {

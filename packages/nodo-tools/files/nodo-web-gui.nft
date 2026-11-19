@@ -1,0 +1,10 @@
+# The web GUI's process (nodo-web-gui, as _nodo_webgui) answers Caddy and asks the helper over
+# Unix sockets, which the firewall does not see. It has no business on the network at all, so it
+# may send nothing there. The rule sits in a chain of its own: a drop in any chain on the hook
+# is final, so it holds whatever other fragments accept in theirs.
+table inet monokulo {
+	chain web_gui_output {
+		type filter hook output priority filter; policy accept;
+		meta skuid "_nodo_webgui" drop
+	}
+}

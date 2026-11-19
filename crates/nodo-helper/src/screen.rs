@@ -93,6 +93,7 @@ pub fn is_read_only(request: &Request) -> bool {
             | BluetoothStatus
             | ScanBluetooth
             | ScreenStatus
+            | WebGuiStatus
     )
 }
 

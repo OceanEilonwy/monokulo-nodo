@@ -16,6 +16,11 @@
 //!   `http://nodo.local`, while any `.local` site uses the internal CA. nftables sends that port to
 //!   [`CADDY_TRUST_PORT`], which Caddy binds on the local address alone, and only for LAN sources.
 //!   See [`crate::trust`]. No other listener has a route to it.
+//! - The **web GUI** (`nodo-web-gui`, the TUI's screens in a browser) is one more host on the local
+//!   listener while the owner has it on ([`DomainSettings::web_gui`]): `https://nodo.local`, by that
+//!   name only, with the internal CA, proxied to its Unix socket ([`WEB_GUI_SOCKET`]) for LAN
+//!   sources only. It turns the local listener, the internal CA and the trust page on by itself, so
+//!   it needs no `.local` site. Off, nothing of it is generated.
 //! - Every **onion** address has its own plain-HTTP server on its own loopback port, reachable only
 //!   through Tor. A shared socket would let anyone probing the public IP send `Host: <addr>.onion` and
 //!   link the onion site to the home IP.
@@ -55,6 +60,10 @@ pub const CADDY_LOCAL_PORT: u16 = 10444;
 /// Caddy binds this on the local address only, for the trust page. nftables sends the local
 /// address's port 80 here.
 pub const CADDY_TRUST_PORT: u16 = 10081;
+/// The web GUI's process listens on this Unix socket, in a directory only it and Caddy may enter.
+pub const WEB_GUI_SOCKET: &str = nodo_api::WEBGUI_HTTP_SOCKET;
+/// The web GUI's name on the local listener: the trust page's name, over HTTPS.
+pub const WEB_GUI_HOST: &str = crate::trust::TRUST_HOST;
 const ONION_VIRTUAL_PORT: u16 = 80;
 const INTERNAL_CA: &str = "local";
 const APEX: &str = "@";
@@ -357,6 +366,9 @@ pub struct DomainSettings {
     pub local_domain: Option<String>,
     /// Where the helper writes the local CA trust page and the root certificate files.
     pub trust_dir: String,
+    /// The owner turned the web GUI on. It is served at `https://nodo.local` on the local listener
+    /// once there is a local address, and waits until then like a local site.
+    pub web_gui: bool,
 }
 
 impl Default for DomainSettings {
@@ -376,6 +388,7 @@ impl Default for DomainSettings {
             acme: AcmeConfig::default(),
             local_domain: None,
             trust_dir: crate::trust::TRUST_DIR.to_owned(),
+            web_gui: false,
         }
     }
 }
@@ -435,8 +448,13 @@ pub struct LocalStatus {
     pub dns_names: Vec<String>,
     /// Why local sites named under the owner's domain wait, when the address itself is fine.
     pub names_problem: Option<&'static str>,
-    /// The page where LAN devices get the local CA's root, while a `.local` site uses that CA.
+    /// The page where LAN devices get the local CA's root, while a `.local` site or the web GUI
+    /// uses that CA.
     pub trust_url: Option<String>,
+    /// The web GUI's address, while it is on and served.
+    pub web_gui_url: Option<String>,
+    /// The web GUI is on but has no local address to be served on yet.
+    pub web_gui_waiting: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -540,6 +558,20 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut local_waiting = Vec::new();
     let mut local_dns_names = Vec::new();
     let mut names_problem = None;
+
+    // The web GUI is not a package's site. It goes first on the local listener, under the trust
+    // page's name and no other, and always with the internal CA. A browser sends no server name
+    // for a bare address, which this listener's TLS policies refuse, so there is no route for one.
+    let web_gui_served = settings.web_gui && local_ip.is_some();
+    if settings.web_gui {
+        if let Some(taken) = resolved.iter().find(|r| r.local.as_deref() == Some(WEB_GUI_HOST)) {
+            return Err(WebConfigError::DuplicateHost { host: taken.local.clone().unwrap_or_default() });
+        }
+    }
+    if web_gui_served {
+        local_routes.push(web_gui_route(settings));
+        local_subjects.push(WEB_GUI_HOST.to_owned());
+    }
 
     for item in &resolved {
         let site = item.site;
@@ -648,7 +680,8 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut policies = Vec::new();
     let internal_subjects: Vec<String> =
         local_subjects.iter().filter(|host| names::is_local_name(host)).cloned().collect();
-    // Only `.local` names use the internal CA, so only then is there a root to offer.
+    // Only `.local` names use the internal CA, the web GUI's among them, so only then is there a
+    // root to offer.
     let trust_ip = local_ip.filter(|_| !internal_subjects.is_empty());
     if let Some(ip) = trust_ip {
         servers.insert("local-trust".to_owned(), trust_server(ip, settings));
@@ -758,7 +791,9 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
         rate_limit_unenforced,
         local: LocalStatus {
             remedy: match &local_address {
-                LocalAddress::Unavailable { reason } if !local_waiting.is_empty() => Some(reason.remedy()),
+                LocalAddress::Unavailable { reason } if !local_waiting.is_empty() || settings.web_gui => {
+                    Some(reason.remedy())
+                }
                 _ => names_problem,
             },
             address: local_address,
@@ -767,6 +802,8 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             dns_names: local_dns_names,
             names_problem,
             trust_url: trust_ip.map(|_| format!("http://{}", crate::trust::TRUST_HOST)),
+            web_gui_url: web_gui_served.then(|| format!("https://{WEB_GUI_HOST}")),
+            web_gui_waiting: settings.web_gui && !web_gui_served,
         },
     })
 }
@@ -1111,7 +1148,9 @@ fn range_contains(range: &str, ip: IpAddr) -> bool {
 /// For the screens: why local sites cannot be served right now, if they cannot.
 pub fn local_problem(plan: &WebPlan) -> Option<&LocalUnavailable> {
     match &plan.local.address {
-        LocalAddress::Unavailable { reason } if !plan.local.waiting.is_empty() => Some(reason),
+        LocalAddress::Unavailable { reason } if !plan.local.waiting.is_empty() || plan.local.web_gui_waiting => {
+            Some(reason)
+        }
         _ => None,
     }
 }
@@ -1343,6 +1382,25 @@ fn trust_server(ip: Ipv4Addr, settings: &DomainSettings) -> Server {
         protocols: vec!["h1".to_owned()],
         strict_sni_host: false,
     }
+}
+
+/// The web GUI on the local listener: its name, for LAN sources only, straight to its process's
+/// Unix socket. A site's socket upstream must be its own under `/run/apps` (see [`upstream_dial`]),
+/// so no package can name this one. It has no admin paths to hide and no unavailable page: a
+/// stopped web GUI gets the listener's error page.
+fn web_gui_route(settings: &DomainSettings) -> Route {
+    host_route(
+        Matcher {
+            host: vec![WEB_GUI_HOST.to_owned()],
+            remote_ip: Some(RemoteIp { ranges: settings.lan_ranges.clone() }),
+            ..Matcher::default()
+        },
+        vec![Route {
+            handle: vec![reverse_proxy(&format!("unix/{WEB_GUI_SOCKET}"), UpstreamProtocol::H1)],
+            terminal: true,
+            ..Route::default()
+        }],
+    )
 }
 
 fn onion_server(listen: String, host: &str, routes: Vec<Route>) -> Server {
