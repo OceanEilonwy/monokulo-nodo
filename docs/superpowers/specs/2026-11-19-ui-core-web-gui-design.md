@@ -502,6 +502,18 @@ Where what was built differs from the text above. Each item names what stands no
   the terminal's behaviour.
 - **The mock plays the web GUI's socket** (`knobs.web_socket`, `MockBackend::web_gui`), so the web
   GUI's tests and `--mock` log in, log out and ask for the status with the helper's own requests.
+- **What `main` added to the terminal while this was built** was carried into the core when the
+  branch was brought up to date, not back into the terminal: a public site gaining a name once
+  the owner confirms it (`Hosting::save`, `Confirm::AddPublicNames`, which carries the draft it
+  saves); asking every provider again as the list opens, a provider's details and the domains its
+  key cannot change (`providers::open_list`, `ProviderStage::Details`, `providers::refreshed_notice`
+  with `Hint::ProviderDetails`, and the wordings in `words`); an update refused before anything
+  changed as its own outcome (`words::update_results`, `words::update_failure_said`); and the word
+  for the step a busy button's work is on (`words::busy_step`). The terminal keeps the button
+  that opens a new name's controls, the pending mark and its drawing. The web GUI's Hosting page
+  has the same button and question, its provider cards show the key and the blocked domains (the
+  cards are its details page), and its jobs already last for a whole chain of effects. Protocol
+  version 6 is `main`'s; the web GUI's four requests still sit after every older one.
 
 **The interfaces**
 
