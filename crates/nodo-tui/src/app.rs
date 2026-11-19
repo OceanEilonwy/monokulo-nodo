@@ -524,7 +524,15 @@ impl std::ops::DerefMut for NetworkState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
     Address { input: Input, error: Option<String> },
-    Confirm { probe: FeedProbe, trust_focused: bool },
+    /// `naming` is the name being typed for the source, which is kept in `probe.label`.
+    Confirm { probe: FeedProbe, trust_focused: bool, naming: Option<Input> },
+}
+
+/// A source's new name being typed on the Sources page, and why the last one was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedRename {
+    pub input: Input,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1057,8 +1065,9 @@ pub enum Screen {
     Review(ReviewState),
     Installing(InstallSnapshot),
     Unlock(UnlockState),
-    /// Sources (feeds). `keys` shows each one's signing key.
-    Feeds { selected: usize, keys: bool },
+    /// Sources (feeds). `keys` shows each one's signing key; `renaming` is the chosen source's
+    /// new name being typed.
+    Feeds { selected: usize, keys: bool, renaming: Option<FeedRename> },
     AddFeed(AddFeedState),
     FeedKey(FeedKeyState),
     Settings(SettingsState),

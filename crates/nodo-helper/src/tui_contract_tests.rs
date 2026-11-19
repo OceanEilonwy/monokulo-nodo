@@ -111,3 +111,21 @@ fn the_tui_names_a_source_the_helper_could_not_read_as_the_mock_does() {
     packages.0.lock().unwrap().feeds.clear();
     contract::unreadable_source_is_named(&mut backend, &probe.name);
 }
+
+#[test]
+fn the_tui_names_a_source_as_it_adds_it_and_renames_it_through_the_helper() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut backend, _packages) = connected(&dir);
+    let mut probe = backend.probe_feed(FEED).unwrap();
+    probe.label = " Alice's apps ".into();
+    backend.trust_feed(&probe).unwrap();
+    let shown = |backend: &HelperBackend| -> Vec<(String, Option<String>)> {
+        backend.feeds().into_iter().map(|feed| (feed.name, feed.label)).collect()
+    };
+    assert_eq!(shown(&backend), [(probe.name.clone(), Some("Alice's apps".to_owned()))]);
+    backend.rename_feed(&probe.name, Some("Monero tools")).unwrap();
+    assert_eq!(shown(&backend), [(probe.name.clone(), Some("Monero tools".to_owned()))]);
+    backend.rename_feed(&probe.name, None).unwrap();
+    assert_eq!(shown(&backend), [(probe.name.clone(), None)]);
+    assert!(backend.rename_feed("nope", Some("x")).is_err());
+}

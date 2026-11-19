@@ -355,6 +355,11 @@ pub fn feeds(b: &HelperBackend) -> Vec<Feed> {
         }
     };
     let entries = catalog_entries(b).unwrap_or_default();
+    // A helper from before names refuses the request: its feeds have none.
+    let mut labels = match b.ask(Request::FeedLabels) {
+        Ok(Response::FeedLabels(labels)) => labels,
+        _ => Vec::new(),
+    };
     list.into_iter()
         .map(|f| {
             let installed_from =
@@ -374,6 +379,7 @@ pub fn feeds(b: &HelperBackend) -> Vec<Feed> {
                 fingerprint: f.fingerprint,
                 added: String::new(),
                 installed_from,
+                label: labels.iter().position(|(name, _)| *name == f.name).map(|at| labels.swap_remove(at).1),
                 name: f.name,
             }
         })
@@ -384,6 +390,7 @@ pub fn probe_feed(b: &HelperBackend, address: &str) -> Result<FeedProbe, String>
     match text(b.ask(Request::ProbeFeed { address: address.to_owned() }))? {
         Response::FeedProbe(p) => Ok(FeedProbe {
             name: p.name,
+            label: String::new(),
             address: p.address,
             packages: p.packages,
             signed: true,
@@ -395,7 +402,14 @@ pub fn probe_feed(b: &HelperBackend, address: &str) -> Result<FeedProbe, String>
 
 /// The key the user compared is sent back, and the helper pins only that key.
 pub fn trust_feed(b: &HelperBackend, probe: &FeedProbe) -> Result<(), String> {
-    let request = Request::AddFeed { address: probe.address.clone(), fingerprint: probe.fingerprint.clone() };
+    let (address, fingerprint) = (probe.address.clone(), probe.fingerprint.clone());
+    let label = probe.label.trim();
+    // A name is sent only when there is one, so a helper from before names still adds the feed.
+    let request = if label.is_empty() {
+        Request::AddFeed { address, fingerprint }
+    } else {
+        Request::AddNamedFeed { address, fingerprint, label: label.to_owned() }
+    };
     text(b.ask(request)).map(|_| ())
 }
 

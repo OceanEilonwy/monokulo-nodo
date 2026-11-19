@@ -36,6 +36,8 @@ pub enum Effect {
     RefreshFeeds,
     ToggleFeed(String),
     RemoveFeed(String),
+    /// A feed by its name, and the name to show for it; `None` goes back to its own.
+    RenameFeed { name: String, label: Option<String> },
     LoadKeyChange(String),
     TrustNewKey { change: KeyChange, typed: String },
     OpenSettings(String),
@@ -180,6 +182,8 @@ pub enum Outcome {
     UpdatesChecked(CheckReport),
     FeedProbed(Result<FeedProbe, String>),
     FeedTrusted(Result<String, String>),
+    /// The name the feed is shown by now.
+    FeedRenamed(Result<String, String>),
     KeyChangeLoaded(Option<KeyChange>),
     NewKeyTrusted(Result<String, String>),
     SettingsLoaded { package: String, form: Option<SettingsForm> },

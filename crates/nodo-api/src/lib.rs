@@ -1258,6 +1258,21 @@ pub enum Request {
     SetWebGui(bool),
     /// The processor's load and temperature, for the overview's CPU figure.
     CpuStatus,
+    /// Gives a feed a name to show in place of its own, or with `None` goes back to its own. The
+    /// feed keeps its `name`, which installed packages and a key change refer to.
+    RenameFeed {
+        name: String,
+        label: Option<String>,
+    },
+    /// `AddFeed` with the name the owner gave the feed, set together with adding it.
+    AddNamedFeed {
+        address: String,
+        fingerprint: String,
+        label: String,
+    },
+    /// The names the owner gave feeds, answered with [`Response::FeedLabels`]. Apart from
+    /// [`FeedInfo`], so an interface newer than its helper still lists the feeds.
+    FeedLabels,
 }
 
 /// The web GUI on the home network: the same screens as the TUI, in a browser.
@@ -1366,6 +1381,8 @@ pub enum Response {
     WebGui(WebGuiStatus),
     /// Answer to `CpuStatus`.
     Cpu(CpuStatus),
+    /// Answer to `FeedLabels`: each feed the owner named, by its name, with the name they gave.
+    FeedLabels(Vec<(String, String)>),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1538,6 +1555,9 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::WebGuiStatus => "web-gui-status",
         Request::SetWebGui(_) => "set-web-gui",
         Request::CpuStatus => "cpu-status",
+        Request::RenameFeed { .. } => "rename-feed",
+        Request::AddNamedFeed { .. } => "add-named-feed",
+        Request::FeedLabels => "feed-labels",
     }
 }
 

@@ -556,6 +556,11 @@ impl ScreenData for HelperBackend {
         self.ask(Request::RemoveFeed { name: name.to_owned() }).map(|_| ()).map_err(|e| e.to_string())
     }
 
+    fn rename_feed(&mut self, name: &str, label: Option<&str>) -> Result<(), String> {
+        let request = Request::RenameFeed { name: name.to_owned(), label: label.map(str::to_owned) };
+        self.ask(request).map(|_| ()).map_err(|e| e.to_string())
+    }
+
     fn key_change(&self, feed: &str) -> Option<KeyChange> {
         crate::helper_manage::key_change(self, feed)
     }

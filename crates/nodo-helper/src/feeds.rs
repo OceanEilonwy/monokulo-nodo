@@ -28,10 +28,15 @@ use crate::system::System;
 
 const MAX_ADDRESS: usize = 512;
 const MAX_NAME: usize = 32;
+/// In characters. A label is only shown, so it may hold spaces and any letters.
+const MAX_LABEL: usize = 48;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FeedRecord {
     pub address: String,
+    /// The name the owner gave the feed, shown in place of its key in `FeedState::feeds`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub enabled: bool,
     pub added: u64,
     #[serde(default)]
@@ -149,6 +154,35 @@ impl FeedState {
         self.feeds
             .get(name)
             .ok_or_else(|| ApiError::NotFound(format!("feed {name}")))
+    }
+
+    /// The label to keep for feed `name` (`None` for a new one): trimmed, `None` when blank, and
+    /// refused when it is too long, holds control characters, or is what another feed is called,
+    /// so two feeds never look the same.
+    fn check_label(&self, name: Option<&str>, label: Option<&str>) -> Result<Option<String>, ApiError> {
+        let Some(label) = label.map(str::trim).filter(|l| !l.is_empty()) else {
+            return Ok(None);
+        };
+        if label.chars().count() > MAX_LABEL {
+            return Err(ApiError::Failed(format!(
+                "a feed's name can be at most {MAX_LABEL} characters"
+            )));
+        }
+        if label.chars().any(char::is_control) {
+            return Err(ApiError::Failed(
+                "a feed's name can't contain control characters".into(),
+            ));
+        }
+        let taken = self.feeds.iter().filter(|(n, _)| Some(n.as_str()) != name).any(|(n, f)| {
+            n.eq_ignore_ascii_case(label)
+                || f.label.as_deref().is_some_and(|l| l.eq_ignore_ascii_case(label))
+        });
+        if taken {
+            return Err(ApiError::Failed(format!(
+                "another feed is already called {label}"
+            )));
+        }
+        Ok(Some(label.to_owned()))
     }
 
     fn name_for(&self, address: &str) -> Option<&str> {
@@ -331,6 +365,17 @@ impl<S: System> Helper<S> {
         Ok(Response::Feeds(feed_infos(&self.read_feeds()?)))
     }
 
+    pub(crate) fn feed_labels(&self) -> Result<Response, ApiError> {
+        let state = self.read_feeds()?;
+        Ok(Response::FeedLabels(
+            state
+                .feeds
+                .iter()
+                .filter_map(|(name, f)| Some((name.clone(), f.label.clone()?)))
+                .collect(),
+        ))
+    }
+
     pub(crate) fn probe_feed(&self, address: &str) -> Result<Response, ApiError> {
         check_address(address)?;
         let index = self.manage.packages.index(address).map_err(failed)?;
@@ -349,7 +394,12 @@ impl<S: System> Helper<S> {
 
     /// The feed is read again here, so a key that changed after the probe is caught: the user
     /// approved the key they were shown, and only that key is pinned.
-    pub(crate) fn add_feed(&self, address: &str, fingerprint: &str) -> Result<Response, ApiError> {
+    pub(crate) fn add_feed(
+        &self,
+        address: &str,
+        fingerprint: &str,
+        label: Option<&str>,
+    ) -> Result<Response, ApiError> {
         check_address(address)?;
         let expected = KeyFingerprint::new(fingerprint)
             .map_err(|_| ApiError::NeedsConfirmation("the confirmed key is not valid".into()))?;
@@ -375,11 +425,13 @@ impl<S: System> Helper<S> {
                 }
                 Decision::Pinned | Decision::Allow => {}
             }
+            let label = state.check_label(None, label)?;
             let name = state.new_name(address);
             state.feeds.insert(
                 name,
                 FeedRecord {
                     address: address.to_owned(),
+                    label,
                     enabled: true,
                     added: now,
                     last_checked: Some(now),
@@ -464,6 +516,19 @@ impl<S: System> Helper<S> {
                 .get_mut(name)
                 .ok_or_else(|| ApiError::NotFound(format!("feed {name}")))?
                 .enabled = enabled;
+            Ok(Response::Feeds(feed_infos(state)))
+        })
+    }
+
+    /// Gives a feed a name to show, or clears it with `None` or a blank one. Only the label
+    /// changes: the feed keeps its name, so installed packages and its pin are untouched.
+    pub(crate) fn rename_feed(&self, name: &str, label: Option<&str>) -> Result<Response, ApiError> {
+        self.with_feeds(|state| {
+            state.feed(name)?;
+            let label = state.check_label(Some(name), label)?;
+            if let Some(record) = state.feeds.get_mut(name) {
+                record.label = label;
+            }
             Ok(Response::Feeds(feed_infos(state)))
         })
     }
@@ -642,6 +707,23 @@ mod tests {
         assert_eq!(state.new_name("https://other/monero-tools"), "monero-tools-2");
         assert_eq!(state.new_name("https://h/"), "h");
         assert_eq!(state.new_name("/srv/feed"), "feed");
+    }
+
+    #[test]
+    fn a_label_never_makes_two_feeds_look_the_same() {
+        let mut state = FeedState::default();
+        state.feeds.insert("tools".into(), FeedRecord::default());
+        state.feeds.insert(
+            "apps".into(),
+            FeedRecord { label: Some("Alice".into()), ..FeedRecord::default() },
+        );
+        assert!(state.check_label(None, Some("alice")).is_err());
+        assert!(state.check_label(None, Some("Tools")).is_err());
+        assert!(state.check_label(Some("tools"), Some("alice")).is_err());
+        assert_eq!(state.check_label(Some("apps"), Some("ALICE")).unwrap().as_deref(), Some("ALICE"));
+        assert_eq!(state.check_label(None, Some("Bob's feed")).unwrap().as_deref(), Some("Bob's feed"));
+        assert_eq!(state.check_label(None, None).unwrap(), None);
+        assert_eq!(state.check_label(None, Some(&"é".repeat(48))).unwrap().map(|l| l.chars().count()), Some(48));
     }
 
     #[test]

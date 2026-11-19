@@ -1677,10 +1677,52 @@ fn install_gates_route_to_the_right_screen() {
 }
 
 #[test]
+fn a_source_is_renamed_on_the_sources_page_and_named_back() {
+    let (mut app, mut mock) = fixture(ScreenId::Feeds);
+    assert_eq!(feed(&mock, "monokulo").label, None);
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    // Letters go into the box, not to the page's shortcuts: q does not quit, x does not remove.
+    type_text(&mut app, &mut mock, "Quiet x tools");
+    assert!(!app.should_quit);
+    assert!(screen_text(&app).contains("Leave it empty to call it monokulo again."));
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(feed(&mock, "monokulo").label.as_deref(), Some("Quiet x tools"));
+    assert!(matches!(app.screen, Screen::Feeds { renaming: None, .. }));
+    let screen = screen_text(&app);
+    assert!(screen.contains("Quiet x tools") && screen.contains("monokulo"), "{screen}");
+
+    // Another source's name is refused beside the box, which stays open.
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    keys(&mut app, &mut mock, &[KeyCode::Char('u')]);
+    send(&mut app, &mut mock, [ctrl('u')]);
+    type_text(&mut app, &mut mock, "OFFICIAL");
+    key(&mut app, &mut mock, ENTER);
+    assert!(screen_text(&app).contains("already called OFFICIAL"), "{}", screen_text(&app));
+    assert!(matches!(app.screen, Screen::Feeds { renaming: Some(_), .. }));
+
+    // Esc leaves the box without leaving the page; an empty name goes back to its own.
+    key(&mut app, &mut mock, ESC);
+    assert_eq!(app.screen.id(), ScreenId::Feeds);
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    send(&mut app, &mut mock, [ctrl('u')]);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(feed(&mock, "monokulo").label, None);
+}
+
+#[test]
+fn a_source_is_given_a_name_as_it_is_added() {
+    let (mut app, mut mock) = fixture(ScreenId::AddFeed);
+    key(&mut app, &mut mock, KeyCode::Char('n'));
+    type_text(&mut app, &mut mock, "Alice's apps");
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(feed(&mock, "monero-tools").label.as_deref(), Some("Alice's apps"));
+}
+
+#[test]
 fn opening_a_feed_from_a_rejected_package_selects_that_feed() {
     let (mut app, mut mock) = fixture(ScreenId::Rejected);
     key(&mut app, &mut mock, KeyCode::Char('f'));
-    assert_eq!(app.screen, Screen::Feeds { selected: 2, keys: false });
+    assert_eq!(app.screen, Screen::Feeds { selected: 2, keys: false, renaming: None });
 }
 
 // Home

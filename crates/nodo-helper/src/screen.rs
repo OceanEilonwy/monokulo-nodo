@@ -51,6 +51,7 @@ pub fn is_read_only(request: &Request) -> bool {
             | PackageDetail { .. }
             | SettingsForm { .. }
             | ListFeeds
+            | FeedLabels
             | ListUpdates
             | GetAutoUpdate
             | LogSources

@@ -38,6 +38,7 @@ nodo-tui --ctl COMMAND [ARGS]
   data-drive PACKAGE 0|1
   feeds | refresh-feeds | catalog | probe-feed ADDRESS | add-feed ADDRESS FINGERPRINT
   feed-enable NAME 0|1 | remove-feed NAME | feed-key NAME | trust-key NAME FROM TO TYPED_NAME
+  feed-labels | rename-feed NAME [LABEL]
   review FEED PACKAGE
   install-pkg FEED PACKAGE PKGVER [PERMISSION...]   (sends exactly this approval)
   remove-pkg PACKAGE                                 (its data stays on the drive)
@@ -273,6 +274,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["add-feed", address, fingerprint] => Request::AddFeed { address: id(address), fingerprint: id(fingerprint) },
         ["feed-enable", name, on] => Request::SetFeedEnabled { name: id(name), enabled: flag(on)? },
         ["remove-feed", name] => Request::RemoveFeed { name: id(name) },
+        ["feed-labels"] => Request::FeedLabels,
+        ["rename-feed", name] => Request::RenameFeed { name: id(name), label: None },
+        ["rename-feed", name, label] => Request::RenameFeed { name: id(name), label: Some(id(label)) },
         ["feed-key", name] => Request::FeedKeyChange { name: id(name) },
         ["trust-key", name, from, to, typed] => Request::TrustFeedKey {
             name: id(name),

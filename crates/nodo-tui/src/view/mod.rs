@@ -75,7 +75,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Review(state) => apps::review(app, t, state),
         Screen::Installing(snapshot) => apps::installing(app, t, snapshot),
         Screen::Unlock(state) => apps::unlock(app, t, state),
-        Screen::Feeds { selected, keys } => sources::sources(app, t, *selected, *keys),
+        Screen::Feeds { selected, keys, renaming } => sources::sources(app, t, *selected, *keys, renaming.as_ref()),
         Screen::AddFeed(state) => sources::add_feed(app, t, state),
         Screen::FeedKey(state) => sources::feed_key(app, t, state),
         Screen::Settings(state) => settings::settings(app, t, state),

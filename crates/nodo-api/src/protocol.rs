@@ -374,6 +374,10 @@ mod tests {
             Request::SetWebGui(true),
             Request::SetWebGui(false),
             Request::CpuStatus,
+            Request::RenameFeed { name: "apps".into(), label: Some("Alice's apps".into()) },
+            Request::RenameFeed { name: "apps".into(), label: None },
+            Request::AddNamedFeed { address: "https://f/".into(), fingerprint: "aa".into(), label: "Mine".into() },
+            Request::FeedLabels,
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -891,6 +895,7 @@ mod tests {
             Err(ApiError::web_login_required()),
             Ok(Response::Cpu(CpuStatus { load_average_milli: 2500, cores: 8, temperature_millicelsius: Some(52_125) })),
             Ok(Response::Cpu(CpuStatus { load_average_milli: 0, cores: 1, temperature_millicelsius: None })),
+            Ok(Response::FeedLabels(vec![("apps".into(), "Alice's apps".into())])),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();
@@ -926,6 +931,21 @@ mod tests {
         let web_gui = Ok(Response::WebGui(WebGuiStatus { enabled: false, url: None, waiting: false, open: false }));
         let cpu = Ok(Response::Cpu(CpuStatus { load_average_milli: 0, cores: 1, temperature_millicelsius: None }));
         assert_eq!(response(&cpu), response(&web_gui) + 1);
+    }
+
+    /// The feed name requests were appended after `CpuStatus`, and their answer after `Cpu`, so
+    /// an older helper refuses them as malformed and still reads everything else.
+    #[test]
+    fn feed_name_variants_sit_after_every_older_one() {
+        let request = |request: &Request| encode_request(request).unwrap()[1];
+        let cpu = request(&Request::CpuStatus);
+        assert_eq!(request(&Request::RenameFeed { name: String::new(), label: None }), cpu + 1);
+        let add = Request::AddNamedFeed { address: String::new(), fingerprint: String::new(), label: String::new() };
+        assert_eq!(request(&add), cpu + 2);
+        assert_eq!(request(&Request::FeedLabels), cpu + 3);
+        let response = |result: &CallResult| encode_response(result).unwrap()[2];
+        let cpu = Ok(Response::Cpu(CpuStatus { load_average_milli: 0, cores: 1, temperature_millicelsius: None }));
+        assert_eq!(response(&Ok(Response::FeedLabels(Vec::new()))), response(&cpu) + 1);
     }
 
     /// Fixes the wire position of the first variants, so an accidental reorder fails here

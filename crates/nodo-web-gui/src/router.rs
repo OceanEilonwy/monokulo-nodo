@@ -83,6 +83,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sources/of/{name}", get(sources::open))
         .route("/sources/of/{name}/toggle", post(sources::toggle))
         .route("/sources/of/{name}/remove", post(sources::remove))
+        .route("/sources/of/{name}/rename", get(sources::rename).post(sources::save_name))
         .route("/sources/of/{name}/key", get(sources::key).post(sources::trust_key))
         .route("/sources/of/{name}/key/remove", post(sources::remove_from_key))
         // Web

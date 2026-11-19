@@ -166,9 +166,16 @@ impl<S: System> Helper<S> {
             Request::AddFeed {
                 address,
                 fingerprint,
-            } => self.add_feed(&address, &fingerprint),
+            } => self.add_feed(&address, &fingerprint, None),
+            Request::AddNamedFeed {
+                address,
+                fingerprint,
+                label,
+            } => self.add_feed(&address, &fingerprint, Some(&label)),
+            Request::FeedLabels => self.feed_labels(),
             Request::RefreshFeeds => self.refresh_feeds(),
             Request::SetFeedEnabled { name, enabled } => self.set_feed_enabled(&name, enabled),
+            Request::RenameFeed { name, label } => self.rename_feed(&name, label.as_deref()),
             Request::RemoveFeed { name } => self.remove_feed(&name),
             Request::FeedKeyChange { name } => self.feed_key_change(&name),
             Request::TrustFeedKey { name, confirmation } => {
