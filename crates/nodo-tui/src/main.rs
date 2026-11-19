@@ -4,7 +4,8 @@ use std::process::ExitCode;
 
 use nodo_api::client::HelperClient;
 use nodo_api::{Backend, DEFAULT_SOCKET};
-use nodo_tui::app::{App, Notice, NoticeKind};
+use nodo_tui::app::App;
+use nodo_ui_core::flows::{Notice, NoticeKind};
 use nodo_tui::ctl;
 use nodo_tui::fixtures::fixture;
 use nodo_ui_core::helper_backend::HelperBackend;

@@ -9,6 +9,7 @@ use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
 use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -1270,47 +1271,29 @@ impl Screen {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeKind {
-    Info,
-    Ok,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notice {
-    pub kind: NoticeKind,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModalAction {
-    RemoveFeed(String),
-    AllSitesOffline,
-    RepairDrive,
-    DiscardSettings,
-    DiscardAutoUpdate,
-    RemoveSshKey(String),
-    /// Puts a package back to the version given.
-    RollBack { package: String, to: String },
-    /// Joins an open network, whose traffic anyone nearby can read.
-    JoinOpenWifi(String),
-    ForgetWifi(String),
-    /// Turns Wi-Fi off while it may be the connection in use.
-    WifiOff,
-    RemoveBluetooth(String),
-    /// Disconnects a domain provider, by id.
-    RemoveProvider(String),
-}
-
-/// A yes-or-no question whose focus always starts on the safe answer.
+/// A question on top of the screen, and which of its two buttons has the focus. The wording and
+/// what confirming does are the core's `Question`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Modal {
-    pub title: String,
-    pub body: Vec<String>,
-    pub confirm_label: String,
+    pub question: Question,
     pub confirm_focused: bool,
-    pub action: ModalAction,
+}
+
+impl Modal {
+    /// The focus starts on Cancel unless the question says its default is to go ahead.
+    pub fn ask(question: Question) -> Self {
+        let confirm_focused = !question.cancel_is_default;
+        Self { question, confirm_focused }
+    }
+}
+
+/// The question's own fields read as the modal's, which is how the views and tests name them.
+impl std::ops::Deref for Modal {
+    type Target = Question;
+
+    fn deref(&self) -> &Question {
+        &self.question
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

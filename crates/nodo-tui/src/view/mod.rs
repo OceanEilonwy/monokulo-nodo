@@ -23,7 +23,8 @@ use ratatui::Frame;
 
 use crossterm::event::KeyCode;
 
-use crate::app::{App, Modal, NoticeKind, Overlay, Screen, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{App, Modal, Overlay, Screen, MIN_HEIGHT, MIN_WIDTH};
+use nodo_ui_core::flows::NoticeKind;
 use crate::hit::{self, Click, Target};
 use nodo_ui_core::model::Area;
 use nodo_ui_core::screen::Tab;

@@ -11,6 +11,7 @@ use nodo_api::{AliasMode, ApiError, Exposure, PublicAlias};
 
 use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
+use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::Effect;
 use nodo_ui_core::effect::ExposureAfter;
@@ -50,16 +51,16 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('l') => return open_logs(app, "System"),
         KeyCode::Char('n') => return more::open_onion(app),
         KeyCode::Char('o') if !sites.is_empty() => {
-            app.modal = Some(Modal {
+            app.modal = Some(Modal::ask(Question {
                 title: "Take all sites offline?".to_owned(),
                 body: vec![
                     "Home network, Tor and internet addresses all stop, for every site.".to_owned(),
                     "Records of your home's address can stay in public DNS history after this.".to_owned(),
                 ],
                 confirm_label: "Take offline".to_owned(),
-                confirm_focused: false,
-                action: ModalAction::AllSitesOffline,
-            });
+                cancel_is_default: true,
+                confirm: Confirm::AllSitesOffline,
+            }));
         }
         _ => {}
     }
@@ -330,13 +331,13 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     if !used.is_empty() {
                         body.push(format!("{} still use it, so take them off the internet first.", used.join(", ")));
                     }
-                    app.modal = Some(Modal {
+                    app.modal = Some(Modal::ask(Question {
                         title: format!("Remove {}?", provider.name),
                         body,
                         confirm_label: "Remove".to_owned(),
-                        confirm_focused: false,
-                        action: ModalAction::RemoveProvider(provider.id.clone()),
-                    });
+                        cancel_is_default: true,
+                        confirm: Confirm::RemoveProvider(provider.id.clone()),
+                    }));
                 }
             }
             KeyCode::Char('c') => {

@@ -8,6 +8,8 @@
 //!
 //! An interface asks for work as an `Effect`; `exec` performs it against the backend and answers
 //! with `Outcome`s. What the screens work out from the device's state alone is in `queries`.
+//! The rules of each feature, and what its results mean, are in `flows`; start with that module's
+//! documentation before writing a frontend or a new flow.
 
 // A dropped result is how failures went unreported. Where dropping is right, an #[allow] says why.
 // CI also enforces these for the tests (.github/workflows/crates.yml).
@@ -16,6 +18,7 @@
 pub mod contract;
 pub mod effect;
 pub mod exec;
+pub mod flows;
 pub mod helper_backend;
 pub mod helper_manage;
 pub mod mock;

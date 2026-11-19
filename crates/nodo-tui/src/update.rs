@@ -4,13 +4,13 @@
 //! such as safe default focus and typed confirmation, live in this file.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, Exposure, Response, ServiceState};
+use nodo_api::{ApiError, Response, ServiceState};
 
 use crate::app::*;
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::{Input, Secret};
 use nodo_ui_core::{Effect, Outcome};
-use nodo_ui_core::effect::ExposureAfter;
+use nodo_ui_core::flows::{Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -616,7 +616,7 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => {
             let modal = app.modal.take().expect("modal checked above");
             if modal.confirm_focused {
-                return modal_action(app, modal.action);
+                return modal_action(app, modal.question.confirm);
             }
         }
         _ => {}
@@ -624,44 +624,52 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
-    match action {
-        ModalAction::RemoveFeed(name) => {
-            if matches!(app.screen, Screen::FeedKey(_)) {
-                pop(app);
+/// The owner confirmed a question. The screens that show the work as running are marked first;
+/// what confirming does comes from the core.
+fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
+    match &confirm {
+        Confirm::RollBack { .. } => more::mark_rolling_back(app),
+        Confirm::JoinOpenWifi(_) | Confirm::ForgetWifi(_) | Confirm::WifiOff | Confirm::RemoveBluetooth(_) => {
+            if !net::mark_confirmed(app, &confirm) {
+                return Vec::new();
             }
-            vec![Effect::RemoveFeed(name)]
         }
-        ModalAction::AllSitesOffline => app
-            .data
-            .web
-            .sites
-            .iter()
-            .filter(|site| site.exposure != Exposure::default())
-            .map(|site| Effect::SetExposure {
-                site: site.package.clone(),
-                exposure: Exposure::default(),
-                after: ExposureAfter::Stay, confirmation: None
-            })
-            .collect(),
-        ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
-        ModalAction::RollBack { package, to } => more::roll_back(app, package, to),
-        action @ (ModalAction::JoinOpenWifi(_)
-        | ModalAction::ForgetWifi(_)
-        | ModalAction::WifiOff
-        | ModalAction::RemoveBluetooth(_)) => net::modal_action(app, action),
-        ModalAction::RemoveProvider(id) => vec![Effect::RemoveProvider(id)],
-        ModalAction::RemoveSshKey(fingerprint) => {
+        Confirm::RemoveSshKey(_) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;
             }
-            vec![Effect::RemoveSshKey(fingerprint)]
         }
-        ModalAction::DiscardSettings | ModalAction::DiscardAutoUpdate => {
-            pop(app);
+        _ => {}
+    }
+    let step = confirm.step(&app.data);
+    follow(app, step)
+}
+
+/// Does what a step from the core says: shows its notice or its question, goes where it sends,
+/// and returns the effects it carries, whose outcomes come back through `on_result`.
+fn follow(app: &mut App, step: Step) -> Vec<Effect> {
+    match step {
+        Step::Stay => Vec::new(),
+        Step::Done(notice) | Step::Failed(notice) => {
+            app.notice = Some(notice);
             Vec::new()
         }
+        Step::Ask(question) => {
+            app.modal = Some(Modal::ask(question));
+            Vec::new()
+        }
+        Step::Go(dest) => go(app, dest),
+        Step::Run(effects) => effects,
+        Step::All(steps) => steps.into_iter().flat_map(|step| follow(app, step)).collect(),
     }
+}
+
+/// Maps a destination of the core to this interface's screens.
+fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
+    match dest {
+        Dest::Back => pop(app),
+    }
+    Vec::new()
 }
 
 fn overlay_key(app: &mut App, key: KeyEvent) {
@@ -818,7 +826,7 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 KeyCode::Char('d') => {
                     if let Some(chosen) = keys.get(*selected) {
                         let fingerprint = chosen.fingerprint.clone();
-                        app.modal = Some(Modal {
+                        app.modal = Some(Modal::ask(Question {
                             title: "Remove this SSH key?".to_owned(),
                             body: vec![
                                 format!("{} {}", chosen.algorithm, chosen.comment),
@@ -826,9 +834,9 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                                 "It will no longer be able to log in.".to_owned(),
                             ],
                             confirm_label: "Remove".to_owned(),
-                            confirm_focused: false,
-                            action: ModalAction::RemoveSshKey(fingerprint),
-                        });
+                            cancel_is_default: true,
+                            confirm: Confirm::RemoveSshKey(fingerprint),
+                        }));
                     }
                 }
                 KeyCode::Esc | KeyCode::Enter => leave = true,
@@ -868,7 +876,7 @@ fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             0 => return vec![Effect::Drive(DriveAction::Retry)],
             1 => return vec![Effect::Drive(DriveAction::ReadOnlyCheck)],
             2 => {
-                app.modal = Some(Modal {
+                app.modal = Some(Modal::ask(Question {
                     title: "Repair the filesystem?".to_owned(),
                     body: vec![
                         "Repairing rewrites damaged parts of the filesystem and can lose data.".to_owned(),
@@ -876,9 +884,9 @@ fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                             .to_owned(),
                     ],
                     confirm_label: "Repair".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::RepairDrive,
-                });
+                    cancel_is_default: true,
+                    confirm: Confirm::RepairDrive,
+                }));
             }
             _ => return vec![Effect::Drive(DriveAction::Diagnostics)],
         },
@@ -1131,7 +1139,7 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('x') => {
             if let Some(feed) = current {
-                app.modal = Some(remove_feed_modal(&feed.name));
+                app.modal = Some(remove_feed_modal(&feed.name, false));
             }
         }
         KeyCode::Enter => {
@@ -1148,16 +1156,16 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-fn remove_feed_modal(name: &str) -> Modal {
-    Modal {
+fn remove_feed_modal(name: &str, from_key_change: bool) -> Modal {
+    Modal::ask(Question {
         title: format!("Remove {name}?"),
         body: vec![
             "Apps you installed from it keep running; they just won't get updates until you add it back.".to_owned(),
         ],
         confirm_label: "Remove".to_owned(),
-        confirm_focused: false,
-        action: ModalAction::RemoveFeed(name.to_owned()),
-    }
+        cancel_is_default: true,
+        confirm: Confirm::RemoveSource { name: name.to_owned(), from_key_change },
+    })
 }
 
 fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1226,7 +1234,7 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             0 => pop(app),
             1 => state.typing = Some(Input::plain("")),
             _ => {
-                let modal = remove_feed_modal(&state.change.feed);
+                let modal = remove_feed_modal(&state.change.feed, true);
                 app.modal = Some(modal);
             }
         },
@@ -1319,13 +1327,13 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             if state.changed_indices().is_empty() {
                 pop(app);
             } else {
-                app.modal = Some(Modal {
+                app.modal = Some(Modal::ask(Question {
                     title: "Discard your changes?".to_owned(),
                     body: vec!["Your unsaved settings will be lost.".to_owned()],
                     confirm_label: "Discard".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::DiscardSettings,
-                });
+                    cancel_is_default: true,
+                    confirm: Confirm::DiscardSettings,
+                }));
             }
         }
         _ => {}
@@ -1963,13 +1971,13 @@ fn auto_update_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             if state.draft == state.saved {
                 pop(app);
             } else {
-                app.modal = Some(Modal {
+                app.modal = Some(Modal::ask(Question {
                     title: "Discard your changes?".to_owned(),
                     body: vec!["Your auto-update choices will not be saved.".to_owned()],
                     confirm_label: "Discard".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::DiscardAutoUpdate,
-                });
+                    cancel_is_default: true,
+                    confirm: Confirm::DiscardAutoUpdate,
+                }));
             }
         }
         _ => {}

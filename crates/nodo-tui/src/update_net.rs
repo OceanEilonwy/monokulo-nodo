@@ -9,6 +9,7 @@ use nodo_api::{PairingStage, WifiLink, WifiSecurity};
 
 use super::{notice, pop, push, step};
 use crate::app::*;
+use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -23,8 +24,8 @@ pub(super) fn network_input(state: &mut NetworkState) -> Option<&mut Input> {
     state.prompt.as_mut().map(|p| &mut p.passphrase)
 }
 
-fn ask(app: &mut App, title: String, body: Vec<String>, confirm: &str, action: ModalAction) {
-    app.modal = Some(Modal { title, body, confirm_label: confirm.to_owned(), confirm_focused: false, action });
+fn ask(app: &mut App, title: String, body: Vec<String>, confirm_label: &str, confirm: Confirm) {
+    app.modal = Some(Modal::ask(Question::careful(title, body, confirm_label, confirm)));
 }
 
 pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -122,7 +123,7 @@ pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             if state.joined() == Some(ssid.as_str()) && !state.wifi.as_ref().is_some_and(|w| w.wired_up) {
                 body.push("The wired link is down, so this may cut the connection you are using.".to_owned());
             }
-            ask(app, format!("Forget {ssid}?"), body, "Forget", ModalAction::ForgetWifi(ssid));
+            ask(app, format!("Forget {ssid}?"), body, "Forget", Confirm::ForgetWifi(ssid));
         }
         KeyCode::Char('x') if state.focus == NetworkFocus::Bluetooth => {
             let Some(device) = state.bluetooth.as_ref().and_then(|b| b.devices.get(state.bt_selected)).cloned() else {
@@ -136,7 +137,7 @@ pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     "Pairing it again needs the device in its pairing mode.".to_owned(),
                 ],
                 "Remove",
-                ModalAction::RemoveBluetooth(device.address),
+                Confirm::RemoveBluetooth(device.address),
             );
         }
         _ => {}
@@ -162,7 +163,7 @@ fn toggle_radio(app: &mut App) -> Vec<Effect> {
                     "Turn Wi-Fi off?".to_owned(),
                     vec!["The wired link is down, so this may cut the connection you are using.".to_owned()],
                     "Turn off",
-                    ModalAction::WifiOff,
+                    Confirm::WifiOff,
                 );
                 return Vec::new();
             }
@@ -221,7 +222,7 @@ fn join_selected(app: &mut App) -> Vec<Effect> {
                     "SSH and HTTPS stay encrypted, but names it looks up and other plain traffic do not.".to_owned(),
                 ],
                 "Join anyway",
-                ModalAction::JoinOpenWifi(ssid),
+                Confirm::JoinOpenWifi(ssid),
             );
             Vec::new()
         }
@@ -256,32 +257,26 @@ fn pair_or_connect(app: &mut App) -> Vec<Effect> {
     vec![Effect::ConnectBluetooth { address: device.address, connect }]
 }
 
-pub(super) fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
+/// Shows a confirmed change as running. False when the Network screen is not the one shown,
+/// in which case nothing is done. What the change asks of the device is the core's
+/// `Confirm::step`.
+pub(super) fn mark_confirmed(app: &mut App, confirm: &Confirm) -> bool {
     let Screen::Network(state) = &mut app.screen else {
-        return Vec::new();
+        return false;
     };
     state.error = None;
-    match action {
-        ModalAction::JoinOpenWifi(ssid) => {
-            state.busy = Some(format!("Joining {ssid}…"));
-            vec![Effect::JoinWifi { ssid, security: WifiSecurity::Open, passphrase: None, accept_open: true }]
-        }
-        ModalAction::ForgetWifi(ssid) => {
-            state.busy = Some(format!("Forgetting {ssid}…"));
-            vec![Effect::ForgetWifi(ssid)]
-        }
-        ModalAction::WifiOff => {
+    match confirm {
+        Confirm::JoinOpenWifi(ssid) => state.busy = Some(format!("Joining {ssid}…")),
+        Confirm::ForgetWifi(ssid) => state.busy = Some(format!("Forgetting {ssid}…")),
+        Confirm::WifiOff => {
             state.busy = Some("Turning Wi-Fi off…".to_owned());
             state.networks.clear();
             state.wifi_selected = 0;
-            vec![Effect::SetWifi(false)]
         }
-        ModalAction::RemoveBluetooth(address) => {
-            state.busy = Some("Removing the device…".to_owned());
-            vec![Effect::RemoveBluetooth(address)]
-        }
-        _ => Vec::new(),
+        Confirm::RemoveBluetooth(_) => state.busy = Some("Removing the device…".to_owned()),
+        _ => return false,
     }
+    true
 }
 
 /// Polls while something happens in the background: a pairing waiting for the owner, or a

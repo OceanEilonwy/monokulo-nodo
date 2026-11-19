@@ -8,6 +8,7 @@ use nodo_api::UpdateOutcome;
 
 use super::{edit_input, fail, notice, open_logs, pop, push, step};
 use crate::app::*;
+use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -342,7 +343,7 @@ pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 state.error = Some(format!("{} cannot roll back now: {reason}.", option.package));
                 return Vec::new();
             }
-            app.modal = Some(Modal {
+            app.modal = Some(Modal::ask(Question {
                 title: format!("Roll {} back?", option.package),
                 body: vec![
                     format!("{} goes from {} back to {}.", option.package, option.current, option.previous),
@@ -350,22 +351,22 @@ pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                     format!("{} is held, so automatic updates leave it alone.", option.current),
                 ],
                 confirm_label: "Roll back".to_owned(),
-                confirm_focused: false,
-                action: ModalAction::RollBack { package: option.package, to: option.previous },
-            });
+                cancel_is_default: true,
+                confirm: Confirm::RollBack { package: option.package, to: option.previous },
+            }));
         }
         _ => {}
     }
     Vec::new()
 }
 
-pub(super) fn roll_back(app: &mut App, package: String, to: String) -> Vec<Effect> {
+/// Shows a confirmed rollback as running. The request itself is the core's `Confirm::step`.
+pub(super) fn mark_rolling_back(app: &mut App) {
     if let Screen::Rollbacks(state) = &mut app.screen {
         state.busy = true;
         state.error = None;
         state.result = None;
     }
-    vec![Effect::RollBack { package, to }]
 }
 
 // Results
