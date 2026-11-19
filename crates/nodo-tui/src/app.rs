@@ -901,9 +901,9 @@ pub struct ExposureState {
     pub picking_alias: bool,
     /// Why the new name could not be added.
     pub alias_error: Option<String>,
-    /// The site was public when the screen opened. The helper then lets names be removed but not
-    /// added, since going public confirmed the names it had.
-    pub was_public: bool,
+    /// The controls that put a new name together are open. They stay closed until the owner asks
+    /// for another address, so a site with one address shows only that one.
+    pub adding_alias: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -916,6 +916,8 @@ pub enum HostingFocus {
     Address,
     /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
     Alias(usize),
+    /// The button that opens the controls for a new name.
+    AliasOpen,
     AliasDomain,
     AliasAddress,
     AliasMode,
@@ -956,7 +958,7 @@ impl ExposureState {
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
             alias_error: None,
-            was_public: draft.public,
+            adding_alias: false,
         }
     }
 
@@ -968,8 +970,10 @@ impl ExposureState {
             if has_provider {
                 order.extend([HostingFocus::Domain, HostingFocus::Address]);
                 order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if !self.was_public {
+                if self.adding_alias {
                     order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
+                } else {
+                    order.push(HostingFocus::AliasOpen);
                 }
             } else {
                 order.push(HostingFocus::AddProvider);
@@ -997,6 +1001,23 @@ impl ExposureState {
     pub fn alias_host(&self) -> String {
         let sub = self.alias_sub.text().trim().trim_matches('.');
         if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+    }
+
+    /// Puts the focus on `focus` when it is in the order.
+    pub fn focus_on(&mut self, focus: HostingFocus) {
+        if let Some(at) = self.order().iter().position(|f| *f == focus) {
+            self.selected = at;
+        }
+    }
+
+    /// Closes the new name's controls and empties them, with the focus on the button that opens
+    /// them again.
+    pub fn close_alias_form(&mut self) {
+        self.adding_alias = false;
+        self.alias_sub.clear();
+        self.alias_mode = nodo_api::AliasMode::Redirect;
+        self.alias_error = None;
+        self.focus_on(HostingFocus::AliasOpen);
     }
 
     /// The domain list is open, for either address.
@@ -1523,6 +1544,8 @@ pub enum ModalAction {
     RemoveBluetooth(String),
     /// Disconnects a domain provider, by id.
     RemoveProvider(String),
+    /// Saves Hosting with these new names, which go on the internet at once: the site is public.
+    AddPublicNames(Vec<String>),
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -1713,7 +1736,8 @@ pub enum Effect {
     SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
     /// Saves the host and every other name of a site. `then` runs only once that worked, so a
     /// refused name never goes on to the checks or to going public with the old names.
-    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, then: Vec<Effect> },
+    /// `confirm_added` are the new names the owner confirmed putting on a site that is public.
+    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, confirm_added: Vec<String>, then: Vec<Effect> },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
     /// `domain` only for a provider that cannot list its domains.

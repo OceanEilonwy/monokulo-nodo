@@ -477,14 +477,18 @@ impl<S: System> Helper<S> {
     }
 
     /// A public site keeps its host, because the user confirmed going public for that name. Its
-    /// other names can be removed while it is public, which only takes names away, but not added
-    /// or changed: the going-public confirmation listed every name the site would answer at, so a
-    /// new one waits until the site goes public again. `aliases` of `None` keeps the saved ones.
+    /// other names can change while it is public, and the change is applied at once. Removing a
+    /// name, or changing whether one redirects, publishes nothing new. A name the site does not
+    /// answer at yet does: it gets a record pointing at the home and a certificate that public
+    /// logs keep, and the going-public confirmation never listed it. So each such name must be in
+    /// `confirm_added`, the names the user confirmed adding. `aliases` of `None` keeps the saved
+    /// ones.
     pub(crate) fn set_public_host(
         &self,
         site: &SiteId,
         host: &str,
         aliases: Option<&[PublicAlias]>,
+        confirm_added: &[String],
     ) -> Result<Response, ApiError> {
         let package = self.package(&site.package)?;
         find_site(&package, &site.site)?;
@@ -509,11 +513,19 @@ impl<S: System> Helper<S> {
         }
         let saved = current.map(|e| e.aliases().to_vec()).unwrap_or_default();
         let aliases = aliases.map_or_else(|| saved.clone(), <[PublicAlias]>::to_vec);
-        if public && !aliases.iter().all(|alias| saved.contains(alias)) {
-            return Err(ApiError::Failed(
-                "take the site off its public address before adding another name; removing one works while it is public"
-                    .to_owned(),
-            ));
+        if public {
+            let unconfirmed: Vec<&str> = aliases
+                .iter()
+                .map(|alias| alias.host.as_str())
+                .filter(|name| !saved.iter().any(|old| old.host == *name))
+                .filter(|name| !confirm_added.iter().any(|confirmed| confirmed == name))
+                .collect();
+            if !unconfirmed.is_empty() {
+                return Err(ApiError::NeedsConfirmation(format!(
+                    "the site is public, so {} would go on the internet at once: confirm adding it",
+                    unconfirmed.join(", ")
+                )));
+            }
         }
         // Every name another site answers at, so two sites never claim one name.
         let taken: Vec<(String, String)> = hosts
@@ -536,7 +548,8 @@ impl<S: System> Helper<S> {
             .insert(site.site.clone(), HostEntry::new(host.to_owned(), aliases));
         self.save_toml(&self.paths.public_hosts, &hosts)?;
         if public && changed {
-            // A removed name must stop answering now, not at the next change.
+            // A removed name must stop answering now, and an added one start, not at the next
+            // change.
             let applied = self
                 .web_input(&state)
                 .map_err(|e| e.to_string())
@@ -633,8 +646,8 @@ mod tests {
         let sys = FakeSystem::default();
         sys.add_manifest(SHOP);
         let h = helper(sys);
-        h.set_public_host(&site("web"), HOST, None).unwrap();
-        h.set_public_host(&site("single"), "one.example.com", None)
+        h.set_public_host(&site("web"), HOST, None, &[]).unwrap();
+        h.set_public_host(&site("single"), "one.example.com", None, &[])
             .unwrap();
         h
     }
@@ -757,13 +770,13 @@ mod tests {
             "a b.com",
             "a_b.com",
         ] {
-            assert!(h.set_public_host(&site("web"), bad, None).is_err(), "{bad}");
+            assert!(h.set_public_host(&site("web"), bad, None, &[]).is_err(), "{bad}");
         }
         go(&h, "web", PUBLIC).unwrap();
         assert!(h
-            .set_public_host(&site("web"), "other.example.com", None)
+            .set_public_host(&site("web"), "other.example.com", None, &[])
             .is_err());
-        assert!(h.set_public_host(&site("web"), HOST, None).is_ok());
+        assert!(h.set_public_host(&site("web"), HOST, None, &[]).is_ok());
     }
 
     /// A proxy that owns example.com and example.org and counts how often it was applied.
@@ -800,7 +813,7 @@ mod tests {
         let proxy = Domains::default();
         let h = with_domains(&proxy);
         let aliases = [alias("example.com", AliasMode::Redirect), alias("pay.example.org", AliasMode::Serve)];
-        h.set_public_host(&site("web"), "www.example.com", Some(&aliases)).unwrap();
+        h.set_public_host(&site("web"), "www.example.com", Some(&aliases), &[]).unwrap();
         let text = String::from_utf8(h.sys.get(HOSTS).unwrap()).unwrap();
         // The other site keeps the plain string an older helper reads.
         assert!(text.contains("single = \"one.example.com\""), "{text}");
@@ -812,9 +825,9 @@ mod tests {
         let web = input.sites.iter().find(|s| s.service.name == "web").unwrap();
         assert_eq!(web.public_aliases, aliases, "the proxy gets them");
         // No aliases given keeps them; an empty list removes them and the old form comes back.
-        h.set_public_host(&site("web"), "www.example.com", None).unwrap();
+        h.set_public_host(&site("web"), "www.example.com", None, &[]).unwrap();
         assert_eq!(listed(&h, "web").public_aliases, aliases);
-        h.set_public_host(&site("web"), "www.example.com", Some(&[])).unwrap();
+        h.set_public_host(&site("web"), "www.example.com", Some(&[]), &[]).unwrap();
         let text = String::from_utf8(h.sys.get(HOSTS).unwrap()).unwrap();
         assert!(text.contains("web = \"www.example.com\""), "{text}");
         assert_eq!(*proxy.0.lock().unwrap(), 0, "nothing public, so nothing to apply");
@@ -833,7 +846,7 @@ mod tests {
     fn aliases_outside_the_connected_domains_duplicates_and_other_sites_names_are_refused() {
         let proxy = Domains::default();
         let h = with_domains(&proxy);
-        let refused = |aliases: &[PublicAlias]| match h.set_public_host(&site("web"), "www.example.com", Some(aliases)) {
+        let refused = |aliases: &[PublicAlias]| match h.set_public_host(&site("web"), "www.example.com", Some(aliases), &[]) {
             Err(ApiError::Failed(reason)) => reason,
             other => panic!("{other:?}"),
         };
@@ -845,31 +858,70 @@ mod tests {
         assert_eq!(listed(&h, "web").public_host.as_deref(), Some(HOST), "a refusal changes nothing");
         // Without a proxy no domain is connected, so no alias can be checked into place.
         let bare = setup();
-        assert!(bare.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)])).is_err());
+        assert!(bare.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)]), &[]).is_err());
         // And another site cannot take a name an alias already has.
-        h.set_public_host(&site("web"), "www.example.com", Some(&[alias("example.com", AliasMode::Redirect)])).unwrap();
-        assert!(h.set_public_host(&site("single"), "example.com", None).is_err());
+        h.set_public_host(&site("web"), "www.example.com", Some(&[alias("example.com", AliasMode::Redirect)]), &[]).unwrap();
+        assert!(h.set_public_host(&site("single"), "example.com", None, &[]).is_err());
     }
 
     #[test]
-    fn while_public_aliases_can_be_removed_and_applied_but_not_added() {
+    fn while_public_aliases_can_be_removed_and_applied_at_once() {
         let proxy = Domains::default();
         let h = with_domains(&proxy);
         let apex = alias("example.com", AliasMode::Redirect);
         let pay = alias("pay.example.org", AliasMode::Serve);
-        h.set_public_host(&site("web"), HOST, Some(&[apex.clone(), pay.clone()])).unwrap();
+        h.set_public_host(&site("web"), HOST, Some(&[apex.clone(), pay.clone()]), &[]).unwrap();
         go(&h, "web", PUBLIC).unwrap();
         let applied = *proxy.0.lock().unwrap();
-        let added = h.set_public_host(&site("web"), HOST, Some(&[apex.clone(), pay.clone(), alias("b.example.com", AliasMode::Serve)]));
-        assert!(matches!(added, Err(ApiError::Failed(reason)) if reason.contains("before adding another name")));
-        let changed = h.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Serve), pay.clone()]));
-        assert!(changed.is_err(), "a mode change is a new name");
-        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay))).unwrap();
+        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay)), &[]).unwrap();
         assert_eq!(listed(&h, "web").public_aliases, std::slice::from_ref(&pay));
         assert_eq!(*proxy.0.lock().unwrap(), applied + 1, "a removed name stops answering at once");
         // Saving the same names again applies nothing.
-        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay))).unwrap();
+        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&pay)), &[]).unwrap();
         assert_eq!(*proxy.0.lock().unwrap(), applied + 1);
+    }
+
+    #[test]
+    fn while_public_a_new_name_goes_on_only_when_it_is_confirmed() {
+        let proxy = Domains::default();
+        let h = with_domains(&proxy);
+        let apex = alias("example.com", AliasMode::Redirect);
+        let b = alias("b.example.com", AliasMode::Serve);
+        h.set_public_host(&site("web"), HOST, Some(std::slice::from_ref(&apex)), &[]).unwrap();
+        go(&h, "web", PUBLIC).unwrap();
+        let applied = *proxy.0.lock().unwrap();
+        let both = [apex.clone(), b.clone()];
+        let confirm = |name: &str| vec![name.to_owned()];
+
+        let unconfirmed = h.set_public_host(&site("web"), HOST, Some(&both), &[]);
+        assert!(
+            matches!(&unconfirmed, Err(ApiError::NeedsConfirmation(reason)) if reason.contains("so b.example.com would go")),
+            "only the new name needs confirming: {unconfirmed:?}"
+        );
+        // Confirming some other name is not confirming this one.
+        let wrong = h.set_public_host(&site("web"), HOST, Some(&both), &confirm("example.com"));
+        assert!(matches!(wrong, Err(ApiError::NeedsConfirmation(_))), "{wrong:?}");
+        assert_eq!(listed(&h, "web").public_aliases, std::slice::from_ref(&apex), "a refusal leaves the saved names");
+        assert_eq!(*proxy.0.lock().unwrap(), applied, "and applies nothing");
+
+        h.set_public_host(&site("web"), HOST, Some(&both), &confirm("b.example.com")).unwrap();
+        assert_eq!(listed(&h, "web").public_aliases, both);
+        assert_eq!(*proxy.0.lock().unwrap(), applied + 1, "the confirmed name answers at once");
+
+        // Whether a name redirects can change without a confirmation: it is public already.
+        let served = [alias("example.com", AliasMode::Serve), b.clone()];
+        h.set_public_host(&site("web"), HOST, Some(&served), &[]).unwrap();
+        assert_eq!(listed(&h, "web").public_aliases, served);
+        assert_eq!(*proxy.0.lock().unwrap(), applied + 2);
+
+        // A confirmed name is still checked like any other.
+        let stray = [served[0].clone(), served[1].clone(), alias("elsewhere.invalid", AliasMode::Serve)];
+        let refused = h.set_public_host(&site("web"), HOST, Some(&stray), &confirm("elsewhere.invalid"));
+        assert!(
+            matches!(&refused, Err(ApiError::Failed(reason)) if reason.contains("not under a domain of a connected provider")),
+            "{refused:?}"
+        );
+        assert_eq!(listed(&h, "web").public_aliases, served);
     }
 
     #[test]
@@ -881,7 +933,7 @@ mod tests {
         let refused = go(&h, "web", PUBLIC);
         assert!(matches!(&refused, Err(ApiError::Failed(reason)) if reason.contains("example.net is not under a domain")), "{refused:?}");
         assert_eq!(h.sys.get(STATE), None);
-        h.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)])).unwrap();
+        h.set_public_host(&site("web"), HOST, Some(&[alias("example.com", AliasMode::Redirect)]), &[]).unwrap();
         go(&h, "web", PUBLIC).unwrap();
     }
 
@@ -893,7 +945,7 @@ mod tests {
         h.sys.put(HOSTS, b"[shop.web]\nhost = \"shop.example.com\"\naliases = [{ host = \"example.com\", mode = \"redirect\" }]\n");
         h.sys.put(STATE, b"[shop.web]\nlocal = false\nonion = false\npublic = true\n");
         let before = h.sys.get(HOSTS).unwrap();
-        assert!(h.set_public_host(&site("web"), HOST, Some(&[])).is_err());
+        assert!(h.set_public_host(&site("web"), HOST, Some(&[]), &[]).is_err());
         assert_eq!(h.sys.get(HOSTS).unwrap(), before);
     }
 

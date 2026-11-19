@@ -1543,7 +1543,7 @@ impl Manage {
             m.change("Saving hosting", move |d| {
                 let id = d.site_id(&site);
                 if !host.is_empty() && exposure.public {
-                    d.set_public_host(&site, &host, &aliases).map_err(ApiError::Failed)?;
+                    d.set_public_host(&site, &host, &aliases, &[]).map_err(ApiError::Failed)?;
                 }
                 let confirmation = exposure.public.then(|| nodo_api::PublicConfirmation { typed_host: host.clone() });
                 d.call(Request::SetExposure { site: id, exposure, confirmation })?;

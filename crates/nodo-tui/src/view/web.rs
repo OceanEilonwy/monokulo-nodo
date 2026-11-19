@@ -275,6 +275,10 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         "Keys: ↑↓ choose  ↵ pick  Esc close the list"
     } else if matches!(focus, HostingFocus::Alias(_)) {
         "Keys: Tab move  x remove this name  ↵ save  Esc back"
+    } else if focus == HostingFocus::AliasOpen {
+        "Keys: Tab move  ↵ add an address  Esc back"
+    } else if matches!(focus, HostingFocus::AliasDomain | HostingFocus::AliasAddress | HostingFocus::AliasMode | HostingFocus::AliasAdd) {
+        "Keys: Tab move  Esc cancel the new name"
     } else {
         "Keys: Tab move  Space tick  ↵ save  Esc back"
     };
@@ -305,18 +309,21 @@ fn domain_list(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
     );
 }
 
-/// "Also answers at": the site's other names, each with Remove, and the controls that add one
-/// (domain, the part before it, serve or redirect). While the site is public only Remove is
-/// offered, as the helper allows.
+/// "Also answers at": the site's other names, each with Remove. A site with no other name shows
+/// only the "Add another address" button; the controls that add one (domain, the part before it,
+/// serve or redirect) open from that button.
 fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(String, String)], index_of: &dyn Fn(HostingFocus) -> usize) {
     let focus = state.focus();
     let host = state.host();
     let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
+    let adding = state.adding_alias;
+    if state.aliases.is_empty() && !adding {
+        card.blank(t);
+        open_button(card, t, state, index_of);
+        return;
+    }
     card.blank(t);
     card.row(t, vec![t.n("       "), t.b("Also answers at")]);
-    if state.aliases.is_empty() {
-        card.row(t, vec![t.d(format!("       Nothing else yet: only {host}."))]);
-    }
     for (index, alias) in state.aliases.iter().enumerate() {
         let which = HostingFocus::Alias(index);
         let focused = focus == which && !state.list_open();
@@ -333,8 +340,8 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
         card.on_row(card.next_row(), [Target::row(alias.host.clone(), Click::Pick { index: at, then: None })]);
         card.row_with_button(t, spans, "Remove", false, Click::Pick { index: at, then: Some(KeyCode::Char('x')) });
     }
-    if state.was_public {
-        card.row(t, vec![t.d("       To add a name, take the site off the internet first. Removing one works now.")]);
+    if !adding {
+        open_button(card, t, state, index_of);
         return;
     }
     card.blank(t);
@@ -388,6 +395,16 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
     if let Some(error) = &state.alias_error {
         card.row(t, vec![t.e(format!("       {error}"))]);
     }
+}
+
+/// The button that opens the controls for a new name.
+fn open_button(card: &mut Card, t: &Theme, state: &ExposureState, index_of: &dyn Fn(HostingFocus) -> usize) {
+    let focused = state.focus() == HostingFocus::AliasOpen && !state.list_open();
+    if focused {
+        card.focus_here();
+    }
+    let label = super::v3::focused("Add another address", focused);
+    card.row_with_button(t, Vec::new(), &label, false, Click::Pick { index: index_of(HostingFocus::AliasOpen), then: Some(KeyCode::Enter) });
 }
 
 /// Each connected provider's name, numbered when the owner connected two accounts at one company.
