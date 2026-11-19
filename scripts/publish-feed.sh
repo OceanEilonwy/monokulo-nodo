@@ -3,6 +3,8 @@
 # them in .github/workflows/feed.yml; docs/FEED.md explains the feed and its key.
 #
 #   scripts/publish-feed.sh build [arch...]     build the apps in feed/packages (default aarch64)
+#   scripts/publish-feed.sh fetch [arch...]     download the apps in feed/releases from their
+#                                               repositories' latest GitHub releases
 #   scripts/publish-feed.sh sign <key> [arch...] copy them into out/site/feed, index and sign them
 #   scripts/publish-feed.sh check [arch...]     verify out/site/feed as a device would
 #   scripts/publish-feed.sh site [arch...]      write the landing page around it
@@ -35,7 +37,17 @@ site=$(cd "$site" && pwd)
 #                     listed beside its recipe and built with it
 #   FEED_SIGNER       the signer name in the index (default "monokulo-nodo feed")
 #   FEED_FINGERPRINT  the key fingerprint `check` requires (default: the one images pin)
-apps=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "${FEED_PACKAGES:-$root/feed/packages}")
+#   FEED_RELEASES     the apps taken from GitHub releases, "<package> <owner/repo>" per line
+#                     (default feed/releases, but none when FEED_PACKAGES is set without it)
+recipes_list=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "${FEED_PACKAGES:-$root/feed/packages}")
+if [ -n "${FEED_RELEASES:-}" ]; then
+	releases=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$FEED_RELEASES")
+elif [ -z "${FEED_PACKAGES:-}" ]; then
+	releases=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$root/feed/releases")
+else
+	releases=
+fi
+apps="$recipes_list $(printf '%s\n' "$releases" | awk 'NF { print $1 }')"
 defaults=$root/packages/nodo-tools/files/default-feeds.toml
 # The image pins the feed to this fingerprint, so the feed must be signed with that key.
 fingerprint=${FEED_FINGERPRINT:-$(sed -n 's/^fingerprint *= *"\([0-9a-fA-F:]*\)".*/\1/p' "$defaults" | head -n 1)}
@@ -50,10 +62,58 @@ archs() { if [ $# -gt 0 ]; then for a in "$@"; do plain "$a" architecture; done;
 case $cmd in
 build)
 	recipes=
-	for app in $apps; do is_subpackage "$app" || recipes="$recipes $app"; done
+	for app in $recipes_list; do is_subpackage "$app" || recipes="$recipes $app"; done
+	# build-packages.sh with no package names builds the base system's, which is not this.
+	[ -n "$recipes" ] || { echo "no recipes to build in ${FEED_PACKAGES:-feed/packages}"; exit 0; }
 	for arch in $(archs "$@"); do
 		# shellcheck disable=SC2086 # one word per package
 		"$root/scripts/build-packages.sh" "$arch" $recipes
+	done
+	;;
+fetch)
+	# Each app's packages come from its repository's latest release (not a prerelease), where its
+	# own workflow attached them (.github/workflows/app-release.yml). An app with no packages
+	# there yet keeps the file the live feed publishes, so the feed never loses it. Every file is
+	# checked against the SHA-256 GitHub or the live site's file list gives, and later, signed,
+	# through the device's review (check).
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	pages=${PAGES_URL:-https://nodo.monokulo.com}
+	printf '%s\n' "$releases" | awk 'NF { print $1, $2 }' > "$tmp/releases"
+	code=$(curl -sS --retry 3 -o "$tmp/live" -w '%{http_code}' "$pages/files/feed.txt")
+	[ "$code" = 200 ] || { echo "::warning::could not read $pages/files/feed.txt (HTTP $code); no fallback to the live feed"; : > "$tmp/live"; }
+	for arch in $(archs "$@"); do
+		dir=$root/out/feed/$arch
+		mkdir -p "$dir"
+		while read -r pkg repo; do
+			plain "$pkg" package
+			case $repo in */*/* | /* | */ | *[!A-Za-z0-9._/-]* | '') echo "bad repository for $pkg: $repo" >&2; exit 2 ;; esac
+			json=$tmp/$(printf %s "$repo" | tr / _).json
+			if [ ! -e "$json" ]; then
+				gh api "repos/$repo/releases/latest" > "$json" 2>/dev/null || echo '{"assets": []}' > "$json"
+			fi
+			rm -f "$dir/$pkg"-[0-9]*.xbps
+			jq -r '.assets[] | [.name, .browser_download_url, (.digest // "")] | @tsv' "$json" > "$tmp/assets"
+			found=0
+			while IFS="$(printf '\t')" read -r name link digest; do
+				case $name in "$pkg"-[0-9]*."$arch".xbps | "$pkg"-[0-9]*.noarch.xbps) ;; *) continue ;; esac
+				found=$((found + 1))
+				[ "$found" = 1 ] || { echo "$repo's latest release has more than one $pkg for $arch" >&2; exit 1; }
+				curl -fsSL --retry 3 -o "$dir/$name" "$link"
+				case $digest in
+				sha256:*) echo "${digest#sha256:}  $dir/$name" | sha256sum -c --quiet - ||
+					{ echo "$name from $repo does not match its release's SHA-256" >&2; exit 1; } ;;
+				esac
+				echo "$arch: $name from $repo $(jq -r .tag_name "$json")"
+			done < "$tmp/assets"
+			[ "$found" = 0 ] || continue
+			line=$(grep -E "^[0-9a-f]{64}  feed/$pkg-[0-9][^/]*\.($arch|noarch)\.xbps\$" "$tmp/live" | head -n 1 || true)
+			[ -n "$line" ] || { echo "$pkg for $arch is in no release of $repo, nor in the live feed" >&2; exit 1; }
+			path=${line#*  }
+			curl -fsSL --retry 3 -o "$dir/${path#feed/}" "$pages/$path"
+			echo "${line%%  *}  $dir/${path#feed/}" | sha256sum -c --quiet - || { echo "$path changed while copying; run again" >&2; exit 1; }
+			echo "::warning::$repo has no release with $pkg for $arch yet; keeping the live feed's ${path#feed/}"
+		done < "$tmp/releases"
 	done
 	;;
 sign)
@@ -100,7 +160,18 @@ check)
 site)
 	list=$(archs "$@")
 	esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
-	field() { sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$(recipe_dir "$1")/template" | head -n 1; }
+	# A field from the app's recipe here, or, for an app built in its own repository, from the
+	# package's own metadata (props.plist, the first file in every .xbps).
+	field() {
+		if dir=$(recipe_dir "$1" 2>/dev/null); then
+			sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$dir/template" | head -n 1
+		else
+			tar -xOf "$3" ./props.plist | awk -v k="<key>$2</key>" '
+				found && /<string>/ { sub(/.*<string>/, ""); sub(/<\/string>.*/, ""); print; exit }
+				index($0, k) { found = 1 }' |
+				sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
+		fi
+	}
 	shown=$(printf '%s' "$fingerprint" | tr -d : | sed 's/../&:/g; s/:$//')
 	printf '%s\n' "$host" > "$site/CNAME"
 	# GitHub Pages answered a missing file inside a directory with HTTP 503 while the site had no
@@ -112,11 +183,11 @@ site)
 		[ -s "$site/.check-$arch.tsv" ] || { echo "run publish-feed.sh check $arch first" >&2; exit 1; }
 		while IFS="$(printf '\t')" read -r kind name version size _; do
 			[ "$kind" = package ] || continue
-			desc=$(field "$name" short_desc | esc)
-			home=$(field "$name" homepage | esc)
-			license=$(field "$name" license | esc)
-			mb=$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1048576 }')
 			file=$name-$version.$arch.xbps
+			desc=$(field "$name" short_desc "$site/feed/$file" | esc)
+			home=$(field "$name" homepage "$site/feed/$file" | esc)
+			license=$(field "$name" license "$site/feed/$file" | esc)
+			mb=$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1048576 }')
 			rows="$rows<tr><td class=\"a\">$(printf %s "$name" | esc)</td><td>$(printf %s "$version" | esc)</td><td class=\"d\">$arch</td><td class=\"n\"><a href=\"feed/$file\">$mb MB</a></td><td>$desc<br><span class=\"d\">$license · <a href=\"$home\">source</a></span></td></tr>
 "
 		done < "$site/.check-$arch.tsv"
@@ -159,7 +230,7 @@ p{margin:0}
 <main>
 <div class="top"><div><span class="tab">Feed</span>monokulo-nodo</div><div class="d">$host</div></div>
 <div class="p"><div class="pt">What this is</div>
-<p>The app feed for monokulo-nodo devices: xbps packages built from <a href="https://github.com/OceanEilonwy/monokulo-nodo">the project's recipes</a> and signed in its CI. Every device ships with this feed added and its key already pinned, so there is nothing to add by hand unless it was removed.</p>
+<p>The app feed for monokulo-nodo devices: xbps packages built in each app's own repository from its release tags, then checked and signed in <a href="https://github.com/OceanEilonwy/monokulo-nodo">the project's</a> CI. Every device ships with this feed added and its key already pinned, so there is nothing to add by hand unless it was removed.</p>
 </div>
 <div class="p"><div class="pt">Add it</div>
 <div class="kv">
