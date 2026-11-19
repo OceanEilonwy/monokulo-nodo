@@ -1000,6 +1000,7 @@ impl ScreenData for MockBackend {
             installed: summary.status != PackageStatus::Available,
             signature_verified: true,
             about,
+            about_hint: None,
             version: summary.version.clone(),
             size: summary.size.clone(),
             license,

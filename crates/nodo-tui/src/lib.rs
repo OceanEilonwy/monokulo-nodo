@@ -14,6 +14,7 @@ pub mod ctl;
 pub mod fixtures;
 pub mod hit;
 pub mod input;
+pub mod keys;
 pub mod proposal;
 pub mod runtime;
 pub mod theme;

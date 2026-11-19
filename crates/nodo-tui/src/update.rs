@@ -108,7 +108,7 @@ fn pressed(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn notice(app: &mut App, kind: NoticeKind, text: impl Into<String>) {
-    app.notice = Some(Notice { kind, text: text.into() });
+    app.notice = Some(Notice { kind, text: text.into(), hint: None });
 }
 
 fn fail(app: &mut App, text: impl Into<String>) {
@@ -565,8 +565,9 @@ fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
 fn follow(app: &mut App, step: Step) -> Vec<Effect> {
     match step {
         Step::Stay => Vec::new(),
+        // What the notice points at is said with its key.
         Step::Done(notice) | Step::Failed(notice) => {
-            app.notice = Some(notice);
+            app.notice = Some(crate::keys::notice(notice));
             Vec::new()
         }
         Step::Ask(question) => {

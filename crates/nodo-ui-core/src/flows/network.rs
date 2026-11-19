@@ -11,7 +11,7 @@
 
 use nodo_api::{BluetoothStatus, PairingStage, WifiLink, WifiNetwork, WifiSecurity, WifiStatus};
 
-use crate::flows::{Confirm, Dest, Notice, Question, Step};
+use crate::flows::{Confirm, Dest, Hint, Notice, Question, Step};
 use crate::secret::Input;
 use crate::{Effect, Outcome};
 
@@ -66,6 +66,8 @@ pub struct Network {
     pub error: Option<String>,
     /// What the helper is doing, while it works.
     pub busy: Option<String>,
+    /// The error that points at something to do, and what. See [`Network::error_hint`].
+    hint: Option<(String, Hint)>,
 }
 
 impl Default for Network {
@@ -86,10 +88,24 @@ impl Network {
             prompt: None,
             error: None,
             busy: Some(READING.to_owned()),
+            hint: None,
         }
     }
 
+    /// Refuses with `text`, which points at something the owner can do.
+    fn refuse(&mut self, text: &str, hint: Hint) {
+        self.error = Some(text.to_owned());
+        self.hint = Some((text.to_owned(), hint));
+    }
+
     // Queries
+
+    /// What the owner can do about `error`, when it points at something: turn the radio on, or
+    /// look for networks or devices.
+    pub fn error_hint(&self) -> Option<Hint> {
+        let (text, hint) = self.hint.as_ref()?;
+        (self.error.as_ref() == Some(text)).then_some(*hint)
+    }
 
     /// Networks in range, then saved networks the last scan did not find.
     pub fn wifi_rows(&self) -> Vec<WifiRow> {
@@ -224,7 +240,7 @@ impl Network {
         }
         self.error = None;
         if !self.wifi.as_ref().is_some_and(|w| w.enabled) {
-            self.error = Some("Turn it on first: press o.".to_owned());
+            self.refuse("Turn it on first.", Hint::TurnOn);
             return Vec::new();
         }
         self.busy = Some("Looking for Wi-Fi networks…".to_owned());
@@ -239,11 +255,11 @@ impl Network {
             return Step::Stay;
         }
         if !self.wifi.as_ref().is_some_and(|w| w.enabled) {
-            self.error = Some("Wi-Fi is off. Press o to turn it on.".to_owned());
+            self.refuse("Wi-Fi is off.", Hint::TurnOn);
             return Step::Stay;
         }
         let Some((security, _)) = self.listed(ssid) else {
-            self.error = Some("Press s to look for networks.".to_owned());
+            self.refuse("Look for networks first.", Hint::ScanWifi);
             return Step::Stay;
         };
         if self.joined() == Some(ssid) {
@@ -349,7 +365,7 @@ impl Network {
         }
         self.error = None;
         if !self.bluetooth.as_ref().is_some_and(|b| b.enabled) {
-            self.error = Some("Turn it on first: press o.".to_owned());
+            self.refuse("Turn it on first.", Hint::TurnOn);
             return Vec::new();
         }
         self.busy = Some("Looking for Bluetooth devices for 8 seconds…".to_owned());
@@ -364,11 +380,11 @@ impl Network {
         }
         let Some(bt) = &self.bluetooth else { return Vec::new() };
         if !bt.enabled {
-            self.error = Some("Bluetooth is off. Press o to turn it on.".to_owned());
+            self.refuse("Bluetooth is off.", Hint::TurnOn);
             return Vec::new();
         }
         let Some(device) = bt.devices.iter().find(|d| d.address == address).cloned() else {
-            self.error = Some("Press s to look for devices. Put the device in its pairing mode first.".to_owned());
+            self.refuse("Look for devices first, with the device in its pairing mode.", Hint::ScanBluetooth);
             return Vec::new();
         };
         self.error = None;
@@ -622,7 +638,7 @@ mod tests {
         assert_eq!(page.join("home-5G"), Step::Stay);
         assert_eq!(page.error.as_deref(), Some("The device is already joined to home-5G."));
         assert_eq!(page.join("no such network"), Step::Stay);
-        assert_eq!(page.error.as_deref(), Some("Press s to look for networks."));
+        assert_eq!((page.error.as_deref(), page.error_hint()), (Some("Look for networks first."), Some(Hint::ScanWifi)));
 
         assert_eq!(page.join("neighbour"), Step::Stay);
         assert_eq!(page.prompt, Some(Prompt { ssid: "neighbour".to_owned(), security: WifiSecurity::Wpa3Personal }));
@@ -660,13 +676,14 @@ mod tests {
         page.networks[2].security = WifiSecurity::Legacy;
         assert_eq!(page.join("neighbour"), Step::Stay);
         assert!(page.error.as_deref().unwrap().contains("WEP or WPA, which are broken"));
+        assert_eq!(page.error_hint(), None, "a hint is only for the error it came with");
         assert!(page.prompt.is_none() && page.busy.is_none());
 
         page.wifi.as_mut().unwrap().enabled = false;
         assert_eq!(page.join("neighbour"), Step::Stay);
-        assert_eq!(page.error.as_deref(), Some("Wi-Fi is off. Press o to turn it on."));
+        assert_eq!((page.error.as_deref(), page.error_hint()), (Some("Wi-Fi is off."), Some(Hint::TurnOn)));
         assert!(page.scan_wifi().is_empty());
-        assert_eq!(page.error.as_deref(), Some("Turn it on first: press o."));
+        assert_eq!((page.error.as_deref(), page.error_hint()), (Some("Turn it on first."), Some(Hint::TurnOn)));
     }
 
     #[test]
@@ -738,7 +755,8 @@ mod tests {
         let mut mock = MockBackend::new();
         let mut page = open(&mut mock);
         assert!(page.pair_or_connect("00:00:00:00:00:00").is_empty());
-        assert!(page.error.as_deref().unwrap().starts_with("Press s to look for devices."));
+        assert!(page.error.as_deref().unwrap().starts_with("Look for devices first"));
+        assert_eq!(page.error_hint(), Some(Hint::ScanBluetooth));
 
         let effects = page.pair_or_connect(HEADPHONES);
         assert_eq!(effects, [Effect::ConnectBluetooth { address: HEADPHONES.to_owned(), connect: true }]);
@@ -794,7 +812,7 @@ mod tests {
         mock.bluetooth.enabled = false;
         let mut page = open(&mut mock);
         assert!(page.pair_or_connect(KEYBOARD).is_empty());
-        assert_eq!(page.error.as_deref(), Some("Bluetooth is off. Press o to turn it on."));
+        assert_eq!((page.error.as_deref(), page.error_hint()), (Some("Bluetooth is off."), Some(Hint::TurnOn)));
         assert!(page.scan_bluetooth().is_empty());
         assert_eq!(page.toggle_bluetooth(), [Effect::SetBluetooth(true)]);
         assert_eq!(page.busy.as_deref(), Some("Turning Bluetooth on…"));

@@ -6,7 +6,7 @@
 
 use nodo_api::ServiceState;
 
-use super::{Confirm, Dest, Notice, Question, Step};
+use super::{Confirm, Dest, Hint, Notice, Question, Step};
 use crate::model::Snapshot;
 use crate::Effect;
 
@@ -55,7 +55,7 @@ impl AppPage {
         let name = &self.name;
         match self.state(snapshot) {
             Some(ServiceState::Running) => Step::Run(self.stop()),
-            Some(ServiceState::Locked) => Step::Failed(Notice::error(format!("{name} is locked. Press u to unlock this device."))),
+            Some(ServiceState::Locked) => Step::Failed(Notice::error(format!("{name} is locked.")).hinting(Hint::Unlock)),
             Some(ServiceState::Waiting) => {
                 Step::Failed(Notice::error(format!("{name} is waiting for another app it depends on.")))
             }

@@ -57,12 +57,37 @@ pub struct PackageSummary {
     pub bundle: Option<u32>,
 }
 
+/// What the owner can do about what a notice, an error or a description says.
+///
+/// The core's words never name a key or a button, since each interface has its own. Where a
+/// message points at something to do, it carries one of these beside its text, and an interface
+/// says how in its own words (the terminal names the key), offers it its own way, or shows the
+/// text alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// Unlock the device with its passphrase.
+    Unlock,
+    /// Turn on the radio the message is about.
+    TurnOn,
+    /// Look for Wi-Fi networks in range.
+    ScanWifi,
+    /// Look for Bluetooth devices in their pairing mode.
+    ScanBluetooth,
+    /// Look for USB drives again.
+    LookForDrives,
+    /// Start the install: the package is downloaded and checked, and what it asks for is shown
+    /// before anything is installed.
+    Install,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageDetail {
     pub id: PackageId,
     pub installed: bool,
     pub signature_verified: bool,
     pub about: String,
+    /// What `about` points at, when it says what to do next.
+    pub about_hint: Option<Hint>,
     pub version: String,
     pub size: String,
     pub license: String,

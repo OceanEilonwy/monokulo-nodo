@@ -57,6 +57,11 @@
 //! **Queries** for drawing are plain methods and functions that read: rows, whether a button is
 //! offered, the words of a consequence. They never change state.
 //!
+//! **Wording** never names a key, a button or a place on a screen, since each frontend has its
+//! own. A message that points at something to do carries a [`Hint`] beside its text: on a
+//! [`Notice`], or from the flow's `error_hint()` beside its `error`. A frontend says how in its
+//! own words, offers the action its own way, or shows the text alone.
+//!
 //! **Time** is in whole seconds, never in ticks or instants. A flow says "wait this long"; the
 //! frontend keeps the clock.
 //!
@@ -94,24 +99,35 @@ pub enum NoticeKind {
     Error,
 }
 
+pub use crate::model::Hint;
+
 /// One line said to the owner about what just happened. A frontend shows the latest one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub kind: NoticeKind,
     pub text: String,
+    /// What the owner can do about it, when the text points at something. The text never names a
+    /// key or a button; see [`Hint`].
+    pub hint: Option<Hint>,
 }
 
 impl Notice {
     pub fn info(text: impl Into<String>) -> Self {
-        Self { kind: NoticeKind::Info, text: text.into() }
+        Self { kind: NoticeKind::Info, text: text.into(), hint: None }
     }
 
     pub fn ok(text: impl Into<String>) -> Self {
-        Self { kind: NoticeKind::Ok, text: text.into() }
+        Self { kind: NoticeKind::Ok, text: text.into(), hint: None }
     }
 
     pub fn error(text: impl Into<String>) -> Self {
-        Self { kind: NoticeKind::Error, text: text.into() }
+        Self { kind: NoticeKind::Error, text: text.into(), hint: None }
+    }
+
+    /// The same notice, pointing at what the owner can do about it.
+    pub fn hinting(mut self, hint: Hint) -> Self {
+        self.hint = Some(hint);
+        self
     }
 }
 

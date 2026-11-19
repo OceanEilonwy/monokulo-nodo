@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use nodo_api::client::HelperClient;
 use nodo_api::{Backend, DEFAULT_SOCKET};
 use nodo_tui::app::App;
-use nodo_ui_core::flows::{Notice, NoticeKind};
+use nodo_ui_core::flows::Notice;
 use nodo_tui::ctl;
 use nodo_tui::fixtures::fixture;
 use nodo_ui_core::helper_backend::HelperBackend;
@@ -161,7 +161,7 @@ fn main() -> ExitCode {
         };
         let mut app = App::new();
         if std::env::var_os(RESTARTED).is_some() {
-            app.notice = Some(Notice { kind: NoticeKind::Info, text: "nodo-tui restarted to run the updated version".into() });
+            app.notice = Some(Notice::info("nodo-tui restarted to run the updated version"));
         }
         runtime::run(app, backend, theme, true)
     };

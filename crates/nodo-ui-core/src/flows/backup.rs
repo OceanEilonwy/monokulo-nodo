@@ -14,7 +14,7 @@ use nodo_api::{BackupContents, BackupInfo, RestoreReport, UsbBackupList, UsbDriv
 
 use crate::effect::UsbView;
 use crate::flows::setup::MIN_PASSPHRASE_CHARS;
-use crate::flows::{Dest, Notice, Step};
+use crate::flows::{Dest, Hint, Notice, Step};
 use crate::model::Snapshot;
 use crate::secret::{Input, Secret};
 use crate::{Effect, Outcome};
@@ -361,6 +361,8 @@ pub struct Restore {
     pub busy: bool,
     /// The passphrase the backup being opened was asked with, until the helper answers.
     opening: Option<Secret>,
+    /// The error that points at something to do, and what. See [`Restore::error_hint`].
+    hint: Option<(String, Hint)>,
 }
 
 impl Default for Restore {
@@ -371,7 +373,13 @@ impl Default for Restore {
 
 impl Restore {
     pub fn new() -> Self {
-        Self { drives: Vec::new(), backups: None, stage: RestoreStage::Drives, error: None, busy: true, opening: None }
+        Self { drives: Vec::new(), backups: None, stage: RestoreStage::Drives, error: None, busy: true, opening: None, hint: None }
+    }
+
+    /// What the owner can do about `error`, when it points at something: look for drives again.
+    pub fn error_hint(&self) -> Option<Hint> {
+        let (text, hint) = self.hint.as_ref()?;
+        (self.error.as_ref() == Some(text)).then_some(*hint)
     }
 
     /// What a new page asks the helper for.
@@ -404,7 +412,9 @@ impl Restore {
             return Vec::new();
         }
         let Some(drive) = self.drives.iter().find(|d| d.device == device) else {
-            self.error = Some("No USB drive is plugged in. Plug one in and press g.".to_owned());
+            let text = "No USB drive is plugged in. Plug one in and look again.";
+            self.error = Some(text.to_owned());
+            self.hint = Some((text.to_owned(), Hint::LookForDrives));
             return Vec::new();
         };
         if let Some(problem) = &drive.problem {

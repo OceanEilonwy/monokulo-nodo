@@ -273,7 +273,7 @@ pub fn detail(app: &App, t: &Theme, detail: &PackageDetail) -> Page {
     card.row(t, vec![t.b(name.to_owned()), t.d(format!("   {}", facts.join(" · ")))]);
     card.blank(t);
     if !detail.about.is_empty() {
-        card.row(t, vec![t.n(detail.about.clone())]);
+        card.row(t, vec![t.n(crate::keys::with_key(&detail.about, detail.about_hint))]);
         card.blank(t);
     }
     let mut asks: Vec<String> = detail.needs.iter().map(|need| format!("Use {}", need.name)).collect();

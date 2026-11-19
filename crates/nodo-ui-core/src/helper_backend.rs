@@ -463,7 +463,7 @@ impl ScreenData for HelperBackend {
             unlock_targets,
             updates_checked: match status.as_ref().and_then(|s| s.last_check) {
                 Some(at) => format!("Last checked {}.", crate::helper_manage::ago(at)),
-                None => "Not checked yet. Press r to check now.".to_owned(),
+                None => "Not checked yet.".to_owned(),
             },
             setup_needed: o.encryption == EncryptionState::NotSetUp,
             locked: o.encryption == EncryptionState::Locked,
@@ -489,6 +489,7 @@ impl ScreenData for HelperBackend {
             // Feed packages were verified against their pinned key when they were installed.
             signature_verified: true,
             about: if d.info.roles.is_empty() { String::new() } else { format!("Provides {}", d.info.roles.join(", ")) },
+            about_hint: None,
             version: d.info.version,
             size: String::new(),
             license: String::new(),

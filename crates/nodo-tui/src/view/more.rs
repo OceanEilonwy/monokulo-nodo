@@ -178,7 +178,7 @@ fn steps_panel(t: &Theme, current: usize) -> Panel {
 pub fn restore(app: &App, t: &Theme, state: &RestoreState) -> Page {
     let header = |step: &str| crumbs(t, &["Set up this device", "Restore from a USB backup", step]);
     let busy = Line::from(t.d(if state.busy { "Working…" } else { "" }));
-    let errors = error_items(t, &state.error);
+    let errors = error_items(t, &crate::keys::error(&state.error, state.error_hint()));
     match &state.step {
         RestoreStep::Drives => {
             let mut items: Vec<Item> = state

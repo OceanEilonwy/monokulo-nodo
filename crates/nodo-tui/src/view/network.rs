@@ -104,7 +104,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
     let Some(wifi) = &state.wifi else {
         let again = not_read(t, &state.wifi_read, &mut items);
         if focused {
-            items.extend(error_items(t, &state.error));
+            items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         }
         return (if focused { Panel::accent("Wi-Fi", items) } else { Panel::new("Wi-Fi", items) }, again);
     };
@@ -166,7 +166,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
         }
     }
     if focused {
-        items.extend(error_items(t, &state.error));
+        items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         (Panel::accent("Wi-Fi", items), false)
     } else {
         (Panel::new("Wi-Fi", items), false)
@@ -247,7 +247,7 @@ fn bluetooth_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
         }
     }
     if focused {
-        items.extend(error_items(t, &state.error));
+        items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         (Panel::accent("Bluetooth", items), again)
     } else {
         (Panel::new("Bluetooth", items), again)
