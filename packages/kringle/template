@@ -10,7 +10,7 @@
 # build runs with --locked.
 pkgname=kringle
 version=0.4.1
-revision=1
+revision=2
 _commit=07329500c7a958ddd9fac0141302e1db1f0be923
 _nightly=2026-11-07
 archs="aarch64 x86_64"
