@@ -1,26 +1,25 @@
 #!/bin/sh
-# Builds the static site of the app feed, https://nodo.monokulo.com, in explicit steps. CI runs
-# them in .github/workflows/feed.yml; docs/FEED.md explains the feed and its key.
+# Builds a signed app feed, in explicit steps. Each app's release workflow runs sign and check
+# (.github/workflows/app-release.yml, which attaches the feed to a GitHub release); another
+# project can also publish a feed as a static site. docs/FEED.md explains feeds and their keys.
 #
-#   scripts/publish-feed.sh build [arch...]     build the apps in feed/packages (default aarch64)
-#   scripts/publish-feed.sh fetch [arch...]     download the apps in feed/releases from their
-#                                               repositories' latest GitHub releases
-#   scripts/publish-feed.sh sign <key> [arch...] copy them into out/site/feed, index and sign them
-#   scripts/publish-feed.sh check [arch...]     verify out/site/feed as a device would
-#   scripts/publish-feed.sh site [arch...]      write the landing page around it
+#   scripts/publish-feed.sh build [arch...]     build the recipes in $FEED_PACKAGES (default aarch64)
+#   scripts/publish-feed.sh sign <key> [arch...] copy them into $FEED_SITE/feed, index and sign them
+#   scripts/publish-feed.sh check [arch...]     verify $FEED_SITE/feed as a device would
+#   scripts/publish-feed.sh site [arch...]      write a landing page around it, for a static site
 #
-# The site, under $FEED_SITE (default out/site):
+# The feed, under $FEED_SITE (default out/site), and the site around it:
 #
-#   index.html               what the feed is, its address, key fingerprint and packages
-#   CNAME                    nodo.monokulo.com, for GitHub Pages
-#   404.html                 so a missing file is answered 404, not 503
-#   signing-key.pub.pem      the public key, to compare with what a device shows
 #   feed/<arch>-repodata     the xbps index, signed: the key and signer are in its meta
 #   feed/<name>-<ver>.<arch>.xbps and .xbps.sig2
+#   index.html               (site) what the feed is, its address, key fingerprint and packages
+#   CNAME                    (site) the address's host, for GitHub Pages
+#   404.html                 (site) so a missing file is answered 404, not 503
+#   signing-key.pub.pem      (site) the public key, to compare with what a device shows
 #
-# The feed address devices use is https://nodo.monokulo.com/feed; nodo-install fetches
-# <address>/<arch>-repodata, <address>/<file>.xbps and <address>/<file>.xbps.sig2. Every
-# architecture shares the one directory, as xbps allows, since file names carry the arch.
+# nodo-install fetches <address>/<arch>-repodata, <address>/<file>.xbps and
+# <address>/<file>.xbps.sig2. Every architecture shares the one directory, as xbps allows, since
+# file names carry the arch.
 #
 # <key> is an RSA private key in PEM form. It is mounted read-only into a throwaway container
 # and never copied; xbps-rindex signs the index meta (-s) and each package (-S, a .sig2: RSA
@@ -32,28 +31,19 @@ shift
 site=${FEED_SITE:-$root/out/site}
 mkdir -p "$site"
 site=$(cd "$site" && pwd)
-# Another project's feed (such as Pingers', built from NODO_EXTRA_PACKAGES) sets these:
-#   FEED_PACKAGES     the package list, one name per line (default feed/packages); a subpackage is
-#                     listed beside its recipe and built with it
+# The feed is described by:
+#   FEED_PACKAGES     the package list, one name per line (required); a subpackage is listed
+#                     beside its recipe and built with it
 #   FEED_SIGNER       the signer name in the index (default "monokulo-nodo feed")
-#   FEED_FINGERPRINT  the key fingerprint `check` requires (default: the one images pin)
-#   FEED_RELEASES     the apps taken from GitHub releases, "<package> <owner/repo>" per line
-#                     (default feed/releases, but none when FEED_PACKAGES is set without it)
-recipes_list=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "${FEED_PACKAGES:-$root/feed/packages}")
-if [ -n "${FEED_RELEASES:-}" ]; then
-	releases=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$FEED_RELEASES")
-elif [ -z "${FEED_PACKAGES:-}" ]; then
-	releases=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$root/feed/releases")
-else
-	releases=
-fi
-apps="$recipes_list $(printf '%s\n' "$releases" | awk 'NF { print $1 }')"
-defaults=$root/packages/nodo-tools/files/default-feeds.toml
-# The image pins the feed to this fingerprint, so the feed must be signed with that key.
-fingerprint=${FEED_FINGERPRINT:-$(sed -n 's/^fingerprint *= *"\([0-9a-fA-F:]*\)".*/\1/p' "$defaults" | head -n 1)}
-case $fingerprint in *[!0-9a-fA-F:]* | '') echo "bad FEED_FINGERPRINT: $fingerprint" >&2; exit 2 ;; esac
-address=$(sed -n 's/^address *= *"\(.*\)".*/\1/p' "$defaults" | head -n 1)
-host=${address#https://}; host=${host%%/*}
+#   FEED_FINGERPRINT  the key fingerprint `check` requires, as xbps shows it (check and site)
+#   FEED_ADDRESS      the feed's https address, for the landing page (site)
+#   FEED_PUBLIC_KEY   the signing key's public half, PEM, copied onto the landing page (site)
+[ -n "${FEED_PACKAGES:-}" ] || { echo "set FEED_PACKAGES to the feed's package list" >&2; exit 2; }
+apps=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$FEED_PACKAGES")
+need_fingerprint() {
+	fingerprint=${FEED_FINGERPRINT:-}
+	case $fingerprint in *[!0-9a-fA-F:]* | '') echo "bad or missing FEED_FINGERPRINT: $fingerprint" >&2; exit 2 ;; esac
+}
 signer=${FEED_SIGNER:-monokulo-nodo feed}
 case $signer in *[!A-Za-z0-9\ ._-]* | '') echo "bad FEED_SIGNER: $signer" >&2; exit 2 ;; esac
 plain() { case $1 in *[!A-Za-z0-9._-]* | .* | -* | '') echo "bad $2: $1" >&2; exit 2 ;; esac; }
@@ -62,58 +52,12 @@ archs() { if [ $# -gt 0 ]; then for a in "$@"; do plain "$a" architecture; done;
 case $cmd in
 build)
 	recipes=
-	for app in $recipes_list; do is_subpackage "$app" || recipes="$recipes $app"; done
+	for app in $apps; do is_subpackage "$app" || recipes="$recipes $app"; done
 	# build-packages.sh with no package names builds the base system's, which is not this.
-	[ -n "$recipes" ] || { echo "no recipes to build in ${FEED_PACKAGES:-feed/packages}"; exit 0; }
+	[ -n "$recipes" ] || { echo "no recipes to build in $FEED_PACKAGES"; exit 0; }
 	for arch in $(archs "$@"); do
 		# shellcheck disable=SC2086 # one word per package
 		"$root/scripts/build-packages.sh" "$arch" $recipes
-	done
-	;;
-fetch)
-	# Each app's packages come from its repository's latest release (not a prerelease), where its
-	# own workflow attached them (.github/workflows/app-release.yml). An app with no packages
-	# there yet keeps the file the live feed publishes, so the feed never loses it. Every file is
-	# checked against the SHA-256 GitHub or the live site's file list gives, and later, signed,
-	# through the device's review (check).
-	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' EXIT
-	pages=${PAGES_URL:-https://nodo.monokulo.com}
-	printf '%s\n' "$releases" | awk 'NF { print $1, $2 }' > "$tmp/releases"
-	code=$(curl -sS --retry 3 -o "$tmp/live" -w '%{http_code}' "$pages/files/feed.txt")
-	[ "$code" = 200 ] || { echo "::warning::could not read $pages/files/feed.txt (HTTP $code); no fallback to the live feed"; : > "$tmp/live"; }
-	for arch in $(archs "$@"); do
-		dir=$root/out/feed/$arch
-		mkdir -p "$dir"
-		while read -r pkg repo; do
-			plain "$pkg" package
-			case $repo in */*/* | /* | */ | *[!A-Za-z0-9._/-]* | '') echo "bad repository for $pkg: $repo" >&2; exit 2 ;; esac
-			json=$tmp/$(printf %s "$repo" | tr / _).json
-			if [ ! -e "$json" ]; then
-				gh api "repos/$repo/releases/latest" > "$json" 2>/dev/null || echo '{"assets": []}' > "$json"
-			fi
-			rm -f "$dir/$pkg"-[0-9]*.xbps
-			jq -r '.assets[] | [.name, .browser_download_url, (.digest // "")] | @tsv' "$json" > "$tmp/assets"
-			found=0
-			while IFS="$(printf '\t')" read -r name link digest; do
-				case $name in "$pkg"-[0-9]*."$arch".xbps | "$pkg"-[0-9]*.noarch.xbps) ;; *) continue ;; esac
-				found=$((found + 1))
-				[ "$found" = 1 ] || { echo "$repo's latest release has more than one $pkg for $arch" >&2; exit 1; }
-				curl -fsSL --retry 3 -o "$dir/$name" "$link"
-				case $digest in
-				sha256:*) echo "${digest#sha256:}  $dir/$name" | sha256sum -c --quiet - ||
-					{ echo "$name from $repo does not match its release's SHA-256" >&2; exit 1; } ;;
-				esac
-				echo "$arch: $name from $repo $(jq -r .tag_name "$json")"
-			done < "$tmp/assets"
-			[ "$found" = 0 ] || continue
-			line=$(grep -E "^[0-9a-f]{64}  feed/$pkg-[0-9][^/]*\.($arch|noarch)\.xbps\$" "$tmp/live" | head -n 1 || true)
-			[ -n "$line" ] || { echo "$pkg for $arch is in no release of $repo, nor in the live feed" >&2; exit 1; }
-			path=${line#*  }
-			curl -fsSL --retry 3 -o "$dir/${path#feed/}" "$pages/$path"
-			echo "${line%%  *}  $dir/${path#feed/}" | sha256sum -c --quiet - || { echo "$path changed while copying; run again" >&2; exit 1; }
-			echo "::warning::$repo has no release with $pkg for $arch yet; keeping the live feed's ${path#feed/}"
-		done < "$tmp/releases"
 	done
 	;;
 sign)
@@ -151,6 +95,7 @@ sign)
 	echo "signed $(find "$feed" -name '*.xbps' | wc -l) packages for $list in $feed"
 	;;
 check)
+	need_fingerprint
 	for arch in $(archs "$@"); do
 		(cd "$root" && cargo run -q --release -p nodo-install --example check-feed -- "$site/feed" "$arch" "$fingerprint") \
 			> "$site/.check-$arch.tsv"
@@ -172,12 +117,17 @@ site)
 				sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
 		fi
 	}
+	need_fingerprint
+	address=${FEED_ADDRESS:?set FEED_ADDRESS to the https address of the feed}
+	case $address in https://*) ;; *) echo "FEED_ADDRESS must be an https address: $address" >&2; exit 2 ;; esac
+	host=${address#https://}; host=${host%%/*}
+	[ -f "${FEED_PUBLIC_KEY:-}" ] || { echo "set FEED_PUBLIC_KEY to the signing key's public half (PEM)" >&2; exit 2; }
 	shown=$(printf '%s' "$fingerprint" | tr -d : | sed 's/../&:/g; s/:$//')
 	printf '%s\n' "$host" > "$site/CNAME"
 	# GitHub Pages answered a missing file inside a directory with HTTP 503 while the site had no
 	# 404 page (2026-11-13). This page is meant to make that a 404. Devices do not rely on it.
 	printf %s\\n "<!doctype html><title>Not found</title><p>Not found." > "$site/404.html"
-	cp "$root/feed/signing-key.pub.pem" "$site/signing-key.pub.pem"
+	cp "$FEED_PUBLIC_KEY" "$site/signing-key.pub.pem"
 	rows=
 	for arch in $list; do
 		[ -s "$site/.check-$arch.tsv" ] || { echo "run publish-feed.sh check $arch first" >&2; exit 1; }
@@ -230,7 +180,7 @@ p{margin:0}
 <main>
 <div class="top"><div><span class="tab">Feed</span>monokulo-nodo</div><div class="d">$host</div></div>
 <div class="p"><div class="pt">What this is</div>
-<p>The app feed for monokulo-nodo devices: xbps packages built in each app's own repository from its release tags, then checked and signed in <a href="https://github.com/OceanEilonwy/monokulo-nodo">the project's</a> CI. Every device ships with this feed added and its key already pinned, so there is nothing to add by hand unless it was removed.</p>
+<p>An app feed for <a href="https://github.com/OceanEilonwy/monokulo-nodo">monokulo-nodo</a> devices: signed xbps packages, each checked with the device's own install review before this page was written. Add it by hand, comparing the key with the one below.</p>
 </div>
 <div class="p"><div class="pt">Add it</div>
 <div class="kv">

@@ -14,7 +14,7 @@ echo "XBPS_MAKEJOBS=$(nproc)" >> etc/conf
 export HOME=/work
 # Compiler caches, kept in the hostdir next to the distfiles and bounded in size: by default 4 GB
 # for sccache and 2 GB for ccache (a kernel build alone fills about 1.5 GB), less in CI, where
-# .github/workflows/feed.yml sets SCCACHE_CACHE_SIZE and CCACHE_MAXSIZE to fit GitHub's 10 GB.
+# .github/workflows/system.yml and app-release.yml set SCCACHE_CACHE_SIZE and CCACHE_MAXSIZE to fit GitHub's 10 GB.
 # C and C++: xbps-src's own ccache support puts /usr/lib/ccache/bin first in PATH, with
 # CCACHE_DIR=$XBPS_HOSTDIR/ccache.
 echo "XBPS_CCACHE=yes" >> etc/conf

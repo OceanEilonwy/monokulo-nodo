@@ -232,11 +232,10 @@ The serial is the UTC time it was made (`YYYYMMDDHHMMSS`) and the name the same 
 (`YYYY.MM.DD-HHMMSS`). A branch run builds and tests with a throwaway key and publishes nothing.
 The secrets live in the `github-pages` environment, which only `main` may use.
 
-Both workflows deploy the whole Pages site, so each writes its own half and copies the other half
-from the live site (`scripts/pages-site.sh`): the feed's `index.html`, `CNAME`,
-`signing-key.pub.pem` and `feed/`, listed in `files/feed.txt`, and the snapshots' `snapshots/`,
-listed in `files/system.txt`, each file with its SHA-256. Their publish jobs share one concurrency
-group, so they never overlap.
+The workflow deploys the whole Pages site: the snapshots and a landing page (`index.html`,
+`404.html`, `CNAME`), copying the published snapshots from the live site by `files/system.txt`, each
+file with its SHA-256 (`scripts/pages-site.sh`). The site carries no apps; each app publishes its
+own feed (FEED.md).
 
 **Keys.** The snapshot keys were made with `nodo-snapshot keygen`. The first signs in CI; the second
 exists only offline (`~/.local/share/monokulo-nodo/snapshot-key-2` on the machine that made them,

@@ -13,13 +13,12 @@
 <p align="center">
   <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml/badge.svg?branch=main" alt="Crates"></a>
   <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml/badge.svg?branch=main" alt="System snapshot"></a>
-  <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml/badge.svg?branch=main" alt="App feed"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-informational" alt="AGPL-3.0-or-later"></a>
 </p>
 
 <p align="center">
   <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a> ·
-  <a href="docs/FEED.md"><b>App feed</b></a> ·
+  <a href="docs/FEED.md"><b>App feeds</b></a> ·
   <a href="docs/SCREEN.md"><b>Screen</b></a> ·
   <a href="docs/UPDATES.md"><b>Updates</b></a> ·
   <a href="#building"><b>Building</b></a>
@@ -31,7 +30,7 @@
 
 - **A node first.** `cuprated` runs by default, with `monerod` as an alternative. Its RPC is restricted and stays on loopback unless the owner publishes it from Hosting like any site; only P2P is open to the network, and the full RPC is never served.
 - **Every service in its own box.** Each one gets its own user, a bubblewrap sandbox, per-user nftables rules and a Landlock and seccomp layer, all generated from its manifest. Packages never write system configuration.
-- **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server, Kringle and the Library. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
+- **Apps from signed feeds.** Each app publishes its own signed feed from its own repository's releases: Monokulo with the Bell and the push relay, the light wallet server, Kringle and the Library ([app feeds](docs/FEED.md)). You add the ones you want; every package is checked against its feed's pinned key, and new permissions wait for you.
 - **Updates that can be undone.** The base system arrives in tested, signed snapshots, never straight from Void's rolling `current`, with A/B rollback, opt-in auto-updates and backups to USB. See [updates, rollback, health and backups](docs/UPDATES.md).
 - **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system. The same pages can be turned on for a browser on the home network, at `https://nodo.local`.
 

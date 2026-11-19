@@ -1,19 +1,55 @@
 #!/bin/sh
-# The GitHub Pages site at https://nodo.monokulo.com has two halves, published by two workflows:
-# the app feed (.github/workflows/feed.yml: index.html, CNAME, signing-key.pub.pem, feed/) and the
-# system snapshots (.github/workflows/system.yml: snapshots/). A Pages deployment replaces the
-# whole site, so each workflow writes its own half and copies the other half from the live site.
-# Each half lists its files and their SHA-256 in files/<half>.txt, which is how the other workflow
-# knows what to copy and checks that it copied it whole.
+# The GitHub Pages site at https://nodo.monokulo.com: the system snapshots (snapshots/) and a
+# landing page, all published by .github/workflows/system.yml. It once had a second half, the app
+# feed (feed/), published by another workflow; apps now publish their own feeds from their own
+# repositories (docs/FEED.md). A Pages deployment replaces the whole site, so each run copies the
+# published snapshots from the live site, by the list of files and SHA-256s in files/<half>.txt.
 #
+#   scripts/pages-site.sh home <site>                   write the landing page, 404.html and CNAME
 #   scripts/pages-site.sh list <site> <half> <path>...  write <site>/files/<half>.txt for these paths
 #   scripts/pages-site.sh pull <site> <half>            copy <half> from the live site into <site>
 #
 # The live site is $PAGES_URL (default https://nodo.monokulo.com). A half the live site does not
 # list yet (before its workflow first ran) is left out with a warning; any other failure stops.
-# Nothing here is trusted by devices: the feed's index is signed, and so is every snapshot manifest.
+# Nothing here is trusted by devices: every snapshot manifest is signed.
 set -eu
-cmd=${1:?usage: pages-site.sh list|pull <site> <half> ...}
+cmd=${1:?usage: pages-site.sh home|list|pull <site> ...}
+if [ "$cmd" = home ]; then
+	site=${2:?the site directory}
+	mkdir -p "$site"
+	printf '%s\n' nodo.monokulo.com > "$site/CNAME"
+	# GitHub Pages answered a missing file inside a directory with HTTP 503 while the site had no
+	# 404 page (2026-11-13). This page is meant to make that a 404. Devices do not rely on it.
+	printf %s\\n "<!doctype html><title>Not found</title><p>Not found." > "$site/404.html"
+	cat > "$site/index.html" <<'EOF'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>monokulo-nodo</title>
+<meta name="description" content="System updates for monokulo-nodo devices.">
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#000;color:#D7DADC;font:14px/20px ui-monospace,monospace}
+main{max-width:720px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:16px}
+a{color:#86BEFF}
+.tab{background:#F2A33A;color:#000;font-weight:700;padding:0 6px;margin-right:12px}
+p{margin:0}
+</style>
+</head>
+<body>
+<main>
+<div><span class="tab">nodo</span>monokulo-nodo</div>
+<p>This site serves the signed system snapshots monokulo-nodo devices update from, under <code>snapshots/</code>. There is nothing to open here by hand.</p>
+<p>Apps are not published here: each app publishes its own signed feed from its own repository, which you add on your device under Sources. See <a href="https://github.com/OceanEilonwy/monokulo-nodo/blob/main/docs/FEED.md">docs/FEED.md</a>.</p>
+</main>
+</body>
+</html>
+EOF
+	echo "wrote the landing page in $site"
+	exit 0
+fi
 site=${2:?the site directory}
 half=${3:?feed or system}
 case $half in feed | system) ;; *) echo "unknown half: $half" >&2; exit 2 ;; esac

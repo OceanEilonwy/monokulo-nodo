@@ -139,17 +139,18 @@ codebase, and signed xbps packages from user-added feeds.
   comparing the fingerprint with the publisher catches. Downloads are bounded in size and time,
   follow at most five redirects to any host (GitHub release downloads use two), and never from HTTPS
   down to HTTP.
-- **Default feed:** Every image ships the project's app feed, `https://nodo.monokulo.com/feed`
-  (GitHub Pages), in `/usr/share/nodo/default-feeds.toml` from nodo-tools, with its key's
-  fingerprint. The helper adds it once, already pinned to that key, so there is no trust on first
-  use; the address is then remembered, so a feed the owner removed never comes back and a
-  fingerprint changed in a later image never replaces a pin (another key from the server is the
-  normal key change). CI signs it (`.github/workflows/feed.yml`, `scripts/publish-feed.sh`) with a
-  key kept as an Actions secret, and runs every package through the device's install review before
-  deploying. Unlike the system keys, which UPDATES.md keeps offline, anyone who can get a workflow
-  run on `main` can sign for this feed. That is accepted because feed packages are untrusted on the
-  device anyway (gate, permissions, no downgrades), while a snapshot is trusted with the whole
-  system. [FEED.md](FEED.md) covers publishing, the key and adding an app.
+- **App feeds:** Images ship no default feed (`/usr/share/nodo/default-feeds.toml` from nodo-tools
+  lists none, though the helper still reads it: a feed listed there is added once, already pinned,
+  and never comes back once the owner removes it). Each app publishes its own feed from its own
+  repository: a release tag builds its packages, runs them through the device's install review,
+  signs them with that repository's key (an Actions secret) and attaches the feed to the release,
+  so `https://github.com/<owner>/<repo>/releases/latest/download` is the feed
+  (`.github/workflows/app-release.yml`). The owner adds the feeds they want and compares each key
+  with the one the app publishes. Unlike the system keys, which UPDATES.md keeps offline, anyone
+  who can get a workflow run in an app's repository can sign for its feed. That is accepted
+  because feed packages are untrusted on the device anyway (gate, permissions, no downgrades),
+  while a snapshot is trusted with the whole system. [FEED.md](FEED.md) covers publishing, the
+  keys and adding an app.
 - **Auto-update:** Off by default and chosen per package, within a scheduled window. It never installs
   an update that needs new permissions, has a changed feed key, fails install checks, is on hold or needs
   a system restart, and it waits while the device is locked or low on disk. A failed update rolls back
@@ -495,7 +496,7 @@ codebase, and signed xbps packages from user-added feeds.
 ## Layout
 
 - `packages/`: xbps recipes.
-- `feed/`: the app feed's package list and public key ([FEED.md](FEED.md)); `.github/workflows/feed.yml` publishes it.
+- `feed/`: the system snapshots' package list and keys ([UPDATES.md](UPDATES.md)); apps publish their own feeds ([FEED.md](FEED.md)).
 - `boards/`, `scripts/`, `tests/`: image builds and test tiers (`scripts/test.sh fast|vm|full`).
   Images take Void's packages from the live mirror (`VOID_MIRROR`), and xbps-src builds ours
   against the void-packages recipes at `VOID_PACKAGES_REV`. A Void dependency whose mirror version

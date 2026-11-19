@@ -9,7 +9,7 @@
 #   test      copies Void's index, builds a T6N image from only the snapshot and inspects it.
 #             No secrets. This is the test run a snapshot must pass before it is signed.
 #   publish   signs the manifest (key: NODO_SNAPSHOT_SIGNING_KEY), makes it the stable channel's
-#             newest snapshot and deploys the site, with the feed's half copied from the live site.
+#             newest snapshot and deploys the site: the snapshots and its landing page.
 #
 # A push to main makes a snapshot when a base package changed. Every Monday one is made anyway:
 # devices download Void's packages from Void's mirror, which drops superseded versions, so the
@@ -400,8 +400,10 @@ jobs:
       - name: Write the site
         run: |
           rm -f "$SNAPSHOT_ROOT"/snapshots/*/tested
-          scripts/pages-site.sh list out/site system snapshots
-          scripts/pages-site.sh pull out/site feed
+          # The whole site is this workflow's: the snapshots and a landing page. The app feed that
+          # was the site's other half is gone; apps publish their own feeds (docs/FEED.md).
+          scripts/pages-site.sh home out/site
+          scripts/pages-site.sh list out/site system snapshots index.html 404.html CNAME
           find out/site -type f -printf '%s\t%P\n' | sort -n | tail -n 20
           total=$(du -sb out/site | cut -f1)
           echo "site: $total bytes of the 1 GB Pages limit"

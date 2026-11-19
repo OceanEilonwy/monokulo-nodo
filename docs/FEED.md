@@ -1,99 +1,74 @@
-# The app feed
+# App feeds
 
-`https://nodo.monokulo.com/feed` is the project's own feed of apps: Monokulo (`mk-pay`), the Bell
-(`mk-bell`), the push relay (`mk-push-relay`), the light wallet server (`mk-lws`), Kringle and the
-Library (`library`). It is an ordinary xbps feed, checked on the device like any user-added feed (ARCHITECTURE.md, Feeds),
-with one difference: every image ships it as a default, its key already pinned. Base system
-packages never go in it; they reach devices in signed system snapshots (UPDATES.md).
+Apps reach devices through feeds: signed xbps repositories the owner adds by hand under Sources
+(ARCHITECTURE.md, Feeds), confirming the feed's key. Images ship no default feed
+(`packages/nodo-tools/files/default-feeds.toml` is empty). Base system packages never come
+through feeds; they reach devices in signed system snapshots (UPDATES.md).
 
-| | |
-|---|---|
-| Address | `https://nodo.monokulo.com/feed` |
-| Key | `62:54:a2:57:c2:57:9d:7e:11:8f:4c:30:a9:32:93:07` (RSA 4096, `feed/signing-key.pub.pem`) |
-| Signed by | `monokulo-nodo feed` |
-| Architectures | aarch64, x86_64 |
+Each of the project's own apps publishes its own feed, from its own repository's releases:
 
-The fingerprint is the one xbps shows (MD5 of the key in SSH form), which nodo-feed's
-`KeyFingerprint` uses and `ssh-keygen -l -E md5 -f <(ssh-keygen -i -m PKCS8 -f feed/signing-key.pub.pem)`
-prints.
+| Apps | Repository | Feed address |
+|---|---|---|
+| `mk-pay`, `mk-bell`, `mk-push-relay` | OceanEilonwy/monokulo-pay | `https://github.com/OceanEilonwy/monokulo-pay/releases/latest/download` |
+| `mk-lws` | OceanEilonwy/monokulo-lws | `https://github.com/OceanEilonwy/monokulo-lws/releases/latest/download` |
+| `kringle` | OceanEilonwy/kringle | `https://github.com/OceanEilonwy/kringle/releases/latest/download` |
+| `library` | OceanEilonwy/library | `https://github.com/OceanEilonwy/library/releases/latest/download` |
 
-## How it is published
+Each repository's `nodo/README.md` gives its feed's key fingerprint, which is the one to compare
+with what the device shows when the feed is added. The fingerprint is the one xbps shows (MD5 of
+the key in SSH form), which nodo-feed's `KeyFingerprint` uses and
+`ssh-keygen -l -E md5 -f <(ssh-keygen -i -m PKCS8 -f nodo/feed-signing-key.pub.pem)` prints.
 
-`.github/workflows/feed.yml` runs on every push to `main`, by hand (Actions, feed, Run
-workflow; a run from any other branch builds but does not publish), when an app's repository
-releases (`repository_dispatch`, `app-released`, below) and every six hours, a scheduled run
-publishing only when a release brought something new. It is never triggered by a pull request.
+## How an app publishes its feed
 
-Every app in the feed today is built in its own repository and listed in `feed/releases`
-("Apps from their own repositories", below); `feed/packages` lists recipes built here, and is
-empty.
+The app keeps its recipe with its source, and tagging a release publishes it:
 
-1. **build** (one job per architecture, without the key): `scripts/publish-feed.sh build <arch>`
-   builds the recipes listed in `feed/packages` with `scripts/build-packages.sh`, in the builder
-   image, exactly as locally. The per-recipe stamps and built packages are cached, so a run only
-   compiles recipes that changed; distfiles, cargo and npm downloads, xbps's package cache, the
-   compiler caches (sccache for Rust, ccache for C) and the builder image are cached for the runs
-   that do. Each package's log ends with its sccache and ccache hit rates. A run on any branch can
-   be started by hand (`gh workflow run feed.yml --ref <branch>`); it builds but skips publish.
-   Any file near GitHub Pages' 100 MB limit fails the job.
-2. **publish** (main only, in the `github-pages` environment, which only `main` may deploy to):
-   - `fetch`: each app in `feed/releases` from its repository's latest release (not a
-     prerelease), checked against the SHA-256 GitHub gives for the file. An app whose repository
-     has not released packages yet keeps the live feed's file (checked against the live
-     `files/feed.txt`), with a warning, so moving an app to its repository never drops it.
-   - `sign`: the key comes from the `NODO_FEED_SIGNING_KEY` secret into a 0600 temp file for that
-     one step. `xbps-rindex -a`, then `--signedby "monokulo-nodo feed" --privkey <key> -s` (the
-     public key into the index meta) and `--privkey <key> -S` (a `.sig2` per package: RSA PKCS#1
-     v1.5 over the SHA-256 of the file), run in the pinned Void image without network.
-   - `check`: `cargo run -p nodo-install --example check-feed` reads the signed feed as a device
-     does, requires the key to be the one in `packages/nodo-tools/files/default-feeds.toml`, and
-     runs every package through the installer's own review (size and hash against the index,
-     signature against the pinned key, the package gate). Nothing is published if one fails.
-   - `site`: the landing page (`index.html`, with the address, fingerprint and the package list
-     taken from that check), `CNAME` and the public key, then the official Pages actions deploy
-     `out/site`. The same site serves the system snapshots under `snapshots/`, published by
-     `.github/workflows/system.yml` (docs/UPDATES.md, "The T6N's published snapshots"). A
-     deployment replaces the whole site, so this job lists its own files in `files/feed.txt` and
-     copies the snapshots from the live site by `files/system.txt` (`scripts/pages-site.sh`), and
-     the two workflows' publish jobs share one concurrency group.
+1. The app's repository is tagged `v<version>` (Kringle's CI tags a release itself when
+   `Cargo.toml`'s version is new; the others are tagged by hand, or by their own release
+   workflows). Its workflow calls this repository's `.github/workflows/app-release.yml`, which
+   runs there, with that repository's token, caches and key.
+2. `prepare` (`scripts/app-release.sh pin`): each recipe in the app's `nodo/<package>` is copied
+   into a checkout of this repository's `packages/` with `version=` from the tag (`v1.2.0` is
+   `1.2.0`, `v1.2.0-rc1` is `1.2.0rc1`), `_commit=` the tag's commit and the first checksum that
+   commit's GitHub tarball's. The revision stays when the version is the recipe's own and is 1
+   otherwise. `newer` refuses a version that is not newer than every one the repository's other
+   releases carry, which devices would refuse as a downgrade or never install. The app's tests
+   in `nodo/tests/<crate>/*.rs` (its files read with the device's own code) run against this
+   repository's crates.
+3. `build`, per architecture: `scripts/build-packages.sh`, in the builder image.
+4. `release`:
+   - the packages go through the device's own install review (`check-feed`) in a throwaway feed
+     signed with a throwaway key;
+   - `sign`: the app's key comes from its repository's `NODO_FEED_SIGNING_KEY` secret into a
+     0600 temp file for that one step. `xbps-rindex -a`, then `--signedby "<repo> feed" --privkey
+     <key> -s` (the public key into the index meta) and `--privkey <key> -S` (a `.sig2` per
+     package: RSA PKCS#1 v1.5 over the SHA-256 of the file), in the pinned Void image without
+     network;
+   - `check`: the signed feed through the device's review again, now requiring the fingerprint of
+     the app's `nodo/feed-signing-key.pub.pem` (from its default branch);
+   - the feed (`aarch64-repodata`, `x86_64-repodata`, each `<package>-<version>_<revision>.<arch>.xbps`
+     and its `.sig2`) is attached to the tag's release, created if the tag has none;
+   - the feed is read back from `https://github.com/<owner>/<repo>/releases/download/<tag>`,
+     through GitHub's redirect to its storage host, exactly as a device reads it.
 
-A run where no recipe changed takes a few minutes (restore the stamps, sign, check, deploy). A
-cold run compiles everything on 4-core runners and can take two to three hours (x86_64 took 19
-minutes locally on 32 cores); the build jobs time out at 330 minutes. The largest file today is
-mk-pay at about 20 MB and the whole site about 66 MB, far inside Pages' 100 MB per file and 1 GB
-per site.
+Both architectures or neither. `releases/latest/download` serves the newest release that is not
+a prerelease or draft, so the release is the feed from then on. Only the newest version is in a
+feed; a device keeps the verified file of what it installed, so rollbacks never need an older one.
 
-If one architecture fails to build, the others still publish (aarch64 is required) and the run
-shows a warning; the next good run brings it back.
-
-The site:
-
-```
-/index.html                 what the feed is, its address, key and packages
-/CNAME                      nodo.monokulo.com
-/signing-key.pub.pem
-/feed/aarch64-repodata      signed index, one per architecture
-/feed/x86_64-repodata
-/feed/<name>-<version>.<arch>.xbps
-/feed/<name>-<version>.<arch>.xbps.sig2
-```
-
-Only the newest version of each app is published. A device keeps the verified file of what it
-installed, so rollbacks never need an older one from the feed.
-
-Locally, with the key: `scripts/publish-feed.sh build aarch64`, `sign <key> aarch64`,
-`check aarch64`, `site aarch64`; the site lands in `out/site`.
+A recipe change on its own (say, a new pinned nightly) is released by tagging a new version, or,
+for the same version, by raising `revision=` in the app's `nodo/<package>/template` and running
+the app's `nodo` workflow by hand on that tag. `app-release.yml` takes `nodo-ref` to build with
+another branch of this repository's scripts.
 
 ## Who can sign
 
-The key lives in GitHub, not on an offline machine as UPDATES.md asks for the system keys. Anyone
-who can get a workflow run on `main` (push or merge access) can publish a signed package, and
-anyone with write access could push a branch whose workflow reads a repository secret. This is
-accepted because the feed is a feed: devices treat it as untrusted (no install scripts, nothing
+Each app's key lives in its own repository's secrets, not on an offline machine as UPDATES.md asks
+for the system keys. Anyone who can get a workflow run with that repository's secrets (push or
+merge access, or a tag) can publish a signed package in that app's feed, and only that app's. This
+is accepted because a feed is a feed: devices treat it as untrusted (no install scripts, nothing
 outside the app's directory, permissions shown to the owner and asked again when they grow,
-downgrades refused), whereas a system snapshot is trusted with the whole device. To narrow it, move
-the secret from the repository to the `github-pages` environment (Settings, Environments), whose
-branch policy allows only `main`, and protect `main` with required reviews.
+downgrades refused), whereas a system snapshot is trusted with the whole device. To narrow it,
+move the secret into an environment whose policy allows only tags, and protect `main` and tags.
 
 ## When devices read feeds
 
@@ -110,98 +85,40 @@ helper reads every enabled feed:
 A feed that cannot be read keeps its last package list and records the problem, which Sources
 and an empty Get apps search show.
 
-## The default feed on devices
-
-`nodo-tools` installs `/usr/share/nodo/default-feeds.toml` (from `packages/nodo-tools/files`).
-The first time the helper reads its feed state on a device that never had a default, it adds it
-as `monokulo`, enabled, pinned to the shipped fingerprint, before ever contacting the server; the
-first refresh fills its package list. That first refresh happens straight away: the helper reads
-every enabled feed in the background when it starts, so a new device lists the feed's packages
-within seconds of booting. The address is then recorded in `defaults_seeded` in
-`/var/lib/nodo/feeds.toml`, so:
-
-- if the owner removes it, it stays removed, also across image updates (it can still be added by
-  hand, confirming the key like any feed);
-- a later image with another fingerprint never replaces the device's pin;
-- if the owner already had that address, their feed and pin are kept;
-- a server signing with another key is a key change, blocked until the owner trusts it by typing
-  the feed's name.
-
-A missing file means no defaults; a broken one is logged and ignored.
-
-## Rotating the key
+## Rotating an app's key
 
 There is no automatic rotation: a device only moves to a new key when its owner approves the key
 change. So rotate only when needed (the key leaked or is lost):
 
 1. `openssl genrsa -out feed-signing-key.pem 4096` and
-   `openssl rsa -in feed-signing-key.pem -pubout -out feed/signing-key.pub.pem` on a trusted
-   machine; keep the private key backed up offline.
-2. Put the new fingerprint in `packages/nodo-tools/files/default-feeds.toml` (the helper test
-   `the_shipped_default_feeds_file_parses` checks it matches `feed/signing-key.pub.pem`), bump
-   `nodo-tools`' revision, and replace the `NODO_FEED_SIGNING_KEY` secret
-   (`gh secret set NODO_FEED_SIGNING_KEY < feed-signing-key.pem`).
-3. Merge. New devices get the new key pinned. Existing devices show the feed as key changed;
-   tell owners the new fingerprint through another channel (this page, release notes) so they can
-   compare before trusting it.
+   `openssl rsa -in feed-signing-key.pem -pubout -out nodo/feed-signing-key.pub.pem` on a trusted
+   machine, in the app's repository; keep the private key backed up offline.
+2. Replace the secret (`gh secret set NODO_FEED_SIGNING_KEY -R <owner>/<repo> < feed-signing-key.pem`),
+   put the new fingerprint in the app's `nodo/README.md`, and merge.
+3. Release (a new tag, or the `nodo` workflow by hand on the latest tag). Devices that added the
+   feed show it as key changed; tell owners the new fingerprint through another channel (the
+   README, release notes) so they can compare before trusting it.
 
 If the old key leaked, also say so: anything signed with it after the leak is suspect.
 
-## Apps from their own repositories
-
-Each app's recipe lives with its source, and a release of the app is what puts it in the feed:
-
-| Package | Repository | Recipe |
-|---|---|---|
-| `mk-pay`, `mk-bell`, `mk-push-relay` | OceanEilonwy/monokulo-pay | `nodo/<package>` |
-| `mk-lws` | OceanEilonwy/monokulo-lws | `nodo/mk-lws` |
-| `kringle` | OceanEilonwy/kringle | `nodo/kringle` |
-| `library` | OceanEilonwy/library | `nodo/library` |
-
-1. The app's repository is tagged `v<version>` (Kringle's CI tags a release itself when
-   `Cargo.toml`'s version is new; the others are tagged by hand, or by their own release
-   workflows). Its workflow calls this repository's `.github/workflows/app-release.yml`, which
-   runs there, with that repository's token and caches.
-2. `prepare` (`scripts/app-release.sh pin`): each recipe in the app's `nodo/<package>` is copied
-   into a checkout of this repository's `packages/` with `version=` from the tag (`v1.2.0` is
-   `1.2.0`, `v1.2.0-rc1` is `1.2.0rc1`), `_commit=` the tag's commit and the first checksum that
-   commit's GitHub tarball's. The revision stays when the version is the recipe's own and is 1
-   otherwise. `newer` refuses a version that is not newer than the live feed's, which devices
-   would refuse as a downgrade or never install. The app's tests in `nodo/tests/<crate>/*.rs`
-   (its files read with the device's own code, as `nodo-install`'s and `nodo-panels`' tests
-   did here) run against this repository's crates.
-3. `build`, per architecture: `scripts/build-packages.sh`, in the builder image, exactly as here.
-4. `release`: the packages are signed into a throwaway feed with a throwaway key and run through
-   the device's own install review (`check-feed`), then attached to the tag's GitHub release
-   (created if the tag has none) as `<package>-<version>_<revision>.<arch>.xbps`. Both
-   architectures or neither.
-5. `notify`: with the app repository's `NODO_DISPATCH_TOKEN` secret (a fine-grained token for
-   this repository with Contents read and write), it starts `feed.yml` here, whose `fetch` takes
-   the new release, then signs, checks and publishes it as above. Without the secret the
-   scheduled run publishes it within six hours.
-
-The feed's key never leaves this repository. A recipe change on its own (say, a new pinned
-nightly) is released by tagging a new version, or, for the same version, by raising `revision=` in
-the app's `nodo/<package>/template` and running the app's `nodo` workflow by hand on that tag.
-`app-release.yml` takes `nodo-ref` to build with another branch of this repository's scripts.
-
-## Adding an app to the feed
+## Adding an app
 
 1. Write its recipe as a feed app: everything under `/opt/nodo/apps/<name>`, a `manifest.toml`,
    no install scripts, accounts or services, and a name that is not a base package name
-   (`nodo-feed`'s gate; the `monokulo-` and `nodo-` prefixes are reserved). For an app with its
-   own repository, put it in that repository's `nodo/<name>`, with its first distfile
-   `https://github.com/<owner>/<repo>/archive/${_commit}.tar.gz`, a test of its files in
-   `nodo/tests/nodo-install/` (like Kringle's `nodo/tests/nodo-install/kringle_package.rs`), and
-   a workflow calling `app-release.yml` on its tags. Otherwise put it in `packages/<name>/` here.
-2. Build and check it locally: copy the recipe into `packages/`, `scripts/build-packages.sh
-   aarch64 <name>`, then `scripts/app-release.sh check <name> -- aarch64` signs a throwaway feed
-   and runs `check-feed` on it; or install it in the dev VM.
-3. Add `<name> <owner/repo>` to `feed/releases` (or, for a recipe here, the name to
-   `feed/packages`) and merge. The next run fetches or builds it, the check runs it through the
-   device's review, and the page lists it.
+   (`nodo-feed`'s gate; the `monokulo-` and `nodo-` prefixes are reserved). Put it in its
+   repository's `nodo/<name>`, with its first distfile
+   `https://github.com/<owner>/<repo>/archive/${_commit}.tar.gz`, and a test of its files in
+   `nodo/tests/nodo-install/` (like Kringle's `nodo/tests/nodo-install/kringle_package.rs`).
+2. Make its key (as under "Rotating an app's key", step 1), set the `NODO_FEED_SIGNING_KEY`
+   secret, commit `nodo/feed-signing-key.pub.pem`, and add a workflow calling `app-release.yml`
+   on its tags (secrets: inherit, contents: write).
+3. Build and check it locally: copy the recipe into a checkout of this repository's `packages/`,
+   `scripts/build-packages.sh aarch64 <name>`, then `scripts/app-release.sh check <name> --
+   aarch64` signs a throwaway feed and runs `check-feed` on it; or install it in the dev VM.
+4. Tag a release, then add `https://github.com/<owner>/<repo>/releases/latest/download` on the
+   device.
 
-### A suite of apps, and a setup page
+## A suite of apps, and a setup page
 
 An app made of several packages can be installed in one go. One package, the head, lists the
 others in `[bundle]`; each member is an ordinary package of the same feed with its own manifest and
@@ -276,19 +193,19 @@ whether a domain provider holds the domain, and whether a recent backup holds th
 
 ## Feeds of other projects
 
-Another project can build its own signed feed with these scripts, without copying recipes into
-`packages/`:
+Any project can build a signed feed with these scripts, through `app-release.yml` as the
+project's own apps do, or on its own, without copying recipes into `packages/`:
 
 - `NODO_EXTRA_PACKAGES=/abs/path/srcpkgs` adds a directory of recipes laid out like
   void-packages' `srcpkgs/` (a subpackage is a symlink to its recipe). `build-packages.sh`
   hashes, builds and stamps them like this repository's own; a recipe in `packages/` wins on a
   clash. A subpackage is built with its recipe and copied to `out/feed/<arch>` beside it; name
   the recipe, not the subpackage, to `build-packages.sh`.
-- `publish-feed.sh` reads its package list from `FEED_PACKAGES` (default `feed/packages`; list
-  subpackages beside their recipe) and its released apps from `FEED_RELEASES` (default
-  `feed/releases`, but none when `FEED_PACKAGES` is set without it), signs with the signer name `FEED_SIGNER` (default
-  `monokulo-nodo feed`), and `check` requires the fingerprint `FEED_FINGERPRINT` (default: the
-  one images pin). The key is still the argument to `sign`.
+- `publish-feed.sh` reads its package list from `FEED_PACKAGES` (list subpackages beside their
+  recipe), signs with the signer name `FEED_SIGNER` (default `monokulo-nodo feed`), and `check`
+  requires the fingerprint `FEED_FINGERPRINT`. The key is the argument to `sign`. For a feed
+  published as a static site, `site` writes a landing page around it from `FEED_ADDRESS` and
+  `FEED_PUBLIC_KEY`.
 
-Such a feed is not added to devices by default: the owner adds it (`ProbeFeed`, compare the
-fingerprint, `AddFeed`). Pingers is the first user (its `docs/deploy-nodo.md`).
+The owner adds such a feed by hand (`ProbeFeed`, compare the fingerprint, `AddFeed`). Pingers was
+the first project to publish one (its `docs/deploy-nodo.md`).
