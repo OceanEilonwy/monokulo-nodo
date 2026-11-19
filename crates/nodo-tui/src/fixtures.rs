@@ -13,6 +13,7 @@ use nodo_ui_core::secret::Input;
 use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::exec::load_snapshot;
 use nodo_ui_core::flows::install::ReviewPurpose;
+use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow, PickMode, Picker};
 use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 
@@ -181,21 +182,23 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         }),
         ScreenId::Settings => Screen::Settings(settings_design_state(mock)),
         ScreenId::Reference => Screen::Reference(ReferenceState {
-            package: "moneropay".to_owned(),
-            field_index: 0,
-            field_label: "Daemon RPC".to_owned(),
-            field_kind: FieldKind::Url,
-            mode: crate::app::PickMode::Insert,
-            assembled: false,
-            list: sample_references(),
+            flow: Picker {
+                package: "moneropay".to_owned(),
+                field_index: 0,
+                field_label: "Daemon RPC".to_owned(),
+                field_kind: FieldKind::Url,
+                mode: PickMode::Insert,
+                assembled: false,
+                list: sample_references(),
+                granting: None,
+            },
             query: typed("rpc"),
             list_focused: true,
             selected: 0,
-            granting: None,
         }),
         ScreenId::ApplyFailed => {
             let reason = "listen tcp :18081: bind: address already in use";
-            Screen::ApplyFailed(ApplyFailedState {
+            Screen::ApplyFailed(ApplyFailed {
                 package: "moneropay".to_owned(),
                 explanation: mock.explain_rollback("moneropay", reason),
                 rows: vec![

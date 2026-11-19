@@ -4,7 +4,7 @@
 //! such as safe default focus and typed confirmation, live in this file.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, ServiceState};
+use nodo_api::ServiceState;
 
 use crate::app::*;
 use nodo_ui_core::model::*;
@@ -13,6 +13,7 @@ use nodo_ui_core::{Effect, Outcome};
 use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
 use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::logs::{self, Logs};
+use nodo_ui_core::flows::settings::{self, PickMode, Picked};
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -656,6 +657,8 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         // The install's page takes the place of the review that started it.
         Dest::Installing(report) => app.screen = Screen::Installing(report),
         Dest::ApplyUpdates { names, approvals } => return apply_batch(app, names, approvals),
+        Dest::Settings(form) => push(app, Screen::Settings(SettingsState::new(form))),
+        Dest::ApplyFailed(failed) => push(app, Screen::ApplyFailed(failed)),
         Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
         Dest::Resume => {
             pop(app);
@@ -1115,12 +1118,9 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     if state.confirm.is_some() {
         return match key.code {
-            KeyCode::Enter => {
-                state.confirm = None;
-                apply_draft(state)
-            }
+            KeyCode::Enter => state.flow.confirm_save(),
             KeyCode::Esc => {
-                state.confirm = None;
+                state.flow.cancel_save();
                 Vec::new()
             }
             _ => Vec::new(),
@@ -1137,11 +1137,7 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => state.editing = None,
             KeyCode::Enter => {
-                let index = state.selected;
-                // Leaving a secret empty keeps the stored one instead of erasing it.
-                if !input.is_empty() {
-                    state.draft[index] = FieldValue::NewSecret(input.take_secret());
-                }
+                state.flow.set_secret(state.selected, input);
                 state.editing = None;
             }
             _ => {
@@ -1161,51 +1157,31 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     let index = state.selected;
     let count = state.form.fields.len();
+    let is_choice = matches!(state.form.fields[index].kind, FieldKind::Choice(_));
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, count, key.code == KeyCode::Down),
         KeyCode::Tab | KeyCode::BackTab => step(&mut state.selected, count, key.code == KeyCode::Tab),
         // A field with a broken reference opens what is wrong with it; anything else edits.
-        KeyCode::Enter if first_broken_chip(state, index).is_some() => {
-            let chip = first_broken_chip(state, index).unwrap_or(0);
+        KeyCode::Enter if state.first_broken(index).is_some() => {
+            let chip = state.first_broken(index).unwrap_or(0);
             state.chip_menu = Some(ChipMenu { chip, choice: 0 });
         }
-        KeyCode::Enter | KeyCode::Char(' ') => start_field_edit(state, index, 1),
+        KeyCode::Enter | KeyCode::Char(' ') => start_field_edit(state, index, true),
         KeyCode::Char('c') if matches!(state.draft[index], FieldValue::Pieces(_)) => {
             state.chip_menu = Some(ChipMenu { chip: 0, choice: 0 });
         }
-        KeyCode::Left if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
-            start_field_edit(state, index, -1);
-        }
-        KeyCode::Right if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
-            start_field_edit(state, index, 1);
-        }
+        KeyCode::Left if is_choice => start_field_edit(state, index, false),
+        KeyCode::Right if is_choice => start_field_edit(state, index, true),
         KeyCode::Char('$') => return open_reference_picker(app, PickMode::Insert),
         KeyCode::Char('u') => return undo_step(app),
-        KeyCode::Char('z') => {
-            state.draft[index] = state.form.fields[index].value.clone();
-            return preview_field(state, index);
-        }
+        KeyCode::Char('z') => return state.flow.reset(index),
         KeyCode::Esc => {
-            if state.changed_indices().is_empty() {
-                pop(app);
-            } else {
-                app.modal = Some(Modal::ask(Question {
-                    title: "Discard your changes?".to_owned(),
-                    body: vec!["Your unsaved settings will be lost.".to_owned()],
-                    confirm_label: "Discard".to_owned(),
-                    cancel_is_default: true,
-                    confirm: Confirm::DiscardSettings,
-                }));
-            }
+            let step = state.flow.leave();
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
-}
-
-/// The first reference of a field that does not resolve, as far as its preview knows.
-fn first_broken_chip(state: &SettingsState, index: usize) -> Option<usize> {
-    state.preview(index)?.chips.iter().position(Result::is_err)
 }
 
 /// Typing in a field: text, reference chips, and the suggestions after `$(`.
@@ -1246,12 +1222,9 @@ fn editor_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             state.editor = None;
         }
         KeyCode::Enter => {
-            let value = FieldValue::from_pieces(editor.pieces());
+            let pieces = editor.pieces();
             state.editor = None;
-            if value != state.draft[index] {
-                state.draft[index] = value;
-                return preview_field(state, index);
-            }
+            return state.flow.set_pieces(index, pieces);
         }
         KeyCode::Left => editor.left(),
         KeyCode::Right => editor.right(),
@@ -1271,32 +1244,19 @@ fn editor_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// What `$(…` before the cursor suggests: up to five references that fit, by app and name.
+/// What `$(…` before the cursor suggests in the field being typed in. The rule is the core's.
 pub fn suggestions(state: &SettingsState) -> Vec<(String, String)> {
-    let (Some(editor), Some(catalog)) = (&state.editor, &state.catalog) else {
-        return Vec::new();
-    };
-    let Some((_, query)) = editor.completing() else {
-        return Vec::new();
-    };
-    let kind = &state.form.fields[state.selected].kind;
-    let assembled = editor.units.len() > query.chars().count() + 2;
-    nodo_ui_core::refs::ordered(kind, nodo_ui_core::refs::search(&catalog.options, &query), assembled)
-        .into_iter()
-        .filter(|(option, verdict)| verdict.is_ok() && option.locked.is_none_or(|l| l.granted))
-        .take(5)
-        .map(|(option, _)| (option.app.clone(), option.setting.clone()))
-        .collect()
+    state.editor.as_ref().map(|editor| state.flow.suggestions(state.selected, editor)).unwrap_or_default()
 }
 
 fn chip_menu_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
+    let chips = state.flow.references(state.selected).len();
     let Some(menu) = state.chip_menu.as_mut() else {
         return Vec::new();
     };
-    let chips = state.draft[state.selected].pieces().map_or(0, |p| nodo_ui_core::model::refs(&p).len());
     match key.code {
         KeyCode::Esc => state.chip_menu = None,
         KeyCode::Left | KeyCode::BackTab => menu.choice = menu.choice.saturating_sub(1),
@@ -1330,43 +1290,19 @@ fn chip_action(app: &mut App, chip: usize, choice: usize) -> Vec<Effect> {
         return open_reference_picker(app, PickMode::Replace(chip));
     }
     let index = state.selected;
-    let Some(pieces) = state.draft[index].pieces() else {
+    if chip >= state.references(index).len() {
         return Vec::new();
-    };
-    let Some((position, app_id, setting)) = nth_ref(&pieces, chip) else {
-        return Vec::new();
-    };
-    let before = state.draft[index].clone();
-    let mut pieces = pieces;
+    }
     if choice == 1 {
         // The chip becomes what it resolves to now, ready to edit.
-        let value = state.preview(index).and_then(|p| p.chips.get(chip).cloned()).and_then(Result::ok).flatten();
-        pieces[position] = Piece::Text(value.unwrap_or_default());
-        let after = FieldValue::from_pieces(pieces.clone());
-        state.draft[index] = after.clone();
-        state.undo = Some(Undo { field: index, before, after, label: format!("Use {app_id}.{setting} again") });
-        let mut editor = nodo_ui_core::refs::PieceEditor::new(&nodo_ui_core::model::tidy(pieces));
+        let effects = state.flow.type_instead(index, chip);
+        let mut editor = nodo_ui_core::refs::PieceEditor::new(&state.draft[index].pieces().unwrap_or_default());
         editor.end();
         state.editor = Some(editor);
+        effects
     } else {
-        pieces.remove(position);
-        let after = FieldValue::from_pieces(pieces);
-        state.draft[index] = after.clone();
-        state.undo = Some(Undo { field: index, before, after, label: format!("Put {app_id}.{setting} back") });
+        state.flow.remove_reference(index, chip)
     }
-    preview_field(state, index)
-}
-
-/// Where the `n`th reference is among the pieces, with its app and setting.
-fn nth_ref(pieces: &[Piece], n: usize) -> Option<(usize, String, String)> {
-    pieces
-        .iter()
-        .enumerate()
-        .filter_map(|(at, piece)| match piece {
-            Piece::Ref { app, setting } => Some((at, app.clone(), setting.clone())),
-            Piece::Text(_) => None,
-        })
-        .nth(n)
 }
 
 /// Takes the last step back: the link under the field.
@@ -1374,27 +1310,17 @@ fn undo_step(app: &mut App) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
-    let Some(undo) = state.undo.take().filter(|u| state.draft[u.field] == u.after) else {
+    let Some(field) = state.undo.as_ref().map(|undo| undo.field) else {
         return Vec::new();
     };
-    state.editor = None;
-    state.editing = None;
-    state.draft[undo.field] = undo.before;
-    state.selected = undo.field;
-    preview_field(state, undo.field)
-}
-
-/// Asks the helper what a field's draft resolves to, when it has references.
-fn preview_field(state: &SettingsState, index: usize) -> Vec<Effect> {
-    if !matches!(state.draft[index], FieldValue::Pieces(_)) {
-        return Vec::new();
+    let applies = state.undo_for(field).is_some();
+    let effects = state.flow.undo(field);
+    if applies {
+        state.editor = None;
+        state.editing = None;
+        state.selected = field;
     }
-    vec![Effect::PreviewSetting {
-        package: state.form.package.clone(),
-        field_index: index,
-        key: state.form.fields[index].key.clone(),
-        value: state.draft[index].clone(),
-    }]
+    effects
 }
 
 /// The keys that open the picker from the Settings form. F4 opens a drop-down in many programs
@@ -1411,54 +1337,27 @@ fn open_reference_picker(app: &mut App, mode: PickMode) -> Vec<Effect> {
         return Vec::new();
     };
     state.chip_menu = None;
-    let index = state.selected;
-    let field = &state.form.fields[index];
-    if !field.kind.takes_reference() {
-        fail(app, "This setting cannot take a value from another app.");
-        return Vec::new();
-    }
-    let assembled = match (&state.editor, mode) {
-        (Some(editor), PickMode::Insert) => !editor.is_empty(),
-        (None, PickMode::Insert) => false,
-        (_, PickMode::Replace(_)) => state.draft[index].pieces().is_some_and(|p| p.len() > 1),
-    };
-    let picker = ReferenceState {
-        package: state.form.package.clone(),
-        field_index: index,
-        field_label: field.label.clone(),
-        field_kind: field.kind.clone(),
-        mode,
-        assembled,
-        list: state.catalog.clone().unwrap_or_default(),
-        query: Input::plain(""),
-        list_focused: false,
-        selected: 0,
-        granting: None,
-    };
-    let load = state.catalog.is_none();
-    let package = state.form.package.clone();
-    push(app, Screen::Reference(picker));
-    if load {
-        vec![Effect::LoadReferences { package }]
-    } else {
-        Vec::new()
+    let beside_typed = state.editor.as_ref().is_some_and(|editor| !editor.is_empty());
+    match state.flow.pick(state.selected, mode, beside_typed) {
+        Ok((picker, load)) => {
+            let picker = ReferenceState { flow: picker, query: Input::plain(""), list_focused: false, selected: 0 };
+            push(app, Screen::Reference(picker));
+            load
+        }
+        Err(why) => {
+            fail(app, why);
+            Vec::new()
+        }
     }
 }
 
-fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
-    match (&state.form.fields[index].kind, &state.draft[index]) {
-        (FieldKind::Toggle, FieldValue::Bool(value)) => state.draft[index] = FieldValue::Bool(!*value),
-        (FieldKind::Choice(options), FieldValue::Text(current)) => {
-            let len = options.len() as isize;
-            // An optional choice with no default has no value yet: the first step lands on the
-            // first choice (or, backwards, the last), not one past it.
-            let next = match options.iter().position(|option| option == current) {
-                Some(position) => (position as isize + direction).rem_euclid(len) as usize,
-                None if direction < 0 => options.len() - 1,
-                None => 0,
-            };
-            state.draft[index] = FieldValue::Text(options[next].clone());
-        }
+/// Enter, Space or an arrow on a field: a switch flips, a choice steps, and anything else opens
+/// its box to type in.
+fn start_field_edit(state: &mut SettingsState, index: usize, forward: bool) {
+    let kind = state.form.fields[index].kind.clone();
+    match (&kind, &state.flow.draft[index]) {
+        (FieldKind::Toggle, FieldValue::Bool(_)) => state.flow.toggle(index),
+        (FieldKind::Choice(_), FieldValue::Text(_)) => state.flow.step_choice(index, forward),
         // A secret with a reference is replaced by typing a new secret.
         (FieldKind::Secret, _) => state.editing = Some(Input::secret()),
         (_, value) => {
@@ -1473,91 +1372,24 @@ fn save_settings(app: &mut App) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
-    let changed = state.changed_indices();
-    if changed.is_empty() {
-        notice(app, NoticeKind::Info, "There are no changes to save.");
-        return Vec::new();
-    }
-    if let Some(invalid) = (0..state.draft.len()).find(|&index| state.error_for(index).is_some()) {
-        state.selected = invalid;
-        fail(app, "Fix the marked field before saving. Nothing was changed.");
-        return Vec::new();
-    }
-    let broken = state.broken();
-    if broken > 0 {
-        if let Some(index) = (0..state.draft.len()).find(|&i| first_broken_chip(state, i).is_some()) {
+    let step = state.flow.save();
+    // A refused save puts the focus on the field it stopped at.
+    if matches!(step, Step::Failed(_)) {
+        if let Some(index) = state.blocking_field() {
             state.selected = index;
         }
-        let plural = if broken == 1 { "reference" } else { "references" };
-        fail(app, format!("Fix {broken} broken {plural} to save. Nothing was changed."));
-        return Vec::new();
     }
-    let bullets = save_consequences(state);
-    if bullets.is_empty() {
-        return apply_draft(state);
-    }
-    state.confirm = Some(bullets);
-    Vec::new()
-}
-
-/// What the changed references allow, in plain words, for the save confirmation.
-pub fn save_consequences(state: &SettingsState) -> Vec<String> {
-    let package = &state.form.package;
-    let mut access = Vec::new();
-    let mut dependencies = Vec::new();
-    let mut follows = Vec::new();
-    for index in state.changed_indices() {
-        let Some(pieces) = state.draft[index].pieces() else { continue };
-        let was = state.form.fields[index].value.pieces().unwrap_or_default();
-        for (app_id, setting) in nodo_ui_core::model::refs(&pieces) {
-            if !nodo_ui_core::model::refs(&was).contains(&(app_id, setting)) {
-                let line = format!("{package} follows {app_id}'s {setting} when it changes.");
-                if !follows.contains(&line) {
-                    follows.push(line);
-                }
-            }
-        }
-        if let Some(preview) = state.preview(index) {
-            for (app_id, what) in &preview.new_access {
-                let line = format!("{package} will be able to reach {app_id} ({what}).");
-                if !access.contains(&line) {
-                    access.push(line);
-                }
-            }
-            for app_id in &preview.new_dependencies {
-                let line = format!("{app_id} becomes a dependency: it can't be removed while {package} uses it.");
-                if !dependencies.contains(&line) {
-                    dependencies.push(line);
-                }
-            }
-        }
-    }
-    access.into_iter().chain(dependencies).chain(follows).collect()
-}
-
-fn apply_draft(state: &SettingsState) -> Vec<Effect> {
-    let values = state
-        .changed_indices()
-        .into_iter()
-        .map(|index| {
-            let (field, value) = (&state.form.fields[index], &state.draft[index]);
-            let reset = field.input_for(value) == Some(nodo_api::SettingInput::Reset);
-            (field.key.clone(), (!reset).then(|| value.clone()))
-        })
-        .collect();
-    vec![Effect::ApplySettings { package: state.form.package.clone(), values }]
+    follow(app, step)
 }
 
 fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Reference(state) = &mut app.screen else {
         return Vec::new();
     };
-    if let Some(option) = state.granting.clone() {
+    if state.granting.is_some() {
         match key.code {
-            KeyCode::Esc => state.granting = None,
-            KeyCode::Enter => {
-                return vec![Effect::Grant { consumer: state.package.clone(), provider: option.app, setting: option.setting }];
-            }
+            KeyCode::Esc => state.flow.decline(),
+            KeyCode::Enter => return state.flow.approve(),
             _ => {}
         }
         return Vec::new();
@@ -1566,18 +1398,12 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
-            let Some((option, verdict)) = state.visible().get(state.selected).map(|(o, v)| ((*o).clone(), v.clone())) else {
+            let chosen = state.visible().get(state.selected).map(|(option, _)| (option.app.clone(), option.setting.clone()));
+            let Some((app_id, setting)) = chosen else {
                 return Vec::new();
             };
-            if let Err(why) = verdict {
-                fail(app, why);
-                return Vec::new();
-            }
-            if option.locked.is_some_and(|l| !l.granted) {
-                state.granting = Some(option);
-                return Vec::new();
-            }
-            return place_reference(app, &option.app, &option.setting);
+            let picked = state.flow.choose(&app_id, &setting);
+            return on_picked(app, picked);
         }
         KeyCode::Down | KeyCode::Up => {
             if state.list_focused {
@@ -1601,7 +1427,20 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Puts a picked reference where the picker was opened for, and closes the picker.
+/// What a choice in the picker, or a result there, came to: a reference to place, or only a step.
+fn on_picked(app: &mut App, picked: Picked) -> Vec<Effect> {
+    match picked {
+        Picked::Nothing(step) => follow(app, step),
+        Picked::Reference { app: app_id, setting, then } => {
+            let mut effects = place_reference(app, &app_id, &setting);
+            effects.extend(follow(app, then));
+            effects
+        }
+    }
+}
+
+/// Puts a picked reference where the picker was opened for, and closes the picker: at the cursor
+/// of what is being typed, or through the core into the field's value.
 fn place_reference(app: &mut App, app_id: &str, setting: &str) -> Vec<Effect> {
     let Screen::Reference(picker) = &app.screen else {
         return Vec::new();
@@ -1612,50 +1451,34 @@ fn place_reference(app: &mut App, app_id: &str, setting: &str) -> Vec<Effect> {
         return Vec::new();
     };
     state.selected = field_index;
-    let before = state.draft[field_index].clone();
     match (mode, state.editor.as_mut()) {
         (PickMode::Insert, Some(editor)) => {
             editor.insert_ref(app_id, setting);
-            return Vec::new();
+            Vec::new()
         }
-        (PickMode::Insert, None) => state.draft[field_index] = FieldValue::reference(app_id, setting),
-        (PickMode::Replace(chip), _) => {
-            let mut pieces = before.pieces().unwrap_or_default();
-            if let Some((position, ..)) = nth_ref(&pieces, chip) {
-                pieces[position] = Piece::Ref { app: app_id.to_owned(), setting: setting.to_owned() };
-            }
+        (PickMode::Insert, None) => state.flow.place(field_index, mode, app_id, setting),
+        (PickMode::Replace(_), _) => {
             state.editor = None;
-            state.draft[field_index] = FieldValue::from_pieces(pieces);
+            state.flow.place(field_index, mode, app_id, setting)
         }
     }
-    let label = match &before {
-        FieldValue::Text(text) if !text.is_empty() => format!("Undo: back to {text}"),
-        FieldValue::Pieces(_) => "Undo".to_owned(),
-        _ => String::new(),
-    };
-    if !label.is_empty() && before != state.draft[field_index] {
-        let after = state.draft[field_index].clone();
-        state.undo = Some(Undo { field: field_index, before, after, label });
-    }
-    preview_field(state, field_index)
 }
 
 fn apply_failed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::ApplyFailed(state) = &app.screen else {
         return Vec::new();
     };
-    let package = state.package.clone();
-    let blamed = state.explanation.blamed_field.clone();
+    let failed = state.clone();
     match key.code {
         KeyCode::Enter => {
             pop(app);
-            if let (Screen::Settings(settings), Some(blamed)) = (&mut app.screen, blamed) {
-                if let Some(index) = settings.form.fields.iter().position(|field| field.key == blamed) {
+            if let Screen::Settings(settings) = &mut app.screen {
+                if let Some(index) = failed.blamed_index(&settings.form) {
                     settings.selected = index;
                 }
             }
         }
-        KeyCode::Char('l') => return open_logs(app, &package),
+        KeyCode::Char('l') => return open_logs(app, &failed.package),
         KeyCode::Char('x') => {
             pop(app);
             if let Screen::Settings(settings) = &mut app.screen {
@@ -2196,75 +2019,40 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = sources::apply(&event);
             return follow(app, step);
         }
-        Outcome::SettingsLoaded { package, form } => match form {
-            Some(form) => {
-                // A finished install is replaced so that Esc does not return to its progress list.
-                if matches!(app.screen, Screen::Installing(_)) {
-                    pop(app);
-                }
-                let state = SettingsState::new(form);
-                // The catalog for suggestions and the picker, and what each reference resolves to.
-                let mut effects = vec![Effect::LoadReferences { package: state.form.package.clone() }];
-                for index in 0..state.draft.len() {
-                    effects.extend(preview_field(&state, index));
-                }
-                push(app, Screen::Settings(state));
-                return effects;
+        Outcome::SettingsLoaded { .. } => {
+            // A finished install is replaced so that Esc does not return to its progress list.
+            if matches!(app.screen, Screen::Installing(_)) {
+                pop(app);
             }
-            None => {
-                if matches!(app.screen, Screen::Installing(_)) {
-                    pop(app);
+            let step = settings::apply(&event);
+            return follow(app, step);
+        }
+        // The catalog for suggestions and the picker, and what each reference resolves to. The
+        // form may be under the picker, or under a failed save's page.
+        Outcome::ReferencesLoaded { .. } | Outcome::SettingPreviewed { .. } => {
+            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
+                if let Screen::Settings(state) = screen {
+                    state.flow.apply(&event);
                 }
-                notice(app, NoticeKind::Info, format!("{package} has no settings to configure."));
             }
-        },
-        Outcome::ReferencesLoaded { package, list } => {
             if let Screen::Reference(picker) = &mut app.screen {
-                if picker.package == package {
-                    picker.list = list.clone();
-                }
-            }
-            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
-                if let Screen::Settings(state) = screen {
-                    if state.form.package == package {
-                        state.catalog = Some(list.clone());
-                    }
-                }
+                let picked = picker.flow.apply(&event);
+                return on_picked(app, picked);
             }
         }
-        Outcome::SettingPreviewed { package, field_index, preview } => {
-            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
-                if let Screen::Settings(state) = screen {
-                    if state.form.package == package && field_index < state.previews.len() {
-                        state.previews[field_index] = Some(preview.clone());
-                    }
-                }
+        Outcome::Granted { .. } => {
+            if let Screen::Reference(picker) = &mut app.screen {
+                let picked = picker.flow.apply(&event);
+                return on_picked(app, picked);
             }
+            let step = settings::apply(&event);
+            return follow(app, step);
         }
-        Outcome::Granted { provider, setting, result } => match result {
-            Ok(()) => {
-                let package = match &mut app.screen {
-                    Screen::Reference(picker) => {
-                        picker.granting = None;
-                        picker.package.clone()
-                    }
-                    _ => String::new(),
-                };
-                let mut effects = place_reference(app, &provider, &setting);
-                notice(app, NoticeKind::Ok, format!("Approved: {package} can use {provider}.{setting}."));
-                effects.push(Effect::LoadReferences { package });
-                return effects;
+        Outcome::SettingsApplied(_) | Outcome::SettingsRolledBack { .. } => {
+            if let Screen::Settings(state) = &mut app.screen {
+                let step = state.flow.apply(&event);
+                return follow(app, step);
             }
-            Err(error) => {
-                if let Screen::Reference(picker) = &mut app.screen {
-                    picker.granting = None;
-                }
-                fail(app, format!("Not approved: {error}"));
-            }
-        },
-        Outcome::SettingsApplied(result) => on_settings_applied(app, result),
-        Outcome::SettingsRolledBack { package, explanation } => {
-            on_settings_rolled_back(app, package, explanation);
         }
         Outcome::UpdatesApplied(report) => {
             if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
@@ -2345,73 +2133,6 @@ fn on_unlock_result(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
     }
     follow(app, step)
 }
-
-fn masked_field(value: &FieldValue) -> String {
-    match value {
-        FieldValue::Text(text) => {
-            let count = text.chars().count();
-            if count > 18 {
-                format!("{}…", text.chars().take(14).collect::<String>())
-            } else {
-                text.clone()
-            }
-        }
-        FieldValue::Pieces(pieces) => pieces
-            .iter()
-            .map(|piece| match piece {
-                Piece::Text(text) => text.clone(),
-                Piece::Ref { app, setting } => format!("{app}·{setting}"),
-            })
-            .collect(),
-        FieldValue::Bool(true) => "on".to_owned(),
-        FieldValue::Bool(false) => "off".to_owned(),
-        FieldValue::SecretUnset => "not set".to_owned(),
-        FieldValue::SecretSet => nodo_ui_core::secret::STORED_MASK.to_owned(),
-        FieldValue::NewSecret(_) => "new secret".to_owned(),
-    }
-}
-
-fn on_settings_applied(app: &mut App, result: Result<(), ApiError>) {
-    let Screen::Settings(state) = &mut app.screen else {
-        return;
-    };
-    match result {
-        Ok(()) => {
-            let package = state.form.package.clone();
-            for (field, value) in state.form.fields.iter_mut().zip(state.draft.iter_mut()) {
-                // The typed secret is dropped here. From now on it is only known to be set.
-                if matches!(value, FieldValue::NewSecret(_)) {
-                    *value = FieldValue::SecretSet;
-                }
-                field.value = value.clone();
-            }
-            notice(app, NoticeKind::Ok, format!("Saved. {package} restarted and passed its health check."));
-        }
-        Err(error) => fail(app, format!("Not saved: {error}")),
-    }
-}
-
-fn on_settings_rolled_back(app: &mut App, package: String, explanation: RollbackExplanation) {
-    let Screen::Settings(state) = &app.screen else {
-        return;
-    };
-    let rows = state
-        .changed_indices()
-        .into_iter()
-        .map(|index| {
-            let field = &state.form.fields[index];
-            DraftRow {
-                label: field.label.clone(),
-                from: masked_field(&field.value),
-                to: masked_field(&state.draft[index]),
-                blamed: explanation.blamed_field.as_deref() == Some(field.key.as_str()),
-            }
-        })
-        .collect();
-    push(app, Screen::ApplyFailed(ApplyFailedState { package, explanation, rows }));
-}
-
-
 
 fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
     match step {
@@ -2814,17 +2535,6 @@ mod tests {
         assert_eq!(parse_window("03:00 to 03:00"), None);
         assert_eq!(parse_window("25:00 to 05:00"), None);
         assert_eq!(parse_window("3am to 5am"), None);
-    }
-
-    #[test]
-    fn address_validation_matches_the_design_copy() {
-        let short = FieldValue::Text("48edf".to_owned());
-        assert_eq!(
-            validate(&FieldKind::MoneroAddress, &short).as_deref(),
-            Some("Address is too short. A Monero address has 95 characters.")
-        );
-        let good = FieldValue::Text(nodo_ui_core::mock::sample_address());
-        assert_eq!(validate(&FieldKind::MoneroAddress, &good), None);
     }
 
     fn mail_form() -> SettingsForm {

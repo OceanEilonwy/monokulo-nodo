@@ -12,6 +12,7 @@ use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::services::AppPage;
+use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::{Notice, Question};
@@ -495,25 +496,18 @@ pub struct FeedKeyState {
     pub error: Option<String>,
 }
 
+/// The Settings form: which field is chosen and what is being typed in it. The form, its draft
+/// and every rule about them are the core's `Settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsState {
-    pub form: SettingsForm,
-    pub draft: Vec<FieldValue>,
+    pub flow: Settings,
     pub selected: usize,
     /// A secret being typed. Other fields are typed in `editor`.
     pub editing: Option<Input>,
     /// Text and reference chips being typed in the selected field.
     pub editor: Option<nodo_ui_core::refs::PieceEditor>,
-    /// What the other apps offer to reference, once loaded.
-    pub catalog: Option<ReferenceList>,
-    /// The latest preview of each field's draft, from the helper.
-    pub previews: Vec<Option<FieldPreview>>,
     /// The selected field's chip whose menu is open, and the highlighted action.
     pub chip_menu: Option<ChipMenu>,
-    /// One step back, offered as "↺ …" under the field while it applies.
-    pub undo: Option<Undo>,
-    /// The save confirmation, listing what the changed references allow.
-    pub confirm: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,155 +520,56 @@ pub struct ChipMenu {
 
 pub const CHIP_ACTIONS: [&str; 3] = ["Replace…", "Type a value instead", "Remove"];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Undo {
-    pub field: usize,
-    /// The value before the step, and the value right after it: the link shows only while the
-    /// field still holds what the step made, so it never undoes something else.
-    pub before: FieldValue,
-    pub after: FieldValue,
-    pub label: String,
-}
-
 impl SettingsState {
     pub fn new(form: SettingsForm) -> Self {
-        let draft: Vec<FieldValue> = form.fields.iter().map(|field| field.value.clone()).collect();
-        let previews = vec![None; draft.len()];
-        Self {
-            form,
-            draft,
-            selected: 0,
-            editing: None,
-            editor: None,
-            catalog: None,
-            previews,
-            chip_menu: None,
-            undo: None,
-            confirm: None,
-        }
-    }
-
-    pub fn changed_indices(&self) -> Vec<usize> {
-        (0..self.draft.len()).filter(|&i| self.draft[i] != self.form.fields[i].value).collect()
-    }
-
-    pub fn error_for(&self, index: usize) -> Option<String> {
-        let field = &self.form.fields[index];
-        let empty = self.draft[index] == FieldValue::Text(String::new());
-        // An optional field left empty has no value, which is always allowed; only what is typed
-        // has to fit the kind.
-        if !field.required && empty {
-            return None;
-        }
-        // A required one must have a value. Only a number's parse caught this before, so a fresh
-        // install with an empty required name or choice saved, and the app could not start. An
-        // unset secret is left to the helper: it may be one the helper makes when it saves.
-        if empty {
-            return Some("Required: give it a value.".to_owned());
-        }
-        validate(&field.kind, &self.draft[index])
-    }
-
-    /// The preview of a field, if it is for the value the field holds now.
-    pub fn preview(&self, index: usize) -> Option<&FieldPreview> {
-        self.previews.get(index)?.as_ref().filter(|p| p.for_value.as_ref() == Some(&self.draft[index]))
-    }
-
-    /// References that do not resolve, over every field, as far as the previews know.
-    pub fn broken(&self) -> usize {
-        (0..self.draft.len()).filter_map(|i| self.preview(i)).map(FieldPreview::broken).sum()
-    }
-
-    /// The undo step for a field, while the field still holds what that step made.
-    pub fn undo_for(&self, index: usize) -> Option<&Undo> {
-        self.undo.as_ref().filter(|u| u.field == index && self.draft[index] == u.after)
+        Self { flow: Settings::new(form), selected: 0, editing: None, editor: None, chip_menu: None }
     }
 }
 
-/// Field validation, kept pure so that it can be tested and so save can refuse early.
-pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
-    // A value with references is checked by the helper's preview, against what it resolves to.
-    let FieldValue::Text(text) = value else {
-        return None;
-    };
-    match kind {
-        FieldKind::Port => match text.parse::<u16>() {
-            Ok(port) if port > 0 => None,
-            _ => Some("Port must be a number from 1 to 65535.".to_owned()),
-        },
-        FieldKind::Number { min, max } => match text.parse::<i64>() {
-            Ok(n) if min.is_none_or(|min| n >= min) && max.is_none_or(|max| n <= max) => None,
-            Ok(_) => Some(format!(
-                "Must be from {} to {}.",
-                min.map_or("any".to_owned(), |n| n.to_string()),
-                max.map_or("any".to_owned(), |n| n.to_string())
-            )),
-            Err(_) => Some("Must be a whole number.".to_owned()),
-        },
-        FieldKind::Url => (!(text.starts_with("http://") || text.starts_with("https://")))
-            .then(|| "Must start with http:// or https://.".to_owned()),
-        FieldKind::MoneroAddress => {
-            const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-            match text.chars().count() {
-                n if n < 95 => Some("Address is too short. A Monero address has 95 characters.".to_owned()),
-                n if n > 95 => Some("Address is too long. A Monero address has 95 characters.".to_owned()),
-                _ if !text.chars().all(|c| BASE58.contains(c)) => {
-                    Some("Address contains characters a Monero address cannot have.".to_owned())
-                }
-                _ => None,
-            }
-        }
-        FieldKind::Choice(_) | FieldKind::Secret | FieldKind::Toggle | FieldKind::Text => None,
+impl std::ops::Deref for SettingsState {
+    type Target = Settings;
+
+    fn deref(&self) -> &Settings {
+        &self.flow
     }
 }
 
-/// Where a picked reference goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickMode {
-    /// At the cursor of the field's editor, or as the whole value when nothing is being typed.
-    Insert,
-    /// In place of this reference of the field.
-    Replace(usize),
+impl std::ops::DerefMut for SettingsState {
+    fn deref_mut(&mut self) -> &mut Settings {
+        &mut self.flow
+    }
 }
 
-/// The one reference picker, for every field: search everything the other apps offer.
+/// The reference picker: the search box, which of the box and the list has the focus, and the
+/// chosen row. What is listed, what fits and the approval of a locked setting are the core's
+/// `Picker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceState {
-    pub package: String,
-    pub field_index: usize,
-    pub field_label: String,
-    pub field_kind: FieldKind,
-    pub mode: PickMode,
-    /// Whether the reference would sit beside other text or references.
-    pub assembled: bool,
-    pub list: ReferenceList,
+    pub flow: Picker,
     pub query: Input,
     pub list_focused: bool,
     pub selected: usize,
-    /// A locked setting the user chose, waiting for their approval.
-    pub granting: Option<ReferenceOption>,
 }
 
 impl ReferenceState {
     /// The options the search shows, in the order they are listed, each with whether it fits.
     pub fn visible(&self) -> Vec<(&ReferenceOption, Result<(), String>)> {
-        nodo_ui_core::refs::ordered(&self.field_kind, nodo_ui_core::refs::search(&self.list.options, self.query.text()), self.assembled)
+        self.flow.visible(self.query.text())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DraftRow {
-    pub label: String,
-    pub from: String,
-    pub to: String,
-    pub blamed: bool,
+impl std::ops::Deref for ReferenceState {
+    type Target = Picker;
+
+    fn deref(&self) -> &Picker {
+        &self.flow
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailedState {
-    pub package: String,
-    pub explanation: RollbackExplanation,
-    pub rows: Vec<DraftRow>,
+impl std::ops::DerefMut for ReferenceState {
+    fn deref_mut(&mut self) -> &mut Picker {
+        &mut self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1078,7 +973,7 @@ pub enum Screen {
     FeedKey(FeedKeyState),
     Settings(SettingsState),
     Reference(ReferenceState),
-    ApplyFailed(ApplyFailedState),
+    ApplyFailed(ApplyFailed),
     Updates(UpdatesState),
     AutoUpdate(AutoUpdateState),
     UpdateResults(UpdateResultsState),

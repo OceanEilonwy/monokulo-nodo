@@ -67,6 +67,7 @@ pub mod drive;
 pub mod install;
 pub mod logs;
 pub mod services;
+pub mod settings;
 pub mod setup;
 pub mod sources;
 pub mod unlock;
@@ -191,6 +192,10 @@ pub enum Dest {
     /// here, the frontend applies it, asking for the device passphrase when one of them grows
     /// encrypted storage.
     ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
+    /// An app's settings, with the form the helper gave: the page of a new `settings::Settings`.
+    Settings(crate::model::SettingsForm),
+    /// The page of a save the helper took back, on top of the form, which keeps its draft.
+    ApplyFailed(settings::ApplyFailed),
     /// A text to read, shown on top of the page the owner is on.
     Document(Document),
 }
@@ -233,11 +238,11 @@ pub enum Confirm {
     RepairDrive,
     /// Removes an SSH key, by fingerprint.
     RemoveSshKey(String),
+    /// Leaves an app's settings without saving.
+    DiscardSettings,
 
     /// Takes every site offline.
     AllSitesOffline,
-    /// Leaves Settings without saving.
-    DiscardSettings,
     /// Leaves the auto-update choices without saving.
     DiscardAutoUpdate,
     /// Puts a package back to the version given.
