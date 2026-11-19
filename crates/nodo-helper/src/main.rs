@@ -1,5 +1,6 @@
 //! `nodo-helper --allow-uid <uid> [--allow-uid <uid>...] [--socket-gid <gid>] [--socket <path>]
-//!  [--drive <device> --drive-mount <path>] [--screen-uid <uid> [--screen-socket <path>]]`
+//!  [--drive <device> --drive-mount <path>] [--screen-uid <uid> [--screen-socket <path>]]
+//!  [--web-uid <uid> [--web-socket <path>]]`
 //!
 //! `nodo-helper --settings-worker` is the unprivileged child that runs package settings code.
 //! The helper starts it itself.
@@ -31,6 +32,9 @@ struct Options {
     /// The touchscreen's account, served on its own socket within what it may do.
     screen_uid: Option<u32>,
     screen_socket: PathBuf,
+    /// The web GUI's account, served on its own socket, and only once someone has logged in.
+    web_uid: Option<u32>,
+    web_socket: PathBuf,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -42,6 +46,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         drive_mount: None,
         screen_uid: None,
         screen_socket: nodo_api::SCREEN_SOCKET.into(),
+        web_uid: None,
+        web_socket: nodo_api::WEBGUI_SOCKET.into(),
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -65,6 +71,11 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
                 options.screen_uid = Some(uid);
             }
             "--screen-socket" => options.screen_socket = value()?.into(),
+            "--web-uid" => {
+                let uid = value()?.parse().map_err(|_| "--web-uid needs a number")?;
+                options.web_uid = Some(uid);
+            }
+            "--web-socket" => options.web_socket = value()?.into(),
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -76,6 +87,14 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
     if options.screen_uid.is_some_and(|uid| options.allowed.contains(&uid)) {
         eprintln!("nodo-helper: the screen account is fully allowed already; no screen socket");
         options.screen_uid = None;
+    }
+    // The web GUI's socket is the narrow one: an account that is root, fully allowed, or the
+    // screen's would gain or lose nothing sensible there, and the helper must still start.
+    if let Some(uid) = options.web_uid {
+        if uid == 0 || options.allowed.contains(&uid) || options.screen_uid == Some(uid) {
+            eprintln!("nodo-helper: the web GUI needs an account of its own (not uid {uid}); no web socket");
+            options.web_uid = None;
+        }
     }
     if options.drive.is_some() != options.drive_mount.is_some() {
         return Err("--drive and --drive-mount go together".to_owned());
@@ -112,7 +131,8 @@ fn bind(path: &Path, gid: Option<u32>) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-/// The screen's socket belongs to the screen's account alone (0600). SO_PEERCRED is still checked.
+/// The screen's socket belongs to the screen's account alone (0600), and the web GUI's to the web
+/// GUI's. SO_PEERCRED is still checked.
 fn bind_owned(path: &Path, uid: u32) -> std::io::Result<UnixListener> {
     let listener = bind(path, None)?;
     chown(path, Some(uid), None)?;
@@ -135,6 +155,16 @@ fn watch_local_address<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>)
 /// Reads every enabled feed once at start, in the background so the socket answers at once. This
 /// also seeds a default feed on a new device and reads it straight away, so the catalog is not
 /// empty until the first scheduled run. Problems are recorded on each feed.
+/// Brings the web GUI's service to the owner's saved choice, in the background because starting a
+/// service can take a while. Its login is closed at every start whatever the choice.
+fn sync_web_gui_at_start<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>) {
+    std::thread::spawn(move || {
+        if let Err(e) = helper.sync_web_gui_service() {
+            eprintln!("nodo-helper: the web GUI's service at start: {e}");
+        }
+    });
+}
+
 fn refresh_feeds_at_start<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>) {
     std::thread::spawn(move || {
         if let Err(e) = helper.refresh_feeds_now() {
@@ -199,6 +229,7 @@ fn main() -> ExitCode {
     let helper = Arc::new(helper);
     watch_local_address(helper.clone());
     refresh_feeds_at_start(helper.clone());
+    sync_web_gui_at_start(helper.clone());
     if let Some(screen_uid) = options.screen_uid {
         match bind_owned(&options.screen_socket, screen_uid) {
             Ok(screen) => {
@@ -210,6 +241,19 @@ fn main() -> ExitCode {
                 });
             }
             Err(e) => eprintln!("nodo-helper: cannot listen on {}: {e}", options.screen_socket.display()),
+        }
+    }
+    if let Some(web_uid) = options.web_uid {
+        match bind_owned(&options.web_socket, web_uid) {
+            Ok(web) => {
+                let helper = helper.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = server::serve_web(web, helper, web_uid) {
+                        eprintln!("nodo-helper: web socket: {e}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("nodo-helper: cannot listen on {}: {e}", options.web_socket.display()),
         }
     }
     if let Err(e) = server::serve(listener, helper) {
@@ -252,6 +296,40 @@ mod tests {
         assert_eq!(options.socket_gid, Some(5));
         assert_eq!(options.socket, PathBuf::from(DEFAULT_SOCKET));
         assert_eq!(options.drive_mount, Some(PathBuf::from("/media/monero")));
+        assert_eq!(options.web_uid, None, "no web socket unless asked for");
+    }
+
+    #[test]
+    fn the_web_socket_needs_an_account_of_its_own() {
+        let options = parse(&["--allow-uid", "1000", "--screen-uid", "990", "--web-uid", "991"]).ok().unwrap();
+        assert_eq!(options.web_uid, Some(991));
+        assert_eq!(options.web_socket, PathBuf::from(nodo_api::WEBGUI_SOCKET));
+        assert_eq!(options.screen_uid, Some(990));
+        let options = parse(&["--allow-uid", "1000", "--web-uid", "991", "--web-socket", "/tmp/w.sock"]).ok().unwrap();
+        assert_eq!(options.web_socket, PathBuf::from("/tmp/w.sock"));
+        // Root, a fully allowed account and the screen's account get no web socket.
+        for args in [
+            &["--allow-uid", "1000", "--web-uid", "0"][..],
+            &["--allow-uid", "1000", "--web-uid", "1000"],
+            &["--allow-uid", "1000", "--screen-uid", "990", "--web-uid", "990"],
+        ] {
+            assert_eq!(parse(args).ok().unwrap().web_uid, None, "{args:?}");
+        }
+        assert!(parse(&["--allow-uid", "1000", "--web-uid", "caddy"]).is_err());
+        assert!(parse(&["--allow-uid", "1000", "--web-uid"]).is_err());
+    }
+
+    #[test]
+    fn an_owned_socket_is_private_to_its_account() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("webgui.sock");
+        // Only root may give a file away, so the test hands the socket to itself.
+        let uid = fs::metadata(dir.path()).unwrap().uid();
+        bind_owned(&path, uid).unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(meta.uid(), uid);
     }
 
     #[test]

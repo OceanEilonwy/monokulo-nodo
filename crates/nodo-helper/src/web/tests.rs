@@ -46,6 +46,8 @@ struct Fake {
     removed_dirs: Mutex<Vec<String>>,
     now: u64,
     tor_installed: bool,
+    /// A device whose nodo-tools has no web GUI service yet.
+    web_gui_missing: bool,
 }
 
 impl Fake {
@@ -96,7 +98,11 @@ impl WebIo for Fake {
         Ok(self.caddy_running)
     }
     fn service_installed(&self, name: &str) -> bool {
-        name != "tor" || self.tor_installed
+        match name {
+            "tor" => self.tor_installed,
+            "nodo-web-gui" => !self.web_gui_missing,
+            _ => true,
+        }
     }
     fn service_running(&self, name: &str) -> bool {
         self.up(name)
@@ -201,6 +207,7 @@ fn input(local: bool, public: bool) -> WebInput {
             locked: false,
         }],
         node_onion: None,
+        web_gui: false,
     }
 }
 
@@ -1082,4 +1089,181 @@ fn a_provider_whose_domain_only_an_alias_uses_is_in_use() {
     assert!(refreshed.problem.is_some());
     // Off the internet, it can go.
     web.remove_domain_provider("gandi", &shop_with_aliases(false)).unwrap();
+}
+
+fn web_gui_input(sites_local: bool) -> WebInput {
+    let mut input = input(sites_local, false);
+    input.web_gui = true;
+    input
+}
+
+#[test]
+fn the_web_gui_alone_brings_up_the_local_listener_the_trust_page_and_its_service() {
+    let web = web(Fake::default());
+    web.io.put(ROOT_PATH, ROOT_PEM);
+    web.apply(&web_gui_input(false)).unwrap();
+
+    let json = web.io.get("/web/caddy.json").unwrap();
+    assert!(json.contains("192.168.1.60:10444") && json.contains("127.0.0.1:10082"), "{json}");
+    assert!(json.contains("\"nodo.local\"") && json.contains("192.168.1.60:10081"));
+    assert!(!json.contains("shop.local"), "no site is on the local network");
+    let nft = web.io.get("/nft/web.nft").unwrap();
+    assert!(nft.contains("dnat ip to 192.168.1.60:10444") && nft.contains("dnat ip to 192.168.1.60:10081"), "{nft}");
+    assert!(!nft.contains("10082"));
+    assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "nodo.local\n");
+    assert_eq!(web.io.get("/web/local-address").unwrap(), "192.168.1.60\n");
+    for service in ["nodo-localnet", "nodo-caddy", "nodo-mdns", "nodo-web-gui"] {
+        assert!(web.io.up(service), "{service}");
+    }
+    // The service starts last, after the firewall and the route are in place.
+    let calls = web.io.calls();
+    let position = |call: &str| calls.iter().position(|c| c == call).unwrap_or_else(|| panic!("{call} in {calls:?}"));
+    assert!(position("nft") < position("up nodo-web-gui") && position("caddy-load") < position("up nodo-web-gui"));
+    assert_eq!(calls.last().map(String::as_str), Some("up nodo-web-gui"));
+
+    // The trust page is there for the web GUI's root, and links to it.
+    let page = web.io.get("/web/trust/index.html").unwrap();
+    assert!(page.contains("href=\"https://nodo.local\""), "{page}");
+    assert_eq!(web.web_gui_url(&web_gui_input(false)).as_deref(), Some("https://nodo.local"));
+    let status = web.local_site_status(&web_gui_input(false)).unwrap();
+    assert_eq!((status.address.as_deref(), status.trust_url.as_deref()), (Some("192.168.1.60"), Some("http://nodo.local")));
+}
+
+#[test]
+fn turning_the_web_gui_off_stops_its_service_and_leaves_nothing_of_it() {
+    // What a device that never had the web GUI on looks like, with one local site.
+    let never = web(Fake::default());
+    never.io.put(ROOT_PATH, ROOT_PEM);
+    never.apply(&input(true, false)).unwrap();
+    assert!(!never.io.up("nodo-web-gui"));
+    assert!(!never.io.calls().contains(&"up nodo-web-gui".to_owned()));
+
+    let web = web(Fake::default());
+    web.io.put(ROOT_PATH, ROOT_PEM);
+    web.apply(&web_gui_input(true)).unwrap();
+    assert!(web.io.up("nodo-web-gui"));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert!(web.io.get("/web/trust/index.html").unwrap().contains("https://nodo.local"));
+    web.io.calls.lock().unwrap().clear();
+
+    web.apply(&input(true, false)).unwrap();
+    assert!(!web.io.up("nodo-web-gui"));
+    // Stopped first, before anything that could fail.
+    assert_eq!(web.io.calls().first().map(String::as_str), Some("down nodo-web-gui"));
+    for path in ["/web/caddy.json", "/nft/web.nft", "/localnet/mdns-names", "/web/trust/index.html"] {
+        assert_eq!(web.io.get(path), never.io.get(path), "{path} is as if the web GUI had never been on");
+    }
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("10082"));
+    assert_eq!(web.web_gui_url(&input(true, false)), None);
+
+    // With no local site either, the local listener, the trust page and the address all go.
+    web.apply(&input(false, false)).unwrap();
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("nodo.local"));
+    assert!(web.io.get("/web/trust/index.html").is_none());
+    for service in ["nodo-localnet", "nodo-caddy", "nodo-mdns", "nodo-web-gui"] {
+        assert!(!web.io.up(service), "{service}");
+    }
+}
+
+#[test]
+fn the_web_gui_waits_for_the_local_address_with_its_service_running() {
+    let web = web(Fake::default());
+    web.io.put("/run/localnet/state", "status=unavailable\nreason=no-lease\n");
+    let waiting = web_gui_input(false);
+    web.apply(&waiting).unwrap();
+    assert!(web.io.up("nodo-localnet"), "asked for the address");
+    assert!(web.io.up("nodo-web-gui"), "ready for when the address comes");
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("10082"), "served nowhere until then");
+    assert_eq!(web.web_gui_url(&waiting), None);
+    let status = web.status(&waiting).unwrap();
+    assert!(status.local_unavailable.is_some() && status.local_remedy.is_some(), "{status:?}");
+
+    // The address arrives: the periodic check applies it, and the web GUI is served.
+    web.io.put("/run/localnet/state", "status=ready\naddress=192.168.1.60\n");
+    assert_eq!(web.local_address_changed(&waiting), Ok(true));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "nodo.local\n");
+    assert_eq!(web.web_gui_url(&waiting).as_deref(), Some("https://nodo.local"));
+}
+
+#[test]
+fn a_device_without_the_web_gui_service_cannot_turn_it_on_and_changes_nothing() {
+    let fake = Fake { web_gui_missing: true, ..Fake::default() };
+    let web = web(fake);
+    let err = web.apply(&web_gui_input(false)).unwrap_err();
+    assert!(err.contains("not installed"), "{err}");
+    assert!(web.io.get("/web/caddy.json").is_none(), "nothing was written");
+    assert!(web.io.calls().is_empty(), "{:?}", web.io.calls());
+    // Off, such a device applies as it always did.
+    web.apply(&input(true, false)).unwrap();
+    assert!(!web.io.calls().iter().any(|c| c.contains("nodo-web-gui")));
+}
+
+#[test]
+fn the_helper_start_sync_only_touches_the_web_guis_service() {
+    let web = web(Fake::default());
+    web.sync_web_gui_service(&web_gui_input(true)).unwrap();
+    assert_eq!(web.io.calls(), ["up nodo-web-gui"]);
+    web.sync_web_gui_service(&input(true, false)).unwrap();
+    assert_eq!(web.io.calls(), ["up nodo-web-gui", "down nodo-web-gui"]);
+    assert!(web.io.get("/web/caddy.json").is_none());
+}
+
+/// Lets a test keep looking at the web side after the helper has taken it.
+struct Shared(Arc<NodoWeb<Fake>>);
+
+impl ExposureApplier for Shared {
+    fn apply(&self, input: &WebInput) -> Result<(), String> {
+        ExposureApplier::apply(self.0.as_ref(), input)
+    }
+    fn web_gui_url(&self, input: &WebInput) -> Option<String> {
+        self.0.web_gui_url(input)
+    }
+    fn sync_web_gui_service(&self, input: &WebInput) -> Result<(), String> {
+        self.0.sync_web_gui_service(input)
+    }
+}
+
+#[test]
+fn the_helpers_switch_drives_the_service_the_route_and_the_gate_together() {
+    use crate::fake::{FakeSystem, TestPolicy, TEST_PATHS};
+    use nodo_api::{Request, Response, WebGuiStatus};
+    let web = Arc::new(web(Fake::default()));
+    let h = crate::Helper::new(
+        FakeSystem::default(),
+        crate::AllowedUids::new([1000]),
+        Box::new(TestPolicy),
+        Box::new(Shared(web.clone())),
+    )
+    .with_paths(TEST_PATHS())
+    .with_kdf(crate::keys::KdfParams { memory_kib: 64, iterations: 1, lanes: 1 })
+    .with_radios(crate::radio_tests::no_radios());
+    let pass = || Secret::new("correct horse battery");
+    h.init_device(&pass()).unwrap();
+    assert!(!web.io.up("nodo-web-gui"), "off on a new device");
+
+    let on = h.handle(1000, Request::SetWebGui(true)).unwrap();
+    let served = WebGuiStatus { enabled: true, url: Some("https://nodo.local".into()), waiting: false, open: false };
+    assert_eq!(on, Response::WebGui(served.clone()));
+    assert!(web.io.up("nodo-web-gui") && web.io.up("nodo-localnet") && web.io.up("nodo-caddy"));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert!(matches!(h.handle_web(4243, Request::WebGuiLogin { passphrase: pass() }), Ok(Response::WebGui(s)) if s.open));
+    assert!(h.handle_web(4243, Request::ListServices).is_ok());
+
+    // Without the address it is on and waiting, and every socket hears that.
+    web.io.put("/run/localnet/state", "status=unavailable\nreason=no-lease\n");
+    let waiting = WebGuiStatus { url: None, waiting: true, ..served };
+    assert_eq!(h.handle(1000, Request::WebGuiStatus), Ok(Response::WebGui(waiting.clone())));
+    assert_eq!(h.handle_screen(4242, Request::WebGuiStatus), Ok(Response::WebGui(waiting)));
+    web.io.put("/run/localnet/state", "status=ready\naddress=192.168.1.60\n");
+
+    let off = h.handle(1000, Request::SetWebGui(false)).unwrap();
+    assert_eq!(off, Response::WebGui(WebGuiStatus { enabled: false, url: None, waiting: false, open: false }));
+    for service in ["nodo-web-gui", "nodo-localnet", "nodo-caddy", "nodo-mdns"] {
+        assert!(!web.io.up(service), "{service}");
+    }
+    let json = web.io.get("/web/caddy.json").unwrap();
+    assert!(!json.contains("10082") && !json.contains("nodo.local"), "{json}");
+    assert!(!web.io.get("/nft/web.nft").unwrap().contains("dnat"));
+    assert!(h.handle_web(4243, Request::ListServices).unwrap_err().is_web_login_required());
 }

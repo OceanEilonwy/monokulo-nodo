@@ -103,7 +103,8 @@ impl<S: System> Helper<S> {
 
     /// Every passphrase check goes through here, so unlocking and changing the passphrase share
     /// one failure count. The caller holds the count's lock across the delay, so parallel
-    /// guesses queue and each pays its own delay.
+    /// guesses queue and each pays its own delay. The web GUI's login passes its own count
+    /// (`crate::webgui`), so guesses at its login page neither raise nor wait behind this one.
     pub(crate) fn verify_passphrase(
         &self,
         failures: &mut u32,
@@ -131,10 +132,34 @@ impl<S: System> Helper<S> {
             let mut failures = lock(&self.failed_unlocks);
             let file = self.read_keystore()?;
             let device_key = self.verify_passphrase(&mut failures, passphrase, &file)?;
-            self.remember_device_key(&device_key);
             // Still holding the lock, so a concurrent unlock cannot race these mounts.
-            self.open_all(&device_key)
+            self.open_with(&failures, &device_key)
         };
+        self.finish_unlock(opened)
+    }
+
+    /// The unlock itself, for a device key that a passphrase check already gave: keeps the
+    /// secrets key and opens every volume. The caller holds the unlock lock, which keeps two
+    /// unlocks from racing the mounts.
+    fn open_with(&self, _unlock_lock: &std::sync::MutexGuard<'_, u32>, device_key: &DeviceKey) -> Result<Response, ApiError> {
+        self.remember_device_key(device_key);
+        self.open_all(device_key)
+    }
+
+    /// Unlocks with a device key the web GUI's login verified under its own failure count. The
+    /// unlock lock is taken only for the mounts: the passphrase is not checked a second time, so
+    /// nothing here can raise the unlock's count or sleep with its lock held.
+    pub(crate) fn unlock_with_key(&self, device_key: &DeviceKey) -> Result<Response, ApiError> {
+        let opened = {
+            let guard = lock(&self.failed_unlocks);
+            self.open_with(&guard, device_key)
+        };
+        self.finish_unlock(opened)
+    }
+
+    /// After the mounts, without the unlock lock: renders the settings services wait for, and
+    /// reports both halves.
+    fn finish_unlock(&self, opened: Result<Response, ApiError>) -> Result<Response, ApiError> {
         let rendered = self.render_unlocked();
         match (opened, rendered) {
             (Ok(response), Ok(())) => Ok(response),
