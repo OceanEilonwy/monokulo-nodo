@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Device</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;overflow:hidden;box-sizing:border-box}
+.rail{width:104px;flex:0 0 104px;background:#050505;display:flex;flex-direction:column;padding:10px 8px;gap:6px;box-sizing:border-box}
+.railnav{display:flex;flex-direction:column;gap:14px;flex:1 1 auto;justify-content:center}
+.ri{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;height:76px;border-radius:18px;color:#b3b3b3;font:600 14px Inter,system-ui,sans-serif;background:transparent;border:0;cursor:pointer;width:76px;margin:0 auto;box-sizing:border-box;padding:0}
+.ri svg{width:28px;height:28px}
+.ri img{width:34px;height:34px}
+.ri.on{background:#ff6600;color:#000000}
+.main{flex:1 1 auto;padding:20px 26px;display:flex;flex-direction:column;gap:12px;min-width:0;box-sizing:border-box}
+h1{font-size:30px;line-height:36px;margin:0;font-weight:700;letter-spacing:-0.01em;flex:1 1 auto}
+.s{font-size:15px;color:#b3b3b3;line-height:20px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
+.grp{font-size:14px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8c8c8c;padding:6px 4px 2px}
+.list{background:#0d0d0d;border-radius:18px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;min-height:52px;padding:0 16px;border-top:1px solid #1f1f1f;box-sizing:border-box;width:100%;background:transparent;border-left:0;border-right:0;border-bottom:0;color:#f2f2f2;font-family:inherit;text-align:left;cursor:pointer}
+.list .row:first-child{border-top:0}
+.row svg.ic{width:24px;height:24px;flex:0 0 24px;color:#d9d9d9}
+.row .nm{flex:1 1 auto;min-width:0;font-size:17px;font-weight:600}
+.row .chev{width:20px;height:20px;color:#6e6e6e;flex:0 0 20px}
+.row.rec svg.ic{color:#ff8c3a}
+.row.neg svg.ic,.row.neg .nm{color:#ffa194}
+.seg{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:0 12px 12px}
+.sg{height:44px;border-radius:12px;border:0;background:#1c1c1c;color:#e6e6e6;font:600 15px Inter,system-ui,sans-serif;cursor:pointer;padding:0}
+.sg.on{background:#ff6600;color:#000000}
+</style>
+</helmet>
+<div class="dev">
+<nav class="rail" aria-label="Device">
+<a class="ri" href="Glance.dc.html"><img src="logo.svg" alt=""><span>Home</span></a>
+<div class="railnav">
+<a class="ri" href="Main.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg><span>Status</span></a>
+<a class="ri" href="Apps.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg><span>Services</span></a>
+<a class="ri" href="Network.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0"></path><path d="M8.5 16a5 5 0 0 1 7 0"></path><path d="M12 19.5h.01"></path><path d="M2 9a14.5 14.5 0 0 1 20 0"></path></svg><span>Network</span></a>
+<a class="ri on" href="System.dc.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10"></path><circle cx="16" cy="6" r="2"></circle><path d="M4 12h4"></path><path d="M12 12h8"></path><circle cx="10" cy="12" r="2"></circle><path d="M4 18h12"></path><circle cx="18" cy="18" r="2"></circle></svg><span>Device</span></a>
+</div>
+</nav>
+<main class="main">
+<div style="display: flex; align-items: center; min-height: 48px"><h1>Device</h1><span class="s mono">monokulo-nodo · [VERSION]</span></div>
+<div style="display: flex; gap: 16px; flex: 1 1 auto; min-height: 0">
+<div class="col">
+<div class="grp">Get back in</div>
+<div class="list">
+<a class="row rec" href="Pin.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path></svg><span class="nm">Reset web password</span><span class="s">One-time QR</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+<a class="row rec" href="Pin.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3"></path><path d="M13 15h4"></path></svg><span class="nm">Reset SSH access</span><span class="s">Remove all keys</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+<a class="row rec" href="Pin.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path></svg><span class="nm">Screen PIN</span><span class="s">Change</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+<a class="row" href="Main.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><path d="M14 14h3v3h-3z"></path><path d="M20 20h1"></path></svg><span class="nm">Web admin address</span><span class="s">Show QR</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+</div>
+<div class="grp">Network</div>
+<div class="list">
+<a class="row" href="Network.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg><span class="nm">Network check</span><span class="s">Online</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+<a class="row" href="Keyboard.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0"></path><path d="M8.5 16a5 5 0 0 1 7 0"></path><path d="M12 19.5h.01"></path><path d="M2 9a14.5 14.5 0 0 1 20 0"></path></svg><span class="nm">Wi-Fi</span><span class="s">Off</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+</div>
+</div>
+<div class="col">
+<div class="grp">Screen</div>
+<div class="list">
+<div style="padding: 14px 16px 10px; font-size: 17px; font-weight: 600; display: flex; justify-content: space-between"><span id="dl">Turn display off after</span><span class="s">{{offLabel}}</span></div>
+<div class="seg" role="radiogroup" aria-labelledby="dl">
+<sc-for list="{{opts}}" as="o" hint-placeholder-count="5"><button class="{{o.cls}}" type="button" role="radio" aria-checked="{{o.on}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for>
+</div>
+<a class="row" href="System.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="M2 12h2"></path><path d="M20 12h2"></path></svg><span class="nm">Brightness</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+</div>
+<div class="grp">This device</div>
+<div class="list">
+<a class="row" href="System.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 10h16"></path><path d="M4 14h10"></path><path d="M4 18h7"></path></svg><span class="nm">Device logs</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></a>
+<a class="row" href="PowerOff.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v5h-5"></path></svg><span class="nm">Restart</span></a>
+<a class="row neg" href="PowerOff.dc.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v9"></path><path d="M6.3 7.5a8 8 0 1 0 11.4 0"></path></svg><span class="nm">Shut down</span></a>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { off: '15 min' };
+}
+renderVals() {
+const cur = this.state.off;
+const labels = ['1 min', '5 min', '15 min', '1 hour', 'Never'];
+const opts = labels.map((l) => ({ label: l, on: l === cur, cls: l === cur ? 'sg on' : 'sg', pick: () => this.setState({ off: l }) }));
+return { opts: opts, offLabel: cur === 'Never' ? 'Always on' : 'After ' + cur + ' idle' };
+}
+}
+</script>
+</body>
+</html>

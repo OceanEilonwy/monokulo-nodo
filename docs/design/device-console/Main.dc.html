@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Status</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;overflow:hidden;box-sizing:border-box}
+.rail{width:104px;flex:0 0 104px;background:#050505;display:flex;flex-direction:column;padding:10px 8px;gap:6px;box-sizing:border-box}
+.railnav{display:flex;flex-direction:column;gap:14px;flex:1 1 auto;justify-content:center}
+.ri{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;height:76px;border-radius:18px;color:#b3b3b3;font:600 14px Inter,system-ui,sans-serif;background:transparent;border:0;cursor:pointer;width:76px;margin:0 auto;box-sizing:border-box;padding:0}
+.ri svg{width:28px;height:28px}
+.ri img{width:34px;height:34px}
+.ri.on{background:#ff6600;color:#000000}
+.ri.lock{color:#ff8c3a}
+.ri.pwr{color:#ff9a8c}
+.main{flex:1 1 auto;padding:22px 26px;display:flex;gap:16px;min-width:0;box-sizing:border-box}
+h1{font-size:30px;line-height:36px;margin:0;font-weight:700;letter-spacing:-0.01em}
+.btn{height:52px;padding:0 22px;border-radius:16px;background:#1a1a1a;color:#f2f2f2;border:0;font:600 17px Inter,system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;box-sizing:border-box;white-space:nowrap}
+.btn.pri{background:#ff6600;color:#000000}
+.card{background:#0d0d0d;border-radius:22px;padding:18px 20px;box-sizing:border-box}
+.card.attn{background:#1f0d00;box-shadow:inset 0 0 0 2px #803300}
+.card.bad{background:#1f0f0d;box-shadow:inset 0 0 0 2px #6a2a24}
+.t1{font-size:21px;font-weight:700;line-height:27px}
+.t2{font-size:18px;font-weight:600;line-height:24px}
+.s{font-size:15px;color:#b3b3b3;line-height:21px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.chip{font-size:14px;font-weight:700;padding:6px 12px;border-radius:999px;white-space:nowrap;line-height:16px}
+.c-ok{background:#123a2c;color:#74e3ba}
+.hv{background:#0d0d0d;border-radius:18px;padding:12px 16px;display:flex;flex-direction:column;gap:2px;box-sizing:border-box}
+.hv .v{font:700 22px/28px "JetBrains Mono",monospace}
+.qr{background:#fff;border-radius:18px;padding:10px;width:220px;height:220px;box-sizing:border-box;align-self:center}
+.qr img{width:100%;height:100%;display:block;image-rendering:pixelated}
+</style>
+</helmet>
+<div class="dev">
+<nav class="rail" aria-label="Device">
+<a class="ri" href="Glance.dc.html"><img src="logo.svg" alt=""><span>Home</span></a>
+<div class="railnav">
+<a class="ri on" href="Main.dc.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg><span>Status</span></a>
+<a class="ri" href="Apps.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg><span>Services</span></a>
+<a class="ri" href="Network.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0"></path><path d="M8.5 16a5 5 0 0 1 7 0"></path><path d="M12 19.5h.01"></path><path d="M2 9a14.5 14.5 0 0 1 20 0"></path></svg><span>Network</span></a>
+<a class="ri" href="System.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10"></path><circle cx="16" cy="6" r="2"></circle><path d="M4 12h4"></path><path d="M12 12h8"></path><circle cx="10" cy="12" r="2"></circle><path d="M4 18h12"></path><circle cx="18" cy="18" r="2"></circle></svg><span>Device</span></a>
+</div>
+</nav>
+<main class="main">
+<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: center; min-height: 52px"><h1>1 thing needs you</h1></div>
+<section class="card attn" style="display: flex; align-items: center; gap: 16px">
+<div style="flex: 1 1 auto"><div class="t1" style="color: #ff8c3a">Unlock after a restart</div><div class="s">2 services wait for the device passphrase.</div></div>
+<a class="btn pri" href="Unlock.dc.html">Unlock</a>
+</section>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; flex: 1 1 auto">
+<a class="hv" href="Network.dc.html"><span class="s">Internet</span><span style="display: flex; align-items: center; justify-content: space-between"><span class="v">Online</span><span class="chip c-ok">Cable</span></span></a>
+<div class="hv"><span class="s">Data drive</span><span class="v">541 GB <span class="s mono">/ 2.0 TB</span></span></div>
+<div class="hv"><span class="s">Temperature</span><span class="v">52 °C</span></div>
+<div class="hv"><span class="s">Memory</span><span class="v">6.1 GB <span class="s mono">/ 31 GB</span></span></div>
+</div>
+</div>
+<section class="card" style="width: 300px; flex: 0 0 300px; display: flex; flex-direction: column; gap: 10px; text-align: center">
+<div class="t2">Manage via web</div>
+<div class="qr"><img src="qr-admin.svg" alt="QR code for https://192.168.1.155"></div>
+<div class="mono" style="font-size: 18px; font-weight: 700">https://192.168.1.155</div>
+<div class="s mono">monokulo-nodo.local</div>
+<div style="flex: 1 1 auto"></div>
+<div class="s">Apps, settings, hosting and 3 ready updates are in the web admin.</div>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

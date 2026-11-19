@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Shutting down</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:40px;overflow:hidden;box-sizing:border-box;text-align:center}
+.s{font-size:18px;color:#b3b3b3;line-height:26px}
+.bar{width:520px;height:12px;border-radius:6px;background:#262626;overflow:hidden}
+.bar span{display:block;height:100%;width:50%;border-radius:6px;background:#ff6600}
+</style>
+</helmet>
+<div class="dev">
+<img src="logo.svg" alt="" width="72" height="72">
+<h1 style="margin: 0; font-size: 34px; line-height: 40px; font-weight: 700">Shutting down</h1>
+<div class="bar" role="progressbar" aria-label="Stopping services" aria-valuemin="0" aria-valuemax="6" aria-valuenow="3"><span></span></div>
+<div class="s">Stopping services · 3 of 6</div>
+<div class="s" style="font-size: 15px; margin-top: 12px">Safe to unplug once the screen goes dark.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
