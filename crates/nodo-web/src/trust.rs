@@ -78,7 +78,8 @@ border-radius:.3rem;text-decoration:none;color:inherit}h2{margin-top:1.6rem;font
 @media (prefers-color-scheme:dark){body{color:#eee;background:#161616}.fp{background:#2a2a2a}}";
 
 /// The page. Without a root yet, it says so and asks for a reload instead of offering a download.
-pub fn page(root: Option<&RootCert>) -> String {
+/// With the web GUI on, it also links to it, since that is served with the same root.
+pub fn page(root: Option<&RootCert>, web_gui: bool) -> String {
     let head = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
@@ -91,10 +92,18 @@ local sites. Reload this page in a minute.</p></body></html>"
         );
     };
     let fp = fingerprint_lines(&root.fingerprint()).join("<br>");
+    let web_gui = if web_gui {
+        format!(
+            "<p>This device's own pages are at <a href=\"https://{TRUST_HOST}\">https://{TRUST_HOST}</a>. They use the \
+same certificate authority, so install the root first, or the browser warns about the certificate.</p>"
+        )
+    } else {
+        String::new()
+    };
     format!(
         "{head}<h1>Trust this device's local sites</h1>\
 <p>Sites ending in <code>.local</code> on this network use certificates from this device's own certificate \
-authority. Install its root once on each phone or computer, and those sites open without a warning.</p>\
+authority. Install its root once on each phone or computer, and those sites open without a warning.</p>{web_gui}\
 <p><strong>Check before you install.</strong> This page is not encrypted, so compare this SHA-256 fingerprint \
 with the one under <em>Web › Domains › Local CA</em> on the device's own screen. Install only if they are \
 the same.</p><p class=\"fp\">{fp}</p>\
@@ -126,8 +135,8 @@ in the system as above.</p></body></html>"
 }
 
 /// The files to serve, as `(name, content)`, for the root or for the page saying it is not ready.
-pub fn files(root: Option<&RootCert>) -> Vec<(&'static str, Vec<u8>)> {
-    let mut files = vec![(INDEX_FILE, page(root).into_bytes())];
+pub fn files(root: Option<&RootCert>, web_gui: bool) -> Vec<(&'static str, Vec<u8>)> {
+    let mut files = vec![(INDEX_FILE, page(root, web_gui).into_bytes())];
     if let Some(root) = root {
         files.push((PEM_FILE, root.pem.clone().into_bytes()));
         files.push((DER_FILE, root.der.clone()));
@@ -183,7 +192,7 @@ t8spEPep0JoaQYoixKS/E07rdkO5URfHv1rzD530
     #[test]
     fn the_page_shows_the_fingerprint_both_downloads_and_every_platform() {
         let root = RootCert::from_pem(ROOT).unwrap();
-        let html = page(Some(&root));
+        let html = page(Some(&root), false);
         for line in fingerprint_lines(&root.fingerprint()) {
             assert!(html.contains(&line));
         }
@@ -191,15 +200,30 @@ t8spEPep0JoaQYoixKS/E07rdkO5URfHv1rzD530
             assert!(html.contains(text), "{text}");
         }
         assert!(!html.contains("http://") && !html.contains("https://"), "nothing is loaded from elsewhere");
-        let files = files(Some(&root));
+        let files = files(Some(&root), false);
         assert_eq!(files.iter().map(|f| f.0).collect::<Vec<_>>(), [INDEX_FILE, PEM_FILE, DER_FILE]);
         assert_eq!(files[2].1, root.der);
     }
 
     #[test]
     fn without_a_root_the_page_offers_nothing_to_install() {
-        let html = page(None);
+        let html = page(None, false);
         assert!(html.contains("not ready") && !html.contains(DER_FILE));
-        assert_eq!(files(None).len(), 1);
+        assert_eq!(files(None, false).len(), 1);
+        assert_eq!(page(None, true), html, "nothing to link to before the root exists");
+    }
+
+    #[test]
+    fn the_page_links_to_the_web_gui_only_while_it_is_on() {
+        let root = RootCert::from_pem(ROOT).unwrap();
+        let link = "<a href=\"https://nodo.local\">https://nodo.local</a>";
+        let on = page(Some(&root), true);
+        assert!(on.contains(link), "{on}");
+        assert_eq!(on.matches("https://").count(), 2, "the link and its text, nothing else");
+        assert!(!on.contains("http://"));
+        let off = page(Some(&root), false);
+        assert!(!off.contains("https://"));
+        assert_eq!(on.replacen(&on[on.find("<p>This device's own pages").unwrap()..on.find("<p><strong>Check").unwrap()], "", 1), off);
+        assert_eq!(files(Some(&root), true)[0].1, on.into_bytes());
     }
 }

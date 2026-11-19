@@ -1279,3 +1279,172 @@ fn hostile_alias_names_are_refused_and_aliases_wait_while_the_site_is_not_public
     assert!(!plan.caddy.apps.http.servers.contains_key("public"));
     assert!(!plan.addresses.iter().any(|a| a.host == "example.com"));
 }
+
+fn web_gui_settings() -> DomainSettings {
+    DomainSettings { web_gui: true, ..settings() }
+}
+
+#[test]
+fn the_web_gui_turns_on_everything_it_needs_without_any_local_site() {
+    let plan = generate(&[], &web_gui_settings()).unwrap();
+    assert_eq!(nodo_api::WEBGUI_URL, format!("https://{WEB_GUI_HOST}"));
+    assert_eq!(plan.local.web_gui_url.as_deref(), Some(nodo_api::WEBGUI_URL));
+    assert!(!plan.local.web_gui_waiting);
+
+    // The local HTTPS server, on the local address only, knowing only the web GUI's two names.
+    let servers = &plan.caddy.apps.http.servers;
+    assert_eq!(servers.keys().collect::<Vec<_>>(), ["local", "local-trust"]);
+    let local = &servers["local"];
+    assert_eq!(local.listen, vec!["192.168.1.60:10444"]);
+    assert_eq!(local.tls_connection_policies[0].matcher.sni, ["nodo.local", "192.168.1.60"]);
+    assert!(local.strict_sni_host && local.automatic_https.disable_redirects);
+    for host in ["nodo.local", "192.168.1.60"] {
+        for path in ["/", "/login", "/admin", "/system/keys"] {
+            assert_eq!(request(&plan, "local", host, path, LAN_CLIENT), Outcome::Proxy("127.0.0.1:10082".into()), "{host}{path}");
+            assert_eq!(request(&plan, "local", host, path, INTERNET_CLIENT), Outcome::Dropped, "{host}{path}");
+        }
+    }
+    assert_eq!(request(&plan, "local", "shop.local", "/", LAN_CLIENT), Outcome::Dropped);
+
+    // The route as Caddy reads it.
+    let value = json(&plan);
+    let route = &value["apps"]["http"]["servers"]["local"]["routes"][0];
+    assert_eq!(route["match"][0]["host"], serde_json::json!(["nodo.local", "192.168.1.60"]));
+    assert_eq!(route["match"][0]["remote_ip"]["ranges"], serde_json::json!(DEFAULT_LAN_RANGES));
+    assert_eq!(route["terminal"], true);
+    let proxy = &route["handle"][0]["routes"][0]["handle"][0];
+    assert_eq!(proxy["handler"], "reverse_proxy");
+    assert_eq!(proxy["upstreams"], serde_json::json!([{ "dial": "127.0.0.1:10082" }]));
+    assert!(proxy.get("transport").is_none());
+
+    // The internal CA for both names, and its PKI app.
+    let tls = plan.caddy.apps.tls.as_ref().unwrap();
+    assert_eq!(tls.automation.policies.len(), 1);
+    assert_eq!(tls.automation.policies[0].subjects, ["nodo.local", "192.168.1.60"]);
+    assert_eq!(tls.automation.policies[0].issuers, vec![Issuer::Internal]);
+    assert!(plan.caddy.apps.pki.is_some());
+    assert!(plan.caddy.logging.is_none(), "no ACME, so no certificate log");
+
+    // The trust page, the mDNS name, and the local firewall block.
+    assert_eq!(servers["local-trust"].listen, vec!["192.168.1.60:10081"]);
+    assert_eq!(plan.local.trust_url.as_deref(), Some("http://nodo.local"));
+    assert_eq!(plan.local.mdns_names, ["nodo.local"]);
+    let firewall = plan.firewall.local.as_ref().unwrap();
+    assert_eq!((firewall.address, firewall.caddy_port, firewall.trust_port), (LOCAL_IP, 10444, Some(10081)));
+    let rules = render_nft(&plan.firewall);
+    assert!(rules.contains("tcp dport 443 dnat ip to 192.168.1.60:10444"), "{rules}");
+    assert!(rules.contains("tcp dport 80 dnat ip to 192.168.1.60:10081"), "{rules}");
+    assert!(rules.contains("tcp dport 10444 ct status dnat accept"), "{rules}");
+    assert!(rules.contains("udp dport 5353 accept"), "{rules}");
+    assert!(!rules.contains("10082"), "the web GUI's own port is never opened or redirected to");
+    assert!(plan.firewall.public_tcp.is_empty() && plan.firewall.redirects.is_empty());
+    assert!(plan.addresses.is_empty(), "the web GUI is not a package's site");
+}
+
+#[test]
+fn the_web_gui_off_leaves_no_route_and_changes_nothing() {
+    let mut shop = site("shop", "shop", 8080, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    let sites = [shop, site("pay", "pay", 8081, Exposure { local: true, ..Exposure::default() })];
+    let off = generate(&sites, &settings()).unwrap();
+    assert!(!settings().web_gui, "off unless the owner turns it on");
+    assert_eq!(off.local.web_gui_url, None);
+    assert!(!off.local.web_gui_waiting);
+    let text = serde_json::to_string_pretty(&off.caddy).unwrap();
+    assert!(!text.contains("10082"), "{text}");
+    for client in [LAN_CLIENT, INTERNET_CLIENT] {
+        for server in ["local", "public"] {
+            for host in ["nodo.local", "192.168.1.60"] {
+                assert_eq!(request(&off, server, host, "/", client), Outcome::Dropped, "{server} {host}");
+            }
+        }
+    }
+    assert!(!off.caddy.apps.http.servers["local"].tls_connection_policies[0].matcher.sni.contains(&"nodo.local".to_owned()));
+
+    // With no site and the web GUI off there is nothing at all.
+    let empty = generate(&[], &settings()).unwrap();
+    assert!(empty.caddy.apps.http.servers.is_empty());
+    assert!(empty.caddy.apps.tls.is_none() && empty.caddy.apps.pki.is_none());
+    assert_eq!(empty.firewall, FirewallPlan::default());
+    assert!(empty.local.mdns_names.is_empty() && empty.local.trust_url.is_none());
+
+    // Turning it on only adds: the sites' own routes, addresses and firewall stay as they were.
+    let on = generate(&sites, &web_gui_settings()).unwrap();
+    assert_eq!(on.addresses, off.addresses);
+    assert_eq!(on.firewall, off.firewall);
+    assert_eq!(render_nft(&on.firewall), render_nft(&off.firewall));
+    assert_eq!(on.tor_lines, off.tor_lines);
+    assert_eq!(on.caddy.apps.http.servers["public"], off.caddy.apps.http.servers["public"]);
+    assert_eq!(on.caddy.apps.http.servers["local-trust"], off.caddy.apps.http.servers["local-trust"]);
+    let (with, without) = (&on.caddy.apps.http.servers["local"].routes, &off.caddy.apps.http.servers["local"].routes);
+    assert_eq!(with[1..], without[..], "the web GUI's route goes first and the rest is unchanged");
+    assert_eq!(request(&on, "local", "nodo.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:10082".into()));
+    assert_eq!(request(&on, "local", "shop.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    // Never on the public or an onion listener, whatever the Host header says.
+    for client in [LAN_CLIENT, INTERNET_CLIENT] {
+        assert_eq!(request(&on, "public", "nodo.local", "/", client), Outcome::Dropped);
+        assert_eq!(request(&on, "public", "192.168.1.60", "/", client), Outcome::Dropped);
+        assert_eq!(request(&on, onion_server_for(&on, ONION), "nodo.local", "/", client), Outcome::Dropped);
+    }
+    assert_eq!(on.local.mdns_names, ["nodo.local", "pay.local", "shop.local"]);
+}
+
+#[test]
+fn the_web_gui_waits_for_the_local_address_like_a_local_site() {
+    for reason in [LocalUnavailable::NoLease, LocalUnavailable::UnsuitableAddress(std::net::Ipv4Addr::new(8, 8, 8, 8))] {
+        let waiting = DomainSettings { local_address: LocalAddress::Unavailable { reason }, ..web_gui_settings() };
+        let plan = generate(&[], &waiting).unwrap();
+        assert!(plan.local.web_gui_waiting);
+        assert_eq!(plan.local.web_gui_url, None);
+        assert!(plan.caddy.apps.http.servers.is_empty(), "never served on the main address or another port");
+        assert!(plan.caddy.apps.tls.is_none() && plan.caddy.apps.pki.is_none());
+        assert_eq!(plan.firewall, FirewallPlan::default());
+        assert!(plan.local.mdns_names.is_empty() && plan.local.trust_url.is_none());
+        assert!(plan.local.remedy.is_some(), "the owner is told what to do about the address");
+        assert!(local_problem(&plan).is_some());
+    }
+    // A public address handed out as the local one counts as none.
+    let public_ip = DomainSettings {
+        local_address: LocalAddress::Ready { address: std::net::Ipv4Addr::new(8, 8, 8, 8) },
+        ..web_gui_settings()
+    };
+    assert!(generate(&[], &public_ip).unwrap().local.web_gui_waiting);
+    // Without the web GUI a missing address is nobody's problem.
+    let quiet = DomainSettings { local_address: LocalAddress::Unavailable { reason: LocalUnavailable::NoLease }, ..settings() };
+    let plan = generate(&[], &quiet).unwrap();
+    assert!(!plan.local.web_gui_waiting && plan.local.remedy.is_none() && local_problem(&plan).is_none());
+}
+
+#[test]
+fn no_site_can_take_the_web_guis_name_or_port() {
+    // The port is reserved whether or not the web GUI is on, so a package cannot sit behind it.
+    for settings in [settings(), web_gui_settings()] {
+        let squatter = site("evil", "evil", 10082, Exposure { local: true, ..Exposure::default() });
+        assert!(matches!(generate(&[squatter], &settings), Err(WebConfigError::ReservedPort { port: 10082, .. })));
+    }
+    let mut named = site("nodo", "nodo", 8001, Exposure { local: true, ..Exposure::default() });
+    assert_eq!(
+        generate(std::slice::from_ref(&named), &web_gui_settings()),
+        Err(WebConfigError::DuplicateHost { host: "nodo.local".into() })
+    );
+    // The same site is fine while the web GUI is off, as it always was.
+    assert!(generate(std::slice::from_ref(&named), &settings()).is_ok());
+    // And with the web GUI on while that site is not on the local network.
+    named.exposure = Exposure { public: true, ..Exposure::default() };
+    assert!(generate(&[named], &web_gui_settings()).is_ok());
+}
+
+#[test]
+fn the_web_gui_keeps_the_internal_ca_beside_local_names_under_the_owners_domain() {
+    let dns = DnsChallenge::Cloudflare { api_token: Secret::new("cfut_0123456789abcdefghijABCDEFGHIJ0123456789") };
+    let settings = DomainSettings { web_gui: true, ..local_domain_settings(Some(dns)) };
+    let plan = generate(&[site("shop", "shop", 8080, Exposure { local: true, ..Exposure::default() })], &settings).unwrap();
+    let policies = &plan.caddy.apps.tls.as_ref().unwrap().automation.policies;
+    assert_eq!(policies[0].subjects, ["nodo.local", "192.168.1.60"]);
+    assert_eq!(policies[0].issuers, vec![Issuer::Internal]);
+    assert!(policies[1..].iter().all(|p| !p.subjects.iter().any(|s| s == "nodo.local" || s == "192.168.1.60")));
+    assert!(matches!(policies[1].issuers[0], Issuer::Acme { .. }));
+    // The trust page is there for the web GUI's root, though the site itself needs none.
+    assert!(plan.caddy.apps.http.servers.contains_key("local-trust"));
+    assert_eq!(plan.local.mdns_names, ["nodo.local"]);
+}
