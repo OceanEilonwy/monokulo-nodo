@@ -229,6 +229,8 @@ fn head(title: &str, waiting: bool) -> Markup {
             title { (title) " · Nodo" }
             // The logo, so browsers do not ask for /favicon.ico on every page.
             link rel="icon" href=(assets::logo_path()) type="image/svg+xml";
+            // The fonts' faces first, so app.css's stacks find them.
+            link rel="stylesheet" href=(assets::fonts_css_path());
             link rel="stylesheet" href=(assets::css_path());
             script src=(assets::htmx_path()) defer {}
             script src=(assets::script_path()) defer {}

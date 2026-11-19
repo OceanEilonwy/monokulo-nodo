@@ -9,9 +9,9 @@ use axum::response::{IntoResponse, Response};
 
 use crate::state::AppState;
 
-/// Only this origin's own files run or style a page: no inline script, no inline style, nothing
-/// from another site, and no page of another site may frame or be posted to from this one.
-pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+/// Only this origin's own files run or style a page: no inline script, no inline style, no font
+/// but the Nodo's own copies, nothing from another site, and no page of another site may frame or be posted to from this one.
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 /// Nothing about a page here is told to another site. `same-origin` and not `no-referrer`:
 /// under `no-referrer` a browser posts a form with `Origin: null` and no `Referer` (Fetch,
@@ -128,6 +128,12 @@ mod tests {
         let both = headers(&[("host", "nodo.local"), ("origin", "https://evil.example"), ("referer", "https://nodo.local/")]);
         assert!(!same_origin(&both, "https"));
         assert!(!same_origin(&headers(&[("host", "nodo.local")]), "https"));
+    }
+
+    #[test]
+    fn fonts_come_only_from_this_origin() {
+        assert!(CONTENT_SECURITY_POLICY.split("; ").any(|directive| directive == "font-src 'self'"));
+        assert!(CONTENT_SECURITY_POLICY.starts_with("default-src 'none';"));
     }
 
     #[test]
