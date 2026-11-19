@@ -1368,3 +1368,103 @@ fn a_single_token_provider_is_identified_by_the_end_of_its_token_only() {
     let key = added.key.unwrap();
     assert_eq!((key.field.as_str(), key.hint.as_str()), ("api_token", "…6789"));
 }
+
+/// The node's RPC site, as the helper reads it from the manifest the base image ships, with the
+/// owner's saved choices: every exposure on, a host, and another name redirecting to it.
+fn shipped_node_site(public_port_file: bool) -> WebInput {
+    use crate::fake::{helper, FakeSystem};
+    let sys = FakeSystem::default();
+    sys.add_system_manifest(include_str!("../../../../packages/nodo-tools/files/cuprated/manifest.toml"));
+    if public_port_file {
+        sys.put("/s/public/cuprated/restricted-rpc-port", b"18081");
+    }
+    sys.put("/s/exposure.toml", b"[cuprated.rpc]\nlocal = true\nonion = true\npublic = true\n");
+    sys.put(
+        "/s/public-hosts.toml",
+        b"[cuprated.rpc]\nhost = \"node.example.com\"\naliases = [{ host = \"monero.example.com\", mode = \"redirect\" }]\n",
+    );
+    let mut input = helper(sys).current_web_input().unwrap();
+    input.secrets = Some(key());
+    input
+}
+
+/// Every upstream the Caddy config dials.
+fn dials(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                match (k.as_str(), v.as_str()) {
+                    ("dial", Some(dial)) => out.push(dial.to_owned()),
+                    _ => dials(v, out),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| dials(v, out)),
+        _ => {}
+    }
+}
+
+/// The route of the server that answers `host`.
+fn route_for<'a>(json: &'a serde_json::Value, host: &str) -> &'a serde_json::Value {
+    json["apps"]["http"]["servers"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|server| server["routes"].as_array().unwrap())
+        .find(|route| route["match"].as_array().is_some_and(|m| m.iter().any(|m| m["host"].as_array().is_some_and(|h| h.iter().any(|h| h == host)))))
+        .unwrap_or_else(|| panic!("no route for {host}: {json:#}"))
+}
+
+#[test]
+fn the_shipped_node_rpc_site_proxies_only_to_the_restricted_rpc() {
+    let input = shipped_node_site(true);
+    assert_eq!(input.sites.len(), 1);
+    let node = &input.sites[0];
+    assert_eq!((node.package.as_str(), node.service.name.as_str()), ("cuprated", "rpc"));
+    assert_eq!(node.exposure, Exposure { local: true, onion: true, public: true });
+
+    let web = tor_web();
+    web.io.put("/tor/cuprated.rpc/hostname", &format!("{NODE_ONION}\n"));
+    store_cloudflare(&web);
+    web.apply(&input).unwrap();
+    let json = caddy_json(&web);
+
+    // Whatever address it is reached at, it is the restricted RPC on loopback and nothing else.
+    let mut all = Vec::new();
+    dials(&json, &mut all);
+    all.sort();
+    all.dedup();
+    assert_eq!(all, ["127.0.0.1:18081"], "{json:#}");
+
+    for host in ["node.example.com", "node.local", NODE_ONION] {
+        let route = route_for(&json, host).to_string();
+        assert!(route.contains("\"reverse_proxy\"") && route.contains("127.0.0.1:18081"), "{host}: {route}");
+        // HTTP/1.1, like any app's site: Monero RPC clients POST to /json_rpc and the other
+        // endpoints, and every path and method goes through unchanged, with no path matcher.
+        assert!(!route.contains("transport") && !route.contains("\"path\""), "{host}: {route}");
+    }
+    // Rate limiting is on for public sites, the same as for every app's site.
+    let public = route_for(&json, "node.example.com").to_string();
+    assert!(public.contains("rate_limit") && public.contains("cuprated.rpc"), "{public}");
+    let alias = route_for(&json, "monero.example.com").to_string();
+    assert!(alias.contains("node.example.com") && !alias.contains("reverse_proxy"), "a redirect: {alias}");
+
+    // The firewall opens Caddy's own ports, never the RPC port itself.
+    let nft = web.io.get("/nft/web.nft").unwrap();
+    assert!(!nft.contains("18081"), "{nft}");
+    let ddns = web.io.get("/secrets/nodo-ddns/config.toml").unwrap();
+    assert!(ddns.contains("\"node\"") && ddns.contains("\"monero\""), "{ddns}");
+    assert!(web.io.get("/localnet/mdns-names").unwrap().contains("node.local\n"));
+    let torrc = web.io.get("/web/torrc").unwrap();
+    assert!(torrc.contains("HiddenServiceDir /tor/cuprated.rpc"), "{torrc}");
+}
+
+#[test]
+fn a_node_that_does_not_export_its_restricted_rpc_port_serves_no_site() {
+    let input = shipped_node_site(false);
+    assert_eq!(input.sites[0].exposure, Exposure::default(), "saved choices are not served");
+    let web = web(Fake::default());
+    web.apply(&input).unwrap();
+    let json = web.io.get("/web/caddy.json").unwrap_or_default();
+    assert!(!json.contains("18081"), "{json}");
+}

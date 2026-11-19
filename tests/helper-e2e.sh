@@ -462,6 +462,30 @@ check "the main address serves no local host, as a masquerading router would del
 check "the local address is closed to the internet" sh -c '
 	. /tmp/e2e-web-lib.sh; is "$(web_get e2einet --resolve shop.local:443:192.168.77.3 https://shop.local/)" ERR28'
 
+# The node's RPC is a site of cuprated's, published like any app's. It is the restricted RPC:
+# wallets' calls go through Caddy unchanged, and what only the full RPC serves is refused by the
+# node itself, since cuprated runs no full RPC at all.
+cat >> /tmp/e2e-web-lib.sh <<'LIB'
+node_rpc() { web_get e2elan --resolve node.local:443:192.168.77.3 -H "Content-Type: application/json" "$@"; }
+LIB
+rpc_up
+check "the node's RPC is listed as a site and goes on the home network" sh -c '
+	ctl sites | grep -A3 "package: \"cuprated\"" | grep -q "site: \"rpc\"" && ctl expose cuprated rpc 1 0 0'
+check "the published node answers restricted RPC through Caddy at https://node.local" sh -c '
+	. /tmp/e2e-web-lib.sh
+	is "$(node_rpc -d "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"get_info\"}" https://node.local/json_rpc)" 200 &&
+	grep -q "\"status\": *\"OK\"" /tmp/e2e.body && grep -q "\"restricted\": *true" /tmp/e2e.body &&
+	is "$(node_rpc https://node.local/get_height)" 200 && grep -q "\"height\"" /tmp/e2e.body &&
+	until_ok 10 mdns_says node.local 192.168.77.3'
+check "the published node refuses what only the full RPC serves" sh -c '
+	. /tmp/e2e-web-lib.sh
+	is "$(node_rpc -d "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"get_connections\"}" https://node.local/json_rpc)" 200 &&
+	grep -q "Method not found" /tmp/e2e.body &&
+	is "$(node_rpc -X POST https://node.local/stop_daemon)" 403 && sleep 2 && pgrep -x cuprated >/dev/null &&
+	! grep -q 18081 /etc/nftables.d/nodo-web.nft'
+check "the node's site comes off the home network again" sh -c '
+	ctl expose cuprated rpc 0 0 0 && ! grep -q 18081 /var/lib/nodo-web/caddy.json'
+
 # The local CA trust page: plain HTTP on the local address's port 80, for the LAN only.
 check "the trust page serves the exact root Caddy uses, in DER and PEM" sh -c '
 	. /tmp/e2e-web-lib.sh; fp=$(root_fp); echo "root $fp"; [ -n "$fp" ] &&

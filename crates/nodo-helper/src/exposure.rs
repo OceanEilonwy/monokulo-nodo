@@ -269,8 +269,14 @@ impl<S: System> Helper<S> {
                 let get = |id: &str| (package.id().to_owned(), id.to_owned());
                 let (pkg, name) = get(&web.name);
                 let entry = hosts.get(&pkg).and_then(|s| s.get(&name));
+                let mut exposure = state.get(&pkg).and_then(|s| s.get(&name)).copied().unwrap_or_default();
+                // A node whose site stopped being its restricted RPC, after a settings change or
+                // an update, comes off every address rather than serve what might be its full RPC.
+                if exposure != Exposure::default() && self.node_site_refusal(package, web).is_some() {
+                    exposure = Exposure::default();
+                }
                 sites.push(WebSite {
-                    exposure: state.get(&pkg).and_then(|s| s.get(&name)).copied().unwrap_or_default(),
+                    exposure,
                     public_host: entry.map(|e| e.host().to_owned()),
                     public_aliases: entry.map(|e| e.aliases().to_vec()).unwrap_or_default(),
                     package: pkg,
@@ -427,6 +433,11 @@ impl<S: System> Helper<S> {
         let package = self.package(&site.package)?;
         let web = find_site(&package, &site.site)?;
         let enabled = [exposure.local, exposure.onion, exposure.public];
+        if enabled.iter().any(|on| *on) {
+            if let Some(reason) = self.node_site_refusal(&package, web) {
+                return Err(ApiError::Failed(reason));
+            }
+        }
         // An app tied to one base URL breaks when reached through a second address.
         if !web.multi_address && enabled.iter().filter(|on| **on).count() > 1 {
             return Err(ApiError::Failed(format!(
@@ -981,6 +992,67 @@ mod tests {
         assert!(web.multi_address);
         let single = sites.iter().find(|s| s.id.site == "single").unwrap();
         assert_eq!(single.exposure, Exposure::default());
+    }
+
+    const CUPRATED: &str = include_str!("../../../packages/nodo-tools/files/cuprated/manifest.toml");
+
+    fn node_site() -> SiteId {
+        SiteId { package: "cuprated".into(), site: "rpc".into() }
+    }
+
+    /// The base image's node, exporting its restricted RPC port as cuprated's settings do.
+    fn with_node() -> Helper<FakeSystem> {
+        let sys = FakeSystem::default();
+        sys.add_manifest(SHOP);
+        sys.add_system_manifest(CUPRATED);
+        sys.put("/s/public/cuprated/restricted-rpc-port", b"18081");
+        helper(sys)
+    }
+
+    #[test]
+    fn the_nodes_rpc_is_a_site_published_like_any_other() {
+        let h = with_node();
+        let listed = listed(&h, "rpc");
+        assert_eq!(listed.id, node_site());
+        assert!(listed.multi_address, "wallets reach it at any address");
+        assert_eq!(listed.exposure, Exposure::default(), "off until the owner publishes it");
+
+        h.set_public_host(&node_site(), "node.example.com", None, &[]).unwrap();
+        let all = Exposure { local: true, onion: true, public: true };
+        h.set_exposure(&node_site(), all, Some(&typed("node.example.com"))).unwrap();
+        assert_eq!(saved(&h)["cuprated"]["rpc"], all);
+        let input = h.current_web_input().unwrap();
+        let node = input.sites.iter().find(|s| s.package == "cuprated").unwrap();
+        assert_eq!(node.service.upstream, "127.0.0.1:18081", "the restricted RPC");
+        assert_eq!(node.service.suggested_subdomain.as_deref(), Some("node"));
+        assert_eq!((node.exposure, node.public_host.as_deref()), (all, Some("node.example.com")));
+        h.set_exposure(&node_site(), Exposure::default(), None).unwrap();
+    }
+
+    #[test]
+    fn a_node_site_is_served_only_from_its_restricted_rpc_port() {
+        let h = with_node();
+        h.sys.remove("/s/public/cuprated/restricted-rpc-port");
+        let refused = h.set_exposure(&node_site(), LOCAL, None);
+        assert!(matches!(&refused, Err(ApiError::Failed(reason)) if reason.contains("restricted RPC")), "{refused:?}");
+        assert_eq!(h.sys.get(STATE), None);
+
+        // Another port than the one it exports might be its full RPC.
+        h.sys.put("/s/public/cuprated/restricted-rpc-port", b"18089");
+        assert!(h.set_exposure(&node_site(), LOCAL, None).is_err());
+
+        // A node that stops exporting it after being published comes off every address, while
+        // its saved choice stays for when it exports the port again.
+        h.sys.put("/s/public/cuprated/restricted-rpc-port", b"18081");
+        h.set_exposure(&node_site(), LOCAL, None).unwrap();
+        h.sys.remove("/s/public/cuprated/restricted-rpc-port");
+        let input = h.current_web_input().unwrap();
+        let node = input.sites.iter().find(|s| s.package == "cuprated").unwrap();
+        assert_eq!(node.exposure, Exposure::default());
+        assert_eq!(saved(&h)["cuprated"]["rpc"], LOCAL);
+        // Turning it off never needs the port, and other packages' sites are not affected.
+        h.set_exposure(&node_site(), Exposure::default(), None).unwrap();
+        h.set_exposure(&site("web"), LOCAL, None).unwrap();
     }
 
     #[test]

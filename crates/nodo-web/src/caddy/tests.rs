@@ -264,6 +264,36 @@ fn every_packaged_site_can_be_published() {
 }
 
 #[test]
+fn the_base_systems_node_rpc_site_passes_every_rpc_request_to_the_restricted_rpc() {
+    // cuprated's site, from the manifest the base image ships, published everywhere with another
+    // name. Monero RPC clients POST JSON-RPC to /json_rpc and call the other restricted endpoints
+    // by path, binary ones included; all of them reach the restricted RPC over HTTP/1.1 unchanged.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/nodo-tools/files/cuprated/manifest.toml");
+    let manifest = nodo_manifest::Manifest::parse_system(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut node = site("cuprated", "rpc", 18081, all_exposures());
+    node.service = manifest.web[0].clone();
+    node.onion_host = Some(ONION.to_owned());
+    node.public_host = Some("node.example.com".to_owned());
+    node.public_aliases = vec![PublicAlias { host: "monero.example.com".to_owned(), mode: AliasMode::Serve }];
+    node.rate_limit = true;
+    let plan = generate(&[node], &settings()).unwrap();
+    let onion = onion_server_for(&plan, ONION);
+    let rpc = Outcome::Proxy("127.0.0.1:18081".into());
+    for path in ["/json_rpc", "/get_info", "/get_height", "/get_transactions", "/get_blocks.bin", "/sendrawtransaction", "/"] {
+        for host in ["node.example.com", "monero.example.com"] {
+            assert_eq!(request(&plan, "public", host, path, INTERNET_CLIENT), rpc, "{host}{path}");
+        }
+        assert_eq!(request(&plan, onion, ONION, path, "127.0.0.1"), rpc, "{path}");
+        assert_eq!(request(&plan, "local", "node.local", path, LAN_CLIENT), rpc, "{path}");
+    }
+    let value = json(&plan);
+    let text = value.to_string();
+    assert!(!text.contains("transport") && !text.contains("h2c"), "HTTP/1.1 to the upstream: {text}");
+    // The public routes count requests, as every app's public site does.
+    assert!(value["apps"]["http"]["servers"]["public"].to_string().contains("\"cuprated.rpc\""), "{text}");
+}
+
+#[test]
 fn a_host_only_ever_reaches_its_own_upstream() {
     let mut a = site("a", "a", 8001, all_exposures());
     a.onion_host = Some(ONION.to_owned());

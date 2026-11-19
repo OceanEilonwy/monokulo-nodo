@@ -167,8 +167,9 @@ impl FakeSystem {
         self.put(&format!("/m/app/{id}.toml"), text.as_bytes());
     }
 
+    /// Read the way the helper reads the base image's manifests, which may use system paths.
     pub fn add_system_manifest(&self, text: &str) {
-        let id = Self::manifest_id(text);
+        let id = nodo_manifest::Manifest::parse_system(text).unwrap().id;
         self.put(&format!("/m/sys/{id}.toml"), text.as_bytes());
     }
 

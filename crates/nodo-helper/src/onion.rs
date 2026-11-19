@@ -1,15 +1,17 @@
 //! Tor exposure for the node and the sites, for the TUI's Onion screen.
 //!
-//! Sites use the saved exposure like every other address (`SetExposure`). The node is not a site:
-//! its onion service forwards straight to the node's restricted RPC on loopback, never to a full
-//! RPC, which can stop the node and change its settings. cuprated serves only restricted RPC, on
-//! 127.0.0.1:18081, and exports that port as its public `restricted-rpc-port` setting. The onion
-//! forwards only to a port exported under that name, so a node that does not say which port is
-//! restricted is never put on Tor.
+//! Sites use the saved exposure like every other address (`SetExposure`), the node's RPC site
+//! included. The node's own onion switch is apart from that: wallets expect the RPC port on the
+//! onion address, so its onion service forwards straight to the node's restricted RPC on
+//! loopback, without Caddy, and never to a full RPC, which can stop the node and change its
+//! settings. cuprated serves only restricted RPC, on 127.0.0.1:18081, and exports that port as its
+//! public `restricted-rpc-port` setting. The onion forwards only to a port exported under that
+//! name, so a node that does not say which port is restricted is never put on Tor.
 
 use std::path::PathBuf;
 
 use nodo_api::{ApiError, NodeOnion, OnionStatus, Response, SiteOnion};
+use nodo_manifest::WebService;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::Package;
@@ -78,6 +80,27 @@ impl<S: System> Helper<S> {
             .flatten()
             .and_then(|p| p.parse::<u16>().ok())
             .filter(|p| *p > 0)
+    }
+
+    /// Why a site of a node package must not be served, or `None` when it may be. A node's site
+    /// on a loopback port is served only from the port the node exports as its restricted RPC,
+    /// the same rule as the node's onion address: any other port of a node might be its full RPC,
+    /// which can stop the node and change its settings, and that is never put on an address. A
+    /// site of any other package, or on a Unix socket, is not a node's RPC and is not affected.
+    pub(crate) fn node_site_refusal(&self, package: &Package, web: &WebService) -> Option<String> {
+        if !package.manifest.provides.iter().any(|role| role == crate::node::ROLE) {
+            return None;
+        }
+        let port = web.upstream.strip_prefix("127.0.0.1:")?.parse::<u16>().ok();
+        if port.is_some() && port == self.restricted_rpc_port(package) {
+            return None;
+        }
+        Some(format!(
+            "{} serves {} from a port it does not say is its restricted RPC, and a node's site only \
+             ever serves the restricted RPC",
+            package.id(),
+            web.name.escape_debug()
+        ))
     }
 
     /// The node's onion target while it is wanted.

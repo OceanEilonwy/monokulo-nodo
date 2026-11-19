@@ -383,6 +383,53 @@ fn an_app_page_in_packages_opens_its_hosting_even_when_offline() {
     assert_eq!(state.draft, Exposure::default());
 }
 
+/// The node's RPC, which the base image's cuprated offers as a site, offline as on a new device.
+fn with_the_node_site() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    let mut node = mock.web.sites[0].clone();
+    node.package = "cuprated".to_owned();
+    node.exposure = Exposure::default();
+    node.public_host = None;
+    node.public_aliases = Vec::new();
+    node.local_url = "https://node.local".to_owned();
+    mock.web.sites.push(node);
+    app.data = load_snapshot(&mut mock).unwrap();
+    mock.calls.clear();
+    (app, mock)
+}
+
+#[test]
+fn the_nodes_rpc_is_published_from_its_page_like_any_apps_site() {
+    let (mut app, mut mock) = with_the_node_site();
+    app.screen = Screen::Web { selected: 0 };
+    assert!(!screen_text(&app).contains("cuprated"), "offline, so not on the Web tab yet");
+
+    app.screen = Screen::AppPage(AppPageState::new("cuprated"));
+    key(&mut app, &mut mock, ENTER);
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting:\n{}", screen_text(&app)) };
+    assert_eq!((state.site.as_str(), state.draft), ("cuprated", Exposure::default()));
+    assert!(screen_text(&app).contains("Choose who can open cuprated. Any combination works."), "{}", screen_text(&app));
+
+    // Home network, Tor and the internet, at the address the old router used.
+    keys(&mut app, &mut mock, &[SPACE, DOWN, SPACE, DOWN, SPACE, DOWN, DOWN]);
+    let Screen::WebExposure(state) = &app.screen else { panic!("expected hosting") };
+    assert_eq!(state.focus(), HostingFocus::Address);
+    dispatch(&mut app, &mut mock, ctrl('u'));
+    type_text(&mut app, &mut mock, "node");
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(exposure_calls(&mock), [Exposure { local: true, onion: true, public: false }], "home and Tor at once");
+    // The internet waits for the checks, which pass here, and the one confirm.
+    assert_eq!(app.screen.id(), ScreenId::WebConfirm);
+    assert!(screen_text(&app).contains("https://node.example.com"), "{}", screen_text(&app));
+    keys(&mut app, &mut mock, &[TAB, ENTER]);
+    let node = mock.web.sites.iter().find(|site| site.package == "cuprated").unwrap();
+    assert_eq!(node.exposure, Exposure { local: true, onion: true, public: true });
+    assert_eq!(node.public_host.as_deref(), Some("node.example.com"));
+
+    app.screen = Screen::Web { selected: 0 };
+    assert!(screen_text(&app).contains("cuprated"), "online now:\n{}", screen_text(&app));
+}
+
 #[test]
 fn taking_all_sites_offline_covers_every_online_site() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
