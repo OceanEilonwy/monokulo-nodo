@@ -3,7 +3,7 @@
 //! Everything is plain HTML that works without scripts: real links, forms and buttons. htmx adds
 //! three things where it is loaded, and nothing depends on them: a question appears as a dialog
 //! over the page instead of on a page of its own, a page that waits asks again by itself, and a
-//! search narrows as it is typed.
+//! search narrows as it is typed. `assets/app.js` gives that dialog the keyboard's focus.
 //!
 //! The content security policy allows no inline script or style, so there is no `style=`
 //! attribute and no `on…=` attribute anywhere; every look is a class of `assets/app.css`.
@@ -99,6 +99,7 @@ fn head(title: &str, waiting: bool) -> Markup {
             link rel="icon" href="data:,";
             link rel="stylesheet" href=(assets::css_path());
             script src=(assets::htmx_path()) defer {}
+            script src=(assets::script_path()) defer {}
             @if waiting {
                 // Without scripts the page loads itself again. With htmx the fragment asks.
                 noscript { meta http-equiv="refresh" content="2"; }

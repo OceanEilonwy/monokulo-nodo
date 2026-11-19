@@ -1,4 +1,5 @@
-//! The two files a page loads, compiled into the binary: htmx and the stylesheet.
+//! The three files a page loads, compiled into the binary: htmx, the stylesheet, and a few
+//! lines of script for the dialog's focus.
 //!
 //! Each is served under a name that holds a hash of its bytes, so it can be cached for a year:
 //! a new build with a changed file has a new name. Nothing is loaded from the Internet, as the
@@ -15,6 +16,7 @@ use axum::response::{IntoResponse, Response};
 /// licence is beside it in `assets/htmx-LICENSE.txt`.
 const HTMX: &[u8] = include_bytes!("../assets/htmx-4.0.2.min.js");
 const CSS: &[u8] = include_bytes!("../assets/app.css");
+const SCRIPT: &[u8] = include_bytes!("../assets/app.js");
 
 /// FNV-1a over the file. It names a file for caches; it protects nothing.
 fn hash(bytes: &[u8]) -> u64 {
@@ -24,6 +26,7 @@ fn hash(bytes: &[u8]) -> u64 {
 struct Names {
     htmx: String,
     css: String,
+    script: String,
 }
 
 fn names() -> &'static Names {
@@ -31,6 +34,7 @@ fn names() -> &'static Names {
     NAMES.get_or_init(|| Names {
         htmx: format!("htmx-4.0.2-{:016x}.js", hash(HTMX)),
         css: format!("app-{:016x}.css", hash(CSS)),
+        script: format!("app-{:016x}.js", hash(SCRIPT)),
     })
 }
 
@@ -44,13 +48,20 @@ pub fn css_path() -> String {
     format!("/static/{}", names().css)
 }
 
-/// `GET /static/{name}`. Open to everyone: the login page needs both files.
+/// The path of this crate's own script, for the page's second `<script src>`.
+pub fn script_path() -> String {
+    format!("/static/{}", names().script)
+}
+
+/// `GET /static/{name}`. Open to everyone: the login page needs these files.
 pub async fn serve(Path(name): Path<String>) -> Response {
     let names = names();
     let (bytes, kind) = if name == names.htmx {
         (HTMX, "text/javascript; charset=utf-8")
     } else if name == names.css {
         (CSS, "text/css; charset=utf-8")
+    } else if name == names.script {
+        (SCRIPT, "text/javascript; charset=utf-8")
     } else {
         return StatusCode::NOT_FOUND.into_response();
     };

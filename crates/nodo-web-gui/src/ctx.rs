@@ -373,6 +373,8 @@ impl Ctx {
                 Ok(Err(Stop::Working(_))) => JobEnd::Failed("another job was running".to_owned()),
                 Err(_) => JobEnd::Failed("it stopped unexpectedly".to_owned()),
             };
+            // The idle time counts from here, not from the click that started the job.
+            session.touch(state.now());
             if let Some(job) = session.inner().job.as_mut().filter(|job| job.id == id) {
                 job.end = Some(end);
             }

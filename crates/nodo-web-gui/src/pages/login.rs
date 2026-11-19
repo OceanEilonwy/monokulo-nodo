@@ -47,8 +47,15 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap) -> Response
 /// the box with the status that fits it.
 pub async fn submit(State(state): State<AppState>, headers: HeaderMap, Form(form): Form<PassForm>) -> Response {
     let address = client_address(&headers);
+    let before = match state.config().cookie.read(&headers) {
+        Some(token) => state.authenticate(&token, false).await,
+        None => None,
+    };
     match state.login(&address, form.passphrase.expose()).await {
         Ok(session) => {
+            if let Some(before) = before {
+                state.replace(&before);
+            }
             let mut response = see_other(dest::HOME);
             if let Ok(cookie) = HeaderValue::from_str(&state.config().cookie.set(session.token())) {
                 response.headers_mut().insert(header::SET_COOKIE, cookie);

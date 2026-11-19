@@ -359,11 +359,12 @@ async fn a_job_outlives_its_request_and_other_pages_say_what_is_running() {
     let session = app.session(&browser).await;
     assert!(session.running_job(app.state.clock()).is_some());
 
-    // The page that waits, and the same as the fragment htmx asks for.
-    app.clock.advance(Duration::from_secs(7));
+    // The page that waits, and the same as the fragment htmx asks for. Waiting only polls, yet
+    // a session whose job is running is not idle, however long the job takes.
+    app.clock.advance(Duration::from_secs(20 * 60 + 7));
     let waiting = browser.get("/working").await;
     assert_eq!(waiting.status, StatusCode::OK);
-    waiting.assert_has("Installing moneropay").assert_has("Working for 7 seconds.").assert_has(r#"hx-get="/working" hx-trigger="every 1s""#);
+    waiting.assert_has("Installing moneropay").assert_has("Working for 1207 seconds.").assert_has(r#"hx-get="/working" hx-trigger="every 1s""#);
     waiting.assert_has(r#"<noscript><meta http-equiv="refresh" content="2"></noscript>"#);
     let mut htmx = browser.clone();
     htmx.htmx = true;

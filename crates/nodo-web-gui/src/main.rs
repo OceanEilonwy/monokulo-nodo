@@ -103,6 +103,37 @@ fn sweep_in_background(state: AppState) {
     }));
 }
 
+/// How long requests in flight get to finish once the service is told to stop. A page that is
+/// waiting on the helper for longer is cut off; the helper carries on with what it was asked.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// Waits until the stop has been signalled.
+async fn stopped(mut stop: tokio::sync::watch::Receiver<bool>) {
+    // An error means the sender is gone, which only happens after it sent.
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = stop.wait_for(|stop| *stop).await;
+}
+
+/// Serves until told to stop, then lets requests in flight finish for `STOP_GRACE`.
+async fn serve_until_stopped<L>(listener: L, app: axum::Router) -> Result<(), String>
+where
+    L: axum::serve::Listener,
+    L::Addr: std::fmt::Debug,
+{
+    let (signal, stop) = tokio::sync::watch::channel(false);
+    drop(tokio::spawn(async move {
+        stop_signal().await;
+        // Fails only when the server has ended already.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = signal.send(true);
+    }));
+    let serving = axum::serve(listener, app).with_graceful_shutdown(stopped(stop.clone()));
+    tokio::select! {
+        served = serving => served.map_err(|e| e.to_string()),
+        () = async { stopped(stop).await; tokio::time::sleep(STOP_GRACE).await } => Ok(()),
+    }
+}
+
 async fn serve(args: Args) -> Result<(), String> {
     let clock = Arc::new(SystemClock::new());
     match args.listen {
@@ -112,7 +143,7 @@ async fn serve(args: Args) -> Result<(), String> {
             sweep_in_background(state.clone());
             let listener = tokio::net::TcpListener::bind(address).await.map_err(|e| format!("cannot listen on {address}: {e}"))?;
             eprintln!("nodo-web-gui: mock device at http://{address} (passphrase: {})", nodo_ui_core::mock::MOCK_PASSPHRASE);
-            axum::serve(listener, router(state)).with_graceful_shutdown(stop_signal()).await.map_err(|e| e.to_string())
+            serve_until_stopped(listener, router(state)).await
         }
         Listen::Unix(path) => {
             let backends: Arc<dyn Backends> = Arc::new(HelperBackends { socket: args.socket });
@@ -126,7 +157,7 @@ async fn serve(args: Args) -> Result<(), String> {
             unsafe { libc::umask(0o117) };
             let listener = tokio::net::UnixListener::bind(&path).map_err(|e| format!("cannot listen on {}: {e}", path.display()))?;
             eprintln!("nodo-web-gui: listening on {}", path.display());
-            axum::serve(listener, router(state)).with_graceful_shutdown(stop_signal()).await.map_err(|e| e.to_string())
+            serve_until_stopped(listener, router(state)).await
         }
     }
 }

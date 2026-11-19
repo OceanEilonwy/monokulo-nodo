@@ -25,6 +25,10 @@
 //! 11. `AppPage::start_or_stop` words a locked app as "Press u to unlock this device.", which is
 //!     a key of the terminal.
 //! 12. Which calls take long enough to be a job (`long_confirm`) is known only by habit.
+//! 13. `MockBackend` has no `RemovePackage`, so removing an app in `--mock` and in the tests ends
+//!     with the mock's "not available yet".
+//! 14. `Review::approve` takes the passphrase as `Option<&mut Input>`, and `Unlock::submit` as
+//!     `&mut Input`: a frontend that gets text from a form builds an `Input` only to hand it over.
 
 use nodo_api::{ApiError, ServiceState};
 use nodo_ui_core::flows::{Confirm, Notice};

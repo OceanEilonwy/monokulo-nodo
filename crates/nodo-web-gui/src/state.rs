@@ -159,6 +159,12 @@ impl AppState {
         self.ended(ended).await;
     }
 
+    /// Ends the session a browser held before it logged in again, so one browser that logs in
+    /// twice does not fill two of the places. The helper is not told: the new session is there.
+    pub fn replace(&self, old: &Arc<Session>) {
+        lock(&self.0.sessions).retain(|each| !Arc::ptr_eq(each, old));
+    }
+
     /// Forgets every session without telling the helper: it said itself that its gate is closed.
     pub fn drop_all(&self) {
         lock(&self.0.sessions).clear();

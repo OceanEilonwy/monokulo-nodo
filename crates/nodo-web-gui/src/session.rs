@@ -263,9 +263,16 @@ impl Session {
         self.last_active.store(now.as_millis() as u64, Ordering::SeqCst);
     }
 
+    /// Whether the session's time is up. A session whose job is still running is not idle: the
+    /// owner asked for something that takes this long, and the page that waits for it only
+    /// polls. The idle time then counts from the job's end. The hard limit holds regardless.
     pub fn expired(&self, now: Duration) -> bool {
+        if now.saturating_sub(self.created) >= HARD_LIMIT {
+            return true;
+        }
+        let working = self.inner().job.as_ref().is_some_and(|job| job.end.is_none());
         let last = Duration::from_millis(self.last_active.load(Ordering::SeqCst));
-        now.saturating_sub(last) >= IDLE || now.saturating_sub(self.created) >= HARD_LIMIT
+        !working && now.saturating_sub(last) >= IDLE
     }
 
     pub fn inner(&self) -> MutexGuard<'_, Inner> {

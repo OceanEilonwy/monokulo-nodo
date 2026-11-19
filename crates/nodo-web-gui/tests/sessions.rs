@@ -361,13 +361,15 @@ async fn every_answer_carries_the_security_headers_and_pages_load_only_their_own
         assert_eq!(answer.header("cache-control"), "no-store");
     }
 
-    // The two files a page loads are the only answers that may be kept, and for long: their
+    // The files a page loads are the only answers that may be kept, and for long: their
     // names change with their contents.
     assets.sort();
-    assert_eq!(assets.len(), 2, "{assets:?}");
+    assert_eq!(assets.len(), 3, "{assets:?}");
     assert!(assets[0].starts_with("/static/app-") && assets[0].ends_with(".css"));
-    assert!(assets[1].starts_with("/static/htmx-4.0.2-") && assets[1].ends_with(".js"));
-    for (asset, kind) in assets.iter().zip(["text/css; charset=utf-8", "text/javascript; charset=utf-8"]) {
+    assert!(assets[1].starts_with("/static/app-") && assets[1].ends_with(".js"));
+    assert!(assets[2].starts_with("/static/htmx-4.0.2-") && assets[2].ends_with(".js"));
+    let kinds = ["text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8"];
+    for (asset, kind) in assets.iter().zip(kinds) {
         let answer = visitor.get(asset).await;
         assert_eq!(answer.status, StatusCode::OK, "served without a login: the login page needs it");
         assert_eq!(answer.header("cache-control"), "public, max-age=31536000, immutable");
@@ -410,4 +412,16 @@ async fn a_form_larger_than_any_form_here_is_refused() {
     let answer = visitor.post("/login", &[("passphrase", &huge)]).await;
     assert_eq!(answer.status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(app.backends.calls(), Vec::<&str>::new());
+}
+
+#[tokio::test]
+async fn a_browser_that_logs_in_again_takes_no_second_place() {
+    let app = App::new();
+    let mut browser = app.login().await;
+    let first = browser.token();
+    assert_eq!(browser.post("/login", &[("passphrase", MOCK_PASSPHRASE)]).await.status, StatusCode::SEE_OTHER);
+    assert_ne!(browser.token(), first, "a new token each time");
+    assert_eq!(app.state.session_count(), 1);
+    assert_eq!(app.backends.calls(), ["login", "login"], "the gate stays open: no logout in between");
+    assert_eq!(browser.get("/").await.status, StatusCode::OK);
 }
