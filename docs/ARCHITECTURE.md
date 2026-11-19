@@ -453,4 +453,13 @@ codebase, and signed xbps packages from user-added feeds.
   gets back (`Effect` and `Outcome` in `effect`) with the code and the worker thread that make
   the helper calls (`exec`). `crates/nodo-tui` (the terminal) and `crates/nodo-gui` (the built-in
   screen) are built on it, and `nodo-tui` re-exports none of it.
+  `crates/nodo-web-gui` is the web GUI's process (see Web GUI): axum on a Unix socket behind
+  Caddy, HTML written with maud, htmx 4, one stylesheet and a few lines of script compiled in (`assets/`), nothing on
+  disk. `session` and `state` hold the logged-in browsers and the helper's one login gate;
+  `security` is what every request and answer is held to; `runner` is its one function that
+  follows a `Step` of the core's flows, `dest` its one mapping from a `Dest` to a URL, and `ctx`
+  what a page handler is written with, including the jobs for calls that take minutes; `pages`
+  are the screens, each a thin layer over a flow; `core_wishlist` lists what it had to copy
+  from the TUI's drawing code until the core offers it. `nodo-web-gui --mock` serves the same
+  pages over the in-memory device on a loopback address.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

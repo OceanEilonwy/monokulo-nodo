@@ -1,0 +1,244 @@
+/* The Nodo's admin pages. One file, compiled into the binary, no build step.
+   Colours, radii and the type scale follow the built-in screen's design (crates/nodo-gui/ui,
+   docs/design/gui) at a desktop's pixel size; the amber accent is the terminal interface's. */
+
+:root {
+  color-scheme: dark;
+  --ground: #0c0e10;
+  --card: #15181c;
+  --raised: #20252a;
+  --hover: #2a3036;
+  --pressed: #343b42;
+  --field: #0a0c0e;
+  --line: #2a3036;
+  --edge: rgba(255, 255, 255, 0.07);
+  --fg: #e4e6e8;
+  --bright: #f7f8f9;
+  --dim: #9aa2a9;
+  --faint: #656d74;
+  --accent: #f2a33a;
+  --accent-hover: #f6b358;
+  --accent-press: #d98d25;
+  --on-accent: #17130d;
+  --ok: #6fd6b3;
+  --ok-fill: #10251e;
+  --err: #ff8a7a;
+  --err-fill: #2c1613;
+  --info: #86beff;
+  --info-fill: #111d2b;
+  --r-card: 14px;
+  --r-control: 10px;
+  --gutter: 16px;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Inter", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--fg);
+  font: 16px/1.5 var(--sans);
+  overflow-wrap: anywhere;
+}
+
+h1, h2, h3, p, ul, ol, dl, dd, pre, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+h1 { font-size: 1.625rem; line-height: 1.25; font-weight: 650; color: var(--bright); letter-spacing: -0.01em; }
+h2 { font-size: 1.125rem; line-height: 1.35; font-weight: 600; color: var(--bright); }
+h3 { font-size: 0.8125rem; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+strong { color: var(--bright); font-weight: 600; }
+.dim { color: var(--dim); }
+.small { font-size: 0.875rem; }
+.mono { font-family: var(--mono); font-size: 0.9375em; }
+.ok { color: var(--ok); }
+.err { color: var(--err); }
+.warn { color: var(--accent); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+.skip { position: absolute; left: -999px; top: 8px; background: var(--accent); color: var(--on-accent); padding: 8px 12px; border-radius: 8px; z-index: 10; }
+.skip:focus { left: 8px; }
+
+/* The top: the name, the four tabs, and the way out. */
+.top { position: sticky; top: 0; z-index: 5; background: rgba(12, 14, 16, 0.94); border-bottom: 1px solid var(--line); }
+.bar { max-width: 920px; margin: 0 auto; padding: 10px var(--gutter); display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--bright); font-weight: 650; font-size: 1.0625rem; letter-spacing: 0.01em; }
+.brand:hover { color: var(--bright); text-decoration: none; }
+.mark { width: 14px; height: 14px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 0 4px rgba(242, 163, 58, 0.16); }
+.tabs { display: flex; gap: 4px; flex: 1; }
+.tabs a { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px; color: var(--fg); font-weight: 550; white-space: nowrap; }
+.tabs a:hover { background: var(--raised); text-decoration: none; }
+.tabs a[aria-current="page"] { background: var(--raised); color: var(--accent); }
+.badge { min-width: 1.35em; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 0.75rem; font-weight: 700; line-height: 1.5; text-align: center; }
+.out { margin-left: auto; }
+
+main { max-width: 920px; margin: 0 auto; padding: 24px var(--gutter) 64px; display: grid; gap: 16px; }
+main > * { min-width: 0; }
+
+.trail { display: flex; flex-wrap: wrap; gap: 6px; color: var(--dim); font-size: 0.9375rem; }
+.trail a { color: var(--dim); }
+.trail a:hover { color: var(--accent); }
+.trail [aria-current] { color: var(--fg); }
+.trail .sep { color: var(--faint); }
+
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.head .actions { margin: 0; }
+.lead { color: var(--dim); max-width: 62ch; }
+
+/* Cards hold everything. One with a bar on its left needs the owner. */
+.card { background: var(--card); border: 1px solid var(--edge); border-radius: var(--r-card); padding: 20px; display: grid; gap: 12px; }
+.card > * { min-width: 0; }
+.card.attn { border-left: 3px solid var(--accent); }
+.card.bad { border-left: 3px solid var(--err); }
+.card.flush { padding: 6px; gap: 0; }
+.card.flush > h2, .card.flush > .pad { padding: 12px 14px 6px; }
+
+/* A list of things to open. The whole row is the link. */
+.rows { display: grid; }
+.row { position: relative; display: grid; grid-template-columns: minmax(7.5rem, 13rem) 1fr auto auto; align-items: center; gap: 4px 16px; padding: 13px 14px; border-radius: var(--r-control); color: var(--fg); }
+a.row:hover { background: var(--raised); text-decoration: none; color: var(--fg); }
+.row + .row::before { content: ""; position: absolute; left: 14px; right: 14px; top: 0; height: 1px; background: var(--edge); }
+.row .name { font-weight: 600; color: var(--bright); }
+.row .what { color: var(--dim); }
+.row .end { color: var(--dim); text-align: right; }
+.row .end.err { color: var(--err); }
+.row .end.warn { color: var(--accent); }
+.row .go { color: var(--faint); }
+.row.off .name { color: var(--dim); font-weight: 500; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--raised); color: var(--dim); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; vertical-align: middle; }
+
+/* Buttons. Every one is a real button or link, at least 40px tall for a thumb. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid transparent; border-radius: var(--r-control); background: var(--raised); color: var(--bright); font: inherit; font-weight: 600; cursor: pointer; text-align: center; overflow-wrap: normal; }
+.btn:hover { background: var(--hover); color: var(--bright); text-decoration: none; }
+.btn:active { background: var(--pressed); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); color: var(--on-accent); }
+.btn.primary:active { background: var(--accent-press); }
+.btn.danger { background: var(--err-fill); color: var(--err); border-color: rgba(255, 138, 122, 0.25); }
+.btn.danger:hover { background: #3a1c18; color: var(--err); }
+.btn.quiet { background: transparent; color: var(--dim); border-color: var(--line); }
+.btn.quiet:hover { background: var(--raised); color: var(--fg); }
+.btn.link { min-height: 0; padding: 0; background: none; color: var(--accent); font-weight: 500; }
+.btn.link:hover { background: none; color: var(--accent-hover); text-decoration: underline; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.actions.end { justify-content: flex-end; }
+.actions form, .inline { display: inline-flex; margin: 0; }
+form { margin: 0; }
+
+/* Fields. The label is above its box, the error under it. */
+.field { display: grid; gap: 6px; }
+.field label, .label { font-size: 0.875rem; font-weight: 600; color: var(--dim); }
+input[type="text"], input[type="password"], input[type="search"], input[type="url"], textarea {
+  width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-control);
+  background: var(--field); color: var(--bright); font: inherit;
+}
+textarea { min-height: 96px; font-family: var(--mono); font-size: 0.875rem; resize: vertical; }
+input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242, 163, 58, 0.22); }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+.field .problem { color: var(--err); font-size: 0.9375rem; }
+.field .hint { color: var(--dim); font-size: 0.875rem; }
+.searchbar { display: flex; gap: 10px; }
+.searchbar input { flex: 1; min-width: 0; }
+.stack { display: grid; gap: 14px; }
+
+/* A settings form: one field after the other, each with its own line of things to do. */
+.setting { display: grid; gap: 6px; padding: 14px 0; }
+.setting + .setting { border-top: 1px solid var(--edge); }
+.setting:first-child { padding-top: 0; }
+.setting:last-child { padding-bottom: 0; }
+.setting:target { outline: 2px solid var(--accent); outline-offset: 8px; border-radius: 6px; }
+.setting .actions { gap: 6px 18px; }
+select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--field); color: var(--bright); font: inherit; }
+select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242, 163, 58, 0.22); }
+[aria-invalid="true"] { border-color: var(--err); }
+.switch, .check { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--fg); font-weight: 500; font-size: 1rem; cursor: pointer; }
+input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+.pieces { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pieces input[type="text"] { flex: 1 1 10rem; width: auto; }
+.pieces select { flex: 0 1 auto; width: auto; max-width: 100%; }
+.reference { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tag.warn { background: rgba(242, 163, 58, 0.16); color: var(--accent); }
+
+/* An app's setup page: a QR code on white so a phone's camera reads it, and values to copy. */
+.qr-box { margin: 0; }
+.qr { display: block; width: min(240px, 100%); height: auto; border-radius: 8px; }
+.value { user-select: all; overflow-wrap: anywhere; }
+
+/* What just happened, said once at the top of the next page. */
+.notices { display: grid; gap: 8px; }
+.notice { display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--r-control); background: var(--info-fill); color: var(--info); border: 1px solid rgba(134, 190, 255, 0.2); }
+.notice.ok { background: var(--ok-fill); color: var(--ok); border-color: rgba(111, 214, 179, 0.22); }
+.notice.error { background: var(--err-fill); color: var(--err); border-color: rgba(255, 138, 122, 0.25); }
+.notice .sign { font-weight: 700; }
+
+/* An app's state as a dot and words. */
+.state { display: inline-flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(111, 214, 179, 0.16); }
+.dot.bad { background: var(--err); box-shadow: 0 0 0 3px rgba(255, 138, 122, 0.16); }
+
+/* Pairs of a label and a value. */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; }
+.facts dt { color: var(--dim); }
+.facts dd { color: var(--fg); }
+.bullets { display: grid; gap: 6px; }
+.bullets li { display: grid; grid-template-columns: 1.25rem 1fr; gap: 4px; }
+.bullets .note { color: var(--dim); }
+
+/* A key's fingerprint in groups, to compare by eye. */
+.fp { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 0.9375rem; color: var(--fg); }
+.fp.check { padding: 8px 12px; border-radius: var(--r-control); background: var(--field); color: var(--accent); font-weight: 600; border: 1px solid var(--line); }
+
+/* Logs and documents: text as the device wrote it. */
+.text { padding: 14px; border-radius: var(--r-control); background: var(--field); border: 1px solid var(--line); font-family: var(--mono); font-size: 0.8125rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 70vh; overflow: auto; }
+.text .e { color: var(--err); }
+.text .m { color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; min-height: 34px; padding: 4px 14px; border-radius: 999px; background: var(--field); border: 1px solid var(--line); color: var(--fg); font-size: 0.9375rem; }
+.chip:hover { background: var(--raised); color: var(--fg); text-decoration: none; }
+.chip[aria-current="true"], .chip.on { background: var(--raised); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+/* The question before something that cannot be taken back. */
+.backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: var(--gutter); background: rgba(0, 0, 0, 0.66); }
+.dialog { width: min(520px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; display: grid; gap: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6); }
+.dialog h2 { font-size: 1.25rem; }
+
+/* Waiting for a job. */
+.working { justify-items: start; }
+.spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--raised); border-top-color: var(--accent); animation: turn 0.9s linear infinite; }
+@keyframes turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 4s; } }
+
+/* htmx marks what is being asked for; its own stylesheet is left out (see layout.rs). */
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+/* The login page stands alone, without the tabs. */
+.gate { min-height: 100vh; display: grid; place-items: center; padding: 24px var(--gutter); }
+.gate .card { width: min(420px, 100%); padding: 28px; gap: 16px; }
+.gate .brand { font-size: 1.25rem; }
+
+@media (max-width: 640px) {
+  .bar { padding: 10px var(--gutter) 8px; }
+  .tabs { order: 3; flex-basis: 100%; gap: 2px; }
+  .tabs a { flex: 1; justify-content: center; padding: 8px 2px; gap: 4px; font-size: 0.9375rem; }
+  main { padding-top: 16px; }
+  h1 { font-size: 1.375rem; }
+  .card { padding: 16px; }
+  .card.flush { padding: 4px; }
+  .row { grid-template-columns: minmax(0, max-content) 1fr auto; padding: 12px; }
+  .row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row + .row::before { left: 12px; right: 12px; }
+  .row .what { grid-column: 1 / -1; grid-row: 2; font-size: 0.9375rem; }
+  .facts { grid-template-columns: 1fr; gap: 0; }
+  .facts dd { margin-bottom: 8px; }
+  .searchbar { flex-wrap: wrap; }
+  .actions.end .btn, .actions.end form { flex: 1 1 auto; }
+  .actions.end form .btn { width: 100%; }
+}
