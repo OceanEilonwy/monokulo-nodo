@@ -381,8 +381,8 @@ async fn a_locked_device_is_unlocked_before_a_key_is_stored() {
     browser.post("/web/providers", &[("do", "add")]).await;
     browser.post("/web/providers", &[("choose", "Porkbun")]).await.assert_has("This Nodo is locked.");
     let sent = browser.post("/web/providers", &[("do", "connect"), ("api_key", "pk1_abc"), ("secret_key", "sk1_def")]).await;
-    assert_eq!(sent.location(), "/");
-    browser.get("/").await.assert_has("Connecting Porkbun stores its key locked with the device passphrase.").assert_has(r#"action="/unlock""#);
+    assert_eq!(sent.location(), "/unlock");
+    browser.get("/unlock").await.assert_has("Connecting Porkbun stores its key locked with the device passphrase.").assert_has(r#"action="/unlock""#);
 }
 
 #[tokio::test]

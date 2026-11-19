@@ -21,7 +21,8 @@ use nodo_ui_core::Outcome;
 use serde::Deserialize;
 
 use super::{document_page, PassForm};
-use crate::core_wishlist::{empty_catalog_line, status_word, typed_secret};
+use crate::core_wishlist::{status_word, typed_secret};
+use nodo_ui_core::words::empty_catalog_line;
 use crate::ctx::{Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -135,7 +136,7 @@ fn load_detail(work: &mut Work<'_>, id: &PackageId) -> Result<PackageDetail, Rep
     }
 }
 
-fn detail_page(detail: &PackageDetail) -> Page {
+fn detail_page(detail: &PackageDetail, has_site: bool) -> Page {
     let id = &detail.id;
     let here = dest::offer(id);
     let version = if detail.version.is_empty() { String::new() } else { format!("Version {}", detail.version) };
@@ -152,6 +153,7 @@ fn detail_page(detail: &PackageDetail) -> Page {
             div.actions {
                 // An installed app is opened, not installed again: the flow says which.
                 @if let Step::Go(dest) = install::open_installed(detail) {
+                    @if has_site { a.btn href=(dest::hosting(&id.name)) { "Hosting" } }
                     a.btn.primary href=(dest::url(&dest, &here)) { "Open its page" }
                 } @else {
                     (layout::post(&format!("{here}/install"), "Install", "btn primary"))
@@ -183,7 +185,11 @@ fn detail_page(detail: &PackageDetail) -> Page {
 /// `GET /apps/get/{feed}/{package}`.
 pub async fn detail(ctx: Ctx, Path((feed, package)): Path<(String, String)>) -> Response {
     ctx.with(dest::GET_APPS, move |work| match load_detail(work, &PackageId::new(&feed, &package)) {
-        Ok(detail) => Out::Page(detail_page(&detail)),
+        Ok(detail) => {
+            // An installed app with a web page: who can open it is one step away.
+            let has_site = detail.installed && nodo_ui_core::flows::services::AppPage::new(&detail.id.name).has_site(&work.snapshot);
+            Out::Page(detail_page(&detail, has_site))
+        }
         Err(reply) => Out::Reply(reply),
     })
     .await
@@ -300,11 +306,7 @@ pub async fn approve(ctx: Ctx, Path((feed, package)): Path<(String, String)>, Fo
         });
     ctx.job(spec, move |work| {
         // The job's page is the install's page, so every report is shown there.
-        let mut report = |outcome: &Outcome, snapshot: &mut Snapshot| match outcome {
-            Outcome::InstallProgress(Some(report)) => install::progress(report, &snapshot.capabilities, true),
-            _ => Step::Stay,
-        };
-        work.run(step, &mut report)
+        work.run(step, &mut on_install_page)
     })
     .await
 }
@@ -313,19 +315,25 @@ fn kept_install(ctx: &Ctx, id: &PackageId) -> Option<InstallSnapshot> {
     ctx.session.inner().stash.install.clone().filter(|report| report.id == *id)
 }
 
-fn installing_page(report: &InstallSnapshot) -> Page {
-    let id = &report.id;
-    let name = &id.name;
-    let here = format!("{}/installing", dest::offer(id));
-    let title = match &report.outcome {
+fn install_title(report: &InstallSnapshot) -> String {
+    let name = &report.id.name;
+    match &report.outcome {
         InstallOutcome::InProgress => format!("Installing {name}"),
         InstallOutcome::Succeeded => format!("{name} is installed"),
         InstallOutcome::Failed(_) => format!("{name} wasn't installed"),
         InstallOutcome::Cancelled => "Install cancelled".to_owned(),
-    };
-    let body = html! {
-        h1 { (title) }
-        section.card {
+    }
+}
+
+/// The install's report: its steps and how it stands. A backend that reports progress gives
+/// steps while the install runs; htmx then asks for this again every second.
+fn install_report(report: &InstallSnapshot) -> Markup {
+    let id = &report.id;
+    let here = format!("{}/installing", dest::offer(id));
+    let stepping = report.outcome == InstallOutcome::InProgress && !report.steps.is_empty();
+    html! {
+        section.card #install hx-get=[stepping.then(|| format!("{here}/status"))] hx-trigger=[stepping.then_some("every 1s")] hx-swap="outerHTML" {
+            h2 { (install_title(report)) }
             @if !report.steps.is_empty() {
                 ul.bullets {
                     @for step in &report.steps {
@@ -345,7 +353,15 @@ fn installing_page(report: &InstallSnapshot) -> Page {
             @match &report.outcome {
                 InstallOutcome::InProgress => {
                     p { "Downloading, checking and installing. This can take a few minutes." }
-                    div.actions.end { a.btn href=(dest::WORKING) { "See how far it is" } }
+                    p.dim { "You can leave this page; it carries on. A failed step removes what this install added." }
+                    div.actions.end {
+                        @if stepping && report.can_cancel {
+                            // Leaving a running install that can be stopped cancels it.
+                            (layout::post(&format!("{here}/leave"), "Cancel the install", "btn danger"))
+                        } @else if !stepping {
+                            a.btn href=(dest::WORKING) { "See how far it is" }
+                        }
+                    }
                 },
                 InstallOutcome::Succeeded => {
                     p.ok { "✓ It is installed and starting." }
@@ -367,8 +383,48 @@ fn installing_page(report: &InstallSnapshot) -> Page {
                 },
             }
         }
+    }
+}
+
+fn installing_page(report: &InstallSnapshot) -> Page {
+    let stepping = report.outcome == InstallOutcome::InProgress && !report.steps.is_empty();
+    let body = html! {
+        h1 { (report.id.name) }
+        (install_report(report))
     };
-    offered(id, title, Some("Install"), body)
+    let page = offered(&report.id, install_title(report), Some("Install"), body);
+    if stepping { page.waiting() } else { page }
+}
+
+/// What a report about the install means on the install's own page, in the flow's words.
+fn on_install_page(outcome: &Outcome, snapshot: &mut Snapshot) -> Step {
+    match outcome {
+        Outcome::InstallProgress(Some(report)) => install::progress(report, &snapshot.capabilities, true),
+        _ => Step::Stay,
+    }
+}
+
+/// `GET /apps/get/{feed}/{package}/installing/status`: asks how the install is going, where the
+/// backend can say, and answers with the report alone. A polling route.
+pub async fn installing_poll(ctx: Ctx, Path((feed, package)): Path<(String, String)>) -> Response {
+    let id = PackageId::new(&feed, &package);
+    let Some(report) = kept_install(&ctx, &id) else {
+        return crate::ctx::go_to(ctx.htmx, &dest::offer(&id));
+    };
+    ctx.with(dest::offer(&id), move |work| {
+        let effects = install::poll(&report, &work.snapshot.capabilities);
+        let reply = work.run(Step::run(effects), &mut on_install_page);
+        match &reply.go {
+            Some(Dest::Installing(now)) => {
+                work.session.inner().stash.install = Some(now.clone());
+                Out::Fragment(install_report(now))
+            }
+            // Cancelled meanwhile: the flow leaves the page.
+            Some(_) => Out::Reply(reply),
+            None => Out::Fragment(install_report(&report)),
+        }
+    })
+    .await
 }
 
 /// `GET /apps/get/{feed}/{package}/installing`: how the install ended.
@@ -395,7 +451,7 @@ pub async fn after_install(ctx: Ctx, Path((feed, package, what)): Path<(String, 
     } else {
         install::leave(&report)
     };
-    ctx.with(back, move |work| Out::Reply(work.run(step, &mut no_flow))).await
+    ctx.with(back, move |work| Out::Reply(work.run(step, &mut on_install_page))).await
 }
 
 fn kept_rejection(ctx: &Ctx, id: &PackageId) -> Option<RejectionData> {

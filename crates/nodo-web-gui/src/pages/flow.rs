@@ -63,6 +63,14 @@ fn carry_out(work: &mut Work<'_>, pending: &Pending) -> Reply {
             }
             work.run(step, &mut no_flow)
         }
+        // Asked on the Network page: its flow is told, and gets what the radios answer.
+        Confirm::JoinOpenWifi(_) | Confirm::ForgetWifi(_) | Confirm::WifiOff | Confirm::RemoveBluetooth(_) => {
+            let mut flow = work.session.inner().stash.network.clone().unwrap_or_default();
+            flow.confirmed(confirm);
+            let reply = work.run(step, &mut |outcome, _| flow.apply(outcome));
+            work.session.inner().stash.network = Some(flow);
+            reply
+        }
         // How the rollback went is the Undo page's to show, where the owner returns.
         Confirm::RollBack { .. } => {
             let mut flow = Rollbacks::new();

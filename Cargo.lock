@@ -3357,6 +3357,7 @@ dependencies = [
  "maud",
  "nodo-api",
  "nodo-ui-core",
+ "qrcodegen",
  "serde",
  "tokio",
  "tower",

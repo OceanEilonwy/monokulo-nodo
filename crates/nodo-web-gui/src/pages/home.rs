@@ -6,14 +6,16 @@ use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
 use nodo_ui_core::flows::unlock::Unlock;
-use nodo_ui_core::flows::{Dest, Step};
+use nodo_ui_core::flows::{unlock as unlock_flow, Dest, Step};
 use nodo_ui_core::model::{AttentionLevel, Snapshot};
 use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::Tab;
 
-use super::{drive, PassForm};
-use crate::core_wishlist::{app_state, health, home_card, typed_secret, unlock_lines};
+use super::drive;
+use crate::core_wishlist::{home_card, typed_secret, unlock_lines};
+use nodo_ui_core::words::{app_state, health_line};
 use crate::ctx::{Ctx, Out, Work};
+use crate::runner::follow_plain;
 use crate::dest;
 use crate::layout::{self, Page};
 
@@ -117,13 +119,11 @@ fn page(work: &mut Work<'_>) -> Page {
                 }
             }
         }
-        @let facts = health(snapshot);
-        @if !facts.is_empty() {
+        @let health = health_line(snapshot);
+        @if !health.is_empty() {
             section.card {
                 h3 { "This Nodo" }
-                dl.facts {
-                    @for (label, value) in &facts { dt { (label) } dd { (value) } }
-                }
+                p { (health) }
             }
         }
     };
@@ -135,14 +135,74 @@ pub async fn show(ctx: Ctx) -> Response {
     ctx.with(dest::HOME, |work| Out::Page(page(work))).await
 }
 
-/// `POST /unlock`, from the card on Home. The count of wrong tries and the wait after them are
-/// the unlock flow's; the session keeps them between requests and the clock is this process's.
-pub async fn unlock(ctx: Ctx, Form(form): Form<PassForm>) -> Response {
-    ctx.with(dest::HOME, move |work| {
+/// `GET /unlock`: the page a flow sends the owner to when what was asked needs the device
+/// unlocked (`Dest::Unlock`). It says why, and once unlocked the owner is back on the page
+/// that sent them, to press its button again. Home's card is the same form without a reason.
+pub async fn unlock_page(ctx: Ctx) -> Response {
+    ctx.with(dest::HOME, |work| {
+        let (sent, problem, wait) = {
+            let mut inner = work.session.inner();
+            let wait = inner.unlock_retry_at.map_or(0, |at| seconds_until(at, work.now));
+            (inner.stash.unlock_return.clone(), inner.unlock.error.take(), wait)
+        };
+        // The flow says whether there is anything to unlock.
+        let step = unlock_flow::open(&work.snapshot);
+        if !matches!(step, Step::Go(Dest::Unlock { .. })) {
+            let mut inner = work.session.inner();
+            inner.stash.unlock_return = None;
+            inner.notices.extend(follow_plain(step).notices);
+            return Out::Go(sent.map_or_else(|| dest::HOME.to_owned(), |(_, back)| back));
+        }
+        let body = html! {
+            h1 { "Unlock your Nodo" }
+            section.card.attn {
+                @match &sent {
+                    Some((reason, _)) => p { (reason) " Type it to unlock the Nodo and carry on." },
+                    None => @for line in unlock_lines(&work.snapshot) { p { (line) } },
+                }
+                // The wait after a wrong try, counted by this process's clock.
+                @if wait > 0 { p.warn role="status" { "You can try again in " (nodo_ui_core::words::counted(wait, "second")) "." } }
+                form.stack method="post" action=(dest::UNLOCK) {
+                    (layout::hidden("from", "page"))
+                    (layout::passphrase("unlock-passphrase", "Device passphrase", problem.as_deref(), true))
+                    div.actions.end {
+                        a.btn href=(sent.as_ref().map_or(dest::HOME, |(_, back)| back.as_str())) { "Leave it locked" }
+                        button.btn.primary type="submit" { "Unlock" }
+                    }
+                }
+                p.dim.small { "A lost passphrase can't be recovered; a backup brings the data back." }
+            }
+        };
+        let page = Page::plain("Unlock", body);
+        Out::Page(if wait > 0 { page.waiting() } else { page })
+    })
+    .await
+}
+
+/// What the unlock form posts.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct UnlockForm {
+    #[serde(default)]
+    passphrase: super::Typed,
+    /// `page` when it came from `/unlock` and not from Home's card.
+    #[serde(default)]
+    from: String,
+}
+
+/// `POST /unlock`, from the card on Home or from the unlock page. The count of wrong tries and
+/// the wait after them are the unlock flow's; the session keeps them between requests and the
+/// clock is this process's. Unlocked, the owner returns to the page that sent them.
+pub async fn unlock(ctx: Ctx, Form(form): Form<UnlockForm>) -> Response {
+    let sent = ctx.session.inner().stash.unlock_return.clone();
+    let from_page = form.from == "page";
+    let back = sent.as_ref().map_or_else(|| dest::HOME.to_owned(), |(_, back)| back.clone());
+    ctx.with(back, move |work| {
         let (mut flow, wait) = {
             let inner = work.session.inner();
             (inner.unlock.clone(), inner.unlock_retry_at.map_or(0, |at| seconds_until(at, work.now)))
         };
+        // What sent the owner here, in words: with it the flow answers "carry on" (`Resume`).
+        flow.resume = sent.map(|(reason, _)| reason);
         let failures = flow.failures;
         let mut typed = typed_secret(form.passphrase.expose());
         let effects = flow.submit(&mut typed, wait);
@@ -155,10 +215,13 @@ pub async fn unlock(ctx: Ctx, Form(form): Form<PassForm>) -> Response {
             // Unlocked: the next lock starts from nothing.
             inner.unlock = Unlock::default();
             inner.unlock_retry_at = None;
-        } else {
-            inner.unlock = flow;
+            inner.stash.unlock_return = None;
+            return Out::Reply(reply);
         }
-        Out::Reply(reply)
+        inner.unlock = flow;
+        inner.notices.extend(reply.notices);
+        // Refused: the form again, where it was sent from.
+        Out::Go(if from_page { dest::UNLOCK } else { dest::HOME }.to_owned())
     })
     .await
 }

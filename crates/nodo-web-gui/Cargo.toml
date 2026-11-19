@@ -25,6 +25,9 @@ serde = { workspace = true }
 zeroize = "1"
 # Session tokens, from the kernel.
 getrandom = "0.3"
+# QR codes on apps' setup pages, drawn as SVG on the server. MIT, no dependencies; the terminal
+# interface uses the same.
+qrcodegen = "1.8"
 # umask before the listening socket is made.
 libc = "0.2"
 

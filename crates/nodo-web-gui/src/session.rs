@@ -13,6 +13,10 @@ use std::time::Duration;
 use axum::http::{header, HeaderMap};
 use nodo_ui_core::exec::Data;
 use nodo_ui_core::flows::unlock::Unlock;
+use nodo_ui_core::flows::backup::Backups;
+use nodo_ui_core::flows::bundle::Bundle;
+use nodo_ui_core::flows::network::Network;
+use nodo_ui_core::flows::owner_page::OwnerPage;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::flows::web::hosting::Hosting;
@@ -168,6 +172,21 @@ pub struct Stash {
     /// The provider pages: the list, or a step of adding one, and the company chosen. Keys
     /// typed are never kept.
     pub providers: Option<(Providers, Option<String>)>,
+    /// The Backups page, from the lists to a restore. While a restore waits to be confirmed it
+    /// holds the backup's passphrase, which goes to the helper and nowhere else.
+    pub backups: Option<Backups>,
+    /// The radios as last read, the networks a scan found, and the passphrase prompt.
+    pub network: Option<Network>,
+    /// When the radios were last asked, on the state's clock.
+    pub network_asked: Duration,
+    /// A suite of apps being installed together: the review the helper gave, which is the only
+    /// one ever sent back to it, the data drive choices and the answers.
+    pub bundle: Option<Bundle>,
+    /// Apps' setup pages that are open, by app. Each holds the device passphrase it was opened
+    /// with, to read the page again; it is dropped with the page and with the session.
+    pub owner: BTreeMap<String, OwnerPage>,
+    /// Why the owner was sent to unlock, and the page to return to once that is done.
+    pub unlock_return: Option<(String, String)>,
 }
 
 impl Stash {
@@ -203,20 +222,25 @@ impl Stash {
                     self.certificate = Some(confirm.certificate());
                 }
             }
+            Dest::Bundle(review) => self.bundle = Some(Bundle::new((**review).clone())),
+            // Opened at its passphrase gate. A page that is open already is closed first.
+            Dest::OwnerPage(page) => {
+                self.owner.insert(page.package.clone(), page.clone());
+            }
+            Dest::Unlock { resume: Some(reason) } => self.unlock_return = Some((reason.clone(), back.to_owned())),
             // The settings page reads its form again unless a draft is open. The pages that
-            // send these two see to their drafts themselves, since neither names its site.
-            Dest::Settings(_) | Dest::LeaveHosting | Dest::HostingWithProvider { .. } => {}
+            // send the next two see to their drafts themselves, since neither names its site.
+            Dest::Settings(_) | Dest::LeaveHosting | Dest::HostingWithProvider { .. } | Dest::SetUpFromBackup => {}
             // These carry what their URL carries, or nothing.
             Dest::Back
             | Dest::Apps
             | Dest::Updates { .. }
-            | Dest::Unlock { .. }
+            | Dest::Unlock { resume: None }
             | Dest::Resume
             | Dest::GetApps { .. }
             | Dest::Sources { .. }
             | Dest::AppPage(_)
-            | Dest::Detail(_)
-            | Dest::Bundle(_) => {}
+            | Dest::Detail(_) => {}
         }
     }
 }

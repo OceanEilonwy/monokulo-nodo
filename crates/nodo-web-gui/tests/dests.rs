@@ -46,15 +46,17 @@ fn name(dest: &Dest) -> &'static str {
         Dest::PublicConfirm(_) => "PublicConfirm",
         Dest::HostingWithProvider { .. } => "HostingWithProvider",
         Dest::WentPublic => "WentPublic",
+        Dest::OwnerPage(_) => "OwnerPage",
+        Dest::SetUpFromBackup => "SetUpFromBackup",
     }
 }
 
 /// How many variants `name` knows, kept beside it.
-const VARIANTS: usize = 26;
+const VARIANTS: usize = 28;
 
 /// Destinations whose own page is not built in this slice. Each is sent to the closest page that
 /// exists, marked `TODO(page)` in `dest::url`; the entry goes when the page comes.
-const NOT_BUILT_YET: [(&str, &str); 1] = [("Bundle", "/apps/get")];
+const NOT_BUILT_YET: [(&str, &str); 0] = [];
 
 fn every_destination() -> Vec<(&'static str, Dest)> {
     let mut mock = MockBackend::new();
@@ -111,6 +113,8 @@ fn every_destination() -> Vec<(&'static str, Dest)> {
         ("PublicConfirm", Dest::PublicConfirm(PublicConfirm::new("moneropay", plan))),
         ("HostingWithProvider", Dest::HostingWithProvider { domains: vec!["example.com".into()] }),
         ("WentPublic", Dest::WentPublic),
+        ("OwnerPage", Dest::OwnerPage(nodo_ui_core::flows::owner_page::OwnerPage::new("moneropay", "Setup"))),
+        ("SetUpFromBackup", Dest::SetUpFromBackup),
         ("Document", Dest::Document(Document { title: "A report".into(), lines: vec!["one line".into()] })),
     ];
     let mut seen: Vec<&str> = all.iter().map(|(_, dest)| name(dest)).collect();
@@ -130,7 +134,12 @@ async fn every_destination_leads_to_a_page_that_is_served() {
         // As `Ctx::respond` does: keep what the destination carries, then go to its URL.
         let url = dest::land(&destination, back, &mut session.inner().stash);
         assert!(dest::local_path(&url).is_some(), "{label} leads off this origin: {url}");
-        let answer = browser.get(&url).await;
+        let mut answer = browser.get(&url).await;
+        // Nothing is locked after a login, so the unlock page leads straight on.
+        if label == "Unlock" {
+            assert_eq!((url.as_str(), answer.location()), ("/unlock", "/"));
+            answer = browser.get("/").await;
+        }
         assert_eq!(answer.status, StatusCode::OK, "{label} leads to {url}, which answered {}", answer.location());
         answer.assert_has("<main id=\"main\">");
 
@@ -140,6 +149,18 @@ async fn every_destination_leads_to_a_page_that_is_served() {
                 // Those that are relative lead to the page that asked, or where the page that
                 // can receive them says.
                 "Back" | "Resume" | "HostingWithProvider" | "WentPublic" => assert_eq!(url, back),
+                "Bundle" => {
+                    answer.assert_has("Install pingers and its apps?");
+                }
+                "OwnerPage" => {
+                    assert_eq!(url, "/apps/moneropay/owner");
+                    answer.assert_has("opens with the device passphrase");
+                }
+                // First boot only; a set-up device restores on the Backups page.
+                "SetUpFromBackup" => {
+                    assert_eq!(url, "/system/backups");
+                    answer.assert_has("<h1>Backups</h1>");
+                }
                 "LeaveHosting" => {
                     assert_eq!(url, "/web");
                     answer.assert_has("<h1>Sites online</h1>");

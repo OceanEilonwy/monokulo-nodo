@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 
 use crate::ctx::Polling;
-use crate::pages::{apps, drive, flow, home, hosting, install, keys, login, logs, settings, sources, system, updates, web};
+use crate::pages::{apps, backups, bundle, drive, flow, home, hosting, install, keys, login, logs, network, owner, settings, sources, system, updates, web};
 use crate::security;
 use crate::state::AppState;
 use crate::{assets, dest};
@@ -24,6 +24,8 @@ pub fn router(state: AppState) -> Router {
         .route(dest::WORKING, get(flow::working))
         .route("/system/logs/{source}/lines", get(logs::poll))
         .route("/apps/{name}/hosting/certificate/status", get(hosting::certificate_status_poll))
+        .route("/apps/get/{feed}/{package}/installing/status", get(install::installing_poll))
+        .route("/system/network/status", get(network::poll))
         .layer(Extension(Polling));
 
     Router::new()
@@ -32,7 +34,7 @@ pub fn router(state: AppState) -> Router {
         .route(dest::LOGOUT, post(login::logout))
         // Home
         .route(dest::HOME, get(home::show))
-        .route(dest::UNLOCK, post(home::unlock))
+        .route(dest::UNLOCK, get(home::unlock_page).post(home::unlock))
         // Apps
         .route(dest::APPS, get(apps::list))
         .route("/apps/{name}", get(apps::show))
@@ -48,6 +50,8 @@ pub fn router(state: AppState) -> Router {
         .route("/apps/{name}/settings/reference/decline", post(settings::decline))
         .route("/apps/{name}/settings/failed", get(settings::failed))
         .route("/apps/{name}/settings/failed/keep", post(settings::keep_as_it_is))
+        .route("/apps/{name}/owner", get(owner::show).post(owner::unlock))
+        .route("/apps/{name}/owner/{what}", post(owner::act))
         .route("/apps/{name}/hosting", get(hosting::show).post(hosting::act))
         .route("/apps/{name}/hosting/check", get(hosting::check))
         .route("/apps/{name}/hosting/check/{what}", get(hosting::check_act).post(hosting::check_act))
@@ -58,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         // Get apps and install. `get` is taken here, so an app of that name has no page of
         // its own; no source offers one.
         .route(dest::GET_APPS, get(install::search))
+        .route(dest::BUNDLE, get(bundle::show).post(bundle::act))
         .route("/apps/get/{feed}/{package}", get(install::detail))
         .route("/apps/get/{feed}/{package}/install", post(install::gate))
         .route("/apps/get/{feed}/{package}/review", get(install::review).post(install::approve))
@@ -101,6 +106,8 @@ pub fn router(state: AppState) -> Router {
         .route("/system/auto-update/history", get(updates::auto_update_history))
         .route(dest::UNDO, get(updates::undo))
         .route("/system/undo/{package}", post(updates::roll_back))
+        .route(dest::BACKUPS, get(backups::show).post(backups::act))
+        .route(dest::NETWORK, get(network::show).post(network::act))
         .route(dest::LOGS, get(logs::device))
         .route("/system/logs/{source}", get(logs::show))
         .route("/system/logs/{source}/save", post(logs::save))

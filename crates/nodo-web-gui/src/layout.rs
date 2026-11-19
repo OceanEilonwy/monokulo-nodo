@@ -15,7 +15,7 @@ use nodo_ui_core::model::Document;
 use nodo_ui_core::screen::Tab;
 
 use crate::assets;
-use crate::core_wishlist::fingerprint_groups;
+use nodo_ui_core::words::fingerprint_groups;
 use crate::dest;
 use crate::session::{JobView, Pending};
 
@@ -221,7 +221,7 @@ pub fn coming(name: &str, what: &str) -> Markup {
 pub fn fingerprint(fp: &str, check: bool) -> Markup {
     html! {
         span class=(if check { "fp check" } else { "fp" }) {
-            @for group in fingerprint_groups(fp) { span { (group) } }
+            @for group in fingerprint_groups(fp).split_whitespace() { span { (group) } }
         }
     }
 }

@@ -85,6 +85,10 @@ impl Backends for MockBackends {
         if let Some(item) = backend.updates.iter_mut().find(|item| item.name == "wallet-relay") {
             item.grows = Some("256 MB to 512 MB".to_owned());
         }
+        // A suite of apps and an app's setup page, which the mock has none of by itself, so
+        // those pages can be reached too.
+        backend.bundles.insert("sample-tool-01".to_owned(), nodo_ui_core::mock::sample_bundle_review());
+        backend.owner_views.insert("moneropay".to_owned(), ("Setup".to_owned(), nodo_ui_core::mock::sample_owner_page()));
         if self.unlock_on_login {
             backend.call(Request::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) })?;
         }

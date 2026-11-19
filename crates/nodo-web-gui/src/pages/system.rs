@@ -9,7 +9,8 @@ use nodo_ui_core::model::{Snapshot, UpdateNote};
 use nodo_ui_core::screen::Tab;
 
 use super::document_page;
-use crate::core_wishlist::{nodo_update, nodo_update_note, system_row_summary, SYSTEM_ROWS};
+use crate::core_wishlist::nodo_update_note;
+use nodo_ui_core::words::{nodo_update, system_row_summary, SYSTEM_ROWS};
 use crate::ctx::{Ctx, Out};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -54,10 +55,11 @@ fn page(snapshot: &Snapshot, web_gui: Option<&WebGuiStatus>) -> Page {
                     @let summary = system_row_summary(snapshot, name);
                     @match name {
                         "Updates" => (layout::row(dest::UPDATES, name, &summary, html! {})),
+                        "Backups" => (layout::row(dest::BACKUPS, name, &summary, html! {})),
+                        "Network" => (layout::row(dest::NETWORK, name, &summary, html! {})),
                         "Device logs" => (layout::row(dest::LOGS, name, &summary, html! {})),
                         "About this Nodo" => (layout::row(dest::ABOUT, name, &summary, html! {})),
-                        // TODO(page): Backups (/system/backups) and Network (/system/network).
-                        // Each row says so until its page exists.
+                        // A row the core adds later says so until it has a page here.
                         _ => (layout::coming(name, &summary)),
                     }
                 }

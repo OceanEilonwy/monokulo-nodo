@@ -26,3 +26,13 @@ document.addEventListener('click', function (event) {
 document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape') cancel(event);
 });
+
+// A value with a Copy button goes to the clipboard. The value is on the page either way.
+document.addEventListener('click', function (event) {
+  var button = event.target.closest && event.target.closest('button.copy');
+  if (!button || !navigator.clipboard) return;
+  navigator.clipboard.writeText(button.dataset.copy).then(function () {
+    button.textContent = 'Copied';
+    setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+  });
+});

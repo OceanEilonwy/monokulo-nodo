@@ -44,6 +44,9 @@ pub const UPDATE_PASSPHRASE: &str = "/system/updates/passphrase";
 pub const UPDATE_RESULTS: &str = "/system/updates/results";
 pub const AUTO_UPDATE: &str = "/system/auto-update";
 pub const UNDO: &str = "/system/undo";
+pub const BACKUPS: &str = "/system/backups";
+pub const NETWORK: &str = "/system/network";
+pub const BUNDLE: &str = "/apps/get/bundle";
 pub const DOCUMENT: &str = "/document";
 pub const WORKING: &str = "/working";
 pub const CONFIRM: &str = "/confirm";
@@ -109,9 +112,9 @@ pub fn url(dest: &Dest, back: &str) -> String {
         Dest::Back => back.to_owned(),
         Dest::Apps => APPS.to_owned(),
         Dest::Updates { only } => updates(only.as_deref()),
-        // Logging in unlocks the device, so there is no unlock page: what is still locked
-        // afterwards is unlocked from the card on Home.
-        Dest::Unlock { resume: _ } => HOME.to_owned(),
+        // Logging in unlocks the device, so this page is only met when something is still
+        // locked afterwards. Home has the same form on a card.
+        Dest::Unlock { resume: _ } => UNLOCK.to_owned(),
         // The page that sent the owner to unlock; they press its button again.
         Dest::Resume => back.to_owned(),
         Dest::GetApps { source } => get_apps(source.as_deref()),
@@ -124,8 +127,11 @@ pub fn url(dest: &Dest, back: &str) -> String {
             ReviewPurpose::Install => format!("{}/review", offer(&review.data.id)),
             ReviewPurpose::Update { .. } => UPDATE_REVIEW.to_owned(),
         },
-        // TODO(page): installing a suite of apps together. Until then Get apps.
-        Dest::Bundle(_) => GET_APPS.to_owned(),
+        Dest::Bundle(_) => BUNDLE.to_owned(),
+        Dest::OwnerPage(page) => format!("{}/owner", app(&page.package)),
+        // Only a device that is not set up reaches this, and the web GUI cannot be on before
+        // setup. The Backups page is where a restore is on a device that is.
+        Dest::SetUpFromBackup => BACKUPS.to_owned(),
         Dest::Rejected(data) => format!("{}/rejected", offer(&data.id)),
         Dest::MissingCapability(data) => format!("{}/capability", offer(&data.id)),
         Dest::Installing(report) => format!("{}/installing", offer(&report.id)),

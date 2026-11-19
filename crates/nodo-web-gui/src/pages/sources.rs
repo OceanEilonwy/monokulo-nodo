@@ -12,7 +12,7 @@ use nodo_ui_core::screen::Tab;
 use serde::Deserialize;
 
 use super::document_page;
-use crate::core_wishlist::is_plain_http;
+use nodo_ui_core::words::is_plain_http;
 use crate::ctx::{go_to, Ctx, Out};
 use crate::dest;
 use crate::layout::{self, Page};

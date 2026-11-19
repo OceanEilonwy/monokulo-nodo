@@ -20,7 +20,8 @@ use nodo_ui_core::screen::Tab;
 use serde::Deserialize;
 
 use super::{document_page, install, PassForm};
-use crate::core_wishlist::{applies_updates, day, typed_secret, update_note};
+use crate::core_wishlist::{applies_updates, typed_secret, update_note};
+use nodo_ui_core::words::day;
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};

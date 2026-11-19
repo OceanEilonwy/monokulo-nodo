@@ -2,6 +2,8 @@
 //! `Ctx` run it, and draws what comes back.
 
 pub mod apps;
+pub mod backups;
+pub mod bundle;
 pub mod drive;
 pub mod flow;
 pub mod home;
@@ -10,6 +12,8 @@ pub mod install;
 pub mod keys;
 pub mod login;
 pub mod logs;
+pub mod network;
+pub mod owner;
 pub mod settings;
 pub mod sources;
 pub mod system;

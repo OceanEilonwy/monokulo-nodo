@@ -17,7 +17,8 @@ use nodo_ui_core::screen::Tab;
 use nodo_ui_core::Outcome;
 
 use super::document_page;
-use crate::core_wishlist::{cert_status, reach_words, site_address, typed_secret};
+use crate::core_wishlist::{tone, typed_secret};
+use nodo_ui_core::words::{cert_status, provider_field_name, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -109,7 +110,7 @@ fn keep_providers(work: &Work<'_>, flow: &Providers, chosen: Option<String>) {
 
 /// The label of a key box, as the provider names its credentials.
 fn key_label(provider: &Provider, field: KeyField) -> String {
-    let name = |index: usize| provider.fields.get(index).map(|field| field.replace('_', " "));
+    let name = |index: usize| provider.fields.get(index).map(|field| provider_field_name(field));
     match field {
         KeyField::Domain => "Web address you bought".to_owned(),
         KeyField::ApiKey => name(0).unwrap_or_else(|| "API key".to_owned()),
@@ -344,14 +345,11 @@ pub async fn providers_act(ctx: Ctx, Form(form): Form<Posted>) -> Response {
                         Out::Page(providers_page(&work.snapshot, &flow, chosen.as_deref(), Some(field), &domain))
                     }
                     Ok(step) => {
-                        let mut reply = work.run(step, &mut |outcome, _| flow.apply(outcome));
+                        let reply = work.run(step, &mut |outcome, _| flow.apply(outcome));
                         keep_providers(work, &flow, chosen.clone());
-                        // A locked device is unlocked on Home first; why is said there.
-                        if let Some(Dest::Unlock { resume: Some(reason) }) = &reply.go {
-                            reply.notices.push(Notice::info(reason.clone()));
-                            return Out::Reply(reply);
-                        }
-                        if reply.login_required {
+                        // A locked device is unlocked first, on the page that says why, and the
+                        // owner comes back here to press Connect again.
+                        if reply.login_required || matches!(reply.go, Some(Dest::Unlock { .. })) {
                             return Out::Reply(reply);
                         }
                         // Connected, or refused in the helper's words above the boxes.
@@ -536,14 +534,15 @@ pub async fn certificates(ctx: Ctx) -> Response {
                 @if snapshot.web.certs.is_empty() { p.pad.dim { "No site is served yet." } }
                 div.rows {
                     @for row in &snapshot.web.certs {
-                        @let (words, class) = cert_status(row);
+                        @let (how, words) = cert_status(row);
+                        @let (sign, class) = tone(how);
                         div.row {
                             span.name.mono { (row.host) }
                             span.what {
                                 (row.site) @if !row.issuer.is_empty() { " · " (row.issuer) }
                                 @if let Some(problem) = &row.problem { span.note.err { " · " (problem) } }
                             }
-                            span class=(format!("end {class}")) { (words) }
+                            span class=(format!("end {class}")) { (sign) " " (words) }
                             span.go {}
                         }
                     }

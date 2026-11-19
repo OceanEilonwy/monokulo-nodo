@@ -11,7 +11,8 @@ use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::queries::APP_SECTIONS;
 use nodo_ui_core::screen::Tab;
 
-use crate::core_wishlist::{app_state, hosting_summary, log_summary, open_url, tagline};
+use crate::core_wishlist::open_url;
+use nodo_ui_core::words::{app_state, hosting_summary, log_summary, tagline};
 use crate::ctx::{Ctx, Out};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -87,7 +88,7 @@ fn app_page(snapshot: &Snapshot, name: &str) -> Page {
             div.rows {
                 @for section in &sections {
                     @match section.as_str() {
-                        "Logs" => (layout::row(&dest::log(name), section, log_summary(snapshot, name), html! {})),
+                        "Logs" => (layout::row(&dest::log(name), section, &log_summary(snapshot, name), html! {})),
                         // An app without a web page has nothing to host, and the row says so.
                         "Hosting" if !page.has_site(snapshot) => div.row.off {
                             span.name { (section) }
@@ -97,9 +98,9 @@ fn app_page(snapshot: &Snapshot, name: &str) -> Page {
                         },
                         "Hosting" => (layout::row(&dest::hosting(name), section, &hosting_summary(snapshot, name), html! {})),
                         "Settings" => (layout::row(&dest::settings(name), section, "Change how it works", html! {})),
-                        // TODO(page): the app's setup page for its owner. Its row is named by
-                        // the app, so it is whatever is not one of the fixed three.
-                        _ => (layout::coming(section, "The steps to set it up, and whether each is done")),
+                        // The app's setup page for its owner. Its row is named by the app, so it
+                        // is whatever is not one of the fixed three.
+                        _ => (layout::row(&format!("{here}/owner"), section, "The steps to set it up, and whether each is done", html! {})),
                     }
                 }
             }
