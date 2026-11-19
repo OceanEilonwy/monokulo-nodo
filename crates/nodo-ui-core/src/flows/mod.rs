@@ -213,6 +213,9 @@ pub enum Dest {
     Reachability(web::public::Found),
     /// The confirmation before a site goes public, on top of the page the owner is on.
     PublicConfirm(web::public::PublicConfirm),
+    /// Back to the Hosting page that sent the owner to add a provider, which now has one: its
+    /// draft takes the domains the new key controls (`Hosting::provider_connected`).
+    HostingWithProvider { domains: Vec<String> },
     /// The site is on the internet. Every page that led there is left for the list of sites
     /// that are online; a frontend that was showing the confirmation shows, on top of that list,
     /// the page following the secure connection (`PublicConfirm::certificate`).
@@ -265,6 +268,8 @@ pub enum Confirm {
     RollBack { package: String, to: String },
     /// Takes every site offline.
     AllSitesOffline,
+    /// Disconnects a domain provider, by id.
+    RemoveProvider(String),
 
     /// Joins an open network, whose traffic anyone nearby can read.
     JoinOpenWifi(String),
@@ -272,8 +277,6 @@ pub enum Confirm {
     /// Turns Wi-Fi off while it may be the connection in use.
     WifiOff,
     RemoveBluetooth(String),
-    /// Disconnects a domain provider, by id.
-    RemoveProvider(String),
 }
 
 impl Confirm {

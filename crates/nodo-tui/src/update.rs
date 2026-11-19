@@ -473,7 +473,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             HostingFocus::AliasAddress => Some(&mut state.alias_sub),
             _ => None,
         },
-        Screen::WebProviders(state) if state.stage != ProviderStage::Key => None,
+        Screen::WebProviders(state) if state.stage != flows::web::providers::ProviderStage::Key => None,
         Screen::WebProviders(state) => match state.focus {
             ProviderFocus::List => None,
             ProviderFocus::Domain => Some(&mut state.domain),
@@ -654,6 +654,7 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::Reachability(found) => web::show_found(app, found),
         Dest::PublicConfirm(confirm) => push(app, Screen::WebConfirm(WebConfirmState::new(confirm))),
         Dest::WentPublic => web::went_public(app),
+        Dest::HostingWithProvider { domains } => web::hosting_with_provider(app, &domains),
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -1758,7 +1759,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         },
         KeyCode::Char('p') if !state.focus.is_text() => {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
-            return vec![Effect::LoadProviders];
+            return flows::web::providers::load();
         }
         KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
         KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
@@ -1994,10 +1995,9 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = flows::web::apply(&event);
             return follow(app, step);
         }
-        Outcome::ProviderAdded(result) => return web::on_provider_added(app, result),
+        Outcome::ProviderAdded(_) => return web::on_provider_added(app, &event),
         Outcome::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
-        Outcome::ProviderRemoved(result) => return web::on_provider_removed(app, result),
-        Outcome::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
+        Outcome::ProviderRemoved(_) | Outcome::ProviderRefreshed(_) => return web::on_provider_changed(app, &event),
         Outcome::AcmeSaved(result) => match result {
             Ok(()) => {
                 if let Screen::WebDomain(state) = &mut app.screen {

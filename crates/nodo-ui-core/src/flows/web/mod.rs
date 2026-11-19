@@ -4,6 +4,7 @@
 //!   and what Save does.
 //! - [`public`]: the reachability check, what its result means, CGNAT, and the confirmation
 //!   before a site goes on the internet.
+//! - [`providers`]: connecting the companies web addresses were bought from.
 //! - [`certs`]: following a certificate, and the local CA.
 //!
 //! Safety rules: exposures are independent flags; turning anything off never needs a
@@ -12,6 +13,7 @@
 
 pub mod certs;
 pub mod hosting;
+pub mod providers;
 pub mod public;
 
 use super::{Confirm, Dest, Notice, Question, Step};

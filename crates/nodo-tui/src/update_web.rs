@@ -9,13 +9,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use nodo_api::{AliasMode, Exposure};
 
-use super::{edit_input, follow, more, notice, open_logs, pop, push, step, tab_key};
+use super::{edit_input, follow, more, open_logs, pop, push, step, tab_key};
 use crate::app::*;
+use nodo_ui_core::flows::web::providers::{KeyField, ProviderStage, Providers};
 use nodo_ui_core::flows::web::public::{CgnatWay, Found};
-use nodo_ui_core::flows::web::{self, hosting};
-use nodo_ui_core::flows::{Confirm, Notice, NoticeKind, Question};
+use nodo_ui_core::flows::web::{self, hosting, providers};
+use nodo_ui_core::flows::Notice;
 use nodo_ui_core::model::*;
-use nodo_ui_core::Effect;
+use nodo_ui_core::{Effect, Outcome};
 
 /// Opens the Hosting screen of a site, or says why there is none.
 pub(super) fn open_hosting(app: &mut App, site: &str) -> Result<(), Notice> {
@@ -169,24 +170,17 @@ fn toggle(state: &mut ExposureState, focus: HostingFocus) {
 }
 
 fn open_add_provider(app: &mut App, return_to: Option<String>) -> Vec<Effect> {
-    let mut state = ProvidersState::new("");
-    state.return_to = return_to;
-    push(app, Screen::WebProviders(state));
-    vec![Effect::LoadProviders]
+    push(app, Screen::WebProviders(ProvidersState::of(Providers::adding(return_to), "")));
+    providers::load()
 }
 
-/// The provider catalog read again as the add flow opened. The list is only replaced while
-/// choosing the company, since the later steps hold an index into it.
+/// The provider catalog read again as the add flow opened.
 pub(super) fn on_providers_loaded(app: &mut App, result: Result<Vec<Provider>, String>) {
-    let picking = matches!(&app.screen, Screen::WebProviders(state) if state.stage == ProviderStage::Pick);
-    match result {
-        Ok(list) if picking || app.data.providers.is_empty() => {
-            app.data.providers = list;
-            app.data.providers_error = None;
-        }
-        Ok(_) => {}
-        Err(e) => app.data.providers_error = Some(e),
-    }
+    let flow = match &app.screen {
+        Screen::WebProviders(state) => Some(&state.flow),
+        _ => None,
+    };
+    providers::catalog_loaded(&mut app.data, flow, &result);
     if let Screen::WebProviders(state) = &mut app.screen {
         if state.stage == ProviderStage::Pick {
             state.selected = state.selected.min(app.data.providers.len().saturating_sub(1));
@@ -194,58 +188,38 @@ pub(super) fn on_providers_loaded(app: &mut App, result: Result<Vec<Provider>, S
     }
 }
 
-/// The boxes of the key step: the domain only for a provider that cannot list its domains.
-fn provider_fields(app: &App, selected: usize) -> Vec<ProviderFocus> {
-    let provider = app.data.providers.get(selected);
-    let mut order = Vec::new();
-    if provider.is_some_and(|p| !p.lists_domains) {
-        order.push(ProviderFocus::Domain);
-    }
-    order.push(ProviderFocus::ApiKey);
-    if provider.is_some_and(|p| p.fields.len() > 1) {
-        order.push(ProviderFocus::SecretKey);
-    }
-    order
+/// The boxes of the key step, as what can have the focus there.
+fn provider_fields(provider: Option<&Provider>) -> Vec<ProviderFocus> {
+    providers::fields(provider).into_iter().map(ProviderFocus::from).collect()
 }
 
 pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let providers = app.data.providers.clone();
-    let locked = app.is_locked();
+    let catalog = app.data.providers.clone();
     let connected = app.data.connected.clone();
-    let fields = match &app.screen {
-        Screen::WebProviders(state) => provider_fields(app, state.selected),
-        _ => return Vec::new(),
-    };
     let Screen::WebProviders(state) = &mut app.screen else {
         return Vec::new();
     };
+    let fields = provider_fields(catalog.get(state.selected));
     match state.stage.clone() {
         ProviderStage::List => match key.code {
-            KeyCode::Esc => pop(app),
+            KeyCode::Esc => {
+                let step = state.flow.back();
+                return follow(app, step);
+            }
             KeyCode::Down | KeyCode::Up => step(&mut state.selected, connected.len(), key.code == KeyCode::Down),
             KeyCode::Char('a') | KeyCode::Enter => {
-                *state = ProvidersState { return_to: state.return_to.take(), ..ProvidersState::new("") };
-                return vec![Effect::LoadProviders];
+                state.empty_boxes();
+                state.selected = 0;
+                return state.flow.add();
             }
             KeyCode::Char('r') => {
                 if let Some(provider) = connected.get(state.selected) {
-                    return vec![Effect::RefreshProvider(provider.id.clone())];
+                    return providers::refresh(&provider.id);
                 }
             }
             KeyCode::Char('x') | KeyCode::Delete => {
                 if let Some(provider) = connected.get(state.selected) {
-                    let used: Vec<String> = provider.domains.iter().flat_map(|d| d.used_by.clone()).collect();
-                    let mut body = vec![format!("The Nodo forgets the {} key. Its domains can't be picked for apps any more.", provider.name)];
-                    if !used.is_empty() {
-                        body.push(format!("{} still use it, so take them off the internet first.", used.join(", ")));
-                    }
-                    app.modal = Some(Modal::ask(Question {
-                        title: format!("Remove {}?", provider.name),
-                        body,
-                        confirm_label: "Remove".to_owned(),
-                        cancel_is_default: true,
-                        confirm: Confirm::RemoveProvider(provider.id.clone()),
-                    }));
+                    app.modal = Some(Modal::ask(providers::ask_remove(provider)));
                 }
             }
             KeyCode::Char('c') => {
@@ -256,32 +230,22 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         },
         ProviderStage::Pick => match key.code {
             KeyCode::Down | KeyCode::Up => {
-                step(&mut state.selected, providers.len(), key.code == KeyCode::Down);
-                state.test = None;
+                step(&mut state.selected, catalog.len(), key.code == KeyCode::Down);
+                state.flow.clear_test();
             }
             KeyCode::Enter => {
-                let Some(provider) = providers.get(state.selected) else { return Vec::new() };
-                if !provider.is_supported() {
-                    state.test = Some(Err(format!(
-                        "{} can't be connected: it has no way for the Nodo to change your records. Tor works without a web address.",
-                        provider.name
-                    )));
-                    return Vec::new();
+                let Some(provider) = catalog.get(state.selected) else { return Vec::new() };
+                if state.flow.choose(provider) {
+                    state.empty_boxes();
+                    state.focus = provider_fields(Some(provider))[0];
                 }
-                // Keys typed for one provider must never be sent to another: they start empty.
-                let selected = state.selected;
-                let return_to = state.return_to.take();
-                let focus = if provider.lists_domains { ProviderFocus::ApiKey } else { ProviderFocus::Domain };
-                *state = ProvidersState { stage: ProviderStage::Key, selected, focus, return_to, ..ProvidersState::new("") };
             }
             KeyCode::Esc => {
-                if state.return_to.is_some() {
-                    pop(app);
-                } else {
-                    state.stage = ProviderStage::List;
+                let step = state.flow.back();
+                if state.stage == ProviderStage::List {
                     state.selected = 0;
-                    state.test = None;
                 }
+                return follow(app, step);
             }
             _ => {}
         },
@@ -289,45 +253,26 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             let at = fields.iter().position(|f| *f == state.focus).unwrap_or(0);
             match key.code {
                 KeyCode::Esc => {
-                    let selected = state.selected;
-                    let return_to = state.return_to.take();
-                    *state = ProvidersState { selected, return_to, ..ProvidersState::new("") };
+                    let step = state.flow.back();
+                    state.empty_boxes();
+                    return follow(app, step);
                 }
                 KeyCode::Tab | KeyCode::Down => state.focus = fields[(at + 1) % fields.len()],
                 KeyCode::BackTab | KeyCode::Up => state.focus = fields[(at + fields.len() - 1) % fields.len()],
                 KeyCode::Enter => {
-                    let Some(provider) = providers.get(state.selected) else { return Vec::new() };
-                    let domain = state.domain.text().trim().to_owned();
-                    if !provider.lists_domains && domain.is_empty() {
-                        state.test = Some(Err(format!(
-                            "{} can't list your domains, so type the web address you bought, such as example.com.",
-                            provider.name
-                        )));
-                        state.focus = ProviderFocus::Domain;
-                        return Vec::new();
+                    let Some(provider) = catalog.get(state.selected) else { return Vec::new() };
+                    let domain = state.domain.text().to_owned();
+                    // On a locked device the core sends the owner to unlock; the unlock screen
+                    // sends Enter back here to carry on, with the keys still in their boxes.
+                    match state.flow.submit(provider, &domain, &mut state.api_key, &mut state.secret_key, &app.data) {
+                        Ok(step) => return follow(app, step),
+                        Err(KeyField::Domain) => state.focus = ProviderFocus::Domain,
+                        Err(KeyField::ApiKey | KeyField::SecretKey) => {}
                     }
-                    if state.api_key.is_empty() || (provider.fields.len() > 1 && state.secret_key.is_empty()) {
-                        state.test = Some(Err(format!("Paste the key from {}.", provider.name)));
-                        return Vec::new();
-                    }
-                    state.test = None;
-                    if locked {
-                        // The keys are stored sealed, so the helper would refuse them. Ask for the
-                        // passphrase here; the unlock screen sends Enter back to carry on.
-                        let reason = format!("Connecting {} stores its key locked with the device passphrase.", provider.name);
-                        push(app, Screen::Unlock(UnlockState::new(Some(reason))));
-                        return Vec::new();
-                    }
-                    return vec![Effect::AddProvider {
-                        provider: provider.name.clone(),
-                        domain: (!provider.lists_domains).then_some(domain),
-                        api_key: state.api_key.take_secret(),
-                        secret_key: state.secret_key.take_secret(),
-                    }];
                 }
                 KeyCode::Char('?') if state.api_key.is_empty() => {
-                    if let Some(provider) = providers.get(state.selected) {
-                        return vec![Effect::ShowDocument(DocKind::ProviderKeys(provider.name.clone()))];
+                    if let Some(provider) = catalog.get(state.selected) {
+                        return providers::key_help(provider);
                     }
                 }
                 _ => {
@@ -341,77 +286,46 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 }
             }
         }
-        ProviderStage::Done { domains, .. } => {
+        ProviderStage::Done { .. } => {
             if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
-                if state.return_to.is_some() {
-                    pop(app);
-                    if let Screen::WebExposure(hosting) = &mut app.screen {
-                        hosting.flow.provider_connected(&domains);
-                        hosting.selected = 0;
-                    }
-                } else {
+                let step = state.flow.finish();
+                if state.stage == ProviderStage::List {
                     *state = ProvidersState::list("");
                 }
-                return vec![Effect::Refresh];
+                return follow(app, step);
             }
         }
     }
     Vec::new()
 }
 
-pub(super) fn on_provider_added(app: &mut App, result: Result<ConnectedProvider, String>) -> Vec<Effect> {
+/// Back on the Hosting screen that sent the owner to add a provider, which now has one.
+pub(super) fn hosting_with_provider(app: &mut App, domains: &[String]) {
+    pop(app);
+    if let Screen::WebExposure(hosting) = &mut app.screen {
+        hosting.flow.provider_connected(domains);
+        hosting.selected = 0;
+    }
+}
+
+pub(super) fn on_provider_added(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
     let Screen::WebProviders(state) = &mut app.screen else {
         return Vec::new();
     };
     // The keys were taken out of the boxes when they were sent; nothing typed is kept either way.
     state.api_key.clear();
     state.secret_key.clear();
-    match result {
-        Ok(provider) => {
-            let domains = provider.domains.iter().filter(|d| d.held_by.is_none()).map(|d| d.name.clone()).collect();
-            let mut held_by: Vec<String> = provider.domains.iter().filter_map(|d| d.held_by.clone()).collect();
-            held_by.sort();
-            held_by.dedup();
-            state.stage = ProviderStage::Done { provider: provider.name, domains, held_by };
-            vec![Effect::Refresh]
-        }
-        Err(text) => {
-            state.test = Some(Err(text));
-            Vec::new()
-        }
-    }
+    let step = state.flow.apply(outcome);
+    follow(app, step)
 }
 
-pub(super) fn on_provider_removed(app: &mut App, result: Result<(), String>) -> Vec<Effect> {
-    match result {
-        Ok(()) => {
-            if let Screen::WebProviders(state) = &mut app.screen {
-                state.selected = 0;
-            }
-            notice(app, NoticeKind::Ok, "The provider was removed.");
-            vec![Effect::Refresh]
-        }
-        Err(text) => {
-            notice(app, NoticeKind::Error, text);
-            Vec::new()
-        }
+/// A provider was removed or asked again. The list starts over after a removal, since the row
+/// the cursor was on is gone.
+pub(super) fn on_provider_changed(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
+    if let (Outcome::ProviderRemoved(Ok(())), Screen::WebProviders(state)) = (outcome, &mut app.screen) {
+        state.selected = 0;
     }
-}
-
-pub(super) fn on_provider_refreshed(app: &mut App, result: Result<ConnectedProvider, String>) -> Vec<Effect> {
-    match result {
-        Ok(provider) => {
-            match &provider.problem {
-                Some(problem) => notice(app, NoticeKind::Error, problem.clone()),
-                None => notice(app, NoticeKind::Ok, format!("{} lists {} domains.", provider.name, provider.domains.len())),
-            }
-            vec![Effect::Refresh]
-        }
-        Err(text) => {
-            notice(app, NoticeKind::Error, text);
-            Vec::new()
-        }
-    }
+    follow(app, providers::apply(outcome))
 }
 
 pub(super) fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -508,7 +422,7 @@ pub(super) fn went_public(app: &mut App) {
 /// A click that picks a row or field on a web screen: moves the selection there.
 pub(super) fn pick(app: &mut App, index: usize) {
     let fields = match &app.screen {
-        Screen::WebProviders(state) => provider_fields(app, state.selected),
+        Screen::WebProviders(state) => provider_fields(app.data.providers.get(state.selected)),
         _ => Vec::new(),
     };
     match &mut app.screen {
@@ -524,7 +438,7 @@ pub(super) fn pick(app: &mut App, index: usize) {
             ProviderStage::List => state.selected = index,
             ProviderStage::Pick => {
                 state.selected = index;
-                state.test = None;
+                state.flow.clear_test();
             }
             ProviderStage::Key => {
                 if let Some(field) = fields.get(index) {

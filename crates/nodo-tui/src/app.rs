@@ -18,6 +18,7 @@ use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
 use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::flows::web::hosting::{self, Hosting};
+use nodo_ui_core::flows::web::providers::{KeyField, Providers};
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
@@ -825,52 +826,72 @@ pub enum ProviderFocus {
     SecretKey,
 }
 
-/// Where the domain provider screens are.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderStage {
-    /// The providers added, with a button to add one.
-    List,
-    /// Choosing the company.
-    Pick,
-    /// The domain and key for the chosen company.
-    Key,
-    /// Connected. Holds the provider's name, the domains its key controls that sites can use, and
-    /// the providers already holding the rest (the same account connected twice, most often).
-    Done { provider: String, domains: Vec<String>, held_by: Vec<String> },
+impl From<KeyField> for ProviderFocus {
+    fn from(field: KeyField) -> Self {
+        match field {
+            KeyField::Domain => ProviderFocus::Domain,
+            KeyField::ApiKey => ProviderFocus::ApiKey,
+            KeyField::SecretKey => ProviderFocus::SecretKey,
+        }
+    }
 }
 
+/// The provider screens: the cursor and the boxes of the key step. Where the screens are and
+/// what each step does are the core's `Providers`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvidersState {
-    pub stage: ProviderStage,
-    /// The chosen company, an index into the provider catalog.
+    pub flow: Providers,
+    /// The chosen row: a connected provider in the list, a company of the catalog while adding.
     pub selected: usize,
     pub focus: ProviderFocus,
     pub domain: Input,
     pub api_key: Input,
     pub secret_key: Input,
-    pub test: Option<Result<String, String>>,
-    /// The site whose Hosting screen opened this, to go back to once a provider is added.
-    pub return_to: Option<String>,
 }
 
 impl ProvidersState {
     /// The add flow, at choosing the company.
     pub fn new(domain: &str) -> Self {
+        Self::of(Providers::adding(None), domain)
+    }
+
+    /// The list of providers added.
+    pub fn list(domain: &str) -> Self {
+        Self::of(Providers::list(), domain)
+    }
+
+    pub fn of(flow: Providers, domain: &str) -> Self {
         Self {
-            stage: ProviderStage::Pick,
+            flow,
             selected: 0,
             focus: ProviderFocus::List,
             domain: Input::plain(domain),
             api_key: Input::secret(),
             secret_key: Input::secret(),
-            test: None,
-            return_to: None,
         }
     }
 
-    /// The list of providers added.
-    pub fn list(domain: &str) -> Self {
-        Self { stage: ProviderStage::List, ..Self::new(domain) }
+    /// Empties the boxes of the key step. Keys typed for one provider must never be sent to
+    /// another, so every way into and out of that step starts from this.
+    pub fn empty_boxes(&mut self) {
+        self.domain = Input::plain("");
+        self.api_key = Input::secret();
+        self.secret_key = Input::secret();
+        self.focus = ProviderFocus::List;
+    }
+}
+
+impl std::ops::Deref for ProvidersState {
+    type Target = Providers;
+
+    fn deref(&self) -> &Providers {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ProvidersState {
+    fn deref_mut(&mut self) -> &mut Providers {
+        &mut self.flow
     }
 }
 
