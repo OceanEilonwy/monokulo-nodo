@@ -472,6 +472,12 @@ impl ScreenData for HelperBackend {
             setup_needed: o.encryption == EncryptionState::NotSetUp,
             locked: o.encryption == EncryptionState::Locked,
             attention: crate::helper_manage::attention(health.as_ref(), status.as_ref()),
+            // Any failure, including an older helper that cannot read the question, only
+            // leaves the figure out: it is no reason to call an area unavailable.
+            cpu: match self.ask(Request::CpuStatus) {
+                Ok(Response::Cpu(cpu)) => Some(cpu),
+                _ => None,
+            },
         }
     }
 

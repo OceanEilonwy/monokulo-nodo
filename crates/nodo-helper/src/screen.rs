@@ -46,6 +46,7 @@ pub fn is_read_only(request: &Request) -> bool {
         request,
         ListServices
             | DeviceOverview
+            | CpuStatus
             | ListPackages
             | PackageDetail { .. }
             | SettingsForm { .. }
