@@ -64,12 +64,13 @@
 
 pub mod services;
 pub mod setup;
+pub mod sources;
 pub mod unlock;
 
 use nodo_api::Exposure;
 
 use crate::effect::ExposureAfter;
-use crate::model::{DriveAction, Snapshot};
+use crate::model::{DriveAction, FeedProbe, KeyChange, Snapshot};
 use crate::{Effect, Outcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +158,12 @@ pub enum Dest {
     /// Back to the page that sent the owner to unlock, which now carries on with what it was
     /// asked: the terminal presses Enter there again, a web page sends its request again.
     Resume,
+    /// Get apps: what the sources offer, only one source's when `source` names it.
+    GetApps { source: Option<String> },
+    /// The second step of adding a source: what was found at the address, to trust or not.
+    ConfirmSource(FeedProbe),
+    /// The decision about a source whose signing key changed.
+    KeyChange(KeyChange),
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or

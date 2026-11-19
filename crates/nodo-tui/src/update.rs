@@ -11,7 +11,7 @@ use nodo_ui_core::model::*;
 use nodo_ui_core::secret::{Input, Secret};
 use nodo_ui_core::{Effect, Outcome};
 use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
-use nodo_ui_core::flows::{self, services, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
+use nodo_ui_core::flows::{self, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -657,6 +657,13 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         }
         Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState::new(resume))),
         // The screen below asked for the unlock on Enter, so it gets its Enter again.
+        Dest::GetApps { source } => return open_get_apps(app, source),
+        Dest::ConfirmSource(probe) => {
+            if let Screen::AddFeed(state) = &mut app.screen {
+                *state = AddFeedState::Confirm { probe, trust_focused: false };
+            }
+        }
+        Dest::KeyChange(change) => push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None })),
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -1082,42 +1089,27 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('a') => {
             push(app, Screen::AddFeed(AddFeedState::Address { input: Input::plain(""), error: None }));
         }
-        KeyCode::Char('r') => return vec![Effect::RefreshFeeds],
+        KeyCode::Char('r') => return sources::refresh(),
         KeyCode::Char('d') => *keys = !*keys,
         KeyCode::Char('e' | ' ') => {
             if let Some(feed) = current {
-                return vec![Effect::ToggleFeed(feed.name.clone())];
+                return sources::toggle(&feed.name);
             }
         }
         KeyCode::Char('x') => {
             if let Some(feed) = current {
-                app.modal = Some(remove_feed_modal(&feed.name, false));
+                app.modal = Some(Modal::ask(sources::ask_remove(&feed.name, false)));
             }
         }
         KeyCode::Enter => {
             if let Some(feed) = current {
-                if feed.status == FeedStatus::Blocked {
-                    return vec![Effect::LoadKeyChange(feed.name.clone())];
-                }
-                let filter = feed.name.clone();
-                return open_get_apps(app, Some(filter));
+                let step = sources::open(feed);
+                return follow(app, step);
             }
         }
         _ => {}
     }
     Vec::new()
-}
-
-fn remove_feed_modal(name: &str, from_key_change: bool) -> Modal {
-    Modal::ask(Question {
-        title: format!("Remove {name}?"),
-        body: vec![
-            "Apps you installed from it keep running; they just won't get updates until you add it back.".to_owned(),
-        ],
-        confirm_label: "Remove".to_owned(),
-        cancel_is_default: true,
-        confirm: Confirm::RemoveSource { name: name.to_owned(), from_key_change },
-    })
 }
 
 fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1127,26 +1119,21 @@ fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match state {
         AddFeedState::Address { input, error } => match key.code {
             KeyCode::Esc => pop(app),
-            KeyCode::Enter => {
-                if input.is_empty() {
-                    *error = Some("Enter the feed's address.".to_owned());
-                } else {
-                    return vec![Effect::ProbeFeed(input.text().trim().to_owned())];
-                }
-            }
+            KeyCode::Enter => match sources::probe(input.text()) {
+                Ok(effects) => return effects,
+                Err(text) => *error = Some(text),
+            },
             _ => {
                 edit_input(input, key);
             }
         },
         AddFeedState::Confirm { probe, trust_focused } => match key.code {
             KeyCode::Left | KeyCode::Right => *trust_focused = !*trust_focused,
-            KeyCode::Char('p') => {
-                return vec![Effect::ShowDocument(DocKind::FeedPackages(probe.name.clone()))];
-            }
+            KeyCode::Char('p') => return sources::packages(probe),
             KeyCode::Esc => pop(app),
             KeyCode::Enter => {
                 if *trust_focused {
-                    return vec![Effect::TrustFeed(probe.clone())];
+                    return sources::trust(probe);
                 }
                 pop(app);
             }
@@ -1166,13 +1153,10 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 state.typing = None;
                 state.error = None;
             }
-            KeyCode::Enter => {
-                if input.text() == state.change.feed {
-                    let typed = input.text().to_owned();
-                    return vec![Effect::TrustNewKey { change: state.change.clone(), typed }];
-                }
-                state.error = Some(format!("That isn't the source's name. Type {} exactly.", state.change.feed));
-            }
+            KeyCode::Enter => match sources::trust_new_key(&state.change, input.text()) {
+                Ok(effects) => return effects,
+                Err(text) => state.error = Some(text),
+            },
             _ => {
                 edit_input(input, key);
             }
@@ -1186,8 +1170,8 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             0 => pop(app),
             1 => state.typing = Some(Input::plain("")),
             _ => {
-                let modal = remove_feed_modal(&state.change.feed, true);
-                app.modal = Some(modal);
+                let question = sources::ask_remove(&state.change.feed, true);
+                app.modal = Some(Modal::ask(question));
             }
         },
         _ => {}
@@ -2271,36 +2255,23 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             };
             notice(app, kind, summary.text);
         }
-        Outcome::FeedProbed(result) => {
+        Outcome::FeedProbed(_) => {
             if let Screen::AddFeed(state) = &mut app.screen {
-                match result {
-                    Ok(probe) => *state = AddFeedState::Confirm { probe, trust_focused: false },
-                    Err(text) => {
+                match sources::apply(&event) {
+                    // Why the address gave no feed is said beside the box it was typed in.
+                    Step::Failed(refusal) => {
                         if let AddFeedState::Address { error, .. } = state {
-                            *error = Some(text);
+                            *error = Some(refusal.text);
                         }
                     }
+                    step => return follow(app, step),
                 }
             }
         }
-        Outcome::FeedTrusted(result) => match result {
-            Ok(name) => {
-                pop(app);
-                notice(app, NoticeKind::Ok, format!("Added {name} and pinned its key."));
-            }
-            Err(text) => fail(app, text),
-        },
-        Outcome::KeyChangeLoaded(Some(change)) => {
-            push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None }));
+        Outcome::FeedTrusted(_) | Outcome::KeyChangeLoaded(_) | Outcome::NewKeyTrusted(_) => {
+            let step = sources::apply(&event);
+            return follow(app, step);
         }
-        Outcome::KeyChangeLoaded(None) => fail(app, "That feed has no pending key change."),
-        Outcome::NewKeyTrusted(result) => match result {
-            Ok(name) => {
-                pop(app);
-                notice(app, NoticeKind::Ok, format!("{name} now uses the new key."));
-            }
-            Err(text) => fail(app, text),
-        },
         Outcome::SettingsLoaded { package, form } => match form {
             Some(form) => {
                 // A finished install is replaced so that Esc does not return to its progress list.
