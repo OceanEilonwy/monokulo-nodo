@@ -1,0 +1,33 @@
+api_version = 1
+id = "library"
+version = "@VERSION@"
+# bin/library is a small launcher that turns the settings into the Library's own environment
+# variables and puts its data in the data directory, then executes libexec/library.
+exec = [
+    "bin/library",
+    # Visitors arrive through the appliance's proxy. Links are relative, so any address works.
+    "--listen", "127.0.0.1:8790",
+]
+settings = "settings.lua"
+# SQLite in WAL mode; a stop finishes the request in hand and the background indexer's batch.
+stop_timeout_secs = 15
+health = { http = { url = "http://127.0.0.1:8790/healthz" } }
+
+[storage]
+# The catalogue, lending history (borrowers' names), photos and the search model.
+encrypted = true
+# Photos are stored resized (at most 1600 px, about 300 KB each); the model is about 130 MB.
+size_mib = 4096
+
+[network]
+# Looking items up while adding them (Open Library, Google Books, MusicBrainz, TMDb, a barcode
+# database), fetching chosen covers, and the meaning-search model's one-time download from
+# Hugging Face. Each can be switched off in the settings; the catalogue works without them.
+outbound = "internet"
+
+[[web]]
+name = "web"
+upstream = "127.0.0.1:8790"
+suggested_subdomain = "library"
+# Every link is relative, so the site answers on any address it is given.
+multi_address = true

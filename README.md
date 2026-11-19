@@ -31,7 +31,7 @@
 
 - **A node first.** `cuprated` runs by default, with `monerod` as an alternative. Its RPC is restricted and stays on loopback; only P2P is open to the network.
 - **Every service in its own box.** Each one gets its own user, a bubblewrap sandbox, per-user nftables rules and a Landlock and seccomp layer, all generated from its manifest. Packages never write system configuration.
-- **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server and Kringle. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
+- **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server, Kringle and the Library. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
 - **Updates that can be undone.** The base system arrives in tested, signed snapshots, never straight from Void's rolling `current`, with A/B rollback, opt-in auto-updates and backups to USB. See [updates, rollback, health and backups](docs/UPDATES.md).
 - **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system.
 
