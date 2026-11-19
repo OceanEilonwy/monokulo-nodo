@@ -156,6 +156,23 @@ impl Answer {
     }
 }
 
+/// Every place in a page that names a key of the terminal interface ("press o", "Press s to"):
+/// the word, a single lower-case letter, and then no further letter. A browser has no such keys.
+pub fn keys_named(body: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for marker in ["Press ", "press "] {
+        for (at, _) in body.match_indices(marker) {
+            let mut rest = body[at + marker.len()..].chars();
+            let key = rest.next().is_some_and(|c| c.is_ascii_lowercase());
+            let ends = rest.next().is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            if key && ends {
+                found.push(body[at..].chars().take(40).collect());
+            }
+        }
+    }
+    found
+}
+
 pub struct App {
     pub router: Router,
     pub state: AppState,

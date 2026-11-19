@@ -98,6 +98,97 @@ async fn every_screen_of_the_terminal_interface_has_a_page_or_a_reason() {
     system.assert_has("Web GUI").assert_has("nodo-tui --ctl web-gui 0|1").assert_lacks("set-web-gui");
 }
 
+/// Pages that are no `ScreenId` of their own, walked as well.
+const MORE_PAGES: [&str; 12] = [
+    "/system/keys",
+    "/system/about",
+    "/system/logs/moneropay",
+    "/system/auto-update/history",
+    "/web/certificates",
+    "/apps/tor",
+    "/apps/wallet-relay",
+    "/apps/get/official/moneropay/doc/changelog",
+    "/apps/get/official/moneropay/doc/versions",
+    "/system/updates/review",
+    "/system/updates/passphrase",
+    "/sources/of/official",
+];
+
+/// The core's words name no key; where they point at something to do they carry a `Hint`, which
+/// is a link or a button here (`hints`). So no page may say "press o" or "Press s to …".
+#[tokio::test]
+async fn no_page_names_a_key_of_the_terminal() {
+    #[track_caller]
+    fn check(path: &str, answer: &common::Answer) {
+        // An app's setup page shows what the package wrote. The mock's sample says "when you
+        // press r", which is the package's content and not this interface's: it is taken out
+        // before looking.
+        let own = answer.body.replace("Each step checks itself when you press r.", "");
+        let keys = common::keys_named(&own);
+        assert!(keys.is_empty(), "{path} names a key: {keys:?}\n{}", answer.body);
+    }
+    assert_eq!(common::keys_named("Turn it on first: press o. Press s to look. Press save, or press 2."), ["Press s to look. Press save, or press 2.", "press o. Press s to look. Press save, or"]);
+
+    // A device that stayed locked, with a suite to install and an app's setup page.
+    let app = App::new();
+    app.backends.stay_locked.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.backends.prepare(|mock| {
+        mock.bundles.insert("sample-tool-01".to_owned(), nodo_ui_core::mock::sample_bundle_review());
+        mock.owner_views.insert("moneropay".to_owned(), ("Setup".to_owned(), nodo_ui_core::mock::sample_owner_page()));
+    });
+    let mut browser = app.login().await;
+    let mut walked = 0;
+    let paths: Vec<&str> = ScreenId::ALL.into_iter().filter_map(|screen| place(screen).ok()).chain(MORE_PAGES).collect();
+    for path in &paths {
+        let mut answer = browser.get(path).await;
+        // A page with nothing kept for it yet leads to where its way starts; that page is read.
+        for _ in 0..3 {
+            if answer.status == StatusCode::SEE_OTHER {
+                let next = answer.location().to_owned();
+                answer = browser.get(&next).await;
+            }
+        }
+        assert_eq!(answer.status, StatusCode::OK, "{path}");
+        check(path, &answer);
+        walked += 1;
+    }
+    assert!(walked >= 50, "{walked} pages");
+
+    // The messages that point at something to do, each on the page that shows it.
+    // A locked app: the refusal links to the unlock page.
+    let locked = browser.post_then("/apps/wallet-relay/toggle", &[]).await;
+    locked.assert_has("wallet-relay is locked.").assert_has(r#"<a href="/unlock">Unlock the Nodo</a>"#);
+    check("a locked app", &locked);
+    // The setup page, opened, with the package's own words.
+    browser.post("/apps/moneropay/owner", &[("passphrase", nodo_ui_core::mock::MOCK_PASSPHRASE)]).await;
+    let owner = browser.get("/apps/moneropay/owner").await;
+    owner.assert_has("Pingers setup");
+    check("an app's setup page", &owner);
+    // The suite's review.
+    browser.post("/apps/get/official/sample-tool-01/install", &[]).await;
+    check("a suite", &browser.get("/apps/get/bundle").await);
+    // The radios: a network and a device that are not listed, then both radios off.
+    let network = "/system/network";
+    browser.get(network).await;
+    let no_network = browser.post_then(network, &[("do", "join"), ("ssid", "made-up")]).await;
+    no_network.assert_has("Look for networks first.");
+    assert_eq!(no_network.body.matches(r#"value="scan-wifi">Look for networks</button>"#).count(), 2, "{}", no_network.body);
+    check("no such network", &no_network);
+    check("no such device", &browser.post_then(network, &[("do", "device"), ("address", "FF:FF:FF:FF:FF:FF")]).await);
+    browser.post_then(network, &[("do", "wifi")]).await;
+    browser.post_then(network, &[("do", "bluetooth")]).await;
+    let wifi_off = browser.post_then(network, &[("do", "join"), ("ssid", "home-5G")]).await;
+    wifi_off.assert_has("Wi-Fi is off.").assert_has(r#"<button class="btn" type="submit" name="do" value="wifi">Turn Wi-Fi on</button>"#);
+    check("Wi-Fi off", &wifi_off);
+    let scan_off = browser.post_then(network, &[("do", "scan-bluetooth")]).await;
+    scan_off.assert_has("Turn it on first.").assert_has(r#"value="bluetooth">Turn Bluetooth on</button>"#);
+    check("Bluetooth off", &scan_off);
+    let pair_off = browser.post_then(network, &[("do", "device"), ("address", "AA:BB:CC:00:00:01")]).await;
+    pair_off.assert_has("Bluetooth is off.").assert_has("Turn Bluetooth on");
+    check("pairing with Bluetooth off", &pair_off);
+    check("scanning with Wi-Fi off", &browser.post_then(network, &[("do", "scan-wifi")]).await);
+}
+
 #[tokio::test]
 async fn a_path_that_is_no_page_is_not_served() {
     let app = App::new();

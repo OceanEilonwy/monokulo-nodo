@@ -179,6 +179,9 @@ pub struct Stash {
     pub network: Option<Network>,
     /// When the radios were last asked, on the state's clock.
     pub network_asked: Duration,
+    /// The radio the last action on the Network page was about, for a refusal that says to
+    /// turn it on.
+    pub network_radio: Option<crate::hints::Radio>,
     /// A suite of apps being installed together: the review the helper gave, which is the only
     /// one ever sent back to it, the data drive choices and the answers.
     pub bundle: Option<Bundle>,

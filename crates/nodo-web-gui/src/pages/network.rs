@@ -21,6 +21,7 @@ use nodo_ui_core::screen::Tab;
 use crate::core_wishlist::typed_secret;
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
+use crate::hints::{self, Radio};
 use crate::layout::{self, Page};
 use crate::runner::{follow_plain, Reply};
 
@@ -189,12 +190,20 @@ fn status(flow: &Network) -> Markup {
     }
 }
 
-fn page(flow: &Network) -> Page {
+fn page(flow: &Network, radio: Radio) -> Page {
     let here = dest::NETWORK;
     let body = html! {
         h1 { "Network" }
         p.lead { "The cable works by itself. Wi-Fi and Bluetooth stay off until you turn them on here." }
-        @if let Some(error) = &flow.error { p.notice.error { "✕ " (error) } }
+        @if let Some(error) = &flow.error {
+            p.notice.error { "✕ " (error) }
+            // What the refusal points at, as the button that does it.
+            @if let Some((action, words)) = flow.error_hint().and_then(|hint| hints::network_button(hint, radio)) {
+                form.actions method="post" action=(here) {
+                    button.btn type="submit" name="do" value=(action) { (words) }
+                }
+            }
+        }
         @if let Some(prompt) = &flow.prompt {
             // The network chosen is the flow's; the form carries only its passphrase.
             section.card.attn #wifi-prompt {
@@ -226,7 +235,8 @@ pub async fn show(ctx: Ctx) -> Response {
         if reply.login_required {
             return Out::Reply(reply);
         }
-        let shown = page(&flow);
+        let radio = work.session.inner().stash.network_radio.unwrap_or(Radio::Wifi);
+        let shown = page(&flow, radio);
         // What the last action had to say is said once.
         flow.error = None;
         keep(work, &flow);
@@ -266,7 +276,10 @@ pub async fn act(ctx: Ctx, Form(form): Form<Posted>) -> Response {
             let _read = read_radios(work, &mut flow);
         }
         let (ssid, address) = (posted(&form, "ssid"), posted(&form, "address"));
-        let step = match posted(&form, "do") {
+        let action = posted(&form, "do");
+        let radio = if matches!(action, "bluetooth" | "scan-bluetooth" | "device" | "remove-device") { Radio::Bluetooth } else { Radio::Wifi };
+        work.session.inner().stash.network_radio = Some(radio);
+        let step = match action {
             "wifi" => flow.toggle_wifi(),
             "scan-wifi" => Step::run(flow.scan_wifi()),
             "join" => flow.join(ssid),

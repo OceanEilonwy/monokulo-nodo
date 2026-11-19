@@ -180,7 +180,10 @@ async fn bluetooth_devices_are_paired_and_removed_and_the_radios_are_polled_quie
     let paired = browser.post_then(NETWORK, &[("do", "device"), ("address", "AA:BB:CC:00:00:03")]).await;
     paired.assert_has("Paired with Kitchen Speaker. It is trusted and connected.");
     // A device that is not listed is not asked for.
-    browser.post_then(NETWORK, &[("do", "device"), ("address", "FF:FF:FF:FF:FF:FF")]).await.assert_has("Put the device in its pairing mode first.");
+    // The refusal comes with the button that does what it points at, and names no key.
+    let refused = browser.post_then(NETWORK, &[("do", "device"), ("address", "FF:FF:FF:FF:FF:FF")]).await;
+    refused.assert_has("Look for devices first, with the device in its pairing mode.").assert_lacks("Press s");
+    assert_eq!(refused.body.matches(r#"name="do" value="scan-bluetooth">Look for devices</button>"#).count(), 2, "{}", refused.body);
 
     assert_eq!(browser.post(NETWORK, &[("do", "remove-device"), ("address", "AA:BB:CC:00:00:03")]).await.location(), "/confirm");
     let removed = confirm(&mut browser, "Remove Kitchen Speaker?").await;

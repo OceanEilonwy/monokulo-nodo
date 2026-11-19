@@ -163,6 +163,10 @@ fn detail_page(detail: &PackageDetail, has_site: bool) -> Page {
         section.card {
             p.dim { (facts.join(" · ")) }
             p { (detail.about) }
+            // What the description points at, as the button that does it.
+            @if detail.about_hint == Some(nodo_ui_core::flows::Hint::Install) && !detail.installed {
+                (layout::post(&format!("{here}/install"), "Download and check it", "btn"))
+            }
             @if !asks.is_empty() {
                 h3 { "It will" }
                 ul.bullets { @for ask in &asks { li { span.dim aria-hidden="true" { "·" } span { (ask) } } } }

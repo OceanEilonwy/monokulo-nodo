@@ -32,6 +32,7 @@ pub mod clock;
 pub mod core_wishlist;
 pub mod ctx;
 pub mod dest;
+pub mod hints;
 pub mod layout;
 pub mod pages;
 pub mod router;

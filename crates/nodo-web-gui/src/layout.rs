@@ -169,7 +169,7 @@ pub fn notice(notice: &Notice) -> Markup {
         NoticeKind::Ok => ("notice ok", "✓"),
         NoticeKind::Error => ("notice error", "✕"),
     };
-    html! { p class=(class) { span.sign aria-hidden="true" { (sign) } span { (notice.text) } } }
+    html! { p class=(class) { span.sign aria-hidden="true" { (sign) } span { (notice.text) (crate::hints::linked(notice.hint)) } } }
 }
 
 /// A form of one button that posts to `action`. `class` is the button's look: `"btn"`,
