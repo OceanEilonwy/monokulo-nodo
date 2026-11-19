@@ -79,10 +79,12 @@ pub enum ScreenId {
     Bundle,
     /// An app's setup checklist for the owner.
     OwnerPage,
+    /// The web GUI: what it is, where it answers, and its switch.
+    WebGui,
 }
 
 impl ScreenId {
-    pub const ALL: [ScreenId; 39] = [
+    pub const ALL: [ScreenId; 40] = [
         ScreenId::Main,
         ScreenId::Search,
         ScreenId::Detail,
@@ -122,6 +124,7 @@ impl ScreenId {
         ScreenId::System,
         ScreenId::Bundle,
         ScreenId::OwnerPage,
+        ScreenId::WebGui,
     ];
 
     /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
@@ -167,6 +170,7 @@ impl ScreenId {
             ScreenId::System => "system",
             ScreenId::Bundle => "bundle",
             ScreenId::OwnerPage => "owner",
+            ScreenId::WebGui => "webgui",
         }
     }
 

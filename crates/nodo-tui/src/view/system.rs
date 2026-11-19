@@ -8,7 +8,7 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
-use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState};
+use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState, WebGuiState};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::screen::Tab;
@@ -65,6 +65,55 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
     parts.blank(t);
     cards.push(parts);
     screen.stack(t, cards, "Keys: ↑↓ choose  ↵ open  1-4 tabs", w, h)
+}
+
+/// System › Web GUI: what it is, what turning it on means, where it answers and how a browser
+/// comes to trust that address, and its switch.
+pub fn web_gui(app: &App, t: &Theme, state: &WebGuiState) -> Page {
+    use nodo_ui_core::flows::web::certs::Trust;
+    use nodo_ui_core::flows::web_gui::{trust_lines, WebGui, ABOUT, SECURITY};
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::System, w);
+    let mut before_targets = Vec::new();
+    screen.before = system_trail(t, &["Web GUI"], &mut before_targets);
+    screen.targets.extend(before_targets);
+    let status = WebGui::status(&app.data);
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    let mut head = vec![t.b(pad("Web GUI", 15))];
+    head.extend(toggle(t, status.is_some_and(|status| status.enabled)));
+    match status {
+        _ if state.flow.busy => head.push(t.d("   Working…")),
+        Some(status) if status.waiting => head.push(t.a("   waiting for the local address")),
+        Some(status) => head.extend(status.url.iter().map(|url| t.o(format!("   {url}")))),
+        None => head.push(t.d("   The Nodo did not say whether it is on.")),
+    }
+    card.row(t, head);
+    card.blank(t);
+    for line in ABOUT {
+        card.row(t, vec![t.n(line)]);
+    }
+    card.blank(t);
+    for line in SECURITY {
+        card.row(t, vec![t.a("▲  "), t.n(line)]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d(pad("Address", 15)), t.b(nodo_api::WEBGUI_URL)]);
+    let trust = Trust::of(&app.data);
+    match &trust.fingerprint {
+        Some(_) => {
+            for (index, line) in trust.fingerprint_lines().into_iter().enumerate() {
+                card.row(t, vec![t.d(pad(if index == 0 { "Local CA" } else { "" }, 15)), t.b(line)]);
+            }
+        }
+        None => card.row(t, vec![t.d(pad("Local CA", 15)), t.d("Not created yet. It is made when the web GUI or a local site first needs it.")]),
+    }
+    for line in trust_lines(trust.url.as_deref()) {
+        card.row(t, vec![t.d(line)]);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), (WebGui::switch_label(&app.data), true, Click::Key(KeyCode::Enter))]);
+    screen.card(t, card, "Keys: ↵ turn it on or off  r read again  Esc back", w, h)
 }
 
 /// One review page for the Nodo and the apps.

@@ -41,6 +41,12 @@ pub fn load_snapshot<T: Backend + ScreenData + ?Sized>(backend: &mut T) -> Resul
         unavailable: backend.unavailable(),
         system_note: backend.system_note(),
         owner_pages: backend.owner_pages(),
+        // Asked last, and never a reason to fail the read: a helper that does not know the
+        // request leaves it unknown.
+        web_gui: match backend.call(Request::WebGuiStatus) {
+            Ok(Response::WebGui(status)) => Some(status),
+            _ => None,
+        },
     })
 }
 
@@ -74,6 +80,14 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
         Effect::LoadOwnerPage { package, passphrase } => {
             let result = backend.owner_page(&package, &passphrase);
             vec![Outcome::OwnerPageLoaded { package, result }]
+        }
+        Effect::SetWebGui(enabled) => {
+            let result = match backend.call(Request::SetWebGui(enabled)) {
+                Ok(Response::WebGui(status)) => Ok(status),
+                Ok(other) => Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
+                Err(error) => Err(error),
+            };
+            vec![Outcome::WebGuiSet { enabled, result }, refresh(backend)]
         }
         Effect::Refresh => vec![refresh(backend)],
         Effect::Start(id) => service_command(backend, Request::StartService { id }),

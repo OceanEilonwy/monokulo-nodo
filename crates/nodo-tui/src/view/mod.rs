@@ -101,6 +101,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Restore(state) => v3::modern(app, t, more::restore(app, t, state)),
         Screen::Rollbacks(state) => v3::modern(app, t, more::rollbacks(t, state)),
         Screen::Network(state) => v3::modern(app, t, network::network(t, state)),
+        Screen::WebGui(state) => system::web_gui(app, t, state),
     };
     for (index, note) in notes(app, t).into_iter().enumerate() {
         page.footer.insert(index, note);

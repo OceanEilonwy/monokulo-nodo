@@ -310,6 +310,8 @@ pub enum Confirm {
     WifiOff,
     /// Unpairs and forgets a Bluetooth device, by address.
     RemoveBluetooth(String),
+    /// Turns the web GUI on, so the device passphrase can be tried from the home network.
+    WebGuiOn,
 }
 
 impl Confirm {
@@ -355,6 +357,7 @@ impl Confirm {
             Confirm::WifiOff => Step::Run(vec![Effect::SetWifi(false)]),
             Confirm::RemoveBluetooth(address) => Step::Run(vec![Effect::RemoveBluetooth(address.clone())]),
             Confirm::RemoveProvider(id) => Step::Run(vec![Effect::RemoveProvider(id.clone())]),
+            Confirm::WebGuiOn => Step::Run(vec![Effect::SetWebGui(true)]),
         }
     }
 }

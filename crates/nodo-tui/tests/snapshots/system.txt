@@ -17,11 +17,11 @@
 
          Network           Cable, Wi-Fi and Bluetooth                                      ›
 
+         Web GUI           Off                                                             ›
+
          Device logs       What the Nodo and its apps have been doing                      ›
 
          About this Nodo   SSD 412 GB of 1.9 TB · System 0.4 GB of 7.6 GB                  ›
-
-
 
 
 

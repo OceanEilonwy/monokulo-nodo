@@ -127,7 +127,7 @@ pub fn health_line(snapshot: &Snapshot) -> String {
 }
 
 /// The rows of the System page, in order.
-pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
+pub const SYSTEM_ROWS: [&str; 6] = ["Updates", "Backups", "Network", "Web GUI", "Device logs", "About this Nodo"];
 
 /// The update of the Nodo itself, when one is offered and not held back.
 pub fn nodo_update(snapshot: &Snapshot) -> Option<&UpdateItem> {
@@ -157,6 +157,10 @@ pub fn system_row_summary(snapshot: &Snapshot, row: &str) -> String {
         }
         "Backups" => "Make one now, or on a schedule".to_owned(),
         "Network" => "Cable, Wi-Fi and Bluetooth".to_owned(),
+        "Web GUI" => match &snapshot.web_gui {
+            Some(status) => web_gui_summary(status),
+            None => "These pages in a browser on the home network".to_owned(),
+        },
         "Device logs" => "What the Nodo and its apps have been doing".to_owned(),
         _ => snapshot.overview.device.iter().take(2).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(" · "),
     }

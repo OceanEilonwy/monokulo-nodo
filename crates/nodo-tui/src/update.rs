@@ -318,6 +318,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
         ScreenId::Onion => more::onion_key(app, key),
+        ScreenId::WebGui => web_gui_key(app, key),
         ScreenId::Restore => more::restore_key(app, key),
         ScreenId::Rollbacks => more::rollbacks_key(app, key),
         ScreenId::Network => net::network_key(app, key),
@@ -437,6 +438,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             "Updates" => return open_updates(app),
             "Backups" => return open_backups(app),
             "Network" => return net::open_network(app),
+            "Web GUI" => push(app, Screen::WebGui(WebGuiState::default())),
             "Device logs" => return open_device_logs(app),
             _ => {
                 app.overlay = Some(Overlay { doc: documents::about(&app.data), scroll: 0 });
@@ -446,6 +448,23 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('k') => {
             return open_ssh_keys(app);
         }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// System › Web GUI: its switch, reading the device again, and the way back.
+fn web_gui_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::WebGui(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => pop(app),
+        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('o') => {
+            let step = state.flow.toggle(&app.data);
+            return follow(app, step);
+        }
+        KeyCode::Char('r') => return vec![Effect::Refresh],
         _ => {}
     }
     Vec::new()
@@ -554,6 +573,7 @@ fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
         Screen::Rollbacks(state) => state.flow.confirmed(&confirm),
         Screen::Network(state) => state.confirmed(&confirm),
         Screen::Setup(state) => state.flow.confirmed(&confirm),
+        Screen::WebGui(state) => state.flow.confirmed(&confirm),
         _ => {}
     }
     let step = confirm.step(&app.data);
@@ -1884,6 +1904,14 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
         | Outcome::RestoreBackups(_)
         | Outcome::RestoreInspected(_)
         | Outcome::RestoreFinished(_) => return more::on_result(app, event),
+        Outcome::WebGuiSet { .. } => {
+            // Said wherever the owner is by now; the page, if it is still shown, stops waiting.
+            let step = match &mut app.screen {
+                Screen::WebGui(state) => state.flow.apply(&event),
+                _ => nodo_ui_core::flows::web_gui::WebGui::new().apply(&event),
+            };
+            return follow(app, step);
+        }
         Outcome::RollbacksLoaded(_) | Outcome::RolledBack(_) => {
             if let Screen::Rollbacks(state) = &mut app.screen {
                 let step = state.flow.apply(&event);

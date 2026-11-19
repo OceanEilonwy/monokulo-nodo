@@ -41,7 +41,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 39, "every screen in the four tabs");
+    assert_eq!(ScreenId::ALL.len(), 40, "every screen in the four tabs");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -64,7 +64,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::Apps => &["Installed", "Get apps ›", "cuprated", "Update ready", "Keeps stopping"],
         ScreenId::AppPage => &["Apps  ›  moneropay", "Restart", "Remove…", "is ready", "Update", "Hosting", "Settings", "Logs"],
         ScreenId::AppRemove => &["Remove moneropay?", "Its data stays on the drive", "Cancel", "Remove moneropay"],
-        ScreenId::System => &["This Nodo", "A Nodo update is ready", "Review", "Updates", "Backups", "Network", "Device logs"],
+        ScreenId::System => &["This Nodo", "A Nodo update is ready", "Review", "Updates", "Backups", "Network", "Web GUI", "Device logs"],
+        ScreenId::WebGui => &["System  ›  Web GUI", "[x] On", "https://nodo.local", "Local CA", "can try the device passphrase", "Turn it off"],
         ScreenId::Search => &["Apps  ›  Get apps", "Search", "Sources ›", "moneropay", "apps match"],
         ScreenId::Detail => &["Apps  ›  Get apps  ›  moneropay", "It will:", "Install"],
         ScreenId::Review => &["Install wallet-relay?", "a source you added", "It will be able to:", "Cancel", "Install"],

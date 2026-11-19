@@ -10,6 +10,7 @@ use nodo_ui_core::screen::Tab;
 
 use super::document_page;
 use nodo_ui_core::words::nodo_update_note;
+use nodo_ui_core::flows::web_gui::{ABOUT, SECURITY};
 use nodo_ui_core::words::{nodo_update, system_row_summary, SYSTEM_ROWS};
 use crate::ctx::{Ctx, Out};
 use crate::dest;
@@ -32,7 +33,9 @@ fn web_gui_card(status: Option<&WebGuiStatus>) -> Markup {
                 },
                 None => p.dim { "The Nodo did not say whether it is on." },
             }
-            p.dim.small { "These pages are turned on and off over SSH: " span.mono { "nodo-tui --ctl web-gui 0|1" } }
+            @for line in ABOUT { p.dim { (line) } }
+            @for line in SECURITY { p.dim { span.warn aria-hidden="true" { "▲ " } (line) } }
+            p.dim.small { "These pages are turned on and off over SSH: in nodo-tui under System › Web GUI, or with " span.mono { "nodo-tui --ctl web-gui 0|1" } "." }
         }
     }
 }
@@ -57,6 +60,8 @@ fn page(snapshot: &Snapshot, web_gui: Option<&WebGuiStatus>) -> Page {
                         "Updates" => (layout::row(dest::UPDATES, name, &summary, html! {})),
                         "Backups" => (layout::row(dest::BACKUPS, name, &summary, html! {})),
                         "Network" => (layout::row(dest::NETWORK, name, &summary, html! {})),
+                        // Its card is below: the state, and no switch.
+                        "Web GUI" => {},
                         "Device logs" => (layout::row(dest::LOGS, name, &summary, html! {})),
                         "About this Nodo" => (layout::row(dest::ABOUT, name, &summary, html! {})),
                         // A row the core adds later says so until it has a page here.

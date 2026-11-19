@@ -738,7 +738,9 @@ impl Manage {
             | Outcome::RestoreInspected(_)
             | Outcome::RestoreFinished(_)
             | Outcome::BundleInstalled(_)
-            | Outcome::OwnerPageLoaded { .. } => Step::Stay,
+            | Outcome::OwnerPageLoaded { .. }
+            // The web GUI's switch is not offered on the screen: the helper refuses it here.
+            | Outcome::WebGuiSet { .. } => Step::Stay,
         }
     }
 
@@ -2878,6 +2880,8 @@ impl Manage {
                 link("open:logs:", "Device logs", "", "", 0),
                 link("open:ssh", "SSH keys", "", "", 0),
                 link("open:screen", "Screen", if self.screen.pin_set { "Screen PIN set" } else { "No screen PIN" }, "", 0),
+                // Shown, not changed here: it is turned on and off over SSH.
+                line("Web GUI", words::system_row_summary(snap, "Web GUI")),
             ],
         ));
         Page { crumbs: Vec::new(), title: "System".into(), actions: Vec::new(), cards }

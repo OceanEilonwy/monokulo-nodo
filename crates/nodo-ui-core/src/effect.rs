@@ -131,6 +131,8 @@ pub enum Effect {
     },
     /// Fetches an app's setup page with the device passphrase.
     LoadOwnerPage { package: String, passphrase: Secret },
+    /// Turns the web GUI on or off. Only the main socket takes it.
+    SetWebGui(bool),
 }
 
 impl Effect {
@@ -231,6 +233,8 @@ pub enum Outcome {
     BluetoothChanged { result: Result<nodo_api::BluetoothStatus, String>, quiet: bool },
     BundleInstalled(Result<nodo_api::BundleReport, String>),
     OwnerPageLoaded { package: String, result: Result<nodo_api::OwnerPageView, ApiError> },
+    /// What the web GUI's switch came to: what was asked for, and how the web GUI stands now.
+    WebGuiSet { enabled: bool, result: Result<nodo_api::WebGuiStatus, ApiError> },
 }
 
 /// The USB drive the backup screen shows: the first one plugged in, with its backups when it

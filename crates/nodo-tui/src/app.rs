@@ -262,6 +262,13 @@ impl std::ops::DerefMut for BackupState {
     }
 }
 
+/// System › Web GUI. Whether it is on is in the device's snapshot; what the switch does and
+/// asks first is the core's `WebGui`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebGuiState {
+    pub flow: nodo_ui_core::flows::web_gui::WebGui,
+}
+
 /// The onion page: the chosen row./// The onion page: the chosen row. What Tor reports and what each switch does are the core's
 /// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1052,6 +1059,7 @@ pub enum Screen {
     Setup(SetupState),
     Backup(BackupState),
     Onion(OnionState),
+    WebGui(WebGuiState),
     Restore(RestoreState),
     Rollbacks(RollbacksState),
     Network(NetworkState),
@@ -1221,6 +1229,7 @@ impl Screen {
             Screen::Setup(_) => ScreenId::Setup,
             Screen::Backup(_) => ScreenId::Backup,
             Screen::Onion(_) => ScreenId::Onion,
+            Screen::WebGui(_) => ScreenId::WebGui,
             Screen::Restore(_) => ScreenId::Restore,
             Screen::Rollbacks(_) => ScreenId::Rollbacks,
             Screen::Network(_) => ScreenId::Network,
@@ -1257,6 +1266,7 @@ impl Screen {
             | Screen::UpdateResults(_)
             | Screen::Rollbacks(_)
             | Screen::Backup(_)
+            | Screen::WebGui(_)
             | Screen::Network(_) => Tab::System,
             Screen::Logs(state) if state.app.is_none() => Tab::System,
             _ => Tab::Apps,

@@ -51,6 +51,8 @@ fn place(screen: ScreenId) -> Result<&'static str, &'static str> {
         ScreenId::System => "/system",
         ScreenId::Bundle => "/apps/get/bundle",
         ScreenId::OwnerPage => "/apps/moneropay/owner",
+        // What it is and whether it is on, without the switch: the helper refuses it from here.
+        ScreenId::WebGui => "/system",
         ScreenId::Restore => return Err("first boot only: the web GUI cannot be turned on before the device is set up. Restoring onto a set-up device is on the Backups page"),
         ScreenId::Setup => return Err("its passphrase steps are first boot only; its SSH keys step is /system/keys, checked on its own below"),
     })
@@ -96,6 +98,9 @@ async fn every_screen_of_the_terminal_interface_has_a_page_or_a_reason() {
     // The web GUI's own switch: shown, not offered.
     let system = browser.get("/system").await;
     system.assert_has("Web GUI").assert_has("nodo-tui --ctl web-gui 0|1").assert_lacks("set-web-gui");
+    // What it is, as the terminal's page says it, and no switch.
+    system.assert_has("The same pages as here, in a browser on your home network.").assert_has("can try the device passphrase");
+    system.assert_has("System › Web GUI").assert_lacks("Turn it off").assert_lacks("Turn it on");
 }
 
 /// Pages that are no `ScreenId` of their own, walked as well.

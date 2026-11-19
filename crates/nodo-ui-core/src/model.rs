@@ -987,6 +987,9 @@ pub struct Snapshot {
     pub system_note: Option<String>,
     /// Installed apps with a setup page for the owner, and its title, such as ("pingers", "Setup").
     pub owner_pages: Vec<(String, String)>,
+    /// The web GUI: whether the owner turned it on and where it answers. `None` when the helper
+    /// did not say.
+    pub web_gui: Option<nodo_api::WebGuiStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

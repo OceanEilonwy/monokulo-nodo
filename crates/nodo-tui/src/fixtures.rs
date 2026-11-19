@@ -39,6 +39,10 @@ pub fn fixture(id: ScreenId) -> (App, MockBackend) {
         shop.renewed = None;
         shop.issuer = String::new();
     }
+    // Its own page is shown turned on, with the address it answers at.
+    if id == ScreenId::WebGui {
+        mock.web_gui.enabled.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     let mut app = App::new();
     app.data = load_snapshot(&mut mock).expect("the mock always answers");
     mock.calls.clear();
@@ -104,6 +108,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::Network(state)
         }
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
+        ScreenId::WebGui => Screen::WebGui(WebGuiState::default()),
         ScreenId::Onion => Screen::Onion(OnionState {
             flow: Onion { status: Some(mock.onion_status()), error: None, busy: false },
             selected: 0,

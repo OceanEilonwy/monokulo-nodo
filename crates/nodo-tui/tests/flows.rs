@@ -2946,3 +2946,134 @@ fn a_name_twice_or_another_sites_name_is_refused_on_the_spot() {
     assert!(hosting(&app).alias_error.as_deref().is_some_and(|e| e.contains("main address")), "{:?}", hosting(&app).alias_error);
     assert_eq!(hosting(&app).aliases.len(), 1);
 }
+
+// Web GUI
+
+fn open_web_gui() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)));
+    assert_eq!(app.screen.id(), ScreenId::System);
+    let row = nodo_ui_core::words::SYSTEM_ROWS.iter().position(|row| *row == "Web GUI").expect("a row of System");
+    for _ in 0..row {
+        key(&mut app, &mut mock, DOWN);
+    }
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::WebGui);
+    (app, mock)
+}
+
+fn web_gui_calls(mock: &MockBackend) -> Vec<bool> {
+    mock.calls.iter().filter_map(|call| if let Request::SetWebGui(on) = call { Some(*on) } else { None }).collect()
+}
+
+#[test]
+fn system_has_a_row_for_the_web_gui_that_says_how_it_stands() {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)));
+    let row = |app: &App| screen_text(app).lines().find(|line| line.contains("Web GUI")).map(str::to_owned).expect("the row");
+    assert!(row(&app).contains("Off"), "{}", row(&app));
+
+    // On, as the device reports it after the next read.
+    assert!(mock.call(Request::SetWebGui(true)).is_ok());
+    for event in execute_effect(&mut mock, Effect::Refresh) {
+        dispatch(&mut app, &mut mock, Event::Done(event));
+    }
+    assert!(row(&app).contains("On · https://nodo.local"), "{}", row(&app));
+
+    // On, but the device has no address on the home network yet.
+    mock.knobs.web_gui_waiting = true;
+    for event in execute_effect(&mut mock, Effect::Refresh) {
+        dispatch(&mut app, &mut mock, Event::Done(event));
+    }
+    assert!(row(&app).contains("On · waiting for the local address"), "{}", row(&app));
+}
+
+#[test]
+fn the_web_gui_page_explains_it_and_shows_where_it_answers() {
+    let (app, mock) = open_web_gui();
+    let screen = screen_text(&app);
+    assert!(screen.contains("System  ›  Web GUI"), "{screen}");
+    assert!(screen.contains("[ ] Off"), "{screen}");
+    assert!(screen.contains("You log in with the device passphrase."), "{screen}");
+    assert!(screen.contains("anyone on your home network can try the device passphrase"), "{screen}");
+    assert!(screen.contains("https://nodo.local") && screen.contains("Local CA"), "{screen}");
+    assert!(screen.contains("3F:9A:21:C4") && screen.contains("shows this same fingerprint"), "{screen}");
+    assert!(screen.contains("Turn it on…"), "{screen}");
+    assert!(web_gui_calls(&mock).is_empty(), "opening the page changes nothing");
+}
+
+#[test]
+fn turning_the_web_gui_on_asks_first_with_the_safe_answer_focused() {
+    let (mut app, mut mock) = open_web_gui();
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.as_ref().expect("asks first");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert_eq!(modal.question.title, "Turn the web GUI on?");
+    assert!(modal.body.iter().any(|line| line.contains("can try the device passphrase")), "{:?}", modal.body);
+    // Enter on Cancel does nothing, and neither does Esc.
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none() && web_gui_calls(&mock).is_empty());
+    keys(&mut app, &mut mock, &[ENTER, KeyCode::Esc]);
+    assert!(app.modal.is_none() && web_gui_calls(&mock).is_empty());
+    assert_eq!(app.screen.id(), ScreenId::WebGui, "Esc closed the question, not the page");
+
+    // Confirmed: sent to the helper, and the page shows the address.
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[x] On") && screen.contains("Turn it off"), "{screen}");
+    assert!(screen.contains("The web GUI is on at https://nodo.local."), "{screen}");
+    let Screen::WebGui(state) = &app.screen else { panic!("still on its page") };
+    assert!(!state.flow.busy);
+}
+
+#[test]
+fn turning_the_web_gui_off_does_not_ask() {
+    let (mut app, mut mock) = open_web_gui();
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "off needs no question");
+    assert_eq!(web_gui_calls(&mock), [true, false]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[ ] Off") && screen.contains("Turn it on…"), "{screen}");
+    assert!(screen.contains("The web GUI is off. Every browser was logged out."), "{screen}");
+    // Back on System, the row says the same.
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::System);
+    assert!(screen_text(&app).lines().any(|line| line.contains("Web GUI") && line.contains("Off")));
+}
+
+#[test]
+fn the_web_gui_waits_for_the_local_address_and_says_so() {
+    let (mut app, mut mock) = open_web_gui();
+    mock.knobs.web_gui_waiting = true;
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[x] On") && screen.contains("waiting for the local address"), "{screen}");
+    assert!(screen.contains("It waits for the Nodo's address on the home network."), "{screen}");
+}
+
+#[test]
+fn the_web_gui_cannot_be_turned_on_before_the_passphrase_is_set_up() {
+    let (mut app, mut mock) = open_web_gui();
+    // A device whose passphrase is not chosen yet.
+    mock.setup_needed = true;
+    app.data.overview.setup_needed = true;
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "nothing to ask");
+    assert!(web_gui_calls(&mock).is_empty());
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up the device passphrase first: the web GUI logs in with it."), "{screen}");
+    assert!(screen.contains("[ ] Off"), "{screen}");
+
+    // The helper refuses it too, when the snapshot the page holds is behind.
+    app.data.overview.setup_needed = false;
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up the device passphrase first"), "{screen}");
+    assert!(!mock.web_gui.enabled.load(std::sync::atomic::Ordering::SeqCst));
+}
