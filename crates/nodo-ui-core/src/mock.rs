@@ -150,8 +150,8 @@ pub struct MockBackend {
     job: Option<InstallJob>,
     /// The screen PIN was given, while `knobs.screen_pin` plays the touchscreen's socket.
     screen_unlocked: bool,
-    /// The last refusal for want of an unlock, as `HelperBackend` notes it.
-    refused: Option<ApiError>,
+    /// The refusals for want of an unlock, each once, as `HelperBackend` notes them.
+    refused: Vec<ApiError>,
 }
 
 impl Default for MockBackend {
@@ -264,14 +264,16 @@ impl MockBackend {
             bundle_installs: Vec::new(),
             job: None,
             screen_unlocked: false,
-            refused: None,
+            refused: Vec::new(),
         }
     }
 
-    /// Refuses for want of an unlock, and notes it for `take_refusal`.
+    /// Refuses for want of an unlock, and notes it for `take_refusals`.
     fn refuse(&mut self, reason: &str) -> ApiError {
         let refusal = ApiError::Locked(reason.to_owned());
-        self.refused = Some(refusal.clone());
+        if !self.refused.contains(&refusal) {
+            self.refused.push(refusal.clone());
+        }
         refusal
     }
 
@@ -783,8 +785,8 @@ impl ScreenData for MockBackend {
         self.knobs.capabilities
     }
 
-    fn take_refusal(&mut self) -> Option<ApiError> {
-        self.refused.take()
+    fn take_refusals(&mut self) -> Vec<ApiError> {
+        std::mem::take(&mut self.refused)
     }
 
     fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {

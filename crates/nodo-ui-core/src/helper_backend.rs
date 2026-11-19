@@ -27,8 +27,8 @@ pub struct HelperBackend {
     /// The most recent read-only drive check, which a repair must quote.
     drive_check: Cell<Option<u64>>,
     pub(crate) manage: RefCell<crate::helper_manage::Cache>,
-    /// The last refusal for want of an unlock, until `take_refusal` asks for it.
-    refused: RefCell<Option<ApiError>>,
+    /// The refusals for want of an unlock, each once, until `take_refusals` asks for them.
+    refused: RefCell<Vec<ApiError>>,
 }
 
 fn origin_label(origin: &Origin) -> String {
@@ -305,7 +305,7 @@ impl HelperBackend {
             unavailable: RefCell::new(Vec::new()),
             drive_check: Cell::new(None),
             manage: RefCell::new(crate::helper_manage::Cache::default()),
-            refused: RefCell::new(None),
+            refused: RefCell::new(Vec::new()),
         })
     }
 
@@ -314,7 +314,11 @@ impl HelperBackend {
     pub(crate) fn ask(&self, request: Request) -> Result<Response, ApiError> {
         let result = self.client.borrow_mut().call(request);
         if let Err(refusal @ ApiError::Locked(_)) = &result {
-            *self.refused.borrow_mut() = Some(refusal.clone());
+            // Each once: nothing may ever ask for them, and the helper has few such answers.
+            let mut refused = self.refused.borrow_mut();
+            if !refused.contains(refusal) {
+                refused.push(refusal.clone());
+            }
         }
         result
     }
@@ -372,8 +376,8 @@ impl ScreenData for HelperBackend {
         Self::CAPABILITIES
     }
 
-    fn take_refusal(&mut self) -> Option<ApiError> {
-        self.refused.borrow_mut().take()
+    fn take_refusals(&mut self) -> Vec<ApiError> {
+        std::mem::take(&mut *self.refused.borrow_mut())
     }
 
     fn overview(&self) -> Overview {

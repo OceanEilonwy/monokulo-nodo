@@ -492,8 +492,8 @@ enum ToWorker {
 
 enum FromWorker {
     Outcomes(Vec<Outcome>),
-    /// The batch is over, with the refusal for want of an unlock that the helper gave during it.
-    BatchDone(Option<ApiError>),
+    /// The batch is over, with the refusals for want of an unlock that the helper gave during it.
+    BatchDone(Vec<ApiError>),
     Called(Result<Response, ApiError>),
 }
 
@@ -501,10 +501,10 @@ enum FromWorker {
 /// ([`EffectWorker::finished`]). They come in the order the work was handed in.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Finished {
-    /// A batch of effects: every outcome, in order, and the last `ApiError::Locked` the helper
-    /// answered while it ran (`ScreenData::take_refusal`). An interface that can lift what was
-    /// locked keeps the effects, and submits them again once it has.
-    Batch { outcomes: Vec<Outcome>, refusal: Option<ApiError> },
+    /// A batch of effects: every outcome, in order, and each different `ApiError::Locked` the
+    /// helper answered while it ran (`ScreenData::take_refusals`). An interface that can lift
+    /// what was locked keeps the effects, and submits them again once it has.
+    Batch { outcomes: Vec<Outcome>, refusals: Vec<ApiError> },
     /// The answer to a request made with [`EffectWorker::call`].
     Reply(Result<Response, ApiError>),
 }
@@ -515,7 +515,7 @@ pub enum Finished {
 /// Results are read one of two ways, and an interface keeps to one: [`EffectWorker::ready`] and
 /// [`EffectWorker::wait_idle`] give outcomes as each effect ends, and
 /// [`EffectWorker::finished`] and [`EffectWorker::wait_finished`] give each batch whole, with
-/// the refusal it met.
+/// the refusals it met.
 pub struct EffectWorker {
     work: Sender<ToWorker>,
     results: Receiver<FromWorker>,
@@ -534,13 +534,13 @@ impl EffectWorker {
                 let done = match job {
                     ToWorker::Batch(batch) => {
                         // A refusal from before this batch is not this batch's.
-                        drop(backend.take_refusal());
+                        drop(backend.take_refusals());
                         run_batch(&mut *backend, batch, |events| {
                             // Fails only once the screen has gone, and the send below then ends the thread.
                             #[allow(clippy::let_underscore_must_use)]
                             let _ = outbox.send(FromWorker::Outcomes(events));
                         });
-                        FromWorker::BatchDone(backend.take_refusal())
+                        FromWorker::BatchDone(backend.take_refusals())
                     }
                     ToWorker::Call(request) => FromWorker::Called(backend.call(request)),
                 };
@@ -603,9 +603,9 @@ impl EffectWorker {
     fn take_whole(&mut self, message: FromWorker, done: &mut Vec<Finished>) {
         match message {
             FromWorker::Outcomes(more) => self.partial.extend(more),
-            FromWorker::BatchDone(refusal) => {
+            FromWorker::BatchDone(refusals) => {
                 self.in_flight = self.in_flight.saturating_sub(1);
-                done.push(Finished::Batch { outcomes: std::mem::take(&mut self.partial), refusal });
+                done.push(Finished::Batch { outcomes: std::mem::take(&mut self.partial), refusals });
             }
             FromWorker::Called(reply) => {
                 self.in_flight = self.in_flight.saturating_sub(1);
@@ -645,7 +645,7 @@ mod tests {
     use crate::mock::MockBackend;
 
     #[test]
-    fn a_whole_batch_comes_with_the_refusal_it_met_and_a_request_with_its_answer() {
+    fn a_whole_batch_comes_with_the_refusals_it_met_and_a_request_with_its_answer() {
         let mut mock = MockBackend::new();
         mock.knobs.screen_pin = Some("123456".to_owned());
         let mut worker = EffectWorker::spawn(Box::new(mock));
@@ -654,14 +654,14 @@ mod tests {
         // A change on the locked screen: its failure in words, and the refusal as it was typed.
         worker.submit(stop.clone());
         let done = worker.wait_finished(Duration::from_secs(5));
-        let [Finished::Batch { outcomes, refusal }] = done.as_slice() else { panic!("one batch: {done:?}") };
+        let [Finished::Batch { outcomes, refusals }] = done.as_slice() else { panic!("one batch: {done:?}") };
         assert!(matches!(outcomes.as_slice(), [Outcome::Failed(text), Outcome::Refreshed(_)] if text.contains("screen PIN")));
-        assert!(matches!(refusal, Some(ApiError::Locked(_))));
+        assert_eq!(refusals, &[ApiError::Locked("enter the screen PIN to make changes".to_owned())]);
 
         // Something that only reads meets none, and an earlier refusal is not carried over.
         worker.submit(vec![Effect::Refresh]);
         let done = worker.wait_finished(Duration::from_secs(5));
-        assert!(matches!(done.as_slice(), [Finished::Batch { refusal: None, .. }]));
+        assert!(matches!(done.as_slice(), [Finished::Batch { refusals, .. }] if refusals.is_empty()));
 
         // The screen's own request, then the same change again.
         worker.call(Request::ScreenUnlock { pin: nodo_api::Secret::new("123456") });
@@ -670,10 +670,10 @@ mod tests {
         while worker.busy() {
             done.extend(worker.wait_finished(Duration::from_secs(5)));
         }
-        let [Finished::Reply(Ok(Response::Screen(status))), Finished::Batch { outcomes, refusal: None }] = done.as_slice() else {
+        let [Finished::Reply(Ok(Response::Screen(status))), Finished::Batch { outcomes, refusals }] = done.as_slice() else {
             panic!("the answer, then the batch: {done:?}")
         };
-        assert!(status.unlocked);
+        assert!(status.unlocked && refusals.is_empty());
         assert!(matches!(outcomes.as_slice(), [Outcome::Refreshed(_)]));
     }
 

@@ -1117,12 +1117,14 @@ pub trait ScreenData {
         Vec::new()
     }
 
-    /// The last `ApiError::Locked` the helper answered since this was last asked, and forgets it.
-    /// Results reach an interface as text, so this is how one that can do something about a
-    /// refusal for want of an unlock (the built-in screen asks for its PIN and runs the change
-    /// again) learns that it was one. `None` from a backend that keeps no such record.
-    fn take_refusal(&mut self) -> Option<nodo_api::ApiError> {
-        None
+    /// Each different `ApiError::Locked` the helper answered since this was last asked, in the
+    /// order they first came, and forgets them. Results reach an interface as text, so this is
+    /// how one that can do something about a refusal for want of an unlock (the built-in screen
+    /// asks for its PIN and runs the change again) learns that there was one. One call can meet
+    /// several: a change the screen's lock refuses, and then a read the locked device refuses.
+    /// Empty from a backend that keeps no such record.
+    fn take_refusals(&mut self) -> Vec<nodo_api::ApiError> {
+        Vec::new()
     }
 
     fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
