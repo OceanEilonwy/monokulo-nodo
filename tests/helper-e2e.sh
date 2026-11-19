@@ -383,11 +383,14 @@ check "the helper reports the node's height and peers" sh -c '
 	ctl node | tee /tmp/e2e.node; grep -q "provider: \"cuprated\"" /tmp/e2e.node && grep -q "height: 1," /tmp/e2e.node &&
 	grep -q "outgoing_peers: 0" /tmp/e2e.node'
 # The real TUI on a pseudo-terminal. It skips unchanged cells with cursor moves, so the screen
-# is compared with escapes and spaces removed.
-check "Home shows the node's height and peers" sh -c '
-	TERM=xterm script -qc "stty rows 40 cols 120; timeout 10 nodo-tui" /tmp/e2e.tui >/dev/null 2>&1 </dev/null
+# is compared with escapes and spaces removed. timeout needs --foreground: by default it moves the
+# TUI into a process group of its own, which leaves the terminal to the shell, and nodo-tui refuses
+# a terminal another job owns. Height and peers left Home with the four-tab redesign (no screen
+# draws them now; the helper check above covers them); Home lists the node with its state.
+check "Home shows the node running" sh -c '
+	TERM=xterm script -qc "stty rows 40 cols 120; timeout --foreground 10 nodo-tui" /tmp/e2e.tui >/dev/null 2>&1 </dev/null
 	sed "s/\x1b\[[0-9;?]*[a-zA-Z]//g" /tmp/e2e.tui | tr -d " " > /tmp/e2e.tui.txt
-	grep -q "1(synced)" /tmp/e2e.tui.txt && grep -q "0out,0in" /tmp/e2e.tui.txt'
+	grep -q "cupratedRunning·up" /tmp/e2e.tui.txt'
 
 # Exposure, applied for real: Caddy, nftables, the local address, mDNS, Tor and dynamic DNS.
 # The device's main address is 192.168.77.2 on a LAN namespace and 203.0.113.2 towards an internet
@@ -1067,17 +1070,24 @@ for s in nodo-caddy nodo-ddns; do [ -d "/etc/sv/$s" ] && { touch "/etc/sv/$s/dow
 nft -f /etc/nftables.conf
 check "no staging copy is left behind" sh -c '! ls -d /var/lib/nodo/.restore-* 2>/dev/null'
 
-# The real TUI against the real helper: feeds, packages, updates, Home's attention and backups
+# The real TUI against the real helper: feeds, packages, updates, Home's attention and backups.
+# The keys follow the four tabs as tests/tui/journeys.py does: Home first, 2 for Apps, g for Get
+# apps, Ctrl-S for its Sources, and b for System › Backups. Esc four times backs out of any page
+# before a tab's digit, because pages under a tab take their own keys.
+# The TUI skips cells that already hold the right character, so a word on a new screen can lose a
+# letter that the screen before had in the same place. Narrowing the terminal by a column after
+# each move makes it clear and draw the whole screen again.
 
-rm -f /tmp/e2e-tui.out
+rm -f /tmp/e2e-tui.out /tmp/e2e-tui.tty
+back() { printf '\033'; sleep 0.2; printf '\033'; sleep 0.2; printf '\033'; sleep 0.2; printf '\033'; sleep 1; }
+redraw() { sleep 2; stty -F "$(cat /tmp/e2e-tui.tty)" cols "$1"; sleep 2; }
 (
-	sleep 4; printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
-	printf '\t'; sleep 3; printf '\t'; sleep 2; printf '\t'; sleep 3
-	printf 'b'; sleep 3; printf '\033'; sleep 2; printf 'q'; sleep 1
-) | script -qfec 'stty rows 32 cols 100; TERM=xterm-256color nodo-tui' /tmp/e2e-tui.out >/dev/null 2>&1
+	sleep 3; redraw 99; printf '2'; redraw 100; printf 'g'; redraw 99; printf '\023'; redraw 100
+	back; printf '1'; sleep 1; printf 'b'; redraw 99; back; printf 'q'; sleep 1
+) | script -qfec 'stty rows 32 cols 100; tty > /tmp/e2e-tui.tty; TERM=xterm-256color nodo-tui' /tmp/e2e-tui.out >/dev/null 2>&1
 # Unchanged cells are skipped with cursor moves, so spaces are removed before comparing.
 sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Z0-9]//g' /tmp/e2e-tui.out | tr -d ' ' > /tmp/e2e-tui.txt
-for want in "Your feeds" "e2e-feed" "e2e-pay" "Backups on this device" "$bk" "is back and the update is on hold"; do
+for want in "Get apps › Sources" "Where the Nodo finds apps" "e2e-feed" "e2e-pay" "Backups on this device" "$bk" "is back and the update is on hold"; do
 	check "the TUI showed: $want" grep -q "$(printf %s "$want" | tr -d ' ')" /tmp/e2e-tui.txt
 done
 check "the TUI no longer says feeds or updates are not available" sh -c '! grep -q "Not available yet: feeds\|Not available yet: automatic" /tmp/e2e-tui.txt'
