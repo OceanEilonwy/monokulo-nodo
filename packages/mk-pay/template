@@ -6,7 +6,7 @@
 # manifest.toml.
 pkgname=mk-pay
 version=0.1.0pre20261113
-revision=1
+revision=2
 _commit=7d8d458598e04d865b8b37214936efc555893b61
 # Monokulo builds on nightly Rust, unpinned upstream. This is the nightly published the day of
 # _commit, so the toolchain is fixed by date and checksum rather than by whatever is current.

@@ -247,6 +247,66 @@ fn root_admin_path_blocks_the_whole_host() {
 }
 
 #[test]
+fn an_admin_path_with_a_trailing_wildcard_means_the_path_itself() {
+    // mk-pay's manifest writes each admin path twice, plain and with `/*`; nodo-manifest allows both.
+    let mut pay = site("mk-pay", "web", 8081, Exposure { public: true, ..Exposure::default() });
+    pay.service.admin_paths = ["/admin", "/admin/*", "/api/v1/admin", "/api/v1/admin/*", "/status/engine", "/status/engine/*"]
+        .map(str::to_owned)
+        .to_vec();
+    let plan = generate(&[pay], &settings()).expect("mk-pay's admin paths are accepted");
+    let blocked = Outcome::Status("404".into());
+    let served = Outcome::Proxy("127.0.0.1:8081".into());
+    for path in ["/admin", "/admin/", "/admin/stores", "/api/v1/admin/x", "/status/engine", "/status/engine/sync"] {
+        assert_eq!(request(&plan, "public", "web.example.com", path, INTERNET_CLIENT), blocked, "{path}");
+    }
+    for path in ["/", "/api/v1/checkout/abc", "/status", "/administrator"] {
+        assert_eq!(request(&plan, "public", "web.example.com", path, INTERNET_CLIENT), served, "{path}");
+    }
+
+    // On its own, `/admin/*` blocks exactly what `/admin` does.
+    let mut wild = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    wild.service.admin_paths = vec!["/admin/*".to_owned()];
+    let plan = generate(&[wild], &settings()).expect("a trailing /* is accepted");
+    for path in ["/admin", "/admin/users", "/admin;x=1", "/Admin.json"] {
+        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), blocked, "{path}");
+    }
+    assert_eq!(request(&plan, "public", "shop.example.com", "/admins", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+
+    // A bare `/*` is the whole host, as `/` is.
+    let mut all = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
+    all.service.admin_paths = vec!["/*".to_owned()];
+    let plan = generate(&[all], &settings()).expect("/* is accepted");
+    assert_eq!(request(&plan, "public", "shop.example.com", "/any", INTERNET_CLIENT), blocked);
+}
+
+#[test]
+fn every_packaged_site_can_be_published() {
+    // The feed check validates manifests with nodo-manifest; this proves the proxy accepts what that
+    // allows, for each site of each package in the repository, made public with an onion address.
+    let packages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&packages).unwrap() {
+        let file = entry.unwrap().path().join("files/manifest.toml");
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let manifest = nodo_manifest::Manifest::parse(&text.replace("@VERSION@", "1.0"))
+            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        for (index, web) in manifest.web.iter().enumerate() {
+            let mut published = site(&manifest.id, &web.name, 9000 + index as u16, all_exposures());
+            published.service = web.clone();
+            published.onion_host = Some(ONION.to_owned());
+            if !web.multi_address {
+                published.exposure = Exposure { public: true, ..Exposure::default() };
+                published.onion_host = None;
+            }
+            generate(&[published], &settings())
+                .unwrap_or_else(|e| panic!("{} site {} cannot be published: {e}", manifest.id, web.name));
+            checked += 1;
+        }
+    }
+    assert!(checked >= 5, "found only {checked} packaged sites under {}", packages.display());
+}
+
+#[test]
 fn a_host_only_ever_reaches_its_own_upstream() {
     let mut a = site("a", "a", 8001, all_exposures());
     a.onion_host = Some(ONION.to_owned());
