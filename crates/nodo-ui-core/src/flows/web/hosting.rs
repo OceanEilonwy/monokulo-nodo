@@ -271,7 +271,7 @@ impl Hosting {
     ///   and the rest runs only once the helper took them (`Effect::SetPublicHost::then`).
     pub fn save(&self, snapshot: &Snapshot) -> Step {
         let Some(site) = snapshot.web.sites.iter().find(|site| site.package == self.site) else {
-            return Step::Go(Dest::LeaveHosting);
+            return Step::Go(Dest::LeaveHosting { site: self.site.clone() });
         };
         let draft = self.draft;
         let host = self.host();
@@ -465,7 +465,7 @@ mod tests {
             Step::Done(Notice::info("Add a domain provider first, so the internet can use your web address."))
         );
         hosting.site = "gone".into();
-        assert_eq!(hosting.save(&snapshot), Step::Go(Dest::LeaveHosting));
+        assert_eq!(hosting.save(&snapshot), Step::Go(Dest::LeaveHosting { site: "gone".into() }));
     }
 
     #[test]
@@ -483,7 +483,7 @@ mod tests {
                 confirmation: None,
             }])
         );
-        assert_eq!(follow(&mut mock, step), [Step::Go(Dest::LeaveHosting), Step::Done(Notice::ok("Saved."))]);
+        assert_eq!(follow(&mut mock, step), [Step::Go(Dest::LeaveHosting { site: "wallet-relay".into() }), Step::Done(Notice::ok("Saved."))]);
         assert!(exposure(&mut mock, "wallet-relay").local);
 
         let snapshot = load_snapshot(&mut mock).expect("the mock answers");
@@ -575,7 +575,7 @@ mod tests {
         hosting.set_exposure(false, false, false);
         let step = hosting.save(&snapshot);
         assert!(matches!(&step, Step::Run(effects) if matches!(&effects[..], [Effect::SetExposure { after: ExposureAfter::Back, confirmation: None, .. }])));
-        assert_eq!(follow(&mut mock, step), [Step::Go(Dest::LeaveHosting), Step::Done(Notice::ok("Saved."))]);
+        assert_eq!(follow(&mut mock, step), [Step::Go(Dest::LeaveHosting { site: "shop".into() }), Step::Done(Notice::ok("Saved."))]);
         assert_eq!(exposure(&mut mock, "shop"), Exposure::default());
     }
 
@@ -609,7 +609,7 @@ mod tests {
         let mut hosting = open(&snapshot, "shop").expect("a site");
         hosting.remove_alias("www.example.com");
         let seen = follow(&mut mock, hosting.save(&snapshot));
-        assert_eq!(seen, [Step::Go(Dest::LeaveHosting), Step::Done(Notice::ok("Saved."))]);
+        assert_eq!(seen, [Step::Go(Dest::LeaveHosting { site: "shop".into() }), Step::Done(Notice::ok("Saved."))]);
         assert!(mock.web.sites[0].public_aliases.is_empty());
     }
 

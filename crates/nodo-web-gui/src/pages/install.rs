@@ -21,7 +21,8 @@ use nodo_ui_core::Outcome;
 use serde::Deserialize;
 
 use super::{document_page, PassForm};
-use crate::core_wishlist::{status_word, typed_secret};
+use crate::glue::typed_secret;
+use nodo_ui_core::words::status_word;
 use nodo_ui_core::words::empty_catalog_line;
 use crate::ctx::{Ctx, JobSpec, Out, Work};
 use crate::dest;

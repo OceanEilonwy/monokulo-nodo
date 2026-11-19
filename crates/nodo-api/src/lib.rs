@@ -51,6 +51,9 @@ pub const WEBGUI_URL: &str = "https://nodo.local";
 /// What [`ApiError::Locked`] carries when the web GUI's socket refuses a request because nobody is
 /// logged in. See [`ApiError::is_web_login_required`].
 pub const WEBGUI_LOGIN_REQUIRED: &str = "web login required";
+/// What [`ApiError::Failed`] carries when the web GUI's socket refuses a login because the owner
+/// has not turned the web GUI on.
+pub const WEBGUI_TURNED_OFF: &str = "the web GUI is turned off";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceState {

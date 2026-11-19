@@ -82,8 +82,10 @@ fn lines(flow: &Logs, source: &str, find: &str) -> Markup {
             }
             @if !flow.view.suggestion.is_empty() {
                 ul.bullets {
-                    @for suggestion in &flow.view.suggestion {
-                        li { span.dim aria-hidden="true" { "▸" } span { (suggestion.replace('`', "")) } }
+                    @for (index, suggestion) in flow.view.suggestion.iter().enumerate() {
+                        // What the last one points at is a link to where it is done.
+                        @let hint = flow.view.suggestion_hint.filter(|_| index + 1 == flow.view.suggestion.len());
+                        li { span.dim aria-hidden="true" { "▸" } span { (suggestion.replace('`', "")) (crate::hints::linked(hint)) } }
                     }
                 }
             }

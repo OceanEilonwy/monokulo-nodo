@@ -662,6 +662,8 @@ pub struct LogLine {
 pub struct LogView {
     pub lines: Vec<LogLine>,
     pub suggestion: Vec<String>,
+    /// What the last line of `suggestion` points at, when it says what to do.
+    pub suggestion_hint: Option<Hint>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

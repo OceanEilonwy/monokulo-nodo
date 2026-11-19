@@ -83,6 +83,7 @@ pub mod sources;
 pub mod unlock;
 pub mod updates;
 pub mod web;
+pub mod web_gui;
 
 use nodo_api::Exposure;
 
@@ -160,6 +161,11 @@ impl Step {
         if effects.is_empty() { Step::Stay } else { Step::Run(effects) }
     }
 
+    /// Whether following the step can take minutes (`Effect::is_long`).
+    pub fn is_long(&self) -> bool {
+        self.effects().iter().any(Effect::is_long)
+    }
+
     /// Every effect the step carries, in order, for a frontend or a test that only needs those.
     pub fn effects(&self) -> Vec<Effect> {
         match self {
@@ -228,8 +234,8 @@ pub enum Dest {
     Document(Document),
     /// A site's Hosting page has nothing more to show: its draft was saved. A frontend showing
     /// that page goes back to the page that opened it; one whose owner has left it already stays
-    /// where it is.
-    LeaveHosting,
+    /// where it is. `site` is the site whose page it was.
+    LeaveHosting { site: String },
     /// The page for what a reachability check found. It takes the place of the page of an
     /// earlier check or of the CGNAT guidance, when one of those is shown, so checking again
     /// never piles pages up.
@@ -237,15 +243,18 @@ pub enum Dest {
     /// The confirmation before a site goes public, on top of the page the owner is on.
     PublicConfirm(web::public::PublicConfirm),
     /// Back to the Hosting page that sent the owner to add a provider, which now has one: its
-    /// draft takes the domains the new key controls (`Hosting::provider_connected`).
+    /// draft takes the domains the new key controls (`Hosting::provider_connected`). Which site's
+    /// page that was is the frontend's to know: the provider pages are opened from several
+    /// places and keep nothing about the one that opened them.
     HostingWithProvider { domains: Vec<String> },
     /// The device was set up from a backup, on first boot. The restore's page is left, and the
     /// first-setup page under it now offers the SSH keys, as it does after a passphrase is chosen.
     SetUpFromBackup,
     /// The site is on the internet. Every page that led there is left for the list of sites
     /// that are online; a frontend that was showing the confirmation shows, on top of that list,
-    /// the page following the secure connection (`PublicConfirm::certificate`).
-    WentPublic,
+    /// the page following the secure connection (`PublicConfirm::certificate`). `site` is the
+    /// one that went public.
+    WentPublic { site: String },
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or
@@ -283,8 +292,8 @@ pub enum Confirm {
     RepairDrive,
     /// Removes an SSH key, by fingerprint.
     RemoveSshKey(String),
-    /// Leaves an app's settings without saving.
-    DiscardSettings,
+    /// Leaves an app's settings without saving. The app, by name.
+    DiscardSettings(String),
     /// Leaves the auto-update choices without saving.
     DiscardAutoUpdate,
     /// Puts a package back to the version given.
@@ -304,6 +313,11 @@ pub enum Confirm {
 }
 
 impl Confirm {
+    /// Whether carrying it out can take minutes, whatever the device's state (`Step::is_long`).
+    pub fn is_long(&self) -> bool {
+        self.step(&Snapshot::default()).is_long()
+    }
+
     /// What confirming does: the effects to run and where to go. `snapshot` is the device's
     /// state as the frontend last read it.
     pub fn step(&self, snapshot: &Snapshot) -> Step {
@@ -329,7 +343,7 @@ impl Confirm {
                     })
                     .collect(),
             ),
-            Confirm::DiscardSettings | Confirm::DiscardAutoUpdate => Step::Go(Dest::Back),
+            Confirm::DiscardSettings(_) | Confirm::DiscardAutoUpdate => Step::Go(Dest::Back),
             Confirm::RollBack { package, to } => Step::Run(vec![Effect::RollBack { package: package.clone(), to: to.clone() }]),
             Confirm::JoinOpenWifi(ssid) => Step::Run(vec![Effect::JoinWifi {
                 ssid: ssid.clone(),
@@ -372,6 +386,24 @@ mod tests {
         ]);
         assert_eq!(step.effects(), [Effect::Refresh, Effect::RefreshFeeds]);
         assert_eq!(Step::run(Vec::new()), Step::Stay);
+    }
+
+    #[test]
+    fn what_takes_minutes_is_said_by_the_effect_the_step_and_the_question() {
+        assert!(Effect::ApplyUpdates { names: Vec::new(), approvals: Vec::new() }.is_long());
+        assert!(Effect::CheckReachability { site: "shop".into(), going_public: true }.is_long());
+        assert!(!Effect::Refresh.is_long() && !Effect::Restart("tor".into()).is_long());
+        // Saving names is quick by itself, and long when a check waits behind it.
+        let names = |then: Vec<Effect>| Effect::SetPublicHost { site: "shop".into(), host: "shop.example.com".into(), aliases: Vec::new(), then };
+        assert!(!names(Vec::new()).is_long());
+        assert!(names(vec![Effect::CheckReachability { site: "shop".into(), going_public: true }]).is_long());
+        let stay = Effect::SetExposure { site: "shop".into(), exposure: Exposure::default(), after: ExposureAfter::Stay, confirmation: None };
+        assert!(!stay.is_long());
+        assert!(Effect::SetExposure { site: "shop".into(), exposure: Exposure::default(), after: ExposureAfter::WentPublic, confirmation: None }.is_long());
+        assert!(Step::All(vec![Step::Go(Dest::Back), Step::Run(vec![Effect::CheckUpdates])]).is_long());
+        assert!(!Step::Run(vec![Effect::Refresh]).is_long() && !Step::Stay.is_long());
+        assert!(Confirm::RepairDrive.is_long() && Confirm::RollBack { package: "tor".into(), to: "1".into() }.is_long());
+        assert!(!Confirm::RemoveApp("tor".into()).is_long() && !Confirm::WifiOff.is_long() && !Confirm::AllSitesOffline.is_long());
     }
 
     #[test]

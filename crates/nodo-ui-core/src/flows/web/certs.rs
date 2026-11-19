@@ -2,6 +2,7 @@
 //! network can trust.
 
 use crate::model::{CertRow, Snapshot};
+use crate::words::Tone;
 use crate::Effect;
 
 /// How often the page following a certificate reads the device's state again, in seconds.
@@ -28,6 +29,41 @@ impl Certificate {
     /// How the host's certificate stands, once the proxy reports one for it.
     pub fn row<'a>(&self, snapshot: &'a Snapshot) -> Option<&'a CertRow> {
         snapshot.web.cert(&self.host)
+    }
+
+    /// The certificate is there and good. Until then a frontend keeps polling.
+    pub fn ready(&self, snapshot: &Snapshot) -> bool {
+        self.row(snapshot).is_some_and(|row| row.state == nodo_api::CertState::Valid)
+    }
+
+    fn broken(&self, snapshot: &Snapshot) -> bool {
+        self.row(snapshot).is_some_and(|row| matches!(row.state, nodo_api::CertState::Failed | nodo_api::CertState::Expired))
+    }
+
+    /// The page's heading: online, online and still getting its certificate, or not ready.
+    pub fn heading(&self, snapshot: &Snapshot) -> (Tone, String) {
+        if self.ready(snapshot) {
+            (Tone::Good, format!("{} is online", self.site))
+        } else if self.broken(snapshot) {
+            (Tone::Bad, "The secure connection isn't ready".to_owned())
+        } else {
+            (Tone::Working, format!("{} is online. Getting its secure connection…", self.site))
+        }
+    }
+
+    /// Why the certificate is not there, when getting it failed and the proxy said why.
+    pub fn problem(&self, snapshot: &Snapshot) -> Option<String> {
+        self.row(snapshot).filter(|_| self.broken(snapshot)).and_then(|row| row.problem.clone())
+    }
+
+    /// What the page says under the addresses: what a failure means, or that nothing is left
+    /// for the owner to do.
+    pub fn outlook(&self, snapshot: &Snapshot) -> &'static str {
+        if self.problem(snapshot).is_some() {
+            "The Nodo keeps trying. Visitors see a warning until it works."
+        } else {
+            "The Nodo renews the secure connection and follows your home's address by itself."
+        }
     }
 }
 

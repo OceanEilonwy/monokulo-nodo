@@ -639,14 +639,14 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::Settings(form) => push(app, Screen::Settings(SettingsState::new(form))),
         Dest::ApplyFailed(failed) => push(app, Screen::ApplyFailed(failed)),
         Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-        Dest::LeaveHosting => {
+        Dest::LeaveHosting { site: _ } => {
             if matches!(app.screen, Screen::WebExposure(_)) {
                 pop(app);
             }
         }
         Dest::Reachability(found) => web::show_found(app, found),
         Dest::PublicConfirm(confirm) => push(app, Screen::WebConfirm(WebConfirmState::new(confirm))),
-        Dest::WentPublic => web::went_public(app),
+        Dest::WentPublic { site: _ } => web::went_public(app),
         Dest::HostingWithProvider { domains } => web::hosting_with_provider(app, &domains),
         Dest::SetUpFromBackup => {
             pop(app);
@@ -1451,7 +1451,7 @@ fn place_reference(app: &mut App, app_id: &str, setting: &str) -> Vec<Effect> {
             Vec::new()
         }
         (PickMode::Insert, None) => state.flow.place(field_index, mode, app_id, setting),
-        (PickMode::Replace(_), _) => {
+        (PickMode::Replace(_) | PickMode::Append, _) => {
             state.editor = None;
             state.flow.place(field_index, mode, app_id, setting)
         }

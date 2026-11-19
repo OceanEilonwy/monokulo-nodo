@@ -85,6 +85,29 @@ pub struct TestKnobs {
     /// Plays the touchscreen's socket, with this as the screen PIN: the screen requests are
     /// answered, and every change is refused with `ApiError::Locked` until the PIN unlocked it.
     pub screen_pin: Option<String>,
+    /// Plays the web GUI's own socket: until `WebGuiLogin` gave the device passphrase, every
+    /// request but that one and `WebGuiStatus` is refused with `ApiError::web_login_required`,
+    /// and the web GUI's switch is never taken. Off, the mock is the main socket: it takes the
+    /// switch and refuses the login.
+    pub web_socket: bool,
+    /// A login over the web GUI's socket leaves the device locked, as when its storage could
+    /// not be opened.
+    pub web_login_keeps_locked: bool,
+    /// The device has no address on the home network yet, so a web GUI that is on only waits.
+    pub web_gui_waiting: bool,
+}
+
+/// The web GUI as the helper keeps it. There is one for the device, so every `MockBackend` made
+/// for the same device shares it (`mock.web_gui = other.web_gui.clone()`), as every connection
+/// shares the helper's.
+#[derive(Debug, Default)]
+pub struct MockWebGui {
+    /// The owner turned it on.
+    pub enabled: std::sync::atomic::AtomicBool,
+    /// Somebody is logged in on its socket.
+    pub open: std::sync::atomic::AtomicBool,
+    /// The logins and logouts its socket took, in order.
+    pub log: std::sync::Mutex<Vec<&'static str>>,
 }
 
 impl Default for TestKnobs {
@@ -100,6 +123,9 @@ impl Default for TestKnobs {
             system_check_failure: None,
             radios_failure: None,
             screen_pin: None,
+            web_socket: false,
+            web_login_keeps_locked: false,
+            web_gui_waiting: false,
         }
     }
 }
@@ -146,6 +172,8 @@ pub struct MockBackend {
     pub owner_views: BTreeMap<String, (String, nodo_api::OwnerPageView)>,
     /// Every bundle install asked for: the answers and data drive choices it carried.
     pub bundle_installs: Vec<(Vec<nodo_api::BundleAnswer>, Vec<String>)>,
+    /// The web GUI's switch and login gate. Off on a new device. See [`MockWebGui`].
+    pub web_gui: std::sync::Arc<MockWebGui>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
     /// The screen PIN was given, while `knobs.screen_pin` plays the touchscreen's socket.
@@ -262,6 +290,7 @@ impl MockBackend {
             bundles: HashMap::new(),
             owner_views: BTreeMap::new(),
             bundle_installs: Vec::new(),
+            web_gui: std::sync::Arc::default(),
             job: None,
             screen_unlocked: false,
             refused: Vec::new(),
@@ -284,6 +313,69 @@ impl MockBackend {
             return Err(self.refuse("enter the screen PIN to make changes"));
         }
         Ok(())
+    }
+
+    fn web_gui_status(&self) -> nodo_api::WebGuiStatus {
+        use std::sync::atomic::Ordering::SeqCst;
+        let enabled = self.web_gui.enabled.load(SeqCst);
+        let open = self.knobs.web_socket && self.web_gui.open.load(SeqCst);
+        if self.knobs.web_socket && !open {
+            // Not logged in: on or off, and nothing about the device or its network.
+            return nodo_api::WebGuiStatus { enabled, url: None, waiting: false, open: false };
+        }
+        let waiting = enabled && self.knobs.web_gui_waiting;
+        nodo_api::WebGuiStatus { enabled, url: (enabled && !waiting).then(|| nodo_api::WEBGUI_URL.to_owned()), waiting, open }
+    }
+
+    /// The web GUI's own requests, as the socket the knobs choose answers them. `None` for a
+    /// request that goes on to the rest of the mock.
+    fn web_gui_request(&mut self, request: &Request) -> Option<Result<Response, ApiError>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let record = |gate: &MockWebGui, what: &'static str| gate.log.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(what);
+        if !self.knobs.web_socket {
+            // The main socket, or the touchscreen's when `screen_pin` is set.
+            return match request {
+                Request::WebGuiStatus => Some(Ok(Response::WebGui(self.web_gui_status()))),
+                Request::WebGuiLogin { .. } | Request::WebGuiLogout => Some(Err(ApiError::Denied)),
+                Request::SetWebGui(_) if self.knobs.screen_pin.is_some() => Some(Err(ApiError::Denied)),
+                // Its login is the device passphrase, so there must be one.
+                Request::SetWebGui(true) if self.setup_needed => Some(Err(ApiError::NotSetUp)),
+                Request::SetWebGui(enabled) => {
+                    self.web_gui.enabled.store(*enabled, SeqCst);
+                    if !enabled {
+                        self.web_gui.open.store(false, SeqCst);
+                    }
+                    Some(Ok(Response::WebGui(self.web_gui_status())))
+                }
+                _ => None,
+            };
+        }
+        match request {
+            Request::WebGuiStatus => Some(Ok(Response::WebGui(self.web_gui_status()))),
+            Request::WebGuiLogin { passphrase } => Some(if self.setup_needed {
+                Err(ApiError::NotSetUp)
+            } else if !self.web_gui.enabled.load(SeqCst) {
+                Err(ApiError::Failed(nodo_api::WEBGUI_TURNED_OFF.to_owned()))
+            } else if passphrase.expose() != MOCK_PASSPHRASE {
+                Err(ApiError::BadPassphrase)
+            } else {
+                // The same secret unlocks the device, so the owner is not asked for it twice.
+                if !self.knobs.web_login_keeps_locked {
+                    self.finish_unlock();
+                }
+                self.web_gui.open.store(true, SeqCst);
+                record(&self.web_gui, "login");
+                Ok(Response::WebGui(self.web_gui_status()))
+            }),
+            _ if !self.web_gui.open.load(SeqCst) => Some(Err(ApiError::web_login_required())),
+            Request::WebGuiLogout => {
+                self.web_gui.open.store(false, SeqCst);
+                record(&self.web_gui, "logout");
+                Some(Ok(Response::Ok))
+            }
+            Request::SetWebGui(_) | Request::ScreenUnlock { .. } | Request::ScreenLock => Some(Err(ApiError::Denied)),
+            _ => None,
+        }
     }
 
     fn screen_status(&self) -> nodo_api::ScreenStatus {
@@ -513,6 +605,9 @@ impl Backend for MockBackend {
             std::thread::sleep(delay);
         }
         self.calls.push(request.clone());
+        if let Some(answer) = self.web_gui_request(&request) {
+            return answer;
+        }
         if self.knobs.screen_pin.is_some() {
             match &request {
                 Request::ScreenStatus => return Ok(Response::Screen(self.screen_status())),
@@ -556,6 +651,23 @@ impl Backend for MockBackend {
                 svc.state = ServiceState::Stopped;
                 svc.detail.clear();
                 svc.uptime_secs = None;
+                Ok(Response::Ok)
+            }
+            Request::RemovePackage { package } => {
+                // The app goes, with its site, its form and its update. Its data stays, and the
+                // sources still offer it.
+                let before = self.services.len();
+                self.services.retain(|svc| svc.id != package);
+                if self.services.len() == before {
+                    return Err(ApiError::NotFound(package));
+                }
+                self.web.sites.retain(|site| site.package != package);
+                self.forms.remove(&package);
+                self.updates.retain(|item| item.name != package);
+                self.owner_views.remove(&package);
+                for offered in self.catalog.iter_mut().filter(|offered| offered.id.name == package) {
+                    offered.status = PackageStatus::Available;
+                }
                 Ok(Response::Ok)
             }
             Request::Unlock { passphrase } => {
@@ -1402,8 +1514,9 @@ impl ScreenData for MockBackend {
                 ],
                 suggestion: vec![
                     s("bell depends on wallet-relay, which is locked."),
-                    s("Press `u` to unlock the device. bell will start automatically."),
+                    s("Unlock the device. bell will start automatically."),
                 ],
+                suggestion_hint: Some(Hint::Unlock),
             },
             "moneropay" => LogView {
                 lines: vec![
@@ -1412,6 +1525,7 @@ impl ScreenData for MockBackend {
                     info("14:01:03 INFO  daemon rpc reachable at 127.0.0.1:18081"),
                 ],
                 suggestion: Vec::new(),
+                suggestion_hint: None,
             },
             other => LogView {
                 lines: vec![
@@ -1419,6 +1533,7 @@ impl ScreenData for MockBackend {
                     info(&format!("14:00:02 INFO  {other} running normally")),
                 ],
                 suggestion: Vec::new(),
+                suggestion_hint: None,
             },
         }
     }

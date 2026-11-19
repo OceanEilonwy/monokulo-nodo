@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
-use nodo_api::{AliasMode, CertState};
+use nodo_api::AliasMode;
 use nodo_ui_core::flows::web::certs::{Certificate, POLL_SECONDS};
 use nodo_ui_core::flows::web::hosting::{self, Hosting, Row};
 use nodo_ui_core::flows::web::providers::{self, Providers};
@@ -30,7 +30,7 @@ use nodo_ui_core::Outcome;
 use serde::Deserialize;
 
 use super::document_page;
-use crate::core_wishlist::checks_or_goes_public;
+
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -192,21 +192,14 @@ pub async fn show(ctx: Ctx, Path(name): Path<String>) -> Response {
 
 /// Follows a step of the hosting flows. The checks and going public take long and run as a
 /// job; everything else answers at once. A draft that was saved and left is dropped.
-fn follow(work: &mut Work<'_>, site: &str, step: Step, back: String) -> Out {
-    fn run(work: &mut Work<'_>, site: &str, step: Step) -> Reply {
-        let reply = work.run(step, &mut no_flow);
-        if matches!(reply.go, Some(Dest::LeaveHosting)) {
-            work.session.inner().stash.hosting.remove(site);
-        }
-        reply
-    }
-    if checks_or_goes_public(&step) {
-        let site = site.to_owned();
+fn follow(work: &mut Work<'_>, step: Step, back: String) -> Out {
+    // A draft that was saved is dropped where the reply lands (`Stash::keep`).
+    if step.is_long() {
         let spec = JobSpec::new("Checking whether the internet can reach your Nodo", back)
             .note(&["The names are saved, then the Nodo is tried from outside. Nothing goes on the internet before you confirm."]);
-        Out::Job(spec, Box::new(move |work| run(work, &site, step)))
+        Out::Job(spec, Box::new(move |work| work.run(step, &mut no_flow)))
     } else {
-        Out::Reply(run(work, site, step))
+        Out::Reply(work.run(step, &mut no_flow))
     }
 }
 
@@ -236,7 +229,7 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form_data): Form<Poste
             "save" => {
                 keep(work, &flow);
                 let step = flow.save(&work.snapshot);
-                return follow(work, &name, step, here);
+                return follow(work, step, here);
             }
             "add-alias" => {
                 let mode = if posted(&form_data, "mode") == Some("serve") { AliasMode::Serve } else { AliasMode::Redirect };
@@ -362,7 +355,7 @@ pub async fn check_act(ctx: Ctx, Path((name, what)): Path<(String, String)>) -> 
         return go_to(ctx.htmx, &here);
     }
     ctx.with(here.clone(), move |work| match what.as_str() {
-        "again" => follow(work, &name, Step::run(found.check_again()), here),
+        "again" => follow(work, Step::run(found.check_again()), here),
         // Having seen what could not be verified, on to the confirmation. Nothing when a check
         // failed: the flow says so by staying.
         "continue" => Out::Reply(work.run(found.continue_anyway(), &mut no_flow)),
@@ -396,7 +389,7 @@ fn tor_instead(work: &mut Work<'_>, site: &str, effects: Vec<nodo_ui_core::Effec
         inner.stash.found = None;
     }
     if reply.go.is_none() {
-        reply.go = Some(Dest::LeaveHosting);
+        reply.go = Some(Dest::LeaveHosting { site: site.to_owned() });
     }
     Out::Reply(reply)
 }
@@ -450,7 +443,7 @@ pub async fn cgnat_act(ctx: Ctx, Path((name, what)): Path<(String, String)>) -> 
     let here = format!("{}/cgnat", dest::hosting(&name));
     ctx.with(here.clone(), move |work| {
         if what == "again" {
-            return follow(work, &name, Step::run(found.check_again()), here);
+            return follow(work, Step::run(found.check_again()), here);
         }
         let Some(way) = CgnatWay::ALL.into_iter().find(|way| way_name(*way).0 == what) else {
             return Out::Go(here);
@@ -579,20 +572,14 @@ fn certificate_of(work: &Work<'_>, site: &str) -> Option<Certificate> {
 /// How the certificate stands. While it is not there yet, htmx asks again every `POLL_SECONDS`.
 fn certificate_status(snapshot: &Snapshot, certificate: &Certificate) -> Markup {
     let site = certificate.site.as_str();
-    let row = certificate.row(snapshot);
     let entry = snapshot.web.sites.iter().find(|entry| entry.package == site);
-    let valid = row.is_some_and(|row| row.state == CertState::Valid);
-    let problem = row.and_then(|row| row.problem.clone()).filter(|_| !valid);
+    let valid = certificate.ready(snapshot);
+    let (standing, heading) = certificate.heading(snapshot);
+    let (sign, class) = crate::glue::tone(standing);
     let poll = format!("{}/certificate/status", dest::hosting(site));
     html! {
         section.card #certificate hx-get=[(!valid).then_some(poll)] hx-trigger=[(!valid).then(|| format!("every {POLL_SECONDS}s"))] hx-swap="outerHTML" {
-            @if valid {
-                h2 { span.ok aria-hidden="true" { "✓ " } (site) " is online" }
-            } @else if problem.is_some() {
-                h2 { span.err aria-hidden="true" { "✕ " } "The secure connection isn't ready" }
-            } @else {
-                h2 { span.warn aria-hidden="true" { "◆ " } (site) " is online. Getting its secure connection…" }
-            }
+            h2 { span class=(class) aria-hidden="true" { (sign) " " } (heading) }
             p.mono { "https://" (certificate.host) }
             @if let Some(entry) = entry {
                 @for alias in &entry.public_aliases {
@@ -600,13 +587,8 @@ fn certificate_status(snapshot: &Snapshot, certificate: &Certificate) -> Markup 
                 }
                 @if entry.exposure.local && !entry.local_url.is_empty() { p.mono { (entry.local_url) } }
             }
-            @match &problem {
-                Some(problem) => {
-                    p.err { (problem) }
-                    p.dim { "The Nodo keeps trying. Visitors see a warning until it works." }
-                },
-                None => p.dim { "The Nodo renews the secure connection and follows your home's address by itself." },
-            }
+            @if let Some(problem) = certificate.problem(snapshot) { p.err { (problem) } }
+            p.dim { (certificate.outlook(snapshot)) }
         }
     }
 }
@@ -618,7 +600,7 @@ pub async fn certificate(ctx: Ctx, Path(name): Path<String>) -> Response {
         let Some(certificate) = certificate_of(work, &name) else {
             return Out::Go(dest::hosting(&name));
         };
-        let waiting = certificate.row(&work.snapshot).is_none_or(|row| row.state != CertState::Valid);
+        let waiting = !certificate.ready(&work.snapshot);
         let body = html! {
             h1 { "Secure connection" }
             (certificate_status(&work.snapshot, &certificate))

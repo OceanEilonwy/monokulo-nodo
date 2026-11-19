@@ -865,7 +865,7 @@ pub fn attention(health: Option<&HealthSummary>, status: Option<&UpdateStatus>) 
             ),
             UpdateEventKind::RollbackFailed { .. } => (
                 AttentionLevel::Critical,
-                format!("{} {} failed and {} did not come back. Press `l` to read its log.", e.package, e.to, e.from),
+                format!("{} {} failed and {} did not come back. Its log says why.", e.package, e.to, e.from),
             ),
             _ => continue,
         };

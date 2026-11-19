@@ -11,7 +11,7 @@ use nodo_ui_core::flows::{Confirm, Notice};
 use serde::Deserialize;
 
 use super::document_page;
-use crate::core_wishlist::long_confirm;
+
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -57,10 +57,8 @@ fn carry_out(work: &mut Work<'_>, pending: &Pending) -> Reply {
     let step = confirm.step(&work.snapshot);
     match confirm {
         // The form that was left: its draft goes with the answer.
-        Confirm::DiscardSettings => {
-            if let Some(package) = &pending.subject {
-                work.session.inner().stash.settings.remove(package);
-            }
+        Confirm::DiscardSettings(package) => {
+            work.session.inner().stash.settings.remove(package);
             work.run(step, &mut no_flow)
         }
         // Asked on the Network page: its flow is told, and gets what the radios answer.
@@ -101,9 +99,12 @@ pub async fn confirm(ctx: Ctx, Form(form): Form<ConfirmForm>) -> Response {
         return go_to(ctx.htmx, dest::HOME);
     };
     let back = pending.back.clone();
-    match long_confirm(&pending.question.confirm) {
-        Some(what) => ctx.job(JobSpec::new(what, back), move |work| carry_out(work, &pending)).await,
-        None => ctx.with(back, move |work| Out::Reply(carry_out(work, &pending))).await,
+    // Whether it takes minutes is the core's to say; the words for the wait are this page's.
+    if pending.question.confirm.is_long() {
+        let what = crate::glue::waiting_for(&pending.question.confirm);
+        ctx.job(JobSpec::new(what, back), move |work| carry_out(work, &pending)).await
+    } else {
+        ctx.with(back, move |work| Out::Reply(carry_out(work, &pending))).await
     }
 }
 

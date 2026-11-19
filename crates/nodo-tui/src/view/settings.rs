@@ -46,10 +46,7 @@ fn shown(text: &str) -> String {
     }
 }
 
-/// How a reference chip reads: `app·setting`.
-pub fn chip_label(app: &str, setting: &str) -> String {
-    format!("{app}·{setting}")
-}
+pub use nodo_ui_core::words::chip_label;
 
 /// A value's text and chips on the field's surface. Chips are accent on a raised fill, or the
 /// error colour when they do not resolve; the reason is in the chip's menu, not beside it.
@@ -343,11 +340,7 @@ pub fn reference(app: &App, t: &Theme, state: &ReferenceState) -> Page {
     card.row_with(t, search, [field_target("Search", 9, 38)]);
     card.blank(t);
     if visible.iter().any(|(_, verdict)| verdict.is_err()) && visible.iter().any(|(_, v)| v.is_ok()) {
-        let words = match state.field_kind {
-            FieldKind::Number { .. } | FieldKind::Port => "Numbers first; the others are dimmed because a number field can't hold them.",
-            _ => "Those that fit first; the others are dimmed with why.",
-        };
-        card.row(t, vec![t.d(words)]);
+        card.row(t, vec![t.d(nodo_ui_core::words::picker_hint(&state.field_kind))]);
         card.blank(t);
     }
     let path_width = visible.iter().map(|(o, _)| o.path().chars().count()).max().unwrap_or(0).clamp(16, 30) + 2;

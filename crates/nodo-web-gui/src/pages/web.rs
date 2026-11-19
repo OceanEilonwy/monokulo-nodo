@@ -17,7 +17,7 @@ use nodo_ui_core::screen::Tab;
 use nodo_ui_core::Outcome;
 
 use super::document_page;
-use crate::core_wishlist::{tone, typed_secret};
+use crate::glue::{tone, typed_secret};
 use nodo_ui_core::words::{cert_status, provider_field_name, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;

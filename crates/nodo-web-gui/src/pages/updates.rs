@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
-use nodo_api::{UpdateEventKind, UpdateOutcome};
+use nodo_api::UpdateEventKind;
 use nodo_ui_core::flows::install::ReviewPurpose;
 use nodo_ui_core::flows::updates::{self, AutoUpdate, Rollbacks};
 use nodo_ui_core::flows::{Dest, Notice, Step};
@@ -20,7 +20,8 @@ use nodo_ui_core::screen::Tab;
 use serde::Deserialize;
 
 use super::{document_page, install, PassForm};
-use crate::core_wishlist::{applies_updates, typed_secret, update_note};
+use crate::glue::typed_secret;
+use nodo_ui_core::words::update_note;
 use nodo_ui_core::words::day;
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
@@ -64,7 +65,7 @@ fn apply_job(step: Step) -> Out {
 /// Follows a step of the updates flow: at once when it only loads a review or says something,
 /// as a job when it applies updates.
 fn follow(work: &mut Work<'_>, step: Step) -> Out {
-    if applies_updates(&step) {
+    if step.is_long() {
         apply_job(step)
     } else {
         Out::Reply(work.run(step, &mut no_flow))
@@ -293,7 +294,7 @@ pub async fn submit_passphrase(ctx: Ctx, Form(form): Form<PassForm>) -> Response
         return go_to(ctx.htmx, dest::UPDATES);
     };
     let step = batch.submit(&mut typed_secret(form.passphrase.expose()));
-    if !applies_updates(&step) {
+    if !step.is_long() {
         return ctx.respond(follow_plain(step), dest::UPDATE_PASSPHRASE);
     }
     ctx.job(apply_spec(), move |work| work.run(step, &mut no_flow)).await
@@ -498,11 +499,11 @@ pub async fn auto_update_history(ctx: Ctx) -> Response {
 
 /// How a rollback went, in a line, and whether it is good news.
 fn rolled_back_line(result: &nodo_api::UpdateResult) -> (String, &'static str) {
-    match &result.outcome {
-        UpdateOutcome::Updated => (format!("✓ {} is back on {}.", result.package, result.to), "ok"),
-        UpdateOutcome::RolledBack { reason, recovered: true, .. } => (format!("▲ {} stayed on {}: {reason}", result.package, result.from), "warn"),
-        UpdateOutcome::RolledBack { reason, .. } => (format!("✕ {} failed and did not come back: {reason}", result.package), "err"),
-        UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => (format!("▲ {}: {reason}", result.package), "warn"),
+    use nodo_ui_core::words::{rollback_result, Tone};
+    match rollback_result(result) {
+        (Tone::Good, words) => (format!("✓ {words}"), "ok"),
+        (Tone::Working, words) => (format!("▲ {words}"), "warn"),
+        (Tone::Bad, words) => (format!("✕ {words}"), "err"),
     }
 }
 

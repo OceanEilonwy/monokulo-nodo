@@ -14,11 +14,11 @@ use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
 use nodo_api::{PairingStage, WifiLink, WifiSecurity};
-use nodo_ui_core::flows::network::{Network, RadioRead};
+use nodo_ui_core::flows::network::{pairing_words, Network, RadioRead, ABOUT_WIRELESS};
 use nodo_ui_core::flows::Step;
 use nodo_ui_core::screen::Tab;
 
-use crate::core_wishlist::typed_secret;
+use crate::glue::typed_secret;
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
 use crate::hints::{self, Radio};
@@ -153,12 +153,18 @@ fn status(flow: &Network) -> Markup {
                     @if let Some(why) = &bluetooth.unavailable { p.dim { (why) } }
                     // A pairing under way, with the code the two devices agree on.
                     @if let Some(pairing) = &bluetooth.pairing {
-                        @match &pairing.stage {
-                            PairingStage::Pairing => p { "Pairing with " span.mono { (pairing.address) } "…" },
-                            PairingStage::TypePasskey(code) => p.warn { "Type " strong.mono { (code) } " on the device, then Enter." },
-                            PairingStage::ComparePasskey(code) => p.warn { "Check that the device shows " strong.mono { (code) } " and accept it there." },
-                            PairingStage::Done | PairingStage::Failed(_) => {},
+                        @if let Some(words) = pairing_words(bluetooth) {
+                            p class=(if matches!(pairing.stage, PairingStage::Failed(_)) { "err" } else { "warn" }) {
+                                (words.before) @if let Some(code) = &words.code { strong.mono { (code) } } (words.after)
+                            }
                         }
+                    }
+                    @if !bluetooth.enabled {
+                        p.dim { "Nothing can pair with the Nodo while Bluetooth is off." }
+                    } @else if bluetooth.devices.is_empty() {
+                        p.dim { "Put a device in its pairing mode, then look for devices." }
+                    } @else {
+                        p.dim { "Not discoverable. It pairs only when you ask." }
                     }
                     div.rows {
                         @for device in &bluetooth.devices {
@@ -208,7 +214,7 @@ fn page(flow: &Network, radio: Radio) -> Page {
             // The network chosen is the flow's; the form carries only its passphrase.
             section.card.attn #wifi-prompt {
                 h2 { "Join " (prompt.ssid) }
-                p.dim { (security_words(prompt.security)) }
+                p.dim { (security_words(prompt.security)) ". The passphrase is stored on this device only." }
                 form.stack method="post" action=(here) {
                     div.field {
                         label for="wifi-passphrase" { "Wi-Fi passphrase" }
@@ -222,6 +228,10 @@ fn page(flow: &Network, radio: Radio) -> Page {
             }
         }
         (status(flow))
+        section.card {
+            h2 { "About wireless" }
+            ul.bullets { @for line in ABOUT_WIRELESS { li { span.dim aria-hidden="true" { "·" } span { (line) } } } }
+        }
     };
     let page = Page::new(Tab::System, "Network", body).trail(&[("System", dest::SYSTEM), ("Network", dest::NETWORK)]);
     if flow.pairing_running() || flow.waiting_for_address() { page.waiting() } else { page }

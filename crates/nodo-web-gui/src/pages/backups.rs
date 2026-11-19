@@ -16,13 +16,15 @@ use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
 use nodo_api::BackupInfo;
-use nodo_ui_core::flows::backup::{Backups, Field, Stage, MIN_BACKUP_PASSPHRASE_CHARS, RESTORE_WORD};
+use nodo_ui_core::flows::backup::{
+    restore_warning, restores, usb_facts, Backups, Field, Stage, CHECKED_FIRST, HOLDS, HOLDS_NOTES, PASSPHRASE_NOTES, RESTORE_WORD, USB_NOTE,
+};
 use nodo_ui_core::flows::Step;
 use nodo_ui_core::screen::Tab;
 use nodo_ui_core::words::{day, drive_name, size};
 use nodo_ui_core::Effect;
 
-use crate::core_wishlist::typed_secret;
+use crate::glue::typed_secret;
 use crate::ctx::{Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -93,7 +95,6 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
                 h1 { "Backups" }
                 form.actions method="post" action=(here) { (button("reload", "Look again", "btn quiet")) }
             }
-            p.lead { "A backup holds the settings, secrets, certificates and locked storage of your apps, encrypted with its own passphrase. Never chain data: the node syncs that again." }
             (problem)
             section.card.flush {
                 h2 { "Backups on this device" }
@@ -106,7 +107,11 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
                 @match &flow.usb {
                     None => p.pad.dim { "No USB drive is plugged in. Plug one in and look again." },
                     Some(usb) => {
-                        p.pad { (drive_name(&usb.drive)) @if let Some(problem) = &usb.drive.problem { span.err { " · " (problem) } } }
+                        p.pad {
+                            (drive_name(&usb.drive))
+                            @if let Some(problem) = &usb.drive.problem { span.err { " · " (problem) } }
+                            @if let Some(list) = &usb.list { span.dim { " · " (usb_facts(&usb.drive, list)) } }
+                        }
                         @if usb.list.is_some() && flow.usb_list().is_empty() { p.pad.dim { "No backups on this drive yet." } }
                         (backup_rows(flow.usb_list(), true))
                     },
@@ -114,7 +119,12 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
             }
             @if flow.usb_device().is_some() {
                 form.actions.end method="post" action=(here) { (button("create-usb", "Make a backup on the USB drive", "btn")) }
-                p.dim.small { "The drive is unmounted when the backup is written. Wait for it before unplugging." }
+                p.dim.small { (USB_NOTE) }
+            }
+            section.card {
+                h2 { "A backup holds" }
+                ul.bullets { @for line in HOLDS { li { span.ok aria-hidden="true" { "✓" } span { (line) } } } }
+                @for line in HOLDS_NOTES { p.dim { (line) } }
             }
         },
         Stage::Create => html! {
@@ -125,9 +135,12 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
                     @if flow.asks_device_passphrase() {
                         (secret_box("device", "Device passphrase", false, refused == Some(Field::DevicePassphrase), "So the backup includes the device key and the backed-up storage opens."))
                     }
-                    (secret_box("first", "Backup passphrase", true, refused == Some(Field::BackupPassphrase), &format!("Use at least {MIN_BACKUP_PASSPHRASE_CHARS} characters. It is as valuable as the device passphrase.")))
+                    (secret_box("first", "Backup passphrase", true, refused == Some(Field::BackupPassphrase), ""))
                     (secret_box("second", "Backup passphrase, again", true, false, ""))
-                    p.dim { "The backup passphrase opens this backup on any device. Keep it apart from the device. Nothing can open the backup without it." }
+                    ul.bullets {
+                        @for line in PASSPHRASE_NOTES { li { span.dim aria-hidden="true" { "·" } span { (line) } } }
+                        @if flow.target.is_some() { li { span.dim aria-hidden="true" { "·" } span { (USB_NOTE) } } }
+                    }
                     div.actions.end { (button("cancel", "Cancel", "btn")) (button("make", "Make the backup", "btn primary")) }
                 }
             }
@@ -136,10 +149,10 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
             h1 { "Open this backup" }
             (problem)
             section.card {
-                p.mono { (name) }
+                p.mono { (name) @if flow.target.is_some() { span.dim { ", on the USB drive" } } }
                 form.stack method="post" action=(here) {
                     (secret_box("passphrase", "Backup passphrase", false, flow.error.is_some(), ""))
-                    p.dim { "The whole backup is checked first. A wrong passphrase or a damaged file restores nothing. Nothing changes yet." }
+                    p.dim { "Nothing changes yet. " (CHECKED_FIRST) }
                     div.actions.end { (button("cancel", "Cancel", "btn")) (button("inspect", "Open", "btn primary")) }
                 }
             }
@@ -148,16 +161,13 @@ fn page(flow: &Backups, refused: Option<Field>) -> Page {
         Stage::Confirm { name, contents, .. } => html! {
             h1 { "Restore from this backup?" }
             (problem)
+            @let (services, warning) = restore_warning(contents, false);
             section.card.bad {
-                p.mono { (name) }
-                p { strong { "This overwrites what is on the device now." } " The backup holds " (contents.entries) " entries." }
-                dl.facts {
-                    dt { "Settings of" } dd { (contents.settings.join(", ")) }
-                    dt { "Locked storage of" } dd { @if contents.storage.is_empty() { "none" } @else { (contents.storage.join(", ")) } }
-                    dt { "Tor onion keys" } dd { @if contents.onion_keys { "yes" } @else { "no" } }
-                    dt { "Device key" } dd { @if contents.has_device_key { "yes, so encrypted storage can be restored" } @else { "no" } }
-                    dt { "Stops while restoring" } dd { @if contents.services_to_stop.is_empty() { "Nothing needs to stop." } @else { (contents.services_to_stop.join(", ")) } }
-                }
+                p.mono { (name) span.ok { "  ✓ verified" } }
+                p { strong { (warning) "." } " The backup holds " (contents.entries) " entries." }
+                h3 { "It will replace" }
+                ul.bullets { @for line in restores(contents, false) { li { span.ok aria-hidden="true" { "✓" } span { (line) } } } }
+                p.warn { "▲ " (services) }
                 form.stack method="post" action=(here) {
                     div.field {
                         label for="typed" { "Type " (RESTORE_WORD) " to confirm" }

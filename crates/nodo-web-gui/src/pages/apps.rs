@@ -11,7 +11,7 @@ use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::queries::APP_SECTIONS;
 use nodo_ui_core::screen::Tab;
 
-use crate::core_wishlist::open_url;
+use nodo_ui_core::words::open_url;
 use nodo_ui_core::words::{app_state, hosting_summary, log_summary, tagline};
 use crate::ctx::{Ctx, Out};
 use crate::dest;

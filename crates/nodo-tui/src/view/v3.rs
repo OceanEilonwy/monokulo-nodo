@@ -556,14 +556,8 @@ impl Screen3 {
 /// target.
 pub fn top(app: &App, t: &Theme, tab: Tab, w: u16, targets: &mut Vec<Target>) -> Page {
     let mut tabs = vec![t.n("  ")];
-    let apps = app.data.updates.iter().filter(|u| !u.held && u.name != nodo_ui_core::model::SYSTEM_BASE).count();
-    let nodo = app.data.updates.iter().filter(|u| !u.held && u.name == nodo_ui_core::model::SYSTEM_BASE).count();
     for each in Tab::ALL {
-        let count = match each {
-            Tab::Apps => apps,
-            Tab::System => nodo,
-            _ => 0,
-        };
+        let count = nodo_ui_core::words::tab_badge(&app.data, each);
         let extra = if count > 0 { format!(" {count}") } else { String::new() };
         if each == tab {
             let style = if t.is_mono() {

@@ -41,11 +41,11 @@ fn name(dest: &Dest) -> &'static str {
         Dest::Settings(_) => "Settings",
         Dest::ApplyFailed(_) => "ApplyFailed",
         Dest::Document(_) => "Document",
-        Dest::LeaveHosting => "LeaveHosting",
+        Dest::LeaveHosting { .. } => "LeaveHosting",
         Dest::Reachability(_) => "Reachability",
         Dest::PublicConfirm(_) => "PublicConfirm",
         Dest::HostingWithProvider { .. } => "HostingWithProvider",
-        Dest::WentPublic => "WentPublic",
+        Dest::WentPublic { .. } => "WentPublic",
         Dest::OwnerPage(_) => "OwnerPage",
         Dest::SetUpFromBackup => "SetUpFromBackup",
     }
@@ -106,13 +106,13 @@ fn every_destination() -> Vec<(&'static str, Dest)> {
         ("UpdateResults", Dest::UpdateResults(report)),
         ("Settings", Dest::Settings(form)),
         ("ApplyFailed", Dest::ApplyFailed(failed)),
-        ("LeaveHosting", Dest::LeaveHosting),
+        ("LeaveHosting", Dest::LeaveHosting { site: "moneropay".into() }),
         ("Reachability", Dest::Reachability(Found::of("moneropay", true, &reachability))),
         ("Reachability with problems", Dest::Reachability(Found::of("shop", true, &unreachable))),
         ("Reachability behind CGNAT", Dest::Reachability(Found::of("monokulo-pay", true, &shared_address))),
         ("PublicConfirm", Dest::PublicConfirm(PublicConfirm::new("moneropay", plan))),
         ("HostingWithProvider", Dest::HostingWithProvider { domains: vec!["example.com".into()] }),
-        ("WentPublic", Dest::WentPublic),
+        ("WentPublic", Dest::WentPublic { site: "shop".into() }),
         ("OwnerPage", Dest::OwnerPage(nodo_ui_core::flows::owner_page::OwnerPage::new("moneropay", "Setup"))),
         ("SetUpFromBackup", Dest::SetUpFromBackup),
         ("Document", Dest::Document(Document { title: "A report".into(), lines: vec!["one line".into()] })),
@@ -148,13 +148,18 @@ async fn every_destination_leads_to_a_page_that_is_served() {
             None => match label {
                 // Those that are relative lead to the page that asked, or where the page that
                 // can receive them says.
-                "Back" | "Resume" | "HostingWithProvider" | "WentPublic" => assert_eq!(url, back),
+                "Back" | "Resume" | "HostingWithProvider" => assert_eq!(url, back),
+                // The site is named, so its page is too.
+                "WentPublic" => {
+                    assert_eq!(url, "/apps/shop/hosting/certificate");
+                    answer.assert_has("shop is online");
+                }
                 "Bundle" => {
                     answer.assert_has("Install pingers and its apps?");
                 }
                 "OwnerPage" => {
                     assert_eq!(url, "/apps/moneropay/owner");
-                    answer.assert_has("opens with the device passphrase");
+                    answer.assert_has("so it needs your device passphrase");
                 }
                 // First boot only; a set-up device restores on the Backups page.
                 "SetUpFromBackup" => {

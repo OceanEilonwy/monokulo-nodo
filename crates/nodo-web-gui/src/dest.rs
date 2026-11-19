@@ -140,15 +140,15 @@ pub fn url(dest: &Dest, back: &str) -> String {
         Dest::Settings(form) => settings(&form.package),
         Dest::ApplyFailed(failed) => format!("{}/failed", settings(&failed.package)),
         // Saved: the list of sites shows who can reach it now.
-        Dest::LeaveHosting => WEB.to_owned(),
+        Dest::LeaveHosting { site: _ } => WEB.to_owned(),
         Dest::Reachability(Found::Problems(check)) => format!("{}/check", hosting(&check.site)),
         Dest::Reachability(Found::Cgnat(cgnat)) => format!("{}/cgnat", hosting(&cgnat.site)),
         Dest::Reachability(Found::Clear(confirm)) | Dest::PublicConfirm(confirm) => format!("{}/confirm", hosting(&confirm.site)),
-        // Neither names its site, so, like `Back`, each leads where the page that can get it
-        // says: the Hosting page that sent the owner to add a provider, and the certificate of
-        // the site that was just confirmed.
+        // It does not name its site, so, like `Back`, it leads where the page that can get it
+        // says: the Hosting page that sent the owner to add a provider.
         Dest::HostingWithProvider { domains: _ } => back.to_owned(),
-        Dest::WentPublic => back.to_owned(),
+        // The page following the secure connection of the site that was just confirmed.
+        Dest::WentPublic { site } => format!("{}/certificate", hosting(site)),
         Dest::Document(_) => DOCUMENT.to_owned(),
     }
 }

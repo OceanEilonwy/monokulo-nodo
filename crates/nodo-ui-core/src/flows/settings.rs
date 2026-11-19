@@ -102,6 +102,8 @@ pub enum PickMode {
     Insert,
     /// In place of this reference of the field, counting from 0.
     Replace(usize),
+    /// After the text and references the field holds, for a frontend without a text cursor.
+    Append,
 }
 
 /// An app's settings form and the owner's unsaved changes to it.
@@ -316,6 +318,7 @@ impl Settings {
         let assembled = match mode {
             PickMode::Insert => beside_typed,
             PickMode::Replace(_) => self.draft[index].pieces().is_some_and(|p| p.len() > 1),
+            PickMode::Append => true,
         };
         let picker = Picker {
             package: self.form.package.clone(),
@@ -348,6 +351,7 @@ impl Settings {
                 }
                 self.draft[index] = FieldValue::from_pieces(pieces);
             }
+            PickMode::Append => return self.insert_reference(index, usize::MAX, app, setting),
         }
         self.placed(index, before)
     }
@@ -502,7 +506,7 @@ impl Settings {
 
     /// Leaving the form: at once when nothing was changed, after a question otherwise.
     pub fn leave(&self) -> Step {
-        if self.changed_indices().is_empty() { Step::Go(Dest::Back) } else { Step::Ask(ask_discard()) }
+        if self.changed_indices().is_empty() { Step::Go(Dest::Back) } else { Step::Ask(ask_discard(&self.form.package)) }
     }
 
     /// Drops every unsaved change, and with it what was loaded for them.
@@ -559,12 +563,12 @@ impl Settings {
 }
 
 /// The question before leaving a form with unsaved changes.
-pub fn ask_discard() -> Question {
+pub fn ask_discard(package: &str) -> Question {
     Question::careful(
         "Discard your changes?",
         vec!["Your unsaved settings will be lost.".to_owned()],
         "Discard",
-        Confirm::DiscardSettings,
+        Confirm::DiscardSettings(package.to_owned()),
     )
 }
 
@@ -908,7 +912,7 @@ mod tests {
         assert!(typed.is_empty(), "the secret was taken out of the box");
 
         assert_eq!(settings.changed_indices(), [LOG_LEVEL, SECRET, ALLOW_LAN]);
-        assert!(matches!(settings.leave(), Step::Ask(question) if question.confirm == Confirm::DiscardSettings && question.cancel_is_default));
+        assert!(matches!(settings.leave(), Step::Ask(question) if question.confirm == Confirm::DiscardSettings(settings.form.package.clone()) && question.cancel_is_default));
         assert!(settings.reset(ALLOW_LAN).is_empty());
         assert_eq!(settings.changed_indices(), [LOG_LEVEL, SECRET]);
 

@@ -99,10 +99,11 @@ async fn every_screen_of_the_terminal_interface_has_a_page_or_a_reason() {
 }
 
 /// Pages that are no `ScreenId` of their own, walked as well.
-const MORE_PAGES: [&str; 12] = [
+const MORE_PAGES: [&str; 13] = [
     "/system/keys",
     "/system/about",
     "/system/logs/moneropay",
+    "/system/logs/bell",
     "/system/auto-update/history",
     "/web/certificates",
     "/apps/tor",
@@ -128,6 +129,7 @@ async fn no_page_names_a_key_of_the_terminal() {
         assert!(keys.is_empty(), "{path} names a key: {keys:?}\n{}", answer.body);
     }
     assert_eq!(common::keys_named("Turn it on first: press o. Press s to look. Press save, or press 2."), ["Press s to look. Press save, or press 2.", "press o. Press s to look. Press save, or"]);
+    assert_eq!(common::keys_named("Press `l` to read its log."), ["Press l to read its log."]);
 
     // A device that stayed locked, with a suite to install and an app's setup page.
     let app = App::new();
@@ -164,6 +166,10 @@ async fn no_page_names_a_key_of_the_terminal() {
     let owner = browser.get("/apps/moneropay/owner").await;
     owner.assert_has("Pingers setup");
     check("an app's setup page", &owner);
+    // A log whose advice points at unlocking: a link, where the terminal names a key.
+    let log = browser.get("/system/logs/bell").await;
+    log.assert_has(r#"Unlock the device. bell will start automatically. <a href="/unlock">Unlock the Nodo</a>"#);
+    check("a log's advice", &log);
     // The suite's review.
     browser.post("/apps/get/official/sample-tool-01/install", &[]).await;
     check("a suite", &browser.get("/apps/get/bundle").await);

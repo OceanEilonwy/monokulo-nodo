@@ -1,6 +1,7 @@
 //! Short wordings every interface shows the same way: an app's state, how long it has been up,
-//! who can open a site, what a row of the System page comes to, a certificate's standing, sizes
-//! and dates.
+//! who can open a site, what a row of the System page comes to, a certificate's standing, Home's
+//! cards and the unlock page's lines, the counts beside the tabs, an update's row, sizes and
+//! dates.
 //!
 //! They only read: the device's `Snapshot` or one value from it. Wording that belongs to a flow
 //! (a question, a refusal, a consequence) is with that flow in `flows`. Nothing here knows
@@ -9,7 +10,9 @@
 
 use nodo_api::{CertState, ServiceState};
 
-use crate::model::{CertRow, ConnectedProvider, FeedStatus, Site, Snapshot, UpdateItem, SYSTEM_BASE};
+use crate::model::{CertRow, ConnectedProvider, FeedStatus, FieldKind, PackageStatus, Site, Snapshot, UpdateItem, UpdateNote, SYSTEM_BASE};
+use crate::queries::HomeItem;
+use crate::screen::Tab;
 
 /// How a wording stands, for an interface to colour or mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,11 +297,211 @@ pub fn day(at: u64) -> String {
     format!("{year}-{month:02}-{day:02}")
 }
 
+// Home, the unlock page and the tabs
+
+/// One of Home's cards about something that needs the owner: its heading, what it means, and
+/// the words on its one button. `None` for an app's row.
+pub fn home_card(snapshot: &Snapshot, item: &HomeItem) -> Option<(String, String, &'static str)> {
+    Some(match item {
+        HomeItem::Unlock => (
+            "Your Nodo is locked".to_owned(),
+            if snapshot.services.iter().any(|svc| svc.state == ServiceState::Locked) {
+                "Apps' data waits for the device passphrase. They start once you unlock.".to_owned()
+            } else {
+                "Saved keys and secret settings, such as a domain provider's, need the device passphrase.".to_owned()
+            },
+            "Unlock",
+        ),
+        HomeItem::Failing(id) => (
+            format!("{id} keeps stopping"),
+            "Its log usually says why. Settings or an update can be undone from its page.".to_owned(),
+            "Show log",
+        ),
+        HomeItem::Updates => {
+            let names: Vec<String> = snapshot
+                .update_rows()
+                .iter()
+                .filter(|u| !u.held)
+                .map(|u| if u.name == SYSTEM_BASE { "the Nodo".to_owned() } else { u.name.clone() })
+                .collect();
+            let count = names.len();
+            (
+                if count == 1 { "1 update is ready".to_owned() } else { format!("{count} updates are ready") },
+                format!("{}. Each keeps its settings and can be undone.", names.join(", ")),
+                "Review updates",
+            )
+        }
+        HomeItem::App(_) => return None,
+    })
+}
+
+/// What the unlock page says under its heading: why the passphrase is asked, then the apps that
+/// start once it is given, when there are any. `resume` is what sent the owner there, in the
+/// words of `Dest::Unlock`; without it the page says when the Nodo restarted and what waits.
+pub fn unlock_lines(snapshot: &Snapshot, resume: Option<&str>) -> Vec<String> {
+    let overview = &snapshot.overview;
+    let waiting: Vec<&str> =
+        overview.unlock_targets.iter().filter(|target| target.encrypted).map(|target| target.name.as_str()).collect();
+    let first = match resume {
+        Some(reason) => format!("{reason} Type it to unlock the Nodo and carry on."),
+        None => {
+            let restarted =
+                if overview.restarted.is_empty() { "The Nodo restarted.".to_owned() } else { format!("{}.", overview.restarted.trim_end_matches('.')) };
+            let what = if waiting.is_empty() { "Saved keys and secret settings stay" } else { "Your apps' data is" };
+            format!("{restarted} {what} locked until you type the device passphrase.")
+        }
+    };
+    let mut lines = vec![first];
+    if !waiting.is_empty() {
+        lines.push(format!("{} start after you unlock.", waiting.join(", ")));
+    }
+    lines
+}
+
+/// The count beside a tab's name: updates for apps on Apps, for the Nodo itself on System.
+/// Held-back versions are not offered, so they do not count.
+pub fn tab_badge(snapshot: &Snapshot, tab: Tab) -> usize {
+    let count = |nodo: bool| snapshot.updates.iter().filter(|u| !u.held && (u.name == SYSTEM_BASE) == nodo).count();
+    match tab {
+        Tab::Apps => count(false),
+        Tab::System => count(true),
+        Tab::Home | Tab::Web => 0,
+    }
+}
+
+/// Where an app's page opens: its public name, or its address on the home network.
+pub fn open_url(site: &Site) -> Option<String> {
+    site.public_host
+        .clone()
+        .map(|host| format!("https://{host}"))
+        .or_else(|| (!site.local_url.is_empty() && site.exposure.local).then(|| site.local_url.clone()))
+}
+
+// Updates, Get apps and settings
+
+/// What the Nodo's own update needs, beside its version.
+pub fn nodo_update_note(update: &UpdateItem) -> &'static str {
+    if update.note == UpdateNote::RestartNeeded { "needs a restart" } else { "no restart needed" }
+}
+
+/// What an update's row says after its versions. The bool marks one that wants the owner's eye.
+pub fn update_note(item: &UpdateItem) -> (String, bool) {
+    match (&item.note, item.held) {
+        (UpdateNote::Skipped, _) => ("you skipped this version".to_owned(), false),
+        (_, true) => ("held back".to_owned(), false),
+        (UpdateNote::Ready, _) if item.grows.is_some() => ("needs the device passphrase".to_owned(), true),
+        (UpdateNote::Ready, _) => (String::new(), false),
+        (UpdateNote::RestartNeeded, _) => ("needs a restart".to_owned(), false),
+        (UpdateNote::NewPermission(_), _) => ("▲ asks for something new; you'll review it first".to_owned(), true),
+        (UpdateNote::Blocked(reason), _) => (format!("▲ {reason}"), true),
+        (UpdateNote::Withdrawal(_), _) => ("▲ replaces a withdrawn version".to_owned(), true),
+    }
+}
+
+/// How putting a package back to its earlier version went, without a sign: `Good` when it is
+/// back, `Working` when it stayed where it was or was refused, `Bad` when it did not come back.
+pub fn rollback_result(result: &nodo_api::UpdateResult) -> (Tone, String) {
+    use nodo_api::UpdateOutcome;
+    match &result.outcome {
+        UpdateOutcome::Updated => (Tone::Good, format!("{} is back on {}.", result.package, result.to)),
+        UpdateOutcome::RolledBack { reason, recovered: true, .. } => (Tone::Working, format!("{} stayed on {}: {reason}", result.package, result.from)),
+        UpdateOutcome::RolledBack { reason, .. } => (Tone::Bad, format!("{} failed and did not come back: {reason}", result.package)),
+        UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => (Tone::Working, format!("{}: {reason}", result.package)),
+    }
+}
+
+/// An app on offer, in a word: installed already, or with an update. Empty for one that is
+/// neither.
+pub fn status_word(status: PackageStatus) -> &'static str {
+    match status {
+        PackageStatus::Installed => "Installed",
+        PackageStatus::UpdateReady => "Update ready",
+        PackageStatus::Available => "",
+    }
+}
+
+/// A reference as a field shows it: `app·setting`.
+pub fn chip_label(app: &str, setting: &str) -> String {
+    format!("{app}·{setting}")
+}
+
+/// What the reference picker says above its list, when some of it does not fit the field.
+pub fn picker_hint(kind: &FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Number { .. } | FieldKind::Port => "Numbers first; the others are dimmed because a number field can't hold them.",
+        _ => "Those that fit first; the others are dimmed with why.",
+    }
+}
+
+// The web GUI
+
+/// The web GUI in a few words, for the row that leads to it: off, on with its address, or on
+/// and waiting for the device's address on the home network.
+pub fn web_gui_summary(status: &nodo_api::WebGuiStatus) -> String {
+    match (&status.url, status.enabled) {
+        (_, false) => "Off".to_owned(),
+        (Some(url), true) => format!("On · {url}"),
+        (None, true) => "On · waiting for the local address".to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::exec::load_snapshot;
     use crate::mock::MockBackend;
+
+    #[test]
+    fn home_the_unlock_page_and_the_tabs_say_what_waits() {
+        let snapshot = load_snapshot(&mut MockBackend::new()).expect("the mock answers");
+        // The mock starts locked, with updates for apps and for the Nodo itself.
+        let (head, body, label) = home_card(&snapshot, &HomeItem::Unlock).expect("a card");
+        assert_eq!((head.as_str(), label), ("Your Nodo is locked", "Unlock"));
+        assert!(body.starts_with("Apps' data waits"), "{body}");
+        assert_eq!(home_card(&snapshot, &HomeItem::App("tor".into())), None);
+        let (head, body, _) = home_card(&snapshot, &HomeItem::Updates).expect("a card");
+        assert!(head.ends_with("updates are ready") && body.contains("the Nodo"), "{head}: {body}");
+
+        let lines = unlock_lines(&snapshot, None);
+        assert!(lines[0].ends_with("locked until you type the device passphrase."), "{lines:?}");
+        let resumed = unlock_lines(&snapshot, Some("Connecting Porkbun stores its key locked with the device passphrase."));
+        assert_eq!(resumed[0], "Connecting Porkbun stores its key locked with the device passphrase. Type it to unlock the Nodo and carry on.");
+        assert_eq!(lines.len(), resumed.len(), "the apps that wait are named either way");
+
+        let ready = snapshot.updates.iter().filter(|u| !u.held).count();
+        assert!(tab_badge(&snapshot, Tab::System) == 1 && tab_badge(&snapshot, Tab::Apps) == ready - 1, "{ready}");
+        assert_eq!(tab_badge(&snapshot, Tab::Home) + tab_badge(&snapshot, Tab::Web), 0);
+    }
+
+    #[test]
+    fn an_updates_row_and_a_rollback_say_how_they_stand() {
+        let snapshot = load_snapshot(&mut MockBackend::new()).expect("the mock answers");
+        let mut item = snapshot.updates[0].clone();
+        item.note = UpdateNote::Ready;
+        item.held = false;
+        item.grows = None;
+        assert_eq!(update_note(&item), (String::new(), false));
+        item.grows = Some("256 MB to 512 MB".into());
+        assert_eq!(update_note(&item), ("needs the device passphrase".to_owned(), true));
+        item.held = true;
+        assert_eq!(update_note(&item), ("held back".to_owned(), false));
+        item.note = UpdateNote::RestartNeeded;
+        assert_eq!(nodo_update_note(&item), "needs a restart");
+
+        let mut result =
+            nodo_api::UpdateResult { package: "tor".into(), from: "2".into(), to: "1".into(), outcome: nodo_api::UpdateOutcome::Updated, log: Vec::new() };
+        assert_eq!(rollback_result(&result), (Tone::Good, "tor is back on 1.".to_owned()));
+        result.outcome = nodo_api::UpdateOutcome::Refused("it is in use".into());
+        assert_eq!(rollback_result(&result), (Tone::Working, "tor: it is in use".to_owned()));
+
+        assert_eq!(status_word(PackageStatus::UpdateReady), "Update ready");
+        assert_eq!(chip_label("cuprated", "rpc_port"), "cuprated·rpc_port");
+        assert!(picker_hint(&FieldKind::Port).starts_with("Numbers first"));
+        let on = nodo_api::WebGuiStatus { enabled: true, url: Some("https://nodo.local".into()), waiting: false, open: false };
+        assert_eq!(web_gui_summary(&on), "On · https://nodo.local");
+        assert_eq!(web_gui_summary(&nodo_api::WebGuiStatus { url: None, waiting: true, ..on.clone() }), "On · waiting for the local address");
+        assert_eq!(web_gui_summary(&nodo_api::WebGuiStatus { enabled: false, url: None, ..on }), "Off");
+    }
 
     #[test]
     fn uptime_uses_the_two_largest_units() {

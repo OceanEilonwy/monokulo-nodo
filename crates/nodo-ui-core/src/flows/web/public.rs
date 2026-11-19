@@ -331,7 +331,7 @@ mod tests {
         for effect in effects {
             steps.extend(execute_effect(&mut mock, effect).iter().map(web::apply));
         }
-        assert!(steps.contains(&Step::Go(Dest::WentPublic)), "{steps:?}");
+        assert!(steps.contains(&Step::Go(Dest::WentPublic { site: "moneropay".into() })), "{steps:?}");
         let after = load_snapshot(&mut mock).expect("the mock answers");
         assert!(after.web.sites.iter().find(|s| s.package == "moneropay").expect("the site").exposure.public);
         assert_eq!(confirm.certificate(), Certificate { site: "moneropay".into(), host: "moneropay.example.com".into() });

@@ -131,7 +131,7 @@ const STATE_FILE: WriteOptions = WriteOptions {
 };
 
 fn turned_off() -> ApiError {
-    ApiError::Failed("the web GUI is turned off".to_owned())
+    ApiError::Failed(nodo_api::WEBGUI_TURNED_OFF.to_owned())
 }
 
 impl<S: System> Helper<S> {

@@ -632,9 +632,10 @@ impl ScreenData for HelperBackend {
                     })
                     .collect(),
                 suggestion: Vec::new(),
+                suggestion_hint: None,
             },
             Ok(_) => LogView::default(),
-            Err(e) => LogView { lines: vec![LogLine { kind: LogKind::Error, text: e.to_string() }], suggestion: Vec::new() },
+            Err(e) => LogView { lines: vec![LogLine { kind: LogKind::Error, text: e.to_string() }], suggestion: Vec::new(), suggestion_hint: None },
         }
     }
 

@@ -53,12 +53,12 @@ pub fn ask_all_offline(snapshot: &Snapshot) -> Option<Question> {
 pub fn apply(outcome: &Outcome) -> Step {
     match outcome {
         Outcome::PublicHostSet { result: Err(text), .. } => Step::Failed(Notice::error(format!("Not saved: {text}"))),
-        Outcome::PublicHostSet { result: Ok(()), then } if then.is_empty() => saved_and_left(),
-        Outcome::PublicHostSet { result: Ok(()), then } => Step::Run(then.clone()),
+        Outcome::PublicHostSet { site, result: Ok(()), then } if then.is_empty() => saved_and_left(site),
+        Outcome::PublicHostSet { result: Ok(()), then, .. } => Step::Run(then.clone()),
         Outcome::ExposureSet { result: Err(error), .. } => Step::Failed(Notice::error(format!("Not changed: {error}"))),
-        Outcome::ExposureSet { after: ExposureAfter::Back, .. } => saved_and_left(),
+        Outcome::ExposureSet { site, after: ExposureAfter::Back, .. } => saved_and_left(site),
         Outcome::ExposureSet { after: ExposureAfter::Stay, .. } => Step::Done(Notice::ok("Saved.")),
-        Outcome::ExposureSet { after: ExposureAfter::WentPublic, .. } => Step::Go(Dest::WentPublic),
+        Outcome::ExposureSet { site, after: ExposureAfter::WentPublic, .. } => Step::Go(Dest::WentPublic { site: site.clone() }),
         Outcome::Reachability { site, going_public, result } => {
             Step::Go(Dest::Reachability(public::Found::of(site, *going_public, result)))
         }
@@ -66,8 +66,8 @@ pub fn apply(outcome: &Outcome) -> Step {
     }
 }
 
-fn saved_and_left() -> Step {
-    Step::All(vec![Step::Go(Dest::LeaveHosting), Step::Done(Notice::ok("Saved."))])
+fn saved_and_left(site: &str) -> Step {
+    Step::All(vec![Step::Go(Dest::LeaveHosting { site: site.to_owned() }), Step::Done(Notice::ok("Saved."))])
 }
 
 #[cfg(test)]

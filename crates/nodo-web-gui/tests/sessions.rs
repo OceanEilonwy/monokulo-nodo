@@ -93,15 +93,19 @@ async fn a_refused_login_says_why_beside_the_box_and_sets_no_cookie() {
     assert_eq!(empty.status, StatusCode::UNPROCESSABLE_ENTITY);
     empty.assert_has("Enter the device passphrase.");
 
-    *app.backends.login_error.lock().expect("the error") = Some(ApiError::NotSetUp);
+    // What the helper's own login answers, on the request path the device uses.
+    app.backends.prepare(|mock| mock.setup_needed = true);
     let not_set_up = browser.post("/login", &[("passphrase", MOCK_PASSPHRASE)]).await;
     assert_eq!(not_set_up.status, StatusCode::SERVICE_UNAVAILABLE);
     not_set_up.assert_has("This Nodo has no device passphrase yet.");
+    app.backends.prepare(|_| {});
 
-    *app.backends.login_error.lock().expect("the error") = Some(ApiError::Failed("the web GUI is turned off".into()));
+    app.backends.gate.enabled.store(false, Ordering::SeqCst);
     let off = browser.post("/login", &[("passphrase", MOCK_PASSPHRASE)]).await;
     assert_eq!(off.status, StatusCode::SERVICE_UNAVAILABLE);
     off.assert_has("The web GUI is turned off.").assert_has("nodo-tui --ctl web-gui 1");
+    app.backends.gate.enabled.store(true, Ordering::SeqCst);
+    assert_eq!(app.backends.calls(), Vec::<&str>::new(), "no login was taken");
 
     *app.backends.login_error.lock().expect("the error") = Some(ApiError::RateLimited { retry_after_secs: 30 });
     let limited = browser.post("/login", &[("passphrase", MOCK_PASSPHRASE)]).await;
@@ -388,7 +392,7 @@ async fn a_helper_that_closed_its_gate_sends_every_browser_back_to_the_login() {
     assert_eq!(first.get("/apps").await.status, StatusCode::OK);
 
     // The helper restarted, or its own time ran out: it answers that nobody is logged in.
-    app.backends.gate_open.store(false, Ordering::SeqCst);
+    app.backends.close_gate();
     let answer = first.get("/apps").await;
     assert_eq!((answer.status, answer.location()), (StatusCode::SEE_OTHER, "/login"));
     assert_eq!(app.state.session_count(), 0, "every session is dropped, not only the one that noticed");
@@ -397,7 +401,7 @@ async fn a_helper_that_closed_its_gate_sends_every_browser_back_to_the_login() {
 
     // A post is not carried out either.
     let mut third = app.login().await;
-    app.backends.gate_open.store(false, Ordering::SeqCst);
+    app.backends.close_gate();
     let mut htmx = third.clone();
     htmx.htmx = true;
     assert_eq!(htmx.post("/apps/tor/restart", &[]).await.header("hx-redirect"), "/login");

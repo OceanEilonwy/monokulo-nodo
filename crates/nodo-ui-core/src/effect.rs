@@ -133,6 +133,35 @@ pub enum Effect {
     LoadOwnerPage { package: String, passphrase: Secret },
 }
 
+impl Effect {
+    /// Whether performing it can take minutes: a download, a whole backup read or written, an
+    /// app restarted with new settings, a check from outside. A frontend that cannot make its
+    /// owner wait for the answer (a web request) runs these in the background and shows what is
+    /// running; every other effect answers in a moment.
+    pub fn is_long(&self) -> bool {
+        match self {
+            Effect::StartInstall { .. }
+            | Effect::InstallBundle { .. }
+            | Effect::CheckUpdates
+            | Effect::ApplyUpdates { .. }
+            | Effect::ApplyUpdatesWithPassphrase { .. }
+            | Effect::ApplySettings { .. }
+            | Effect::RollBack { .. }
+            | Effect::CheckReachability { .. }
+            | Effect::CreateBackup { .. }
+            | Effect::InspectBackup { .. }
+            | Effect::RestoreBackup { .. }
+            | Effect::InspectRestore { .. }
+            | Effect::RunRestore { .. } => true,
+            Effect::Drive(action) => matches!(action, DriveAction::ReadOnlyCheck | DriveAction::Repair),
+            Effect::SetExposure { after, .. } => *after == ExposureAfter::WentPublic,
+            // What runs once the names are saved counts too.
+            Effect::SetPublicHost { then, .. } => then.iter().any(Effect::is_long),
+            _ => false,
+        }
+    }
+}
+
 /// What an effect came to. A frontend hands each one to the state that asked for it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
@@ -166,8 +195,8 @@ pub enum Outcome {
     AutoUpdateSaved(Result<(), String>),
     LogsLoaded { source: String, view: LogView },
     DriveResult(Result<Document, String>),
-    ExposureSet { after: ExposureAfter, result: Result<(), ApiError> },
-    PublicHostSet { result: Result<(), String>, then: Vec<Effect> },
+    ExposureSet { site: String, after: ExposureAfter, result: Result<(), ApiError> },
+    PublicHostSet { site: String, result: Result<(), String>, then: Vec<Effect> },
     Reachability { site: String, going_public: bool, result: Reachability },
     ProviderAdded(Result<ConnectedProvider, String>),
     ProvidersLoaded(Result<Vec<Provider>, String>),

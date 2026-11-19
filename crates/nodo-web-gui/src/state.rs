@@ -17,7 +17,7 @@ use nodo_ui_core::secret::Secret;
 
 use crate::backends::Backends;
 use crate::clock::Clock;
-use crate::core_wishlist::{login_error, typed_secret};
+use crate::glue::typed_secret;
 use crate::session::{lock, new_token, CookieStyle, Session, MAX_SESSIONS};
 
 /// How this process is reached.
@@ -188,10 +188,9 @@ impl AppState {
             if state.session_count() > 0 {
                 return;
             }
-            let backends = state.backends();
             let closing = tokio::task::spawn_blocking(move || {
                 let mut backend = lock(&last.backend);
-                backends.logout(&mut **backend)
+                crate::backends::logout(&mut **backend)
             });
             match closing.await {
                 Ok(Ok(())) => {}
@@ -270,7 +269,7 @@ impl AppState {
                     ApiError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
                     _ => StatusCode::SERVICE_UNAVAILABLE,
                 };
-                return Err(Refusal::new(status, login_error(&error)));
+                return Err(Refusal::new(status, nodo_ui_core::flows::web_gui::login_refusal(&error)));
             }
         };
         lock(&self.0.tries).remove(address);
@@ -285,7 +284,7 @@ impl AppState {
 
     async fn check_passphrase(&self, secret: Secret) -> Result<Box<dyn nodo_ui_core::exec::Data>, ApiError> {
         let backends = self.backends();
-        tokio::task::spawn_blocking(move || backends.login(&secret))
+        tokio::task::spawn_blocking(move || crate::backends::login(&*backends, &secret))
             .await
             .unwrap_or_else(|error| Err(ApiError::Failed(format!("the login did not run ({error})"))))
     }

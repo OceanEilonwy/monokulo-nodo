@@ -14,10 +14,9 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::Router;
-use nodo_api::{ApiError, Backend, Request as HelperRequest, WebGuiStatus};
+use nodo_api::ApiError;
 use nodo_ui_core::exec::Data;
-use nodo_ui_core::mock::{MockBackend, MOCK_PASSPHRASE};
-use nodo_ui_core::secret::Secret;
+use nodo_ui_core::mock::{MockBackend, MockWebGui, MOCK_PASSPHRASE};
 use nodo_web_gui::backends::Backends;
 use nodo_web_gui::clock::ManualClock;
 use nodo_web_gui::session::Session;
@@ -51,15 +50,15 @@ impl Hold {
     }
 }
 
-/// A fresh `MockBackend` per session, like `MockBackends`, that also records what the helper's
-/// gate would have been asked and can be made to answer as a helper in trouble does.
+/// The web GUI's socket of one mock device, like `MockBackends`: a fresh `MockBackend` per
+/// session, all sharing the device's one login gate, which is asked with the helper's own
+/// requests. It can also be made to answer as a helper in trouble does.
 pub struct TestBackends {
-    /// `login` and `logout`, in the order they reached the helper.
-    pub gate_calls: Mutex<Vec<&'static str>>,
-    /// The next logins fail with this.
+    /// The device's gate: whether the web GUI is on, whether somebody is logged in, and the
+    /// logins and logouts the helper took. Closing it by hand is a helper that restarted.
+    pub gate: Arc<MockWebGui>,
+    /// The next connections fail with this, as a helper that refuses or does not answer.
     pub login_error: Mutex<Option<ApiError>>,
-    /// False once the helper has closed its gate by itself, as after a restart.
-    pub gate_open: AtomicBool,
     /// Logging in leaves the device locked, as when its storage failed to open.
     pub stay_locked: AtomicBool,
     /// A login waits here, as the helper makes a guess wait.
@@ -70,10 +69,12 @@ pub struct TestBackends {
 
 impl Default for TestBackends {
     fn default() -> Self {
+        let gate = Arc::new(MockWebGui::default());
+        // Turned on over SSH, as it must be before anybody can log in.
+        gate.enabled.store(true, Ordering::SeqCst);
         Self {
-            gate_calls: Mutex::new(Vec::new()),
+            gate,
             login_error: Mutex::new(None),
-            gate_open: AtomicBool::new(true),
             stay_locked: AtomicBool::new(false),
             login_hold: Mutex::new(None),
             prepare: Mutex::new(Box::new(|_| {})),
@@ -82,17 +83,23 @@ impl Default for TestBackends {
 }
 
 impl TestBackends {
+    /// `login` and `logout`, in the order the helper took them.
     pub fn calls(&self) -> Vec<&'static str> {
-        self.gate_calls.lock().expect("the record").clone()
+        self.gate.log.lock().expect("the record").clone()
     }
 
     pub fn prepare(&self, change: impl Fn(&mut MockBackend) + Send + 'static) {
         *self.prepare.lock().expect("the preparation") = Box::new(change);
     }
+
+    /// The helper closed its gate by itself, as after a restart or when its own time ran out.
+    pub fn close_gate(&self) {
+        self.gate.open.store(false, Ordering::SeqCst);
+    }
 }
 
 impl Backends for TestBackends {
-    fn login(&self, passphrase: &Secret) -> Result<Box<dyn Data>, ApiError> {
+    fn connect(&self) -> Result<Box<dyn Data>, ApiError> {
         let hold = self.login_hold.lock().expect("the hold").clone();
         if let Some(hold) = hold {
             hold.wait();
@@ -100,28 +107,13 @@ impl Backends for TestBackends {
         if let Some(error) = self.login_error.lock().expect("the error").clone() {
             return Err(error);
         }
-        if passphrase.expose() != MOCK_PASSPHRASE {
-            return Err(ApiError::BadPassphrase);
-        }
         let mut backend = MockBackend::new();
-        if !self.stay_locked.load(Ordering::SeqCst) {
-            backend.call(HelperRequest::Unlock { passphrase: nodo_api::Secret::new(passphrase.expose()) })?;
-        }
+        // The preparation may put another device in its place, so the socket is set up after.
         (self.prepare.lock().expect("the preparation"))(&mut backend);
-        self.gate_open.store(true, Ordering::SeqCst);
-        self.gate_calls.lock().expect("the record").push("login");
+        backend.knobs.web_socket = true;
+        backend.knobs.web_login_keeps_locked = self.stay_locked.load(Ordering::SeqCst);
+        backend.web_gui = self.gate.clone();
         Ok(Box::new(backend))
-    }
-
-    fn logout(&self, _backend: &mut dyn Data) -> Result<(), ApiError> {
-        self.gate_calls.lock().expect("the record").push("logout");
-        self.gate_open.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-
-    fn status(&self, _backend: &mut dyn Data) -> Result<WebGuiStatus, ApiError> {
-        let open = self.gate_open.load(Ordering::SeqCst);
-        Ok(WebGuiStatus { enabled: true, url: open.then(|| nodo_api::WEBGUI_URL.to_owned()), waiting: false, open })
     }
 }
 
@@ -156,9 +148,11 @@ impl Answer {
     }
 }
 
-/// Every place in a page that names a key of the terminal interface ("press o", "Press s to"):
-/// the word, a single lower-case letter, and then no further letter. A browser has no such keys.
+/// Every place in a page that names a key of the terminal interface ("press o", "Press s to",
+/// "Press `l`"): the word, a single lower-case letter, and then no further letter. A browser has
+/// no such keys.
 pub fn keys_named(body: &str) -> Vec<String> {
+    let body = &body.replace('`', "");
     let mut found = Vec::new();
     for marker in ["Press ", "press "] {
         for (at, _) in body.match_indices(marker) {

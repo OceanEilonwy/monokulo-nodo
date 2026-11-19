@@ -12,6 +12,26 @@ use crate::model::Snapshot;
 use crate::secret::Input;
 use crate::{Effect, Outcome};
 
+/// The warning above a suite's review: where its apps come from.
+pub fn unreviewed(feed: &str) -> String {
+    format!("They come from {feed}, a source you added. Nobody has reviewed their code for you.")
+}
+
+/// What no app of a suite can do, whatever it asks for.
+pub const GUARANTEES: [&str; 2] = ["Cannot read other packages' data or secrets", "Cannot run setup scripts as root or replace system packages"];
+
+/// Said above the settings a suite asks for.
+pub const ASKED_ONCE: &str = "These are asked once, before anything installs. You can change them later in each app's Settings.";
+
+/// Said under a secret setting a suite asks for.
+pub const SECRET_ANSWER: &str = "Paste it whole; it is never shown, and line breaks in a pasted file are dropped.";
+
+/// Said while a suite installs.
+pub const IN_TURN: &str = "Each app installs in turn, then the next. A failed one stops the rest; what installed before it stays.";
+
+/// Said under the problem that stopped a suite's install.
+pub const AFTER_FAILURE: &str = "The apps installed before it stay. Installing again skips them and carries on.";
+
 /// Where installing a bundle stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BundleStep {

@@ -142,7 +142,7 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
     let (words, bad) = app_state(&app.data, name);
     let site = app.data.web.sites.iter().find(|s| s.package == name);
     let mut line = vec![if bad { t.e("●  ") } else if running { t.o("●  ") } else { t.d("○  ") }, if bad { t.e(words) } else { t.n(words) }];
-    if let Some(url) = site.and_then(|s| s.public_host.clone().map(|h| format!("https://{h}")).or_else(|| (!s.local_url.is_empty() && s.exposure.local).then(|| s.local_url.clone()))) {
+    if let Some(url) = site.and_then(nodo_ui_core::words::open_url) {
         line.push(t.n(format!("   ·   open at {url}")));
     }
     status.row(t, line);
@@ -226,11 +226,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    let tag_of = |status: &PackageStatus| match status {
-        PackageStatus::Installed => "Installed",
-        PackageStatus::UpdateReady => "Update ready",
-        PackageStatus::Available => "",
-    };
+    let tag_of = |status: &PackageStatus| nodo_ui_core::words::status_word(*status);
     let cols = Columns::fit(&card, results.iter().map(|pkg| pkg.id.name.as_str()), results.iter().map(|pkg| tag_of(&pkg.status)), 0);
     for (index, pkg) in results.iter().enumerate() {
         if index > 0 {
@@ -439,21 +435,13 @@ pub fn unlock(app: &App, t: &Theme, state: &UnlockState) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::Home, w);
     screen.before = vec![Item::Blank, Item::Blank];
-    let overview = &app.data.overview;
     let mut card = Card::new(t, w);
     card.blank(t);
     card.row(t, vec![t.b("Unlock your Nodo")]);
     card.blank(t);
-    let waiting: Vec<&str> = overview.unlock_targets.iter().filter(|target| target.encrypted).map(|target| target.name.as_str()).collect();
-    if let Some(reason) = &state.resume {
-        card.row(t, vec![t.n(format!("{reason} Type it to unlock the Nodo and carry on."))]);
-    } else {
-        let restarted = if overview.restarted.is_empty() { "The Nodo restarted.".to_owned() } else { format!("{}.", overview.restarted.trim_end_matches('.')) };
-        let what = if waiting.is_empty() { "Saved keys and secret settings stay" } else { "Your apps' data is" };
-        card.row(t, vec![t.n(format!("{restarted} {what} locked until you type the device passphrase."))]);
-    }
-    if !waiting.is_empty() {
-        card.row(t, vec![t.d(format!("{} start after you unlock.", waiting.join(", ")))]);
+    // Why the passphrase is asked, then the apps that wait for it.
+    for (index, line) in nodo_ui_core::words::unlock_lines(&app.data, state.resume.as_deref()).into_iter().enumerate() {
+        card.row(t, vec![if index == 0 { t.n(line) } else { t.d(line) }]);
     }
     card.blank(t);
     let mut pass = vec![t.d(pad("Passphrase", 13))];

@@ -38,8 +38,8 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
     if let Some(update) = nodo_update(&app.data) {
         let mut card = Card::new(t, w);
         card.blank(t);
-        let restart = if update.note == UpdateNote::RestartNeeded { "   needs a restart" } else { "   no restart needed" };
-        card.row(t, vec![t.b("A Nodo update is ready"), t.d(format!("   {}{restart}", update.to))]);
+        let restart = nodo_ui_core::words::nodo_update_note(update);
+        card.row(t, vec![t.b("A Nodo update is ready"), t.d(format!("   {}   {restart}", update.to))]);
         if let UpdateNote::Withdrawal(withdrawn) = &update.note {
             card.row(t, vec![t.a("▲  "), t.n(format!("The publisher withdrew {withdrawn}, which this Nodo runs."))]);
         }
@@ -124,23 +124,11 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             card.focus_here();
         }
         let ticked = state.checked.contains(&item.name);
-        let note = match &item.note {
-            UpdateNote::Ready if item.grows.is_some() => t.a("needs the device passphrase"),
-            UpdateNote::Ready => t.d(""),
-            UpdateNote::RestartNeeded => t.d("needs a restart"),
-            UpdateNote::NewPermission(_) => t.a("▲ asks for something new; you'll review it first"),
-            UpdateNote::Skipped => t.d("you skipped this version"),
-            UpdateNote::Blocked(reason) => t.a(format!("▲ {reason}")),
-            UpdateNote::Withdrawal(_) => t.a("▲ replaces a withdrawn version"),
-        };
+        let (words, marked) = nodo_ui_core::words::update_note(item);
+        let note = if marked { t.a(words) } else { t.d(words) };
         let lead = if selected { t.a("▸ ") } else { t.n("  ") };
         let name_width = apps.iter().map(|(_, i)| i.name.chars().count()).max().unwrap_or(0).clamp(10, 20) + 2;
         let name = if item.held { t.d(pad(&item.name, name_width)) } else { t.n(pad(&item.name, name_width)) };
-        let note = match (&item.note, item.held) {
-            (UpdateNote::Skipped, _) => t.d("you skipped this version"),
-            (_, true) => t.d("held back"),
-            _ => note,
-        };
         let target = Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' '))));
         card.row_with(t, vec![lead, tick(t, ticked), t.n("  "), name, t.d(pad(&format!("{}  →  {}", item.from, item.to), 22)), note], [target]);
     }
@@ -369,8 +357,11 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
         card.row(t, vec![t.d(state.empty_text())]);
     }
     card.blank(t);
-    for suggestion in &state.view.suggestion {
-        card.row(t, vec![t.i("▸  "), t.n(suggestion.replace('`', ""))]);
+    let last = state.view.suggestion.len().saturating_sub(1);
+    for (index, suggestion) in state.view.suggestion.iter().enumerate() {
+        // What the last one points at is said with its key.
+        let hint = state.view.suggestion_hint.filter(|_| index == last);
+        card.row(t, vec![t.i("▸  "), t.n(crate::keys::suggestion(suggestion, hint).replace('`', ""))]);
     }
     if !state.view.suggestion.is_empty() {
         card.blank(t);

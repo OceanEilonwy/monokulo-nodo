@@ -13,6 +13,21 @@ use crate::model::Snapshot;
 use crate::secret::{Input, Secret};
 use crate::{Effect, Outcome};
 
+/// Why an app's setup page asks for the device passphrase.
+pub const WHY_PASSPHRASE: &str = "The setup page shows addresses and codes that let others in, so it needs your device passphrase.";
+
+/// Who publishes the DNS records a site needs: a connected provider by itself, or the owner.
+/// `None` for a site that needs no record.
+pub fn dns_note(site: &nodo_api::SiteFacts) -> Option<String> {
+    match &site.automatic_dns {
+        Some(provider) => Some(format!("{provider} publishes this record by itself.")),
+        None if !site.records.is_empty() => {
+            Some("Create this record at your domain's DNS provider, or connect it in Web › Domain providers.".to_owned())
+        }
+        None => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerPage {
     pub package: String,

@@ -83,10 +83,9 @@ async fn from_adding_a_source_to_removing_an_app_it_offered() {
     assert_eq!((asked.status, asked.location()), (StatusCode::SEE_OTHER, "/confirm"));
     browser.get("/apps/moneropay").await.assert_has("Stopped");
     let apps = confirm(&mut browser, "Remove moneropay?").await;
-    // Back on the list of apps with what the helper said. The mock has no removal, and says so;
-    // that its words are here shows the request reached it.
+    // Back on the list of apps, without it, with what removing means.
     assert!(apps.body.contains("<h1>Installed</h1>"), "{}", apps.body);
-    apps.assert_has("remove-package");
+    apps.assert_has("moneropay was removed. Its data stays on the drive; installing it again brings it back.").assert_lacks(r#"href="/apps/moneropay""#);
     // Answered once: the same answer again does nothing.
     assert_eq!(browser.get("/confirm").await.location(), "/");
 }

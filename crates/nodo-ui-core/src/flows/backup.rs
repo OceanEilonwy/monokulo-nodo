@@ -26,6 +26,77 @@ pub const RESTORE_WORD: &str = nodo_api::RESTORE_WORD;
 /// The helper enforces the same minimum. Checking here saves a round trip and a KDF run.
 pub const MIN_BACKUP_PASSPHRASE_CHARS: usize = 12;
 
+/// What a backup holds, a line each.
+pub const HOLDS: [&str; 4] = [
+    "Package settings, secrets, certificates and Tor onion keys",
+    "The device key, so encrypted storage can be restored",
+    "The contents of unlocked encrypted storage",
+    "Feeds, pinned keys, approvals and the verified package files",
+];
+
+/// What a backup leaves out, and how it is protected.
+pub const HOLDS_NOTES: [&str; 2] =
+    ["Never chain data. The node syncs it again.", "Encrypted with its own passphrase, at the same cost as the device key."];
+
+/// What the owner should know about a backup's passphrase before choosing one.
+pub const PASSPHRASE_NOTES: [&str; 3] = [
+    "The backup passphrase opens this backup on any device. Keep it apart from the device.",
+    "Use at least 12 characters. It is as valuable as the device passphrase.",
+    "Nothing can open the backup without it.",
+];
+
+/// Said where a backup goes to a USB drive.
+pub const USB_NOTE: &str = "The drive is unmounted when the backup is written. Wait for it before unplugging.";
+
+/// Said where a backup's passphrase is asked for, before anything is restored.
+pub const CHECKED_FIRST: &str = "The whole backup is checked first. A wrong passphrase or a damaged file restores nothing.";
+
+/// What restoring a verified backup brings back or replaces, a line each. `fresh` on a device
+/// that is being set up from it.
+pub fn restores(contents: &BackupContents, fresh: bool) -> Vec<String> {
+    let mut what: Vec<String> = contents.settings.iter().map(|id| format!("{id} settings")).collect();
+    what.extend(contents.storage.iter().map(|id| format!("{id} encrypted storage")));
+    if contents.onion_keys {
+        what.push("Tor onion keys".to_owned());
+    }
+    if fresh {
+        what.push("Feeds, their pinned keys, approvals and the packages installed from them".to_owned());
+        if contents.has_device_key {
+            what.push("Device key, so the backed-up storage opens".to_owned());
+        }
+    } else if contents.has_device_key {
+        what.push("Device key, kept if this device's storage already uses its own".to_owned());
+    }
+    what
+}
+
+/// What a restore does to the running services, and the warning it is confirmed under.
+pub fn restore_warning(contents: &BackupContents, fresh: bool) -> (String, &'static str) {
+    if fresh {
+        ("Each package is installed, its storage filled, then started.".to_owned(), "Set up this device from the backup")
+    } else if contents.services_to_stop.is_empty() {
+        ("Nothing needs to stop.".to_owned(), "This overwrites what is on the device now")
+    } else {
+        (format!("Stops while restoring: {}", contents.services_to_stop.join(", ")), "This overwrites what is on the device now")
+    }
+}
+
+/// A USB drive's filesystem, its free space and whether it can be written, in a line.
+pub fn usb_facts(drive: &UsbDrive, list: &UsbBackupList) -> String {
+    let filesystem = match drive.filesystem.as_deref() {
+        Some("vfat") => "FAT32",
+        Some("exfat") => "exFAT",
+        Some("ext4") => "ext4",
+        Some(other) => other,
+        None => "no filesystem",
+    };
+    let mut facts = format!("{filesystem} · {} free", crate::words::size(list.free_bytes));
+    if list.read_only {
+        facts.push_str(" · read-only");
+    }
+    facts
+}
+
 /// A box of one of the forms here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
@@ -608,6 +679,29 @@ impl Restore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_backup_holds_and_what_a_restore_replaces_are_said_once() {
+        assert!(PASSPHRASE_NOTES[1].contains(&format!("at least {MIN_BACKUP_PASSPHRASE_CHARS} characters")));
+        let contents = BackupContents {
+            name: "nodo-1.nodobak".into(),
+            entries: 3,
+            settings: vec!["cuprated".into()],
+            storage: vec!["wallet-relay".into()],
+            onion_keys: true,
+            has_device_key: true,
+            services_to_stop: vec!["cuprated".into()],
+        };
+        let nothing_running = BackupContents { services_to_stop: Vec::new(), ..contents.clone() };
+        assert_eq!(
+            restores(&contents, false),
+            ["cuprated settings", "wallet-relay encrypted storage", "Tor onion keys", "Device key, kept if this device's storage already uses its own"]
+        );
+        assert!(restores(&contents, true).contains(&"Device key, so the backed-up storage opens".to_owned()));
+        assert_eq!(restore_warning(&contents, false), ("Stops while restoring: cuprated".to_owned(), "This overwrites what is on the device now"));
+        assert_eq!(restore_warning(&nothing_running, false).0, "Nothing needs to stop.");
+        assert_eq!(restore_warning(&contents, true).1, "Set up this device from the backup");
+    }
     use crate::exec::{execute_effect, load_snapshot};
     use crate::mock::{MockBackend, MOCK_PASSPHRASE};
 

@@ -12,7 +12,8 @@ use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::Tab;
 
 use super::drive;
-use crate::core_wishlist::{home_card, typed_secret, unlock_lines};
+use crate::glue::typed_secret;
+use nodo_ui_core::words::{home_card, unlock_lines};
 use nodo_ui_core::words::{app_state, health_line};
 use crate::ctx::{Ctx, Out, Work};
 use crate::runner::follow_plain;
@@ -32,7 +33,7 @@ fn unlock_card(snapshot: &Snapshot, head: &str, body: &str, problem: Option<&str
         section.card.attn #unlock {
             h2 { (head) }
             p { (body) }
-            @for line in unlock_lines(snapshot) { p.dim { (line) } }
+            @for line in unlock_lines(snapshot, None) { p.dim { (line) } }
             form.stack method="post" action=(dest::UNLOCK) {
                 (layout::passphrase("unlock-passphrase", "Device passphrase", problem, false))
                 div.actions.end { button.btn.primary type="submit" { "Unlock" } }
@@ -156,10 +157,7 @@ pub async fn unlock_page(ctx: Ctx) -> Response {
         let body = html! {
             h1 { "Unlock your Nodo" }
             section.card.attn {
-                @match &sent {
-                    Some((reason, _)) => p { (reason) " Type it to unlock the Nodo and carry on." },
-                    None => @for line in unlock_lines(&work.snapshot) { p { (line) } },
-                }
+                @for line in unlock_lines(&work.snapshot, sent.as_ref().map(|(reason, _)| reason.as_str())) { p { (line) } }
                 // The wait after a wrong try, counted by this process's clock.
                 @if wait > 0 { p.warn role="status" { "You can try again in " (nodo_ui_core::words::counted(wait, "second")) "." } }
                 form.stack method="post" action=(dest::UNLOCK) {

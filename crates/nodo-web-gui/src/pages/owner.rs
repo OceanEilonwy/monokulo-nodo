@@ -20,7 +20,7 @@ use nodo_ui_core::flows::Step;
 use nodo_ui_core::screen::Tab;
 
 use super::PassForm;
-use crate::core_wishlist::typed_secret;
+use crate::glue::typed_secret;
 use crate::ctx::{go_to, Ctx, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -103,8 +103,8 @@ fn item(item: &OwnerItem) -> Markup {
                     None => p.dim { (site.package) " has no web address yet." },
                 }
                 @if site.public { p.ok { "✓ On the internet" } }
-                @if let Some(provider) = &site.automatic_dns { p.dim { "Its records are kept by the Nodo through " (provider) "." } }
-                @for record in &site.records { (copyable(&format!("{} record {}", record.kind, record.name), &record.value)) }
+                @for record in &site.records { (copyable(&format!("{} record {} in {}", record.kind, record.name, record.zone), &record.value)) }
+                @if let Some(note) = nodo_ui_core::flows::owner_page::dns_note(site) { p.dim { (note) } }
                 @for each in &site.checks { (check(each)) }
             },
             OwnerItem::Service { package, check: each } => { p.dim { (package) } (check(each)) },
@@ -124,7 +124,8 @@ fn page(flow: &OwnerPage) -> Page {
         None => html! {
             h1 { (flow.title) }
             section.card {
-                p { "This page holds " (flow.package) "'s secrets, so it opens with the device passphrase. The passphrase is kept on the Nodo while the page is open, to read it again, and dropped when you close it." }
+                p { (nodo_ui_core::flows::owner_page::WHY_PASSPHRASE) }
+                p.dim { "The passphrase is kept on the Nodo while the page is open, to read it again, and dropped when you close it. Reading the page may check its sites first, up to half a minute." }
                 form.stack method="post" action=(here) {
                     (layout::passphrase("owner-passphrase", "Device passphrase", flow.error.as_deref(), true))
                     div.actions.end {

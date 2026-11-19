@@ -15,6 +15,43 @@ use crate::flows::{Confirm, Dest, Hint, Notice, Question, Step};
 use crate::secret::Input;
 use crate::{Effect, Outcome};
 
+/// What the owner should know about the radios, a line each.
+pub const ABOUT_WIRELESS: [&str; 3] = [
+    "Wired stays the main connection. Wi-Fi carries traffic only while the wired link is down.",
+    "Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept.",
+    "Bluetooth is never discoverable. Only pairings you start here can happen.",
+];
+
+/// A pairing under way, in words around the code the two devices agree on. An interface draws
+/// the code so it stands out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingWords {
+    pub before: String,
+    pub code: Option<String>,
+    pub after: String,
+}
+
+/// What to say about the pairing the radio reports, by the device's name when it is known.
+/// `None` when none runs or the last one is done.
+pub fn pairing_words(bluetooth: &BluetoothStatus) -> Option<PairingWords> {
+    let pairing = bluetooth.pairing.as_ref()?;
+    let name = bluetooth.devices.iter().find(|d| d.address == pairing.address).map_or(pairing.address.as_str(), |d| d.name.as_str());
+    let plain = |text: String| PairingWords { before: text, code: None, after: String::new() };
+    Some(match &pairing.stage {
+        PairingStage::Pairing => plain(format!("Pairing with {name}…")),
+        PairingStage::TypePasskey(key) => {
+            PairingWords { before: "Type ".to_owned(), code: Some(key.clone()), after: format!(" on {name}, then press its Enter key.") }
+        }
+        PairingStage::ComparePasskey(key) => PairingWords {
+            before: format!("{name} should show "),
+            code: Some(key.clone()),
+            after: ". If it does not, remove it: someone else may be pairing.".to_owned(),
+        },
+        PairingStage::Done => return None,
+        PairingStage::Failed(why) => plain(format!("Pairing with {name} failed: {why}")),
+    })
+}
+
 /// How long the page waits for the radios before saying there is no answer yet.
 pub const NO_ANSWER_SECONDS: u64 = 10;
 

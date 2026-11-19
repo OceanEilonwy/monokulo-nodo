@@ -12,7 +12,7 @@
 //! `…/settings/field/{key}` and gets its own row back, with its error, preview and undo.
 //!
 //! There is no text cursor here, so a reference is not typed as `$(` among the text: the picker
-//! puts it in (`Settings::place`, or `Settings::insert_reference` after the text), and each
+//! puts it in (`Settings::place`, with `PickMode::Append` after the text), and each
 //! reference of a field has its own buttons.
 
 use axum::extract::{Path, Query};
@@ -29,7 +29,8 @@ use nodo_ui_core::secret::STORED_MASK;
 use nodo_ui_core::{Effect, Outcome};
 use serde::Deserialize;
 
-use crate::core_wishlist::{chip_label, picker_hint, typed_secret};
+use crate::glue::typed_secret;
+use nodo_ui_core::words::{chip_label, picker_hint};
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -363,8 +364,8 @@ fn save_job(flow: Settings, effects: Vec<Effect>) -> Out {
 }
 
 /// Opens the picker for a field and goes to its page.
-fn open_picker(work: &mut Work<'_>, flow: &mut Settings, index: usize, mode: PickMode, append: bool) -> Out {
-    match flow.pick(index, mode, append) {
+fn open_picker(work: &mut Work<'_>, flow: &mut Settings, index: usize, mode: PickMode) -> Out {
+    match flow.pick(index, mode, false) {
         Err(why) => to_form(Reply::notice(Notice::error(why)), flow),
         Ok((mut picker, effects)) => {
             // What can be referenced, when it was not loaded yet, is told to both.
@@ -376,7 +377,7 @@ fn open_picker(work: &mut Work<'_>, flow: &mut Settings, index: usize, mode: Pic
                 return Out::Reply(reply);
             }
             let package = flow.form.package.clone();
-            work.session.inner().stash.picking = Some(Picking { picker, append });
+            work.session.inner().stash.picking = Some(Picking { picker });
             Out::Go(reference_url(&package))
         }
     }
@@ -422,15 +423,15 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form): Form<Posted>) -
             }
             ("leave", _) => match flow.leave() {
                 // Changes would be lost: ask. Confirmed, the draft goes (`pages::flow`).
-                Step::Ask(question) => Out::Reply(Reply::ask(question).about(name.clone()).cancel_to(dest::settings(&name))),
+                Step::Ask(question) => Out::Reply(Reply::ask(question).cancel_to(dest::settings(&name))),
                 other => {
                     work.session.inner().stash.settings.remove(&name);
                     return Out::Reply(follow_plain(other));
                 }
             },
-            ("pick", Some(index)) => open_picker(work, &mut flow, index, PickMode::Insert, false),
-            ("add", Some(index)) => open_picker(work, &mut flow, index, PickMode::Insert, true),
-            ("replace", Some(index)) => open_picker(work, &mut flow, index, PickMode::Replace(number), false),
+            ("pick", Some(index)) => open_picker(work, &mut flow, index, PickMode::Insert),
+            ("add", Some(index)) => open_picker(work, &mut flow, index, PickMode::Append),
+            ("replace", Some(index)) => open_picker(work, &mut flow, index, PickMode::Replace(number)),
             (verb, Some(index)) => {
                 let effects = match verb {
                     "reset" => flow.reset(index),
@@ -589,11 +590,7 @@ pub async fn reference(ctx: Ctx, Path(name): Path<String>, Query(query): Query<P
 /// what the picker said comes after. The picker is done with.
 fn place(work: &mut Work<'_>, flow: &mut Settings, picking: &Picking, app: &str, setting: &str, then: Step) -> Reply {
     let index = picking.picker.field_index;
-    let effects = if picking.append {
-        flow.insert_reference(index, usize::MAX, app, setting)
-    } else {
-        flow.place(index, picking.picker.mode, app, setting)
-    };
+    let effects = flow.place(index, picking.picker.mode, app, setting);
     let reply = work.run(Step::All(vec![Step::run(effects), then]), &mut |outcome, _| flow.apply(outcome));
     let mut inner = work.session.inner();
     inner.stash.picking = None;

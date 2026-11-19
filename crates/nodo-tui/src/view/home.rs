@@ -27,36 +27,9 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
     for (index, item) in needs.iter().enumerate() {
         let mut card = Card::new(t, w);
         card.blank(t);
-        let (head, body, label) = match item {
-            HomeItem::Unlock => (
-                "Your Nodo is locked".to_owned(),
-                if app.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked) {
-                    "Apps' data waits for the device passphrase. They start once you unlock.".to_owned()
-                } else {
-                    "Saved keys and secret settings, such as a domain provider's, need the device passphrase.".to_owned()
-                },
-                "Unlock",
-            ),
-            HomeItem::Failing(id) => (
-                format!("{id} keeps stopping"),
-                "Its log usually says why. Settings or an update can be undone from its page.".to_owned(),
-                "Show log",
-            ),
-            HomeItem::Updates => {
-                let names: Vec<String> = app
-                    .update_rows()
-                    .iter()
-                    .filter(|u| !u.held)
-                    .map(|u| if u.name == nodo_ui_core::model::SYSTEM_BASE { "the Nodo".to_owned() } else { u.name.clone() })
-                    .collect();
-                let count = names.len();
-                (
-                    if count == 1 { "1 update is ready".to_owned() } else { format!("{count} updates are ready") },
-                    format!("{}. Each keeps its settings and can be undone.", names.join(", ")),
-                    "Review updates",
-                )
-            }
-            HomeItem::App(_) => unreachable!("filtered out"),
+        // An app's row is no card; those were filtered out above.
+        let Some((head, body, label)) = nodo_ui_core::words::home_card(&app.data, item) else {
+            continue;
         };
         if index == selected {
             card.focus_here();

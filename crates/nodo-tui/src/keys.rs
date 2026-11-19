@@ -23,6 +23,14 @@ pub fn with_key(text: &str, hint: Option<Hint>) -> String {
     }
 }
 
+/// A line of a log's suggestion as the terminal says it, with the key for what it points at.
+pub fn suggestion(text: &str, hint: Option<Hint>) -> String {
+    match (hint, text.strip_prefix("Unlock the device.")) {
+        (Some(Hint::Unlock), Some(rest)) => format!("Press `u` to unlock the device.{rest}"),
+        _ => with_key(text, hint),
+    }
+}
+
 /// A notice with the key in its text.
 pub fn notice(notice: Notice) -> Notice {
     Notice { text: with_key(&notice.text, notice.hint), hint: None, ..notice }
@@ -65,6 +73,11 @@ mod tests {
             assert_eq!(with_key(text, Some(hint)), expected);
         }
         assert_eq!(with_key("Saved.", None), "Saved.");
+        assert_eq!(
+            suggestion("Unlock the device. bell will start automatically.", Some(Hint::Unlock)),
+            "Press `u` to unlock the device. bell will start automatically."
+        );
+        assert_eq!(suggestion("bell depends on wallet-relay, which is locked.", None), "bell depends on wallet-relay, which is locked.");
         let told = notice(Notice::error("bell is locked.").hinting(Hint::Unlock));
         assert_eq!(told, Notice::error("bell is locked. Press u to unlock this device."));
     }

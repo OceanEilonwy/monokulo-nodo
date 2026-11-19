@@ -13,7 +13,7 @@ use nodo_ui_core::flows::{self, Dest, Notice, Question, Step};
 use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::{Effect, Outcome};
 
-use crate::core_wishlist::says_login_required;
+use crate::glue::says_login_required;
 
 /// More rounds of effects than any flow asks for. A flow that answers its own outcome with the
 /// same effects for ever is stopped here and said, instead of holding the request.
@@ -32,9 +32,6 @@ pub struct Reply {
     pub login_required: bool,
     /// Where Cancel on the question leads, when that is not where the reply goes back to.
     pub cancel: Option<String>,
-    /// What the question is about (an app's name), for the flow that asked to find its state
-    /// again when the answer comes.
-    pub subject: Option<String>,
 }
 
 impl Reply {
@@ -51,12 +48,6 @@ impl Reply {
     /// Cancel on this reply's question returns to `url`.
     pub fn cancel_to(mut self, url: impl Into<String>) -> Self {
         self.cancel = Some(url.into());
-        self
-    }
-
-    /// The question on this reply is about `subject`.
-    pub fn about(mut self, subject: impl Into<String>) -> Self {
-        self.subject = Some(subject.into());
         self
     }
 
@@ -206,7 +197,6 @@ mod tests {
         let (mut mock, mut snapshot) = mock();
         let name = snapshot.services[0].id.clone();
         // Removing goes to Apps and then removes; what the helper said about it arrives after.
-        // (The mock has no removal, so what it says is that.)
         let step = Confirm::RemoveApp(name.clone()).step(&snapshot);
         let reply = run_steps(&mut mock, &mut snapshot, step, &mut no_flow);
         assert_eq!(reply.go, Some(Dest::Apps));

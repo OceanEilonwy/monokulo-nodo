@@ -718,14 +718,11 @@ pub fn online(app: &App, t: &Theme, state: &Certificate) -> Page {
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;
     let mut card = Card::new(t, w);
-    let cert = web.cert(&state.host);
-    let cert_state = cert.map(|c| c.state).unwrap_or(nodo_api::CertState::Waiting);
-    let broken = matches!(cert_state, nodo_api::CertState::Failed | nodo_api::CertState::Expired);
     card.blank(t);
-    match cert_state {
-        nodo_api::CertState::Valid => card.row(t, vec![t.o("✓  "), t.b(format!("{} is online", state.site))]),
-        _ if broken => card.row(t, vec![t.e("✕  "), t.b("The secure connection isn't ready")]),
-        _ => card.row(t, vec![t.a("◆  "), t.b(format!("{} is online. Getting its secure connection…", state.site))]),
+    match state.heading(&app.data) {
+        (nodo_ui_core::words::Tone::Good, words) => card.row(t, vec![t.o("✓  "), t.b(words)]),
+        (nodo_ui_core::words::Tone::Bad, words) => card.row(t, vec![t.e("✕  "), t.b(words)]),
+        (nodo_ui_core::words::Tone::Working, words) => card.row(t, vec![t.a("◆  "), t.b(words)]),
     }
     card.blank(t);
     card.row(t, vec![t.n(format!("   https://{}", state.host))]);
@@ -739,13 +736,10 @@ pub fn online(app: &App, t: &Theme, state: &Certificate) -> Page {
         }
     }
     card.blank(t);
-    match cert.and_then(|c| c.problem.clone()) {
-        Some(problem) if broken => {
-            card.row(t, vec![t.e(format!("   {problem}"))]);
-            card.row(t, vec![t.d("   The Nodo keeps trying. Visitors see a warning until it works.")]);
-        }
-        _ => card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]),
+    if let Some(problem) = state.problem(&app.data) {
+        card.row(t, vec![t.e(format!("   {problem}"))]);
     }
+    card.row(t, vec![t.d(format!("   {}", state.outlook(&app.data)))]);
     card.blank(t);
     card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);
     screen.before = vec![Item::Blank, trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];

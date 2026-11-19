@@ -9,7 +9,7 @@ use nodo_ui_core::model::{Snapshot, UpdateNote};
 use nodo_ui_core::screen::Tab;
 
 use super::document_page;
-use crate::core_wishlist::nodo_update_note;
+use nodo_ui_core::words::nodo_update_note;
 use nodo_ui_core::words::{nodo_update, system_row_summary, SYSTEM_ROWS};
 use crate::ctx::{Ctx, Out};
 use crate::dest;

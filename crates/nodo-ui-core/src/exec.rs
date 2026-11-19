@@ -217,10 +217,11 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
                 confirmation: confirmation.map(|typed_host| PublicConfirmation { typed_host }),
             };
             let result = plain_result(backend.call(request));
-            vec![Outcome::ExposureSet { after, result }, refresh(backend)]
+            vec![Outcome::ExposureSet { site, after, result }, refresh(backend)]
         }
         Effect::SetPublicHost { site, host, aliases, then } => {
-            vec![Outcome::PublicHostSet { result: backend.set_public_host(&site, &host, &aliases), then }, refresh(backend)]
+            let result = backend.set_public_host(&site, &host, &aliases);
+            vec![Outcome::PublicHostSet { site, result, then }, refresh(backend)]
         }
         Effect::SetPublicAccess { site, access } => match backend.set_public_access(&site, &access) {
             Ok(()) => Vec::new(),

@@ -882,7 +882,7 @@ impl Manage {
                 }
                 self.dialog(&document.title, &lines.join("\n"), false, vec![button("dialog-close", "OK", 0)]);
             }
-            Dest::LeaveHosting => {
+            Dest::LeaveHosting { site: _ } => {
                 if matches!(self.top(), Screen::Hosting(_)) {
                     self.pop();
                 }
@@ -898,7 +898,7 @@ impl Manage {
                 }
             }
             Dest::SetUpFromBackup => self.in_terminal("Setting the device up from a backup"),
-            Dest::WentPublic => {
+            Dest::WentPublic { site: _ } => {
                 if matches!(self.top(), Screen::Hosting(_)) {
                     self.pop();
                 }
@@ -2190,7 +2190,7 @@ impl Manage {
                 })
                 .collect();
             let title = match picker.flow.mode {
-                PickMode::Insert => "Insert a reference",
+                PickMode::Insert | PickMode::Append => "Insert a reference",
                 PickMode::Replace(_) => "Replace the reference",
             };
             return MPicker {
@@ -2953,12 +2953,11 @@ impl Manage {
                 .collect(),
         };
         if let Some(result) = &flow.result {
-            use nodo_api::UpdateOutcome::*;
-            rows.push(match &result.outcome {
-                Updated => text(format!("✓  {} is back on {}.", result.package, result.to), 2),
-                RolledBack { reason, recovered: true, .. } => text(format!("▲  {} stayed on {}: {reason}", result.package, result.from), 1),
-                RolledBack { reason, .. } => text(format!("✕  {} failed and did not come back: {reason}", result.package), 3),
-                Refused(reason) | Postponed(reason) => text(format!("▲  {}: {reason}", result.package), 1),
+            use nodo_ui_core::words::Tone;
+            rows.push(match nodo_ui_core::words::rollback_result(result) {
+                (Tone::Good, words) => text(format!("✓  {words}"), 2),
+                (Tone::Working, words) => text(format!("▲  {words}"), 1),
+                (Tone::Bad, words) => text(format!("✕  {words}"), 3),
             });
         }
         if let Some(error) = &flow.error {

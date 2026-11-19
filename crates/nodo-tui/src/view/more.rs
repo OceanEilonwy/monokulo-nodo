@@ -2,7 +2,7 @@
 //! `Restore.dc.html` and `Rollbacks.dc.html`: a breadcrumb header, bordered panels, the safe
 //! choice first, typed confirmation before anything is overwritten, and key hints in the footer.
 
-use nodo_api::{UpdateEventKind, UpdateOutcome};
+use nodo_api::UpdateEventKind;
 use ratatui::text::Line;
 
 use super::layout::{Item, Page, Panel};
@@ -377,17 +377,10 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
     }
     if let Some(result) = &state.result {
         options.push(Item::Blank);
-        options.push(Item::Text(Line::from(match &result.outcome {
-            UpdateOutcome::Updated => t.o(format!("✓ {} is back on {}.", result.package, result.to)),
-            UpdateOutcome::RolledBack { reason, recovered: true, .. } => {
-                t.a(format!("▲ {} stayed on {}: {reason}", result.package, result.from))
-            }
-            UpdateOutcome::RolledBack { reason, .. } => {
-                t.e(format!("✕ {} failed and did not come back: {reason}", result.package))
-            }
-            UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => {
-                t.a(format!("▲ {}: {reason}", result.package))
-            }
+        options.push(Item::Text(Line::from(match nodo_ui_core::words::rollback_result(result) {
+            (nodo_ui_core::words::Tone::Good, words) => t.o(format!("✓ {words}")),
+            (nodo_ui_core::words::Tone::Working, words) => t.a(format!("▲ {words}")),
+            (nodo_ui_core::words::Tone::Bad, words) => t.e(format!("✕ {words}")),
         })));
     }
     options.extend(error_items(t, &state.error));

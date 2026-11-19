@@ -38,6 +38,9 @@ async fn a_backup_is_made_with_its_own_passphrase_typed_twice() {
     browser.get("/system").await.assert_has(r#"<a class="row" href="/system/backups">"#);
     let list = browser.get(BACKUPS).await;
     list.assert_has("<h1>Backups</h1>").assert_has("nodo-1762560000.nodobak").assert_has("USB drive").assert_has("Make a backup on the USB drive");
+    // What a backup holds and leaves out, and what the drive is.
+    list.assert_has("The contents of unlocked encrypted storage").assert_has("Feeds, pinned keys, approvals and the verified package files");
+    list.assert_has("Never chain data. The node syncs it again.").assert_has(" free");
 
     assert_eq!(browser.post(BACKUPS, &[("do", "create")]).await.location(), BACKUPS);
     let form = browser.get(BACKUPS).await;
@@ -87,7 +90,9 @@ async fn a_restore_shows_what_the_backup_holds_and_needs_the_word() {
 
     // The right one: what the backup holds and what stops, before anything changes.
     let contents = job(&mut browser, BACKUPS, &[("do", "inspect"), ("passphrase", MOCK_PASSPHRASE)]).await;
-    contents.assert_has("Restore from this backup?").assert_has("This overwrites what is on the device now.").assert_has("cuprated, moneropay").assert_has("wallet-relay");
+    contents.assert_has("Restore from this backup?").assert_has("This overwrites what is on the device now.").assert_has("cuprated settings").assert_has("moneropay settings");
+    // What it replaces and what stops, as the terminal says them.
+    contents.assert_has("wallet-relay encrypted storage").assert_has("Device key, kept if this device's storage already uses its own").assert_has("Stops while restoring: ");
     contents.assert_has(&format!("Type {RESTORE_WORD} to confirm")).assert_has("New device passphrase");
     // The backup's passphrase is held on the Nodo. Nothing of it is on the page.
     contents.assert_lacks(&format!(r#"value="{MOCK_PASSPHRASE}""#)).assert_lacks("type=\"hidden\"");
@@ -117,13 +122,14 @@ async fn wifi_networks_are_joined_by_their_kind_and_forgotten_after_a_question()
     let page = browser.get(NETWORK).await;
     page.assert_has("<h1>Network</h1>").assert_has("Joined to <strong>home-5G</strong>").assert_has("192.168.1.57").assert_has("travel-hotspot").assert_has("The cable is connected too.");
     page.assert_lacks("cuts this page off");
+    page.assert_has("Wi-Fi keys are stored root-only on this device.").assert_has("Bluetooth is never discoverable. Only pairings you start here can happen.");
 
     let scanned = browser.post_then(NETWORK, &[("do", "scan-wifi")]).await;
     scanned.assert_has("Cafe Libre").assert_has("open, not encrypted").assert_has("neighbour").assert_has("office-staff").assert_has("WPA Enterprise");
 
     // A network with a passphrase: asked for on the page, and only the passphrase is posted.
     let prompt = browser.post_then(NETWORK, &[("do", "join"), ("ssid", "neighbour")]).await;
-    prompt.assert_has("Join neighbour").assert_has(r#"name="passphrase""#);
+    prompt.assert_has("Join neighbour").assert_has(r#"name="passphrase""#).assert_has("The passphrase is stored on this device only.");
     browser.post_then(NETWORK, &[("do", "passphrase"), ("passphrase", ""), ("ssid", "home-5G")]).await.assert_has("Type the passphrase of neighbour.");
     let joined = browser.post_then(NETWORK, &[("do", "passphrase"), ("passphrase", "not ours at all"), ("ssid", "Cafe Libre")]).await;
     joined.assert_has("Joined neighbour.").assert_has("Joined to <strong>neighbour</strong>").assert_lacks("not ours at all");
@@ -220,11 +226,14 @@ async fn a_bundle_is_reviewed_answered_and_installed_and_a_secret_answer_never_c
     let review = browser.get(BUNDLE).await;
     review.assert_has("Install pingers and its apps?").assert_has("pingers-push-relay").assert_has("Data drive").assert_has("pingers-map-host");
     review.assert_has("keeps its data on the data drive");
+    // Where the apps come from, and what none of them can do.
+    review.assert_has(", a source you added. Nobody has reviewed their code for you.").assert_has("Cannot run setup scripts as root or replace system packages");
     browser.post_then(BUNDLE, &[("drive", "pingers-map-host")]).await.assert_has("keeps its data on the Nodo's own disk");
     seen.push(review.body);
 
     // The settings it asks for once. The secret one is a password box, always empty.
     let answers = browser.post_then(BUNDLE, &[("do", "proceed")]).await;
+    answers.assert_has("These are asked once, before anything installs.").assert_has("Paste it whole; it is never shown");
     answers.assert_has("A few settings first").assert_has("Your domain").assert_has("Firebase service account").assert_has(r#"<input type="password" id="a.1" name="a.1""#);
     let missing = browser.post(BUNDLE, &[("do", "answers"), ("a.0", "example.com"), ("a.1", "")]).await;
     assert_eq!(missing.status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -275,7 +284,7 @@ async fn an_apps_setup_page_opens_with_the_passphrase_which_never_leaves_the_nod
     // The gate.
     assert_eq!(browser.get(owner).await.location(), owner);
     let gate = browser.get(owner).await;
-    gate.assert_has("opens with the device passphrase").assert_has(r#"autocomplete="current-password""#).assert_lacks("Pingers setup");
+    gate.assert_has("so it needs your device passphrase").assert_has(r#"autocomplete="current-password""#).assert_lacks("Pingers setup");
     let wrong = browser.post(owner, &[("passphrase", "not it")]).await;
     assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
     wrong.assert_has("That passphrase did not unlock this Nodo.").assert_lacks("not it");
@@ -297,7 +306,7 @@ async fn an_apps_setup_page_opens_with_the_passphrase_which_never_leaves_the_nod
     assert_eq!(browser.post(&format!("{owner}/close"), &[]).await.location(), "/apps/moneropay");
     assert!(app.session(&browser).await.inner().stash.owner.is_empty());
     browser.get(owner).await;
-    browser.get(owner).await.assert_has("opens with the device passphrase");
+    browser.get(owner).await.assert_has("so it needs your device passphrase");
 
     // Open again, then the session ends: nothing of it is left in the process.
     browser.post(owner, &[("passphrase", MOCK_PASSPHRASE)]).await;

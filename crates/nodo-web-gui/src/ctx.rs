@@ -29,8 +29,9 @@ use nodo_ui_core::flows::{Notice, Step};
 use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::screen::Tab;
 
-use crate::backends::Backends;
-use crate::core_wishlist::{job_failed, tab_badge};
+use crate::backends;
+use crate::glue::job_failed;
+use nodo_ui_core::words::tab_badge;
 use crate::dest;
 use crate::layout::{self, Chrome, Page};
 use crate::runner::{self, PageApply, Reply};
@@ -142,14 +143,13 @@ pub enum Stop {
 /// Checks the gate, reads the device, and runs `work`. Shared by requests and jobs; the caller
 /// holds the backend's lock.
 fn open<R>(
-    backends: &dyn Backends,
     backend: &mut dyn Data,
     session: &Session,
     now: Duration,
     work: impl FnOnce(&mut Work<'_>) -> R,
 ) -> Result<R, Stop> {
     // The gate first, as a value: a helper that restarted answers "not open" here.
-    let web_gui = match backends.status(backend) {
+    let web_gui = match backends::status(backend) {
         Ok(status) if !status.open => return Err(Stop::Login),
         Ok(status) => Some(status),
         Err(error) if error.is_web_login_required() => return Err(Stop::Login),
@@ -304,7 +304,7 @@ impl Ctx {
                     None => lock(&session.backend),
                 },
             };
-            open(&*state.backends(), &mut **backend, &session, now, work)
+            open(&mut **backend, &session, now, work)
         })
         .await;
         match done {
@@ -332,7 +332,7 @@ impl Ctx {
         let mut inner = self.session.inner();
         inner.notices.extend(reply.notices);
         if let Some(question) = reply.question {
-            let pending = inner.ask(question, back, reply.cancel.as_deref().unwrap_or(back), reply.subject);
+            let pending = inner.ask(question, back, reply.cancel.as_deref().unwrap_or(back));
             drop(inner);
             return if self.htmx { layout::dialog(&pending).into_response() } else { see_other(dest::CONFIRM) };
         }
@@ -368,7 +368,7 @@ impl Ctx {
         drop(tokio::task::spawn_blocking(move || {
             let ran = catch_unwind(AssertUnwindSafe(|| {
                 let mut backend = lock(&session.backend);
-                open(&*state.backends(), &mut **backend, &session, now, work)
+                open(&mut **backend, &session, now, work)
             }));
             let end = match ran {
                 Ok(Ok(reply)) if reply.login_required => JobEnd::LoginRequired,

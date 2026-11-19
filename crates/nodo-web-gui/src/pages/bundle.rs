@@ -9,12 +9,13 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Form;
 use maud::html;
+use nodo_ui_core::flows::bundle::{unreviewed, AFTER_FAILURE, ASKED_ONCE, GUARANTEES, IN_TURN, SECRET_ANSWER};
 use nodo_ui_core::flows::bundle::{Bundle, BundleStep};
 use nodo_ui_core::flows::Step;
 use nodo_ui_core::screen::Tab;
 use nodo_ui_core::Effect;
 
-use crate::core_wishlist::typed_secret;
+use crate::glue::typed_secret;
 use crate::ctx::{go_to, Ctx, JobSpec, Out};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -37,6 +38,7 @@ fn page(flow: &Bundle, typed: &Posted, unanswered: Option<usize>) -> Page {
         BundleStep::Review => html! {
             h1 { "Install " (review.package) " and its apps?" }
             (problem)
+            p.warn { "▲ " (unreviewed(&review.feed)) }
             @for member in &review.members {
                 section.card {
                     h2 { (member.review.package) span.dim { "   " (member.review.pkgver) } }
@@ -64,11 +66,13 @@ fn page(flow: &Bundle, typed: &Posted, unanswered: Option<usize>) -> Page {
                         }
                     }
                 }
+                @for guarantee in GUARANTEES { p.dim { (guarantee) } }
                 div.actions.end { (button("back", "Cancel", "btn")) (button("proceed", "Continue", "btn primary")) }
             }
         },
         BundleStep::Answers => html! {
             h1 { "A few settings first" }
+            p.lead { (ASKED_ONCE) }
             (problem)
             section.card {
                 form.stack method="post" action=(here) {
@@ -84,6 +88,7 @@ fn page(flow: &Bundle, typed: &Posted, unanswered: Option<usize>) -> Page {
                                 input type="text" id=(name) name=(name) value=(posted(typed, &name)) autocomplete="off" autocapitalize="none" spellcheck="false" aria-invalid=[(unanswered == Some(index)).then_some("true")];
                             }
                             @if !ask.help.is_empty() { p.hint { (ask.help) } }
+                            @if ask.secret { p.hint { (SECRET_ANSWER) } }
                         }
                     }
                     div.actions.end { (button("back", "Back", "btn")) (button("answers", "Continue", "btn primary")) }
@@ -103,12 +108,12 @@ fn page(flow: &Bundle, typed: &Posted, unanswered: Option<usize>) -> Page {
         },
         BundleStep::Installing => html! {
             h1 { "Installing " (review.package) }
-            section.card { p { "The apps are being installed." } div.actions.end { a.btn href=(dest::WORKING) { "See how far it is" } } }
+            section.card { p { "The apps are being installed." } p.dim { (IN_TURN) } div.actions.end { a.btn href=(dest::WORKING) { "See how far it is" } } }
         },
         BundleStep::Done(report) => html! {
             h1 { @if report.problem.is_none() { span.ok aria-hidden="true" { "✓ " } (report.package) " and its apps are installed" } @else { span.err aria-hidden="true" { "✕ " } (report.package) " was not installed completely" } }
             section.card {
-                @if let Some(problem) = &report.problem { p.err { (problem) } }
+                @if let Some(problem) = &report.problem { p.err { (problem) } p.dim { (AFTER_FAILURE) } }
                 ul.bullets {
                     @for member in &report.members {
                         li {
@@ -117,7 +122,10 @@ fn page(flow: &Bundle, typed: &Posted, unanswered: Option<usize>) -> Page {
                                 nodo_api::StepState::Failed => span.err aria-hidden="true" { "✕" },
                                 _ => span.dim aria-hidden="true" { "○" },
                             }
-                            span { (member.package) span.note { "   " (member.note) } }
+                            span {
+                                (member.package) span.note { "   " (member.note) }
+                                @if let Some(inner) = &member.report { @for detail in &inner.details { span.note { "   " (detail) } } }
+                            }
                         }
                     }
                 }
@@ -149,7 +157,7 @@ pub async fn show(ctx: Ctx) -> Response {
 /// The install itself, as a job. The flow goes with it and comes back with the result.
 fn install(mut flow: Bundle, effects: Vec<Effect>) -> Out {
     let spec = JobSpec::new(format!("Installing {} and its apps", flow.review.package), dest::BUNDLE)
-        .note(&["Each app is downloaded, checked and installed in turn. This can take several minutes.", "You can leave this page; it carries on."]);
+        .note(&[IN_TURN, "This can take several minutes. You can leave this page; it carries on."]);
     Out::Job(
         spec,
         Box::new(move |work| {

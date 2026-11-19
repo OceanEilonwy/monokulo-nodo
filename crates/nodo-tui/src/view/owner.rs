@@ -10,7 +10,7 @@ use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{focused, inset, keys_line, line, margin, rows_of, tick, trail, Card, Screen3, STRIP_ROWS};
 use crate::app::{App, BundleState, OwnerPageState};
-use nodo_ui_core::flows::bundle::BundleStep;
+use nodo_ui_core::flows::bundle::{unreviewed, BundleStep, AFTER_FAILURE, ASKED_ONCE, GUARANTEES, IN_TURN, SECRET_ANSWER};
 use nodo_ui_core::flows::documents::copy_targets;
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
@@ -140,7 +140,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             rows.blank();
             rows.row(vec![t.b(format!("Install {head}?")), t.d(format!("   Installs {} apps", review.members.len()))]);
             rows.blank();
-            rows.row(vec![t.a("▲  "), t.n(format!("They come from {}, a source you added. Nobody has reviewed their code for you.", review.feed))]);
+            rows.row(vec![t.a("▲  "), t.n(unreviewed(&review.feed))]);
             rows.blank();
             for member in &review.members {
                 let name = member.review.package.clone();
@@ -187,7 +187,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                 }
             }
             rows.blank();
-            for guarantee in ["Cannot read other packages' data or secrets", "Cannot run setup scripts as root or replace system packages"] {
+            for guarantee in GUARANTEES {
                 rows.row(vec![t.d(guarantee)]);
             }
             rows.blank();
@@ -211,7 +211,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             rows.blank();
             rows.row(vec![t.b(format!("Set up {head}"))]);
             rows.blank();
-            rows.row(vec![t.n("These are asked once, before anything installs. You can change them later in each app's Settings.")]);
+            rows.row(vec![t.n(ASKED_ONCE)]);
             rows.blank();
             let open = state.open_asks();
             let room = rows.inner().saturating_sub(4).clamp(20, 60);
@@ -248,7 +248,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                     rows.row(vec![t.n("  "), t.d(ask.help.clone())]);
                 }
                 if ask.secret {
-                    rows.row(vec![t.n("  "), t.d("Paste it whole; it is never shown, and line breaks in a pasted file are dropped.")]);
+                    rows.row(vec![t.n("  "), t.d(SECRET_ANSWER)]);
                 }
                 rows.blank();
             }
@@ -287,7 +287,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
                 rows.row(vec![mark, t.n(member.review.package.clone())]);
             }
             rows.blank();
-            rows.row(vec![t.d("Each app installs in turn, then the next. A failed one stops the rest; what installed before it stays.")]);
+            rows.row(vec![t.d(IN_TURN)]);
             rows.blank();
             keys = "Keys: wait while it installs";
         }
@@ -310,7 +310,7 @@ pub fn bundle(app: &App, t: &Theme, state: &BundleState) -> Page {
             rows.blank();
             if let Some(problem) = &report.problem {
                 rows.row(vec![t.e(format!("✕ {problem}"))]);
-                rows.row(vec![t.d("The apps installed before it stay. Installing again skips them and carries on.")]);
+                rows.row(vec![t.d(AFTER_FAILURE)]);
                 rows.blank();
             }
             after.blank(t);
@@ -435,7 +435,7 @@ pub fn owner_page(app: &App, t: &Theme, state: &OwnerPageState) -> Page {
         card.blank(t);
         card.row(t, vec![t.b(format!("{} for {package}", state.title))]);
         card.blank(t);
-        card.row(t, vec![t.n("The setup page shows addresses and codes that let others in, so it needs your device passphrase.")]);
+        card.row(t, vec![t.n(nodo_ui_core::flows::owner_page::WHY_PASSPHRASE)]);
         card.blank(t);
         let mut pass = vec![t.d(pad("Passphrase", 13))];
         pass.extend(inset(t, &state.passphrase.display(), 30, None, true));
@@ -510,12 +510,8 @@ pub fn owner_page(app: &App, t: &Theme, state: &OwnerPageState) -> Page {
                         value_rows(&mut rows, t, &label, &record.value, copy, state);
                         copy += 1;
                     }
-                    match &site.automatic_dns {
-                        Some(provider) => rows.row(vec![t.n("     "), t.d(format!("{provider} publishes this record by itself."))]),
-                        None if !site.records.is_empty() => {
-                            rows.row(vec![t.n("     "), t.d("Create this record at your domain's DNS provider, or connect it in Web › Domain providers.")])
-                        }
-                        None => {}
+                    if let Some(note) = nodo_ui_core::flows::owner_page::dns_note(site) {
+                        rows.row(vec![t.n("     "), t.d(note)]);
                     }
                     for check in &site.checks {
                         check_row(&mut rows, t, check);

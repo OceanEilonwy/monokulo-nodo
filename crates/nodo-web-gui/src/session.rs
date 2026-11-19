@@ -114,16 +114,13 @@ pub struct Pending {
     pub back: String,
     /// The page that asked, where Cancel returns.
     pub cancel: String,
-    /// What it is about, when the flow that asked needs to know on the answer.
-    pub subject: Option<String>,
 }
 
 /// The reference picker open for one field of an app's settings.
 #[derive(Debug, Clone)]
 pub struct Picking {
+    /// Where the reference goes is the picker's `mode`.
     pub picker: Picker,
-    /// The reference goes after what the field holds, instead of taking its place.
-    pub append: bool,
 }
 
 /// What the helper gave for a page that is shown by the next request. Each holds the latest one
@@ -219,11 +216,15 @@ impl Stash {
             }
             // The site is public: its draft is done with, and its certificate is followed at
             // the address that was confirmed.
-            Dest::WentPublic => {
-                if let Some(confirm) = self.going_public.take() {
-                    self.hosting.remove(&confirm.site);
+            Dest::WentPublic { site } => {
+                self.hosting.remove(site);
+                if let Some(confirm) = self.going_public.take().filter(|confirm| confirm.site == *site) {
                     self.certificate = Some(confirm.certificate());
                 }
+            }
+            // Saved: the draft is done with.
+            Dest::LeaveHosting { site } => {
+                self.hosting.remove(site);
             }
             Dest::Bundle(review) => self.bundle = Some(Bundle::new((**review).clone())),
             // Opened at its passphrase gate. A page that is open already is closed first.
@@ -231,9 +232,9 @@ impl Stash {
                 self.owner.insert(page.package.clone(), page.clone());
             }
             Dest::Unlock { resume: Some(reason) } => self.unlock_return = Some((reason.clone(), back.to_owned())),
-            // The settings page reads its form again unless a draft is open. The pages that
-            // send the next two see to their drafts themselves, since neither names its site.
-            Dest::Settings(_) | Dest::LeaveHosting | Dest::HostingWithProvider { .. } | Dest::SetUpFromBackup => {}
+            // The settings page reads its form again unless a draft is open. The provider page
+            // that sends the second sees to the draft itself, since it does not name its site.
+            Dest::Settings(_) | Dest::HostingWithProvider { .. } | Dest::SetUpFromBackup => {}
             // These carry what their URL carries, or nothing.
             Dest::Back
             | Dest::Apps
@@ -306,9 +307,9 @@ pub struct Inner {
 
 impl Inner {
     /// Keeps a question until it is answered, replacing one still open.
-    pub fn ask(&mut self, question: Question, back: &str, cancel: &str, subject: Option<String>) -> Pending {
+    pub fn ask(&mut self, question: Question, back: &str, cancel: &str) -> Pending {
         self.next_id += 1;
-        let pending = Pending { id: self.next_id, question, back: back.to_owned(), cancel: cancel.to_owned(), subject };
+        let pending = Pending { id: self.next_id, question, back: back.to_owned(), cancel: cancel.to_owned() };
         self.question = Some(pending.clone());
         pending
     }

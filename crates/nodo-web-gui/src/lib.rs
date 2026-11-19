@@ -19,8 +19,10 @@
 //!   `/working` until it is over.
 //! - [`layout`] holds the page frame and the pieces pages are made of.
 //!
-//! No page holds a rule of its own. What an action does, what it asks first and how its result
-//! is worded come from the core; what is missing there is in [`core_wishlist`], marked as such.
+//! No page holds a rule of its own. What an action does, what it asks first, whether it takes
+//! long and how its result is worded come from the core. What is this interface's alone (a
+//! typed form field as a secret, a standing as a CSS class, a `Hint` as a link) is in [`glue`]
+//! and [`hints`], each item with why it is local.
 
 // A dropped result is how failures went unreported. Where dropping is right, an #[allow] says why.
 // CI also enforces these for the tests (.github/workflows/crates.yml).
@@ -29,9 +31,9 @@
 pub mod assets;
 pub mod backends;
 pub mod clock;
-pub mod core_wishlist;
 pub mod ctx;
 pub mod dest;
+pub mod glue;
 pub mod hints;
 pub mod layout;
 pub mod pages;
