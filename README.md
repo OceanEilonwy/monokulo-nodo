@@ -14,7 +14,7 @@
   <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/crates.yml/badge.svg?branch=main" alt="Crates"></a>
   <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/system.yml/badge.svg?branch=main" alt="System snapshot"></a>
   <a href="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml"><img src="https://github.com/OceanEilonwy/monokulo-nodo/actions/workflows/feed.yml/badge.svg?branch=main" alt="App feed"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-informational" alt="GPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-informational" alt="AGPL-3.0-or-later"></a>
 </p>
 
 <p align="center">
@@ -72,4 +72,4 @@ tests/inspect-t6n-mainline.sh out/images/nanopc-t6n-mainline/monokulo-nanopc-t6n
 
 ## License
 
-GPL-3.0-or-later. Packaged software, such as Cuprate, keeps its own license.
+AGPL-3.0-or-later. Packaged software, such as Cuprate and the Linux kernel, keeps its own license.

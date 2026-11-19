@@ -4,7 +4,7 @@
 # monokulo-sources: Cargo.toml Cargo.lock LICENSE crates
 pkgname=nodo-tools
 version=0.1.0
-revision=45
+revision=46
 archs="aarch64 x86_64"
 build_style=cargo
 configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash -p nodo-web-gui"
@@ -16,7 +16,7 @@ makedepends="libzstd-devel libinput-devel libxkbcommon-devel eudev-libudev-devel
 depends="bubblewrap nftables cryptsetup e2fsprogs xfsprogs util-linux shadow procps-ng"
 short_desc="Root helper service and terminal interface for monokulo-nodo"
 maintainer="monokulo-nodo <noreply@localhost>"
-license="GPL-3.0-or-later"
+license="AGPL-3.0-or-later"
 homepage="https://github.com/OceanEilonwy/monokulo-nodo"
 # The system update server (docs/UPDATES.md): the owner may point it elsewhere.
 conf_files="/etc/nodo/system-update.toml"
