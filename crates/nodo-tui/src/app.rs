@@ -8,9 +8,12 @@
 use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
-use nodo_ui_core::effect::UsbView;
+use nodo_ui_core::flows::backup::{self, Backups, Restore};
+use nodo_ui_core::flows::bundle::Bundle;
+use nodo_ui_core::flows::owner_page::OwnerPage;
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
+use nodo_ui_core::flows::network::{self, Network};
 use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
@@ -22,11 +25,11 @@ use nodo_ui_core::flows::web::hosting::{self, Hosting};
 use nodo_ui_core::flows::web::onion::Onion;
 use nodo_ui_core::flows::web::providers::{KeyField, Providers};
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
-use nodo_ui_core::flows::{Notice, Question};
+use nodo_ui_core::flows::{Confirm, Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::{ScreenId, Tab};
-use nodo_ui_core::secret::{Input, Secret};
+use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
 /// Below this size the layout cannot show enough context to act safely, so input is refused.
@@ -171,67 +174,95 @@ impl std::ops::DerefMut for SetupState {
     }
 }
 
+/// The boxes of the Backups page's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupStep {
     List,
     /// The device passphrase, when the device has one, then the backup passphrase twice.
     Create { device: Input, first: Input, second: Input, field: usize },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Unlock { name: String, passphrase: Input },
-    /// What a restore replaces, the typed word, and a new device passphrase when it holds a key.
-    Confirm { name: String, passphrase: Secret, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
+    /// The typed word, and a new device passphrase when the restore asks for one.
+    Confirm { name: String, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
     Restored(nodo_api::RestoreReport),
 }
 
+/// The Backups page: the chosen rows and the boxes. The lists, the order of the steps and what
+/// each one checks are the core's `Backups`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupState {
-    pub list: Vec<nodo_api::BackupInfo>,
+    pub flow: Backups,
     pub selected: usize,
     pub step: BackupStep,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The device key exists, so a backup asks for the device passphrase to include it.
-    pub device_set_up: bool,
-    /// The USB drive, `None` while none is plugged in.
-    pub usb: Option<UsbView>,
     /// The USB list has the focus rather than the device's own list.
     pub usb_focused: bool,
     pub usb_selected: usize,
-    /// The removable drive the step under way uses, `None` for the device's own backups.
-    pub target: Option<String>,
-    /// First boot: restoring a whole device from a USB drive instead of setting it up.
-    pub fresh: bool,
 }
 
 impl BackupState {
     pub fn new(device_set_up: bool) -> Self {
-        Self {
-            list: Vec::new(),
-            selected: 0,
-            step: BackupStep::List,
-            error: None,
-            busy: true,
-            device_set_up,
-            usb: None,
-            usb_focused: false,
-            usb_selected: 0,
-            target: None,
-            fresh: false,
-        }
+        Self::of(Backups::new(device_set_up))
     }
 
     /// The first-boot restore, which only offers USB drives.
     pub fn fresh() -> Self {
-        Self { usb_focused: true, fresh: true, ..Self::new(false) }
+        Self { usb_focused: true, ..Self::of(Backups::fresh()) }
     }
 
-    /// Backups on the USB drive, when one can be used.
-    pub fn usb_list(&self) -> &[nodo_api::BackupInfo] {
-        self.usb.as_ref().and_then(|u| u.list.as_ref()).map(|l| l.backups.as_slice()).unwrap_or(&[])
+    pub fn of(flow: Backups) -> Self {
+        Self { flow, selected: 0, step: BackupStep::List, usb_focused: false, usb_selected: 0 }
+    }
+
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    pub fn sync(&mut self) {
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (backup::Stage::List, BackupStep::List)
+                | (backup::Stage::Create, BackupStep::Create { .. })
+                | (backup::Stage::Unlock { .. }, BackupStep::Unlock { .. })
+                | (backup::Stage::Confirm { .. }, BackupStep::Confirm { .. })
+                | (backup::Stage::Restored(_), BackupStep::Restored(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            backup::Stage::List => BackupStep::List,
+            backup::Stage::Create => BackupStep::Create {
+                device: Input::secret(),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: if self.flow.asks_device_passphrase() { 0 } else { 1 },
+            },
+            backup::Stage::Unlock { name } => BackupStep::Unlock { name: name.clone(), passphrase: Input::secret() },
+            backup::Stage::Confirm { name, contents, .. } => BackupStep::Confirm {
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                device: Input::secret(),
+                field: 0,
+            },
+            backup::Stage::Restored(report) => BackupStep::Restored(report.clone()),
+        };
     }
 }
 
-/// The onion page: the chosen row. What Tor reports and what each switch does are the core's
+impl std::ops::Deref for BackupState {
+    type Target = Backups;
+
+    fn deref(&self) -> &Backups {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BackupState {
+    fn deref_mut(&mut self) -> &mut Backups {
+        &mut self.flow
+    }
+}
+
+/// The onion page: the chosen row./// The onion page: the chosen row. What Tor reports and what each switch does are the core's
 /// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnionState {
@@ -260,19 +291,20 @@ impl std::ops::Deref for OnionState {
     }
 }
 
+/// The boxes of the first-boot restore's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreStep {
     /// Every removable drive, with why one cannot be used.
     Drives,
     /// The backups on the chosen drive.
     Backups { device: String },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Passphrase { device: String, name: String, passphrase: Input },
     /// What comes back, the typed word and a new device passphrase, twice.
     Confirm {
         device: String,
         name: String,
-        passphrase: Secret,
         contents: nodo_api::BackupContents,
         typed: Input,
         first: Input,
@@ -286,24 +318,60 @@ pub enum RestoreStep {
     Done(nodo_api::RestoreReport),
 }
 
-/// The first-boot restore from a USB drive.
+/// The first-boot restore from a USB drive: the chosen row and the boxes. The drives, the order
+/// of the steps and what each one checks are the core's `Restore`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreState {
-    pub drives: Vec<nodo_api::UsbDrive>,
-    pub backups: Option<nodo_api::UsbBackupList>,
+    pub flow: Restore,
     pub selected: usize,
     pub step: RestoreStep,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl RestoreState {
     pub fn new() -> Self {
-        Self { drives: Vec::new(), backups: None, selected: 0, step: RestoreStep::Drives, error: None, busy: true }
+        Self { flow: Restore::new(), selected: 0, step: RestoreStep::Drives }
     }
 
-    pub fn drive(&self, device: &str) -> Option<&nodo_api::UsbDrive> {
-        self.drives.iter().find(|d| d.device == device)
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    /// `now` is the tick, for a restore that starts.
+    pub fn sync(&mut self, now: u64) {
+        use backup::RestoreStage as Stage;
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (Stage::Drives, RestoreStep::Drives)
+                | (Stage::Backups { .. }, RestoreStep::Backups { .. })
+                | (Stage::Passphrase { .. }, RestoreStep::Passphrase { .. })
+                | (Stage::Confirm { .. }, RestoreStep::Confirm { .. })
+                | (Stage::Restoring { .. }, RestoreStep::Restoring { .. })
+                | (Stage::Failed { .. }, RestoreStep::Failed { .. })
+                | (Stage::Done(_), RestoreStep::Done(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            Stage::Drives => RestoreStep::Drives,
+            Stage::Backups { device } => RestoreStep::Backups { device: device.clone() },
+            Stage::Passphrase { device, name } => {
+                RestoreStep::Passphrase { device: device.clone(), name: name.clone(), passphrase: Input::secret() }
+            }
+            Stage::Confirm { device, name, contents, .. } => RestoreStep::Confirm {
+                device: device.clone(),
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: 0,
+            },
+            Stage::Restoring { device, name } => {
+                RestoreStep::Restoring { device: device.clone(), name: name.clone(), started: now }
+            }
+            Stage::Failed { device, name, reason } => {
+                RestoreStep::Failed { device: device.clone(), name: name.clone(), reason: reason.clone() }
+            }
+            Stage::Done(report) => RestoreStep::Done(report.clone()),
+        };
     }
 }
 
@@ -313,7 +381,21 @@ impl Default for RestoreState {
     }
 }
 
-/// The page that undoes an update: the chosen row. The list, what is running and how the last
+impl std::ops::Deref for RestoreState {
+    type Target = Restore;
+
+    fn deref(&self) -> &Restore {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for RestoreState {
+    fn deref_mut(&mut self) -> &mut Restore {
+        &mut self.flow
+    }
+}
+
+/// The page that undoes an update: the chosen row./// The page that undoes an update: the chosen row. The list, what is running and how the last
 /// rollback went are the core's `Rollbacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbacksState {
@@ -354,133 +436,61 @@ pub enum NetworkFocus {
     Bluetooth,
 }
 
-/// A row of the Wi-Fi list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiRow {
-    /// An index into the last scan.
-    InRange(usize),
-    /// An index into the saved networks, for one the last scan did not find.
-    Saved(usize),
-}
+/// How long the Network screen waits for the radios before saying there is no answer yet: the
+/// core's wait, in ticks.
+pub const NO_ANSWER_TICKS: u64 = network::NO_ANSWER_SECONDS * TICKS_PER_SECOND;
 
-/// The passphrase for the network being joined.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WifiPrompt {
-    pub ssid: String,
-    pub security: nodo_api::WifiSecurity,
-    pub passphrase: Input,
-}
-
-/// Where reading one radio's state from the helper stands, kept apart from the status itself so
-/// a panel with nothing to show yet can tell asking from failing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RadioRead {
-    Asking,
-    /// Asked [`NO_ANSWER_TICKS`] ago and still no answer. The helper does one thing at a time,
-    /// so the answer may only be waiting behind something slower.
-    NoAnswer,
-    Failed(String),
-    Read,
-}
-
-/// How long the Network screen waits for the radios before saying there is no answer yet.
-pub const NO_ANSWER_TICKS: u64 = 10 * TICKS_PER_SECOND;
-
-/// Wi-Fi and Bluetooth: both radios, the networks in range and the saved ones, and devices.
+/// The Network page: which radio and which row are chosen, the passphrase box and when the
+/// radios were asked. The radios, the lists and every rule about them are the core's `Network`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkState {
-    pub wifi: Option<nodo_api::WifiStatus>,
-    pub wifi_read: RadioRead,
-    pub bluetooth_read: RadioRead,
+    pub flow: Network,
     /// The tick the radios were last asked for.
     pub asked_at: u64,
-    /// The last scan, strongest first.
-    pub networks: Vec<nodo_api::WifiNetwork>,
-    pub bluetooth: Option<nodo_api::BluetoothStatus>,
     pub focus: NetworkFocus,
     pub wifi_selected: usize,
     pub bt_selected: usize,
-    pub prompt: Option<WifiPrompt>,
-    pub error: Option<String>,
-    /// What the helper is doing, while it works.
-    pub busy: Option<String>,
+    /// The passphrase of the network being joined, typed while the flow's `prompt` is set.
+    pub passphrase: Input,
 }
 
 impl NetworkState {
     pub fn new() -> Self {
         Self {
-            wifi: None,
-            wifi_read: RadioRead::Asking,
-            bluetooth_read: RadioRead::Asking,
+            flow: Network::new(),
             asked_at: 0,
-            networks: Vec::new(),
-            bluetooth: None,
             focus: NetworkFocus::Wifi,
             wifi_selected: 0,
             bt_selected: 0,
-            prompt: None,
-            error: None,
-            busy: Some("Reading the radios…".to_owned()),
+            passphrase: Input::secret(),
         }
-    }
-
-    /// Networks in range, then saved networks the last scan did not find.
-    pub fn wifi_rows(&self) -> Vec<WifiRow> {
-        let mut rows: Vec<WifiRow> = (0..self.networks.len()).map(WifiRow::InRange).collect();
-        if let Some(status) = &self.wifi {
-            for (index, saved) in status.saved.iter().enumerate() {
-                if !self.networks.iter().any(|n| n.ssid == saved.ssid) {
-                    rows.push(WifiRow::Saved(index));
-                }
-            }
-        }
-        rows
-    }
-
-    /// The name, security and saved state of a Wi-Fi row.
-    pub fn wifi_row(&self, row: WifiRow) -> Option<(String, nodo_api::WifiSecurity, bool)> {
-        match row {
-            WifiRow::InRange(i) => self.networks.get(i).map(|n| (n.ssid.clone(), n.security, n.saved || self.is_saved(&n.ssid))),
-            WifiRow::Saved(i) => self.wifi.as_ref()?.saved.get(i).map(|n| (n.ssid.clone(), n.security, true)),
-        }
-    }
-
-    pub fn is_saved(&self, ssid: &str) -> bool {
-        self.wifi.as_ref().is_some_and(|w| w.saved.iter().any(|s| s.ssid == ssid))
-    }
-
-    /// The network the device is joined to, if any.
-    pub fn joined(&self) -> Option<&str> {
-        let wifi = self.wifi.as_ref()?;
-        (wifi.link == nodo_api::WifiLink::Connected).then_some(())?;
-        wifi.ssid.as_deref()
-    }
-
-    /// Whether a radio with nothing to show failed or went unanswered, so asking again helps.
-    pub fn can_ask_again(&self) -> bool {
-        let stuck = |read: &RadioRead| matches!(read, RadioRead::NoAnswer | RadioRead::Failed(_));
-        (self.wifi.is_none() && stuck(&self.wifi_read)) || (self.bluetooth.is_none() && stuck(&self.bluetooth_read))
     }
 
     /// Asks for both radios again, counting the wait from tick `now`.
     pub fn ask_again(&mut self, now: u64) -> Vec<Effect> {
-        self.error = None;
-        self.busy = Some("Reading the radios…".to_owned());
-        self.wifi_read = RadioRead::Asking;
-        self.bluetooth_read = RadioRead::Asking;
         self.asked_at = now;
-        vec![Effect::LoadNetwork]
+        self.flow.ask_again()
     }
 
-    pub fn pairing_running(&self) -> bool {
-        self.bluetooth.as_ref().and_then(|b| b.pairing.as_ref()).is_some_and(|p| {
-            matches!(
-                p.stage,
-                nodo_api::PairingStage::Pairing
-                    | nodo_api::PairingStage::TypePasskey(_)
-                    | nodo_api::PairingStage::ComparePasskey(_)
-            )
-        })
+    /// The owner confirmed a question of this page. The scan goes with the radio, and the cursor
+    /// with the scan.
+    pub fn confirmed(&mut self, confirm: &Confirm) {
+        self.flow.confirmed(confirm);
+        if matches!(confirm, Confirm::WifiOff) {
+            self.wifi_selected = 0;
+        }
+    }
+
+    /// Keeps both selections inside their lists.
+    pub fn clamp(&mut self) {
+        let rows = self.flow.wifi_rows().len();
+        if self.wifi_selected >= rows {
+            self.wifi_selected = rows.saturating_sub(1);
+        }
+        let devices = self.flow.bluetooth.as_ref().map_or(0, |b| b.devices.len());
+        if self.bt_selected >= devices {
+            self.bt_selected = devices.saturating_sub(1);
+        }
     }
 }
 
@@ -490,8 +500,19 @@ impl Default for NetworkState {
     }
 }
 
-/// The helper also requires this word, so the check here only saves a round trip.
-pub const RESTORE_WORD: &str = nodo_api::RESTORE_WORD;
+impl std::ops::Deref for NetworkState {
+    type Target = Network;
+
+    fn deref(&self) -> &Network {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for NetworkState {
+    fn deref_mut(&mut self) -> &mut Network {
+        &mut self.flow
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
@@ -1067,94 +1088,59 @@ impl std::ops::Deref for AppPageState {
     }
 }
 
-/// Where installing a bundle stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BundleStep {
-    /// The apps it installs with their permissions, the grants and the data drive choices.
-    Review,
-    /// The settings the bundle asks for once, before anything installs.
-    Answers,
-    /// The device passphrase, for new encrypted storage or a secret answer while locked.
-    Passphrase,
-    /// The helper is installing.
-    Installing,
-    Done(nodo_api::BundleReport),
-}
-
-/// Installing a suite of apps together, from the review of the head that declares it.
+/// Installing a suite of apps together: the focus, the boxes and the scroll. The steps and what
+/// each one checks are the core's `Bundle`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleState {
-    pub review: nodo_api::BundleReview,
-    pub step: BundleStep,
+    pub flow: Bundle,
     /// In the review: an index into the data drive toggles, then Cancel, then Continue. In the
     /// questions: the field.
     pub focus: usize,
-    /// Per `review.data_drive`: keep that app's data on the data drive. On by default when one
-    /// is present.
-    pub drive: Vec<bool>,
-    /// One per ask, in order. A secret ask is a masked field.
+    /// One per ask, in order, as the core makes them.
     pub answers: Vec<Input>,
     pub passphrase: Input,
-    pub error: Option<String>,
     /// Rows scrolled past in a long review or result.
     pub scroll: usize,
 }
 
 impl BundleState {
     pub fn new(review: nodo_api::BundleReview) -> Self {
-        let drive = vec![review.data_drive_present; review.data_drive.len()];
-        let answers = review.asks.iter().map(|a| if a.secret { Input::secret() } else { Input::plain("") }).collect();
-        let focus = drive.len();
-        Self { review, step: BundleStep::Review, focus, drive, answers, passphrase: Input::secret(), error: None, scroll: 0 }
-    }
-
-    /// The asks the owner answers: those for apps not installed yet.
-    pub fn open_asks(&self) -> Vec<usize> {
-        (0..self.review.asks.len()).filter(|&i| !self.review.asks[i].skipped).collect()
+        let flow = Bundle::new(review);
+        let answers = flow.answer_boxes();
+        let focus = flow.drive.len();
+        Self { flow, focus, answers, passphrase: Input::secret(), scroll: 0 }
     }
 
     /// The review's Cancel button, after the toggles; Continue is the one after it.
     pub fn cancel_index(&self) -> usize {
-        self.drive.len()
-    }
-
-    /// The apps this install puts their data on the data drive for.
-    pub fn chosen_drive(&self) -> Vec<String> {
-        self.review.data_drive.iter().zip(&self.drive).filter(|(_, on)| **on).map(|(id, _)| id.clone()).collect()
-    }
-
-    /// The answers as the helper takes them, every value a secret.
-    pub fn answers_for_helper(&self) -> Vec<nodo_api::BundleAnswer> {
-        self.open_asks()
-            .into_iter()
-            .map(|i| {
-                let ask = &self.review.asks[i];
-                nodo_api::BundleAnswer {
-                    package: ask.package.clone(),
-                    setting: ask.setting.clone(),
-                    value: nodo_api::Secret::new(self.answers[i].secret_value().expose()),
-                }
-            })
-            .collect()
+        self.flow.drive.len()
     }
 }
 
-/// An app's setup page: the passphrase first, then the checklist. The passphrase stays in memory
-/// only while the page is open, so `r` can fetch it again; leaving the page drops it.
+impl std::ops::Deref for BundleState {
+    type Target = Bundle;
+
+    fn deref(&self) -> &Bundle {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BundleState {
+    fn deref_mut(&mut self) -> &mut Bundle {
+        &mut self.flow
+    }
+}
+
+/// An app's setup page: the passphrase box, the scroll and the chosen copy target. The gate, the
+/// page and the passphrase held to read it again are the core's `OwnerPage`; leaving the page
+/// drops them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerPageState {
-    pub package: String,
-    /// The row's name on the app's page, such as "Setup".
-    pub title: String,
+    pub flow: OwnerPage,
     pub passphrase: Input,
-    pub held: Option<Secret>,
-    pub view: Option<nodo_api::OwnerPageView>,
-    pub error: Option<String>,
-    /// A fetch is under way.
-    pub loading: bool,
     /// Rows scrolled past.
     pub scroll: usize,
-    /// An index into the core's `documents::copy_targets`.
+    /// An index into the flow's `copy_targets`.
     pub focus: usize,
     /// The copy target last copied, for the "Copied" note.
     pub copied: Option<usize>,
@@ -1164,23 +1150,29 @@ pub struct OwnerPageState {
 
 impl OwnerPageState {
     pub fn new(package: &str, title: &str) -> Self {
-        Self {
-            package: package.to_owned(),
-            title: title.to_owned(),
-            passphrase: Input::secret(),
-            held: None,
-            view: None,
-            error: None,
-            loading: false,
-            scroll: 0,
-            focus: 0,
-            copied: None,
-            follow: false,
-        }
+        Self::of(OwnerPage::new(package, title))
+    }
+
+    pub fn of(flow: OwnerPage) -> Self {
+        Self { flow, passphrase: Input::secret(), scroll: 0, focus: 0, copied: None, follow: false }
     }
 }
 
-/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
+impl std::ops::Deref for OwnerPageState {
+    type Target = OwnerPage;
+
+    fn deref(&self) -> &OwnerPage {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for OwnerPageState {
+    fn deref_mut(&mut self) -> &mut OwnerPage {
+        &mut self.flow
+    }
+}
+
+/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels./// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppRemoveState {
     pub name: String,
@@ -1194,9 +1186,6 @@ impl AppRemoveState {
         Self { name: name.to_owned(), question: nodo_ui_core::flows::services::ask_remove(name), confirm_focused: false }
     }
 }
-
-/// The rows of the System page, in order.
-pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
 
 impl Screen {
     pub fn id(&self) -> ScreenId {

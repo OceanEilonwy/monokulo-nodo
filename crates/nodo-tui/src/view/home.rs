@@ -2,7 +2,6 @@
 //! drive being missing replaces it.
 
 use crossterm::event::KeyCode;
-use nodo_api::ServiceState;
 
 use super::layout::{Item, Page};
 use super::pad;
@@ -11,60 +10,9 @@ use crate::app::App;
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::AttentionLevel;
 use nodo_ui_core::queries::HomeItem;
+use nodo_ui_core::words::{app_state, health_line};
 use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
-
-/// An app's state in plain words, and whether it is a problem.
-pub(crate) fn app_state(app: &App, id: &str) -> (String, bool) {
-    let Some(svc) = app.data.services.iter().find(|svc| svc.id == id) else {
-        return ("Not running".to_owned(), false);
-    };
-    let base = match svc.state {
-        ServiceState::Running => {
-            let mut parts = vec!["Running".to_owned()];
-            parts.extend(svc.uptime_secs.map(|secs| format!("up {}", uptime(secs))));
-            parts.extend((!svc.detail.is_empty()).then(|| svc.detail.clone()));
-            parts.join(" · ")
-        }
-        ServiceState::Stopped => "Stopped".to_owned(),
-        ServiceState::Failed => "Keeps stopping".to_owned(),
-        ServiceState::Locked => "Locked until you unlock".to_owned(),
-        ServiceState::Waiting => "Waiting for another app".to_owned(),
-    };
-    (base, svc.state == ServiceState::Failed)
-}
-
-/// How long an app has been up, in its two largest units, such as `3h 12m` or `2d 5h`.
-pub(crate) fn uptime(secs: u64) -> String {
-    let (days, hours, minutes) = (secs / 86400, secs / 3600 % 24, secs / 60 % 60);
-    let pair = |big: u64, big_unit: &str, small: u64, small_unit: &str| match small {
-        0 => format!("{big}{big_unit}"),
-        _ => format!("{big}{big_unit} {small}{small_unit}"),
-    };
-    match secs {
-        s if s < 60 => "under a minute".to_owned(),
-        s if s < 3600 => format!("{minutes}m"),
-        s if s < 86400 => pair(hours, "h", minutes, "m"),
-        _ => pair(days, "d", hours, "h"),
-    }
-}
-
-/// What an app is for, from its source's description.
-pub(crate) fn tagline(app: &App, id: &str) -> String {
-    app.data.catalog.iter().find(|pkg| pkg.id.name == id).map(|pkg| pkg.tagline.clone()).unwrap_or_default()
-}
-
-/// The device's health in one line: storage, temperature, uptime.
-fn health_line(app: &App) -> String {
-    app.data
-        .overview
-        .device
-        .iter()
-        .take(3)
-        .map(|(label, value)| format!("{label} {value}"))
-        .collect::<Vec<_>>()
-        .join("   ·   ")
-}
 
 pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
     let (w, h) = super::frame_size();
@@ -160,7 +108,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
     // As wide as the longest name, so a long one never runs into its state.
     let name_width = apps.iter().map(|(_, id)| id.chars().count() + 2).max().unwrap_or(0).max(14);
     for (index, id) in &apps {
-        let (state, bad) = app_state(app, id);
+        let (state, bad) = app_state(&app.data, id);
         let lead = if *index == selected { t.a("▸ ") } else { t.n("  ") };
         if *index == selected {
             fine.focus_here();
@@ -175,7 +123,7 @@ pub fn home(app: &App, t: &Theme, selected: usize) -> Page {
         fine.row(t, vec![t.d("Get apps from Apps › Get apps.")]);
     }
     fine.blank(t);
-    let health = health_line(app);
+    let health = health_line(&app.data);
     if !health.is_empty() {
         fine.row(t, vec![t.d(health)]);
         fine.blank(t);
@@ -227,7 +175,7 @@ pub fn no_drive(app: &App, t: &Theme, choice: usize) -> Page {
 
 #[cfg(test)]
 mod tests {
-    use super::uptime;
+    use nodo_ui_core::words::uptime;
 
     #[test]
     fn uptime_uses_the_two_largest_units() {

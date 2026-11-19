@@ -9,7 +9,8 @@ use ratatui::text::{Line, Span};
 use super::layout::{Item, Page, Panel};
 use super::more::{bullet, crumbs, error_items, row};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{NetworkFocus, NetworkState, RadioRead, WifiRow};
+use crate::app::{NetworkFocus, NetworkState};
+use nodo_ui_core::flows::network::{RadioRead, WifiRow};
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
 
@@ -115,7 +116,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
             t.d(format!("  {}, the passphrase is stored on this device only", prompt.security.label())),
         ])));
         items.push(Item::Row(
-            Line::from(vec![t.n(" Passphrase  "), t.n(prompt.passphrase.display()), t.s(" ")]),
+            Line::from(vec![t.n(" Passphrase  "), t.n(state.passphrase.display()), t.s(" ")]),
             Line::from(vec![t.a("↵"), t.d(" join  "), t.a("Esc"), t.d(" cancel ")]),
         ));
     } else if wifi.enabled && wifi.unavailable.is_none() {

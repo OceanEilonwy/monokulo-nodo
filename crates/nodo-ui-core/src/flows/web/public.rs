@@ -128,6 +128,16 @@ pub enum CgnatWay {
 
 impl CgnatWay {
     pub const ALL: [CgnatWay; 4] = [CgnatWay::Tor, CgnatWay::PublicIp, CgnatWay::Ipv6, CgnatWay::Relay];
+
+    /// The way, as the owner is offered it.
+    pub fn label(self) -> &'static str {
+        match self {
+            CgnatWay::Tor => "Use Tor instead",
+            CgnatWay::PublicIp => "Ask your provider for a public address",
+            CgnatWay::Ipv6 => "Use IPv6, if your provider has it",
+            CgnatWay::Relay => "Use a relay that forwards visitors",
+        }
+    }
 }
 
 /// The home shares its internet address with others (CGNAT).

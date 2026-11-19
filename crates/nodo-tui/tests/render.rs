@@ -635,7 +635,8 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result
 /// forever; one with no answer yet says so without guessing why.
 #[test]
 fn unread_radios_show_why_instead_of_asking_forever() {
-    use nodo_tui::app::{RadioRead, Screen};
+    use nodo_tui::app::Screen;
+    use nodo_ui_core::flows::network::RadioRead;
     let (mut app, _) = fixture(ScreenId::Network);
     let Screen::Network(state) = &mut app.screen else { panic!("expected network") };
     state.wifi = None;

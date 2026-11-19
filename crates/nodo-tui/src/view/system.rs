@@ -8,10 +8,11 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
-use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
+use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::{nodo_update, system_row_summary, SYSTEM_ROWS};
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {
@@ -28,44 +29,13 @@ fn system_trail(t: &Theme, last: &[&str], targets: &mut Vec<Target>) -> Vec<Item
     vec![Item::Blank, trail(t, &parts, targets), Item::Blank]
 }
 
-fn nodo_update(app: &App) -> Option<&UpdateItem> {
-    app.data.updates.iter().find(|item| item.name == SYSTEM_BASE && !item.held)
-}
-
-fn row_summary(app: &App, row: &str) -> String {
-    match row {
-        "Updates" => {
-            let apps = app.data.updates.iter().filter(|u| u.name != SYSTEM_BASE && !u.held).count();
-            let nodo = nodo_update(app).is_some();
-            let mut parts = Vec::new();
-            if apps > 0 {
-                parts.push(if apps == 1 { "1 for an app".to_owned() } else { format!("{apps} for apps") });
-            }
-            if nodo {
-                parts.push("1 for the Nodo".to_owned());
-            }
-            let auto = app.data.auto_update.enabled_count();
-            let automatic = if auto == 0 { "automatic updates off".to_owned() } else { format!("automatic for {auto}") };
-            if parts.is_empty() {
-                format!("Up to date · {automatic}")
-            } else {
-                format!("{} · {automatic}", parts.join(", "))
-            }
-        }
-        "Backups" => "Make one now, or on a schedule".to_owned(),
-        "Network" => "Cable, Wi-Fi and Bluetooth".to_owned(),
-        "Device logs" => "What the Nodo and its apps have been doing".to_owned(),
-        _ => app.data.overview.device.iter().take(2).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(" · "),
-    }
-}
-
 /// The System page: a waiting Nodo update first, then the Nodo's parts.
 pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::System, w);
     screen.before = vec![Item::Blank, heading(t, "This Nodo"), Item::Blank];
     let mut cards = Vec::new();
-    if let Some(update) = nodo_update(app) {
+    if let Some(update) = nodo_update(&app.data) {
         let mut card = Card::new(t, w);
         card.blank(t);
         let restart = if update.note == UpdateNote::RestartNeeded { "   needs a restart" } else { "   no restart needed" };
@@ -87,7 +57,7 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
             parts.focus_here();
         }
         let room = parts.width.saturating_sub(6 + 20 + 2);
-        let summary = row_summary(app, row);
+        let summary = system_row_summary(&app.data, row);
         let summary: String = if summary.chars().count() > room { format!("{}…", summary.chars().take(room.saturating_sub(1)).collect::<String>()) } else { summary };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
         parts.row_with(t, vec![lead, t.b(pad(row, 18)), t.d(pad(&summary, room)), t.d("›")], [Target::card_row(*row, pick(index, Some(KeyCode::Enter)))]);
@@ -182,7 +152,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             1 => "Update 1 app".to_owned(),
             n => format!("Update {n} apps"),
         };
-        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(app).is_none(), Click::Key(KeyCode::Enter));
+        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(&app.data).is_none(), Click::Key(KeyCode::Enter));
         card.blank(t);
     }
     cards.push(card);

@@ -34,7 +34,8 @@
 //! or the module's `apply(&Outcome) -> Step` where the feature has no type. `apply` says what the
 //! result means. **An outcome that is not the flow's own gives `Step::Stay` and changes nothing**,
 //! so a frontend may hand an outcome to the flow of the page it shows without knowing whose it
-//! is. Outcomes of features not extracted yet are still handled by the frontend.
+//! is. Every outcome belongs to a flow here; `Outcome::Refreshed` alone is the frontend's own, since
+//! it keeps the `Snapshot`.
 //!
 //! **Following a step.** A frontend has one function that follows a `Step`: it shows the notice,
 //! shows the question, goes to the destination, and performs the effects of `Step::Run` and
@@ -62,10 +63,14 @@
 //! **Tests.** Each flow has unit tests here against `MockBackend`: actions are run with
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
+pub mod backup;
+pub mod bundle;
 pub mod documents;
 pub mod drive;
 pub mod install;
 pub mod logs;
+pub mod network;
+pub mod owner_page;
 pub mod services;
 pub mod settings;
 pub mod setup;
@@ -181,8 +186,10 @@ pub enum Dest {
     Detail(PackageDetail),
     /// What an app asks for, to approve or not.
     Review(install::Review),
-    /// A suite of apps installed together, to review.
+    /// A suite of apps installed together, to review: the page of a new `bundle::Bundle`.
     Bundle(Box<nodo_api::BundleReview>),
+    /// An app's setup page for the owner, which opens at its passphrase gate.
+    OwnerPage(owner_page::OwnerPage),
     /// Why a package cannot be installed at all.
     Rejected(RejectionData),
     /// What a package needs that the node installed now lacks.
@@ -216,6 +223,9 @@ pub enum Dest {
     /// Back to the Hosting page that sent the owner to add a provider, which now has one: its
     /// draft takes the domains the new key controls (`Hosting::provider_connected`).
     HostingWithProvider { domains: Vec<String> },
+    /// The device was set up from a backup, on first boot. The restore's page is left, and the
+    /// first-setup page under it now offers the SSH keys, as it does after a passphrase is chosen.
+    SetUpFromBackup,
     /// The site is on the internet. Every page that led there is left for the list of sites
     /// that are online; a frontend that was showing the confirmation shows, on top of that list,
     /// the page following the secure connection (`PublicConfirm::certificate`).
@@ -244,11 +254,8 @@ impl Question {
     }
 }
 
-/// What the owner confirmed. `step` carries it out.
-///
-/// The first group belongs to features whose flows are here. The second group is still asked by
-/// the terminal interface, with its own wording, until the slice of its feature moves the
-/// question here; what confirming does is already in `step`, so there is one copy of that.
+/// What the owner confirmed. `step` carries it out. The question itself, with its wording, is
+/// built by the flow that asks it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confirm {
     /// Removes an installed app, by name.
@@ -270,12 +277,13 @@ pub enum Confirm {
     AllSitesOffline,
     /// Disconnects a domain provider, by id.
     RemoveProvider(String),
-
-    /// Joins an open network, whose traffic anyone nearby can read.
+    /// Joins an open network, by name, whose traffic anyone nearby can read.
     JoinOpenWifi(String),
+    /// Forgets a saved network, by name, and deletes its key.
     ForgetWifi(String),
     /// Turns Wi-Fi off while it may be the connection in use.
     WifiOff,
+    /// Unpairs and forgets a Bluetooth device, by address.
     RemoveBluetooth(String),
 }
 

@@ -18,6 +18,7 @@ use crate::app::App;
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
 use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::fingerprint_groups;
 
 pub const MARGIN: &str = "    ";
 
@@ -661,16 +662,6 @@ pub fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
     } else {
         vec![t.d("[ ]"), t.d(" Off")]
     }
-}
-
-/// A key fingerprint as groups of four, to compare by eye.
-pub fn fingerprint_groups(fp: &str) -> String {
-    // A "SHA256:" or similar label is not part of the key; its digits must not join the groups.
-    let body = fp.rsplit_once(": ").map_or(fp, |(_, rest)| rest);
-    let body = body.split_once("256:").map_or(body, |(_, rest)| rest);
-    let hex: String = body.chars().filter(char::is_ascii_hexdigit).collect();
-    let pieces: Vec<String> = hex.as_bytes().chunks(8).map(|c| String::from_utf8_lossy(c).into_owned()).collect();
-    pieces.join("  ")
 }
 
 /// A key with its label on one row, the value as groups (highlighted when it is the one to

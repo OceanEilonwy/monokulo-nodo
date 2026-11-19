@@ -94,15 +94,14 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             // The scan has run, and the speaker the Bluetooth scan found waits to be paired.
             let mut bluetooth = mock.bluetooth.clone();
             bluetooth.devices.extend(mock.nearby.iter().cloned());
-            Screen::Network(NetworkState {
-                wifi: Some(mock.wifi.clone()),
-                networks: mock.wifi_networks(),
-                bluetooth: Some(bluetooth),
-                wifi_read: crate::app::RadioRead::Read,
-                bluetooth_read: crate::app::RadioRead::Read,
-                busy: None,
-                ..NetworkState::new()
-            })
+            let mut state = NetworkState::new();
+            state.wifi = Some(mock.wifi.clone());
+            state.networks = mock.wifi_networks();
+            state.bluetooth = Some(bluetooth);
+            state.wifi_read = nodo_ui_core::flows::network::RadioRead::Read;
+            state.bluetooth_read = nodo_ui_core::flows::network::RadioRead::Read;
+            state.busy = None;
+            Screen::Network(state)
         }
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
         ScreenId::Onion => Screen::Onion(OnionState {
@@ -121,7 +120,10 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 read_only: false,
                 problem: Some("it has no filesystem".to_owned()),
             });
-            Screen::Restore(RestoreState { drives, busy: false, ..RestoreState::new() })
+            let mut state = RestoreState::new();
+            state.drives = drives;
+            state.busy = false;
+            Screen::Restore(state)
         }
         ScreenId::Rollbacks => Screen::Rollbacks(RollbacksState {
             flow: Rollbacks {

@@ -10,7 +10,9 @@ use crate::app::*;
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
-use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
+use nodo_ui_core::flows::setup::Setup;
+use nodo_ui_core::flows::backup::{self, Backups};
+use nodo_ui_core::flows::bundle::BundleStep;
 use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::logs::{self, Logs};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked};
@@ -20,6 +22,7 @@ use nodo_ui_core::flows::web::domain;
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
+use nodo_ui_core::words::SYSTEM_ROWS;
 
 #[path = "update_more.rs"]
 mod more;
@@ -423,7 +426,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let nodo_update = app.data.updates.iter().any(|item| item.name == nodo_ui_core::model::SYSTEM_BASE && !item.held);
+    let nodo_update = nodo_ui_core::words::nodo_update(&app.data).is_some();
     let Screen::System { selected } = &mut app.screen else {
         return Vec::new();
     };
@@ -450,9 +453,8 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 /// System › Backups.
 fn open_backups(app: &mut App) -> Vec<Effect> {
-    let device_set_up = !app.data.overview.setup_needed;
-    push(app, Screen::Backup(BackupState::new(device_set_up)));
-    vec![Effect::LoadBackups]
+    push(app, Screen::Backup(BackupState::of(Backups::of(&app.data))));
+    Backups::load()
 }
 
 /// The input that currently has keyboard focus. Pasted text only ever goes here, because pasted
@@ -496,12 +498,12 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Backup(state) => backup_input(&mut state.step),
         Screen::Restore(state) => more::restore_input(&mut state.step),
         Screen::Network(state) => net::network_input(state),
-        Screen::Bundle(state) => match state.step {
-            BundleStep::Answers => state.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
+        Screen::Bundle(state) => match state.flow.step {
+            BundleStep::Answers => state.flow.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
             BundleStep::Passphrase => Some(&mut state.passphrase),
             _ => None,
         },
-        Screen::OwnerPage(state) if state.view.is_none() => Some(&mut state.passphrase),
+        Screen::OwnerPage(state) if state.flow.view.is_none() => Some(&mut state.passphrase),
         _ => None,
     }
 }
@@ -545,25 +547,13 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The owner confirmed a question. The screens that show the work as running are marked first;
-/// what confirming does comes from the core.
+/// The owner confirmed a question. The flow of the page that asked is told first, so it shows
+/// the work as running; what confirming does comes from the core.
 fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
-    match &confirm {
-        Confirm::RollBack { .. } => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                state.flow.confirmed(&confirm);
-            }
-        }
-        Confirm::JoinOpenWifi(_) | Confirm::ForgetWifi(_) | Confirm::WifiOff | Confirm::RemoveBluetooth(_) => {
-            if !net::mark_confirmed(app, &confirm) {
-                return Vec::new();
-            }
-        }
-        Confirm::RemoveSshKey(_) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.flow.confirmed(&confirm);
-            }
-        }
+    match &mut app.screen {
+        Screen::Rollbacks(state) => state.flow.confirmed(&confirm),
+        Screen::Network(state) => state.confirmed(&confirm),
+        Screen::Setup(state) => state.flow.confirmed(&confirm),
         _ => {}
     }
     let step = confirm.step(&app.data);
@@ -624,6 +614,7 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::Detail(detail) => push(app, Screen::Detail(detail)),
         Dest::Review(review) => push(app, Screen::Review(ReviewState::of(review))),
         Dest::Bundle(review) => owner::open_bundle(app, *review),
+        Dest::OwnerPage(page) => owner::show_owner_page(app, page),
         Dest::Rejected(data) => push(app, Screen::Rejected(data)),
         Dest::MissingCapability(data) => push(app, Screen::Capability(CapabilityState { data, choice: 0 })),
         // The install's page takes the place of the review that started it.
@@ -656,6 +647,12 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::PublicConfirm(confirm) => push(app, Screen::WebConfirm(WebConfirmState::new(confirm))),
         Dest::WentPublic => web::went_public(app),
         Dest::HostingWithProvider { domains } => web::hosting_with_provider(app, &domains),
+        Dest::SetUpFromBackup => {
+            pop(app);
+            if let Screen::Setup(setup) = &mut app.screen {
+                *setup = SetupState::keys();
+            }
+        }
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -2012,8 +2009,8 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = documents::apply(&event);
             return follow(app, step);
         }
-        Outcome::BundleInstalled(result) => owner::on_bundle_installed(app, result),
-        Outcome::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
+        Outcome::BundleInstalled(_) => return owner::on_bundle_installed(app, &event),
+        Outcome::OwnerPageLoaded { .. } => return owner::on_owner_page(app, &event),
     }
     Vec::new()
 }
@@ -2044,96 +2041,57 @@ fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
     }
 }
 
-/// Backups and restore. A restore asks for the backup passphrase, shows what the verified backup
-/// holds and which services stop, then needs the typed word. The helper checks the word again.
-/// Tab moves between the device's backups and a USB drive's. On first boot only the USB drive is
-/// offered, and the restore sets the whole device up.
+/// Backups and restore: the keys of each step. Tab moves between the device's backups and a USB
+/// drive's. What each step asks, checks and does is the core's `Backups`.
 fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    use backup::Field;
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
-    if state.busy {
+    if state.flow.busy {
         return Vec::new();
     }
-    let device_set_up = state.device_set_up;
-    let fresh = state.fresh;
-    let mut effects = Vec::new();
-    let mut leave = false;
-    let mut finished_fresh = false;
-    let mut next = None;
-    let usb_device = state.usb.as_ref().filter(|u| u.list.is_some()).map(|u| u.drive.device.clone());
+    let fresh = state.flow.fresh;
+    let mut next = Step::Stay;
     match &mut state.step {
         BackupStep::List => match key.code {
-            KeyCode::Tab if !fresh && usb_device.is_some() => state.usb_focused = !state.usb_focused,
+            KeyCode::Tab if !fresh && state.flow.usb_device().is_some() => state.usb_focused = !state.usb_focused,
             KeyCode::Down | KeyCode::Up => {
                 let down = key.code == KeyCode::Down;
                 if state.usb_focused {
-                    let len = state.usb_list().len();
+                    let len = state.flow.usb_list().len();
                     step(&mut state.usb_selected, len, down);
                 } else {
-                    step(&mut state.selected, state.list.len(), down);
+                    step(&mut state.selected, state.flow.list.len(), down);
                 }
             }
-            KeyCode::Char(c @ ('n' | 'u')) if !fresh => {
-                if c == 'u' && usb_device.is_none() {
-                    state.error = Some("Plug in a USB drive formatted as FAT32, exFAT or ext4 first.".to_owned());
-                } else {
-                    state.target = if c == 'u' { usb_device.clone() } else { None };
-                    let field = if device_set_up { 0 } else { 1 };
-                    next = Some(BackupStep::Create {
-                        device: Input::secret(),
-                        first: Input::secret(),
-                        second: Input::secret(),
-                        field,
-                    });
-                }
-            }
+            KeyCode::Char(c @ ('n' | 'u')) if !fresh => state.flow.start_create(c == 'u'),
             KeyCode::Char('r') | KeyCode::Enter => {
                 let chosen = if state.usb_focused {
-                    state.usb_list().get(state.usb_selected).map(|b| b.name.clone())
+                    state.flow.usb_list().get(state.usb_selected).map(|b| b.name.clone())
                 } else {
-                    state.list.get(state.selected).map(|b| b.name.clone())
+                    state.flow.list.get(state.selected).map(|b| b.name.clone())
                 };
                 if let Some(name) = chosen {
-                    state.target = if state.usb_focused { usb_device.clone() } else { None };
-                    next = Some(BackupStep::Unlock { name, passphrase: Input::secret() });
+                    state.flow.open(&name, state.usb_focused);
                 }
             }
-            KeyCode::Char('g') => {
-                state.busy = true;
-                effects.push(Effect::LoadBackups);
-            }
-            KeyCode::Esc => leave = true,
+            KeyCode::Char('g') => next = Step::run(state.flow.reload()),
+            KeyCode::Esc => next = state.flow.leave(),
             _ => {}
         },
         BackupStep::Create { device, first, second, field } => match key.code {
-            KeyCode::Esc => next = Some(BackupStep::List),
-            KeyCode::Tab | KeyCode::Down => *field = if *field >= 2 { if device_set_up { 0 } else { 1 } } else { *field + 1 },
-            KeyCode::Enter if *field < 2 => *field += 1,
-            KeyCode::Enter => {
-                let backup = first.secret_value();
-                if backup.expose().chars().count() < MIN_BACKUP_PASSPHRASE_CHARS {
-                    state.error = Some(format!("A backup passphrase needs at least {MIN_BACKUP_PASSPHRASE_CHARS} characters."));
-                } else if backup != second.secret_value() {
-                    state.error = Some("The two backup passphrases differ. Type them again.".to_owned());
-                    first.clear();
-                    second.clear();
-                    *field = 1;
-                } else if device_set_up && device.is_empty() {
-                    state.error = Some("Enter the device passphrase, so the backup includes the device key.".to_owned());
-                    *field = 0;
-                } else {
-                    state.error = None;
-                    state.busy = true;
-                    let device_passphrase = device_set_up.then(|| device.take_secret());
-                    second.clear();
-                    effects.push(Effect::CreateBackup {
-                        device_passphrase,
-                        backup_passphrase: first.take_secret(),
-                        usb: state.target.clone(),
-                    });
-                }
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Tab | KeyCode::Down => {
+                *field = if *field >= 2 { if state.flow.asks_device_passphrase() { 0 } else { 1 } } else { *field + 1 }
             }
+            KeyCode::Enter if *field < 2 => *field += 1,
+            KeyCode::Enter => match state.flow.create(device, first, second) {
+                Ok(effects) => next = Step::run(effects),
+                Err(Some(Field::DevicePassphrase)) => *field = 0,
+                Err(Some(_)) => *field = 1,
+                Err(None) => {}
+            },
             _ => {
                 let input = match field {
                     0 => device,
@@ -2143,150 +2101,57 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(input, key);
             }
         },
-        BackupStep::Unlock { name, passphrase } => match key.code {
-            KeyCode::Esc => next = Some(BackupStep::List),
-            KeyCode::Enter if !passphrase.is_empty() => {
-                state.busy = true;
-                state.error = None;
-                effects.push(Effect::InspectBackup {
-                    name: name.clone(),
-                    passphrase: passphrase.secret_value(),
-                    usb: state.target.clone(),
-                });
-            }
+        BackupStep::Unlock { passphrase, .. } => match key.code {
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Enter => next = Step::run(state.flow.inspect(passphrase)),
             _ => {
                 edit_input(passphrase, key);
             }
         },
-        BackupStep::Confirm { name, passphrase, contents, typed, device, field } => {
-            // A device that is not set up always needs a passphrase of its own.
-            let asks_device = contents.has_device_key || fresh;
-            match key.code {
-                KeyCode::Esc => next = Some(BackupStep::List),
-                KeyCode::Tab if asks_device => *field = 1 - *field,
-                KeyCode::Enter => {
-                    if typed.text() != RESTORE_WORD {
-                        state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
-                        *field = 0;
-                    } else if asks_device && device.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
-                        state.error = Some(format!(
-                            "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters for the backup's key."
-                        ));
-                        *field = 1;
-                    } else {
-                        state.error = None;
-                        state.busy = true;
-                        let new_device_passphrase = asks_device.then(|| device.take_secret());
-                        effects.push(Effect::RestoreBackup {
-                            name: name.clone(),
-                            passphrase: passphrase.clone(),
-                            new_device_passphrase,
-                            typed: typed.text().to_owned(),
-                            usb: state.target.clone(),
-                        });
-                    }
-                }
-                _ => {
-                    edit_input(if *field == 0 { typed } else { device }, key);
-                }
+        BackupStep::Confirm { typed, device, field, .. } => match key.code {
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Tab if state.flow.asks_new_device_passphrase() => *field = 1 - *field,
+            KeyCode::Enter => match state.flow.restore(typed.text(), device) {
+                Ok(effects) => next = Step::run(effects),
+                Err(Some(Field::Word)) => *field = 0,
+                Err(Some(_)) => *field = 1,
+                Err(None) => {}
+            },
+            _ => {
+                edit_input(if *field == 0 { typed } else { device }, key);
             }
-        }
+        },
         BackupStep::Restored(_) => {
             if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
-                if fresh {
-                    finished_fresh = true;
-                } else {
-                    next = Some(BackupStep::List);
-                    state.busy = true;
-                    effects.push(Effect::LoadBackups);
-                }
+                next = state.flow.finish();
             }
         }
     }
-    if let Some(step) = next {
-        state.error = None;
-        state.step = step;
-    }
-    if finished_fresh {
-        // Set up from the backup. SSH keys are offered next, as after a first-boot setup.
-        pop(app);
-        if let Screen::Setup(setup) = &mut app.screen {
-            *setup = SetupState::keys();
-        }
-        return vec![Effect::LoadSshKeys, Effect::Refresh];
-    }
-    if leave {
-        pop(app);
-        effects.push(Effect::Refresh);
-    }
-    effects
+    state.sync();
+    follow(app, next)
 }
-
-/// The helper enforces the same minimum. Checking here saves a round trip and a KDF run.
-const MIN_BACKUP_PASSPHRASE_CHARS: usize = 12;
 
 fn on_backup_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
+    let next = state.flow.apply(&event);
+    state.sync();
     match event {
-        Outcome::BackupsLoaded(Ok(list)) => {
-            state.selected = state.selected.min(list.len().saturating_sub(1));
-            state.list = list;
-        }
-        Outcome::UsbLoaded(result) => {
-            state.busy = false;
-            state.usb = result.ok();
-            let len = state.usb_list().len();
+        Outcome::BackupsLoaded(Ok(_)) => state.selected = state.selected.min(state.flow.list.len().saturating_sub(1)),
+        Outcome::UsbLoaded(_) => {
+            let len = state.flow.usb_list().len();
             state.usb_selected = state.usb_selected.min(len.saturating_sub(1));
-            if len == 0 && !state.fresh {
+            if len == 0 && !state.flow.fresh {
                 state.usb_focused = false;
             }
         }
-        Outcome::BackupCreated(Ok(created)) => {
-            state.step = BackupStep::List;
-            state.busy = true;
-            let place = if state.target.take().is_some() { " to the USB drive" } else { "" };
-            let mut text = format!("Backup {} written{place}.", created.info.name);
-            if !created.locked.is_empty() {
-                text.push_str(&format!(" Locked storage was left out: {}.", created.locked.join(", ")));
-            }
-            notice(app, NoticeKind::Ok, text);
-            return vec![Effect::LoadBackups];
-        }
-        Outcome::BackupInspected(Ok(contents)) => {
-            state.busy = false;
-            if let BackupStep::Unlock { name, passphrase } = &mut state.step {
-                state.step = BackupStep::Confirm {
-                    name: name.clone(),
-                    passphrase: passphrase.take_secret(),
-                    contents,
-                    typed: Input::plain(""),
-                    device: Input::secret(),
-                    field: 0,
-                };
-            }
-        }
-        Outcome::BackupRestored(Ok(report)) => {
-            state.busy = false;
-            state.step = BackupStep::Restored(report);
-        }
-        Outcome::BackupsLoaded(Err(e)) => {
-            // On first boot the device has no backups of its own, which is no error.
-            if !state.fresh {
-                state.error = Some(e);
-            }
-        }
-        Outcome::BackupCreated(Err(e)) | Outcome::BackupInspected(Err(e)) | Outcome::BackupRestored(Err(e)) => {
-            state.busy = false;
-            state.error = Some(e);
-        }
         _ => {}
     }
-    Vec::new()
+    follow(app, next)
 }
 
-/// A mouse event. A click does what its target says; a move updates the hover; the wheel scrolls
+/// A mouse event. A click does what its target says;/// A mouse event. A click does what its target says; a move updates the hover; the wheel scrolls
 /// like the arrow keys. While the terminal is too small nothing is clickable.
 fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect> {
     if app.too_small() {
