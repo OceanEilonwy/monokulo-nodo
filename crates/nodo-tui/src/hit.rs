@@ -10,8 +10,8 @@
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use nodo_ui_core::screen::Tab;
 
-use crate::app::Tab;
 
 /// What a click does.
 #[derive(Debug, Clone, PartialEq, Eq)]

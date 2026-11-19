@@ -9,9 +9,10 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{focused, inset, keys_line, line, margin, rows_of, tick, trail, Card, Screen3, STRIP_ROWS};
-use crate::app::{copy_targets, App, BundleState, BundleStep, OwnerPageState, Tab};
+use crate::app::{copy_targets, App, BundleState, BundleStep, OwnerPageState};
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
+use nodo_ui_core::screen::Tab;
 
 fn pick(index: usize, then: KeyCode) -> Click {
     Click::Pick { index, then: Some(then) }

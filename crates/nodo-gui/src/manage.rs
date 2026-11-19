@@ -16,16 +16,13 @@ use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use nodo_api::{ApiError, Backend, Request, Response, ScreenStatus};
+use nodo_api::{ApiError, Request, Response, ScreenStatus};
+use nodo_ui_core::exec::{load_snapshot, Data};
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::Secret;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::{MButton, MCard, MChip, MDialog, MKeyboard, MPicker, MPin, MRow};
-
-/// Everything a backend offers the screens.
-pub trait Data: Backend + ScreenData + Send {}
-impl<T: Backend + ScreenData + Send> Data for T {}
 
 type Job = Box<dyn FnOnce(&mut dyn Data) -> Done + Send>;
 type Done = Box<dyn FnOnce(&mut Manage) + Send>;
@@ -2418,35 +2415,6 @@ impl Manage {
         rows.push(buttons(vec![self.change_button("ssh-add", "Add a key", 0)]));
         Page { crumbs: self.crumbs(), title: "SSH keys".into(), actions: Vec::new(), cards: vec![card("", "Keys that may log in as root.", rows)] }
     }
-}
-
-/// nodo-tui's `load_snapshot`, for a backend behind `dyn`.
-fn load_snapshot(d: &mut dyn Data) -> Result<Snapshot, ApiError> {
-    let services = match d.call(Request::ListServices)? {
-        Response::Services(services) => services,
-        other => return Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
-    };
-    let (providers, providers_error) = match d.providers() {
-        Ok(list) => (list, None),
-        Err(e) => (Vec::new(), Some(e)),
-    };
-    Ok(Snapshot {
-        capabilities: d.capabilities(),
-        services,
-        overview: d.overview(),
-        catalog: d.catalog(),
-        feeds: d.feeds(),
-        updates: d.updates(),
-        web: d.web(),
-        providers,
-        providers_error,
-        connected: d.connected_providers(),
-        log_sources: d.log_sources(),
-        auto_update: d.auto_update(),
-        unavailable: d.unavailable(),
-        system_note: d.system_note(),
-        owner_pages: d.owner_pages(),
-    })
 }
 
 fn has_refs(v: &FieldValue) -> bool {

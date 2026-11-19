@@ -8,10 +8,11 @@ mod common;
 use std::path::PathBuf;
 
 use common::{draw, screen_text, text};
-use nodo_tui::app::ScreenId;
 use nodo_tui::fixtures::fixture;
 use nodo_tui::theme::Theme;
 use ratatui::style::Color;
+use nodo_ui_core::Outcome;
+use nodo_ui_core::screen::ScreenId;
 
 fn snapshot_path(id: ScreenId) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots").join(format!("{}.txt", id.slug()))
@@ -586,7 +587,8 @@ fn app_rows_cut_the_tagline_before_the_status_at_80() {
 #[test]
 fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result() {
     use crossterm::event::KeyCode;
-    use nodo_tui::app::{Effect, Event, MouseKind};
+    use nodo_tui::app::{Event, MouseKind};
+    use nodo_ui_core::Effect;
     use nodo_tui::fixtures::press;
     use nodo_tui::hit::Click;
     use nodo_tui::update::update;
@@ -610,7 +612,7 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_on_its_result
     assert!(unlock(&app).is_none(), "a pending button is not a target");
     assert!(update(&mut app, press(KeyCode::Enter)).is_empty(), "its key is ignored while it runs");
 
-    update(&mut app, Event::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned()))));
+    update(&mut app, Event::Done(Outcome::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned())))));
     assert_eq!(app.pending, None, "the result ends it");
     let screen = text(&draw_with(&app, &theme, 100, 32));
     assert!(!screen.contains('⧗'), "{screen}");

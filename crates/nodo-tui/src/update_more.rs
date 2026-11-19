@@ -9,6 +9,7 @@ use nodo_api::UpdateOutcome;
 use super::{edit_input, fail, notice, open_logs, pop, push, step};
 use crate::app::*;
 use nodo_ui_core::secret::Input;
+use nodo_ui_core::{Effect, Outcome};
 
 // Entry points
 
@@ -369,9 +370,9 @@ pub(super) fn roll_back(app: &mut App, package: String, to: String) -> Vec<Effec
 
 // Results
 
-pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
+pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
-        Event::OnionLoaded(result) => {
+        Outcome::OnionLoaded(result) => {
             if let Screen::Onion(state) = &mut app.screen {
                 state.busy = false;
                 match result {
@@ -384,7 +385,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::OnionChanged(result) => {
+        Outcome::OnionChanged(result) => {
             if let Screen::Onion(state) = &mut app.screen {
                 match result {
                     Ok(()) => notice(app, NoticeKind::Ok, "Onion exposure changed."),
@@ -392,7 +393,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::RestoreDrives(result) => {
+        Outcome::RestoreDrives(result) => {
             if let Screen::Restore(state) = &mut app.screen {
                 state.busy = false;
                 match result {
@@ -405,7 +406,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::RestoreBackups(result) => {
+        Outcome::RestoreBackups(result) => {
             if let Screen::Restore(state) = &mut app.screen {
                 state.busy = false;
                 match result {
@@ -420,7 +421,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::RestoreInspected(result) => {
+        Outcome::RestoreInspected(result) => {
             if let Screen::Restore(state) = &mut app.screen {
                 state.busy = false;
                 if let RestoreStep::Passphrase { device, name, passphrase } = &mut state.step {
@@ -445,7 +446,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::RestoreFinished(result) => {
+        Outcome::RestoreFinished(result) => {
             if let Screen::Restore(state) = &mut app.screen {
                 state.busy = false;
                 let (device, name) = match &state.step {
@@ -458,7 +459,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 };
             }
         }
-        Event::RollbacksLoaded(result) => {
+        Outcome::RollbacksLoaded(result) => {
             if let Screen::Rollbacks(state) = &mut app.screen {
                 state.busy = false;
                 match result {
@@ -470,7 +471,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::RolledBack(result) => {
+        Outcome::RolledBack(result) => {
             if let Screen::Rollbacks(state) = &mut app.screen {
                 match result {
                     Ok(outcome) => {

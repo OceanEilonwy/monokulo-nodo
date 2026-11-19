@@ -8,10 +8,11 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, inset, quiet, setting_aside, toggle, trail, Card, Screen3};
-use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState, Tab};
+use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::STORED_MASK;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 
 /// The link on each field that takes a reference, the same as F4 or Ctrl-R.

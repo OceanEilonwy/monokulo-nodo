@@ -20,11 +20,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Terminal;
 
-use crate::app::{App, ScreenId, Tab};
+use crate::app::App;
 use crate::fixtures::fixture;
 use crate::theme::Theme;
 use crate::view::layout::{draw_page, Item, Page, Panel};
 use crate::view::{self, button_line, checkbox, hints, mark, pad};
+use nodo_ui_core::screen::{ScreenId, Tab};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {

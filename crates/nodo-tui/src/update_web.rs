@@ -12,6 +12,8 @@ use nodo_api::{AliasMode, ApiError, Exposure, PublicAlias};
 use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
 use nodo_ui_core::model::*;
+use nodo_ui_core::Effect;
+use nodo_ui_core::effect::ExposureAfter;
 
 /// Opens the Hosting screen of a site. Returns false when there is no such site.
 pub(super) fn open_hosting(app: &mut App, site: &str) -> bool {

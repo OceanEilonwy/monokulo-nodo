@@ -6,9 +6,10 @@ use crossterm::event::KeyCode;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{focused, heading, heading_button, inset, key_row, link, quiet, toggle, trail, Card, Screen3};
-use crate::app::{AddFeedState, App, FeedKeyState, Tab};
+use crate::app::{AddFeedState, App, FeedKeyState};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {

@@ -5,6 +5,7 @@ use nodo_api::ApiError;
 
 use super::{edit_input, fail, notice, pop, push, step};
 use crate::app::*;
+use nodo_ui_core::Effect;
 
 /// Rows a page key scrolls.
 const PAGE: usize = 10;

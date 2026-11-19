@@ -4,9 +4,10 @@
 mod common;
 
 use common::draw;
-use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, ScreenId, Undo};
+use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, Undo};
 use nodo_tui::fixtures::{fixture, press};
 use nodo_ui_core::model::FieldValue;
+use nodo_ui_core::screen::ScreenId;
 use nodo_tui::hit::{hit_at, Click, Hit};
 use nodo_tui::update::update;
 use ratatui::buffer::Buffer;
@@ -174,7 +175,7 @@ fn clicking_sources_while_typing_a_search_opens_sources() {
 }
 
 /// Clicks the target covering `label` on what `app` draws.
-fn click_text(app: &mut App, label: &str) -> Vec<nodo_tui::app::Effect> {
+fn click_text(app: &mut App, label: &str) -> Vec<nodo_ui_core::Effect> {
     let (_, buffer, hits) = drawn(app.clone());
     draw(app, app.size.0, app.size.1);
     let target = hits.iter().find(|hit| covered_text(&buffer, hit) == label).unwrap_or_else(|| panic!("\"{label}\" is a target"));
@@ -346,7 +347,7 @@ fn marked(screen: &str) -> Vec<String> {
 fn every_click_target_on_every_scrolled_screen_does_what_it_shows() {
     let snapshot = {
         let mut mock = common::forms::crowded();
-        nodo_tui::runtime::load_snapshot(&mut mock).expect("the mock answers")
+        nodo_ui_core::exec::load_snapshot(&mut mock).expect("the mock answers")
     };
     let mut screens: Vec<(String, App)> = ScreenId::ALL.into_iter().map(|id| (id.slug().to_owned(), fixture(id).0)).collect();
     // The fixture's own pages: its settings form and its app page.
@@ -499,7 +500,7 @@ fn a_sites_other_names_click_at_every_size() {
     use nodo_tui::app::{ExposureState, HostingFocus};
     let snapshot = {
         let mut mock = common::forms::crowded();
-        nodo_tui::runtime::load_snapshot(&mut mock).expect("the mock answers")
+        nodo_ui_core::exec::load_snapshot(&mut mock).expect("the mock answers")
     };
     let state = |app: &App| -> ExposureState {
         let Screen::WebExposure(state) = &app.screen else { panic!("hosting") };

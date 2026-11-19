@@ -8,7 +8,7 @@ use nodo_settings::{DefaultValue, Limits, Schema, SettingDef, SettingType};
 use nodo_tui::app::App;
 use nodo_ui_core::mock::MockBackend;
 use nodo_ui_core::model::*;
-use nodo_tui::runtime::load_snapshot;
+use nodo_ui_core::exec::load_snapshot;
 
 pub const ID: &str = "nodo-fixture-forms";
 

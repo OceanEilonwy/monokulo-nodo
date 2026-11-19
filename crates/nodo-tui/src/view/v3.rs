@@ -14,9 +14,10 @@ use ratatui::text::{Line, Span};
 
 use super::layout::{Item, Page};
 use super::pad;
-use crate::app::{App, Tab};
+use crate::app::App;
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
+use nodo_ui_core::screen::Tab;
 
 pub const MARGIN: &str = "    ";
 

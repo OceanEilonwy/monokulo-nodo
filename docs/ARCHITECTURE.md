@@ -394,6 +394,9 @@ codebase, and signed xbps packages from user-added feeds.
 - `crates/`: the Rust workspace. `crates/nodo-ui-core` is what the interfaces share and has no
   terminal or toolkit in it: the screens' data (`model`), the helper backend (`helper_backend`,
   `helper_manage`) and its in-memory double (`mock`), the scenarios both must pass (`contract`),
-  and the text and reference editing buffers (`secret`, `refs`). `crates/nodo-tui` (the terminal)
-  and `crates/nodo-gui` (the built-in screen) are built on it, and `nodo-tui` re-exports none of it.
+  the text and reference editing buffers (`secret`, `refs`), the screens' names (`screen`), what
+  the screens work out from the device's state (`queries`), and what an interface asks for and
+  gets back (`Effect` and `Outcome` in `effect`) with the code and the worker thread that make
+  the helper calls (`exec`). `crates/nodo-tui` (the terminal) and `crates/nodo-gui` (the built-in
+  screen) are built on it, and `nodo-tui` re-exports none of it.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

@@ -9,8 +9,10 @@ use nodo_api::Exposure;
 use crate::app::*;
 use nodo_ui_core::mock::{reachability_checks, sample_references, MockBackend};
 use nodo_ui_core::model::*;
-use crate::runtime::load_snapshot;
 use nodo_ui_core::secret::Input;
+use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::exec::load_snapshot;
+use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 
 /// A loaded app on the given screen, plus the device behind it.

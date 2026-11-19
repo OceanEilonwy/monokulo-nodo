@@ -4,11 +4,14 @@ mod common;
 
 use common::{draw, screen_text, send, text, type_text};
 use crossterm::event::KeyCode;
-use nodo_tui::app::{App, BundleStep, Event, MouseKind, Screen, ScreenId};
+use nodo_tui::app::{App, BundleStep, Event, MouseKind, Screen};
 use nodo_tui::fixtures::{fixture, press};
 use nodo_ui_core::mock::{sample_bundle_review, sample_owner_page, MockBackend, MOCK_PASSPHRASE};
 use nodo_ui_core::model::{PackageId, ScreenData};
-use nodo_tui::runtime::{dispatch, load_snapshot};
+use nodo_ui_core::Outcome;
+use nodo_ui_core::exec::load_snapshot;
+use nodo_ui_core::screen::ScreenId;
+use nodo_tui::runtime::dispatch;
 use nodo_tui::view::owner::qr_lines;
 use ratatui::style::Color;
 
@@ -31,7 +34,7 @@ fn at_bundle_review() -> (App, MockBackend) {
     mock.bundles.insert("pingers".to_owned(), review);
     mock.owner_views.insert("pingers".to_owned(), ("Setup".to_owned(), sample_owner_page()));
     let gate = mock.install_gate(&PackageId::new("pingers", "pingers"));
-    dispatch(&mut app, &mut mock, Event::GateLoaded(gate));
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::GateLoaded(gate)));
     (app, mock)
 }
 

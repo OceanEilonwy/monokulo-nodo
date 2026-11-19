@@ -8,9 +8,10 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
-use crate::app::{App, AutoUpdateState, LogsState, Tab, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
+use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {

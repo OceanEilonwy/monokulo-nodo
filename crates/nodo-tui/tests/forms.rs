@@ -74,7 +74,7 @@ fn the_mock_serves_the_fixture_with_its_real_schema() {
     let keys: Vec<&str> = form.fields.iter().map(|f| f.key.as_str()).collect();
     let names: Vec<&str> = schema.settings.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(keys, names);
-    let snapshot = nodo_tui::runtime::load_snapshot(&mut mock).unwrap();
+    let snapshot = nodo_ui_core::exec::load_snapshot(&mut mock).unwrap();
     assert!(snapshot.services.iter().any(|svc| svc.id == ID));
     assert!(snapshot.web.sites.iter().filter(|s| s.package.starts_with("forms")).count() >= 3);
 }
@@ -229,7 +229,7 @@ fn set_up_mock() -> MockBackend {
 
 fn open_form(mock: &mut MockBackend, size: (u16, u16)) -> App {
     let mut app = App::new();
-    app.data = nodo_tui::runtime::load_snapshot(mock).unwrap();
+    app.data = nodo_ui_core::exec::load_snapshot(mock).unwrap();
     app.size = size;
     app.screen = Screen::Settings(SettingsState::new(mock.settings_form(ID).unwrap()));
     app

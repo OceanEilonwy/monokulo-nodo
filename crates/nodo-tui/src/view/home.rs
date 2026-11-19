@@ -7,9 +7,11 @@ use nodo_api::ServiceState;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{heading, Card, Screen3};
-use crate::app::{App, HomeItem, Tab};
+use crate::app::App;
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::AttentionLevel;
+use nodo_ui_core::queries::HomeItem;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 
 /// An app's state in plain words, and whether it is a problem.

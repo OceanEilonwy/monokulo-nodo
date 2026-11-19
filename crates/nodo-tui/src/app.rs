@@ -1,14 +1,19 @@
 //! Application state, plus the events that change it and the effects it asks for.
 //!
 //! `update::update` turns `(state, event)` into a new state and a list of `Effect`s without any
-//! I/O. `runtime::execute` performs each effect against the backend and turns the result back into
-//! events. Tests can therefore drive every flow without a terminal or a device.
+//! I/O. `nodo_ui_core::exec::execute_effect` performs each effect against the backend, and its
+//! outcomes come back as `Event::Done`. Tests can therefore drive every flow without a terminal
+//! or a device.
 
 use crossterm::event::KeyEvent;
-use nodo_api::{ApiError, Exposure, Response};
+use nodo_api::Exposure;
 
+use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::model::*;
+use nodo_ui_core::queries::HomeItem;
+use nodo_ui_core::screen::{ScreenId, Tab};
 use nodo_ui_core::secret::{Input, Secret};
+use nodo_ui_core::{Effect, Outcome};
 
 /// Below this size the layout cannot show enough context to act safely, so input is refused.
 pub const MIN_WIDTH: u16 = 60;
@@ -18,180 +23,6 @@ pub const TICKS_PER_SECOND: u64 = 4;
 /// Upper bound of the unlock retry delay. The helper must enforce its own limit as well, because
 /// this one only protects against an impatient user at this screen.
 pub const MAX_UNLOCK_DELAY_SECONDS: u64 = 30;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
-    Home,
-    /// Installed apps, each with its own page (update, hosting, settings, logs), and Get apps.
-    Apps,
-    Web,
-    /// The Nodo itself: its updates, backups, network and device logs.
-    System,
-}
-
-impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Apps, Tab::Web, Tab::System];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Tab::Home => "Home",
-            Tab::Apps => "Apps",
-            Tab::Web => "Web",
-            Tab::System => "System",
-        }
-    }
-}
-
-/// One entry per design file, so fixtures and tests can enumerate the whole design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScreenId {
-    Main,
-    Search,
-    Detail,
-    Review,
-    Installing,
-    Unlock,
-    Feeds,
-    AddFeed,
-    FeedKey,
-    Settings,
-    Reference,
-    ApplyFailed,
-    Updates,
-    UpdateFailed,
-    Logs,
-    Rejected,
-    Capability,
-    NoDrive,
-    WebSites,
-    WebExposure,
-    WebProviders,
-    WebCheck,
-    WebConfirm,
-    WebCgnat,
-    AutoUpdate,
-    WebDomain,
-    WebCertificate,
-    WebTrust,
-    /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
-    Setup,
-    /// Backups and restore, on the device and on a USB drive.
-    Backup,
-    /// Tor exposure of the node and the sites.
-    Onion,
-    /// First boot: rebuilding the device from a backup on a USB drive.
-    Restore,
-    /// Rollbacks that happened, and putting a package back to its previous version.
-    Rollbacks,
-    /// Wi-Fi and Bluetooth.
-    Network,
-    /// The installed apps.
-    Apps,
-    /// One installed app's page.
-    AppPage,
-    /// Confirming an app's removal.
-    AppRemove,
-    /// The Nodo itself: updates, backups, network, device logs, about.
-    System,
-    /// Installing a suite of apps together: review, questions, passphrase, progress, result.
-    Bundle,
-    /// An app's setup checklist for the owner.
-    OwnerPage,
-}
-
-impl ScreenId {
-    pub const ALL: [ScreenId; 39] = [
-        ScreenId::Main,
-        ScreenId::Search,
-        ScreenId::Detail,
-        ScreenId::Review,
-        ScreenId::Installing,
-        ScreenId::Unlock,
-        ScreenId::Feeds,
-        ScreenId::AddFeed,
-        ScreenId::FeedKey,
-        ScreenId::Settings,
-        ScreenId::Reference,
-        ScreenId::ApplyFailed,
-        ScreenId::Updates,
-        ScreenId::UpdateFailed,
-        ScreenId::Logs,
-        ScreenId::Rejected,
-        ScreenId::Capability,
-        ScreenId::NoDrive,
-        ScreenId::WebSites,
-        ScreenId::WebExposure,
-        ScreenId::WebProviders,
-        ScreenId::WebCheck,
-        ScreenId::WebConfirm,
-        ScreenId::WebCgnat,
-        ScreenId::AutoUpdate,
-        ScreenId::WebDomain,
-        ScreenId::WebCertificate,
-        ScreenId::WebTrust,
-        ScreenId::Backup,
-        ScreenId::Onion,
-        ScreenId::Restore,
-        ScreenId::Rollbacks,
-        ScreenId::Network,
-        ScreenId::Apps,
-        ScreenId::AppPage,
-        ScreenId::AppRemove,
-        ScreenId::System,
-        ScreenId::Bundle,
-        ScreenId::OwnerPage,
-    ];
-
-    /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
-    pub fn slug(self) -> &'static str {
-        match self {
-            ScreenId::Main => "main",
-            ScreenId::Search => "search",
-            ScreenId::Detail => "detail",
-            ScreenId::Review => "review",
-            ScreenId::Installing => "installing",
-            ScreenId::Unlock => "unlock",
-            ScreenId::Feeds => "feeds",
-            ScreenId::AddFeed => "addfeed",
-            ScreenId::FeedKey => "feedkey",
-            ScreenId::Settings => "settings",
-            ScreenId::Reference => "reference",
-            ScreenId::ApplyFailed => "applyfailed",
-            ScreenId::Updates => "updates",
-            ScreenId::UpdateFailed => "updatefailed",
-            ScreenId::Logs => "logs",
-            ScreenId::Rejected => "rejected",
-            ScreenId::Capability => "capability",
-            ScreenId::NoDrive => "nodrive",
-            ScreenId::WebSites => "websites",
-            ScreenId::WebExposure => "webexposure",
-            ScreenId::WebProviders => "webproviders",
-            ScreenId::WebCheck => "webcheck",
-            ScreenId::WebConfirm => "webconfirm",
-            ScreenId::WebCgnat => "webcgnat",
-            ScreenId::AutoUpdate => "autoupdate",
-            ScreenId::WebDomain => "webdomain",
-            ScreenId::WebCertificate => "webcertificate",
-            ScreenId::WebTrust => "webtrust",
-            ScreenId::Setup => "setup",
-            ScreenId::Backup => "backup",
-            ScreenId::Onion => "onion",
-            ScreenId::Restore => "restore",
-            ScreenId::Rollbacks => "rollbacks",
-            ScreenId::Network => "network",
-            ScreenId::Apps => "apps",
-            ScreenId::AppPage => "app",
-            ScreenId::AppRemove => "appremove",
-            ScreenId::System => "system",
-            ScreenId::Bundle => "bundle",
-            ScreenId::OwnerPage => "owner",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|id| id.slug() == slug)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchState {
@@ -417,16 +248,6 @@ impl Default for RestoreState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// What the Rollbacks screen shows: rollbacks that happened and versions that can be put back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RollbackView {
-    pub options: Vec<nodo_api::RollbackOption>,
-    /// Failed updates that were rolled back, newest first.
-    pub events: Vec<nodo_api::UpdateEvent>,
-    /// The system went back to its previous version at boot, and why.
-    pub boot_fallback: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1362,51 +1183,12 @@ pub fn copy_targets(view: &nodo_api::OwnerPageView) -> Vec<(String, String)> {
     out
 }
 
-/// The rows of an app's page: its setup page first when it has one, then Hosting, Settings and
-/// Logs.
-pub fn app_sections(app: &App, name: &str) -> Vec<String> {
-    let mut rows: Vec<String> = app.data.owner_pages.iter().filter(|(p, _)| p == name).map(|(_, t)| t.clone()).collect();
-    rows.extend(APP_SECTIONS.iter().map(|s| (*s).to_owned()));
-    rows
-}
-
 /// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppRemoveState {
     pub name: String,
     pub confirm_focused: bool,
 }
-
-/// What Home lets one act on, in order: what needs the owner first (each with its one button),
-/// then every app.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HomeItem {
-    Unlock,
-    /// An app that keeps failing: its log.
-    Failing(String),
-    Updates,
-    App(String),
-}
-
-impl App {
-    pub fn home_items(&self) -> Vec<HomeItem> {
-        let mut items = Vec::new();
-        if self.is_locked() {
-            items.push(HomeItem::Unlock);
-        }
-        for svc in self.data.services.iter().filter(|svc| svc.state == nodo_api::ServiceState::Failed) {
-            items.push(HomeItem::Failing(svc.id.clone()));
-        }
-        if self.pending_updates() > 0 {
-            items.push(HomeItem::Updates);
-        }
-        items.extend(self.data.services.iter().map(|svc| HomeItem::App(svc.id.clone())));
-        items
-    }
-}
-
-/// The rows of the app page, in order.
-pub const APP_SECTIONS: [&str; 3] = ["Hosting", "Settings", "Logs"];
 
 /// The rows of the System page, in order.
 pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
@@ -1576,30 +1358,26 @@ impl Default for App {
 }
 
 impl App {
+    // These only read the snapshot, where the rules live (`nodo_ui_core::queries`). They stay
+    // here as short names for the views.
+
     /// The sites that are online somewhere: on the home network, Tor or the internet.
     pub fn active_sites(&self) -> Vec<&Site> {
-        self.data.web.sites.iter().filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public).collect()
+        self.data.active_sites()
     }
 
     /// A domain provider is connected with at least one domain an app can use.
     pub fn has_provider(&self) -> bool {
-        !self.domain_choices().is_empty()
+        self.data.has_provider()
     }
 
-    /// The domains apps can be put under, each with its provider's name. A domain another provider
-    /// already holds is left out: it is used through that one.
+    /// The domains apps can be put under, each with its provider's name.
     pub fn domain_choices(&self) -> Vec<(String, String)> {
-        let mut choices: Vec<(String, String)> = self
-            .data
-            .connected
-            .iter()
-            .flat_map(|p| p.domains.iter().filter(|d| d.held_by.is_none()).map(move |d| (d.name.clone(), p.name.clone())))
-            .collect();
-        // Before the helper reports providers (or with an older one), the single connected domain.
-        if choices.is_empty() && !self.data.web.domain.is_empty() && !self.data.web.provider.is_empty() {
-            choices.push((self.data.web.domain.clone(), self.data.web.provider.clone()));
-        }
-        choices
+        self.data.domain_choices()
+    }
+
+    pub fn home_items(&self) -> Vec<HomeItem> {
+        self.data.home_items()
     }
 
     pub fn new() -> Self {
@@ -1627,157 +1405,21 @@ impl App {
 
     /// Held-back versions are not offered, so they do not count towards the badge.
     pub fn pending_updates(&self) -> usize {
-        self.data.updates.iter().filter(|item| !item.held).count()
+        self.data.pending_updates()
     }
 
-    /// The device key is not in memory. The helper says so even when no app waits, such as
-    /// before the first encrypted app is installed, and DNS keys still need it.
     pub fn is_locked(&self) -> bool {
-        self.data.overview.locked || self.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked)
+        self.data.is_locked()
     }
 
     /// Available updates first, then held ones, matching the rows the Updates screen shows.
     pub fn update_rows(&self) -> Vec<&UpdateItem> {
-        let (held, available): (Vec<_>, Vec<_>) = self.data.updates.iter().partition(|item| item.held);
-        available.into_iter().chain(held).collect()
+        self.data.update_rows()
     }
 
     pub fn search_results(&self, state: &SearchState) -> Vec<&PackageSummary> {
-        let query = state.query.text().to_lowercase();
-        self.data
-            .catalog
-            .iter()
-            .filter(|pkg| state.feed_filter.as_ref().is_none_or(|feed| &pkg.id.feed == feed))
-            .filter(|pkg| {
-                pkg.id.name.to_lowercase().contains(&query) || pkg.tagline.to_lowercase().contains(&query)
-            })
-            .collect()
+        self.data.search_results(state.query.text(), state.feed_filter.as_deref())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExposureAfter {
-    Back,
-    Stay,
-    WentPublic,
-}
-
-/// A request for I/O. `Debug` is safe to print: anything secret is held in a `Secret`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Effect {
-    Refresh,
-    Start(String),
-    Stop(String),
-    Restart(String),
-    /// Removes an installed app. Its data stays on the drive, so installing it again brings it back.
-    RemovePackage(String),
-    Unlock(Secret),
-    OpenService(String),
-    LoadDetail(PackageId),
-    CheckInstall(PackageId),
-    StartInstall { id: PackageId, approval: Option<nodo_api::PermissionApproval>, passphrase: Option<Secret> },
-    PollInstall,
-    CancelInstall,
-    ProbeFeed(String),
-    TrustFeed(FeedProbe),
-    RefreshFeeds,
-    ToggleFeed(String),
-    RemoveFeed(String),
-    LoadKeyChange(String),
-    TrustNewKey { change: KeyChange, typed: String },
-    OpenSettings(String),
-    LoadReferences { package: String },
-    PreviewSetting { package: String, field_index: usize, key: String, value: FieldValue },
-    Grant { consumer: String, provider: String, setting: String },
-    /// The changed fields. `None` puts a setting back to having no value of its own: an emptied
-    /// optional field.
-    ApplySettings { package: String, values: Vec<(String, Option<FieldValue>)> },
-    CheckUpdates,
-    ReviewUpdate {
-        name: String,
-        batch: Vec<String>,
-        pending_reviews: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    },
-    ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
-    SetHeld { name: String, held: bool },
-    SaveAutoUpdate(AutoUpdatePrefs),
-    LoadLogs(String),
-    Drive(DriveAction),
-    Shell,
-    /// `confirmation` is the host the user typed, which the helper requires to go public.
-    SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
-    /// Saves the host and every other name of a site. `then` runs only once that worked, so a
-    /// refused name never goes on to the checks or to going public with the old names.
-    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, then: Vec<Effect> },
-    SetPublicAccess { site: String, access: PublicAccess },
-    CheckReachability { site: String, going_public: bool },
-    /// `domain` only for a provider that cannot list its domains.
-    AddProvider { provider: String, domain: Option<String>, api_key: Secret, secret_key: Secret },
-    /// Reads the provider catalog again, as the add flow opens.
-    LoadProviders,
-    RemoveProvider(String),
-    RefreshProvider(String),
-    /// `dns01` holds the provider's separate certificate credentials, when it needs them.
-    SaveAcme { settings: nodo_api::AcmeSettingsInput, dns01: Option<(Secret, Secret)> },
-    CheckLocalNames,
-    ShowDocument(DocKind),
-    CopyReport(String),
-    InitEncryption(Secret),
-    LoadSshKeys,
-    AddSshKey(String),
-    RemoveSshKey(String),
-    /// The device's backups, and the first USB drive with its backups.
-    LoadBackups,
-    /// `usb` names a removable drive to use instead of the device's own backup folder.
-    CreateBackup { device_passphrase: Option<Secret>, backup_passphrase: Secret, usb: Option<String> },
-    InspectBackup { name: String, passphrase: Secret, usb: Option<String> },
-    RestoreBackup {
-        name: String,
-        passphrase: Secret,
-        new_device_passphrase: Option<Secret>,
-        typed: String,
-        usb: Option<String>,
-    },
-    /// Like `ApplyUpdates`, with the device passphrase for updates that grow encrypted storage.
-    ApplyUpdatesWithPassphrase {
-        names: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-        passphrase: Secret,
-    },
-    LoadOnion,
-    SetNodeOnion(bool),
-    SetSiteExposure { site: nodo_api::SiteId, exposure: Exposure },
-    LoadRestoreDrives,
-    LoadRestoreBackups(String),
-    InspectRestore { device: String, name: String, passphrase: Secret },
-    RunRestore { device: String, name: String, passphrase: Secret, new_device_passphrase: Secret, typed: String },
-    LoadRollbacks,
-    RollBack { package: String, to: String },
-    /// Both radios' status.
-    LoadNetwork,
-    /// Wi-Fi's status alone, quietly, while an address is awaited.
-    PollWifi,
-    SetWifi(bool),
-    ScanWifi,
-    JoinWifi { ssid: String, security: nodo_api::WifiSecurity, passphrase: Option<Secret>, accept_open: bool },
-    ForgetWifi(String),
-    SetBluetooth(bool),
-    ScanBluetooth,
-    PairBluetooth(String),
-    /// Bluetooth's status, quietly, while a pairing runs.
-    PollBluetooth,
-    ConnectBluetooth { address: String, connect: bool },
-    RemoveBluetooth(String),
-    /// Installs a reviewed bundle with the owner's answers and data drive choices.
-    InstallBundle {
-        review: Box<nodo_api::BundleReview>,
-        answers: Vec<nodo_api::BundleAnswer>,
-        data_drive: Vec<String>,
-        passphrase: Option<Secret>,
-    },
-    /// Fetches an app's setup page with the device passphrase.
-    LoadOwnerPage { package: String, passphrase: Secret },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1798,78 +1440,6 @@ pub enum Event {
     Paste(String),
     Tick,
     Resize(u16, u16),
-    Refreshed(Box<Snapshot>),
-    Failed(String),
-    Info(String),
-    UnlockResult(Result<Response, ApiError>),
-    DetailLoaded(Option<PackageDetail>),
-    GateLoaded(InstallGate),
-    InstallProgress(Option<InstallSnapshot>),
-    /// How Check now went. It comes after the snapshot that holds what it found, and the sources
-    /// as they were read.
-    UpdatesChecked(CheckReport),
-    FeedProbed(Result<FeedProbe, String>),
-    FeedTrusted(Result<String, String>),
-    KeyChangeLoaded(Option<KeyChange>),
-    NewKeyTrusted(Result<String, String>),
-    SettingsLoaded { package: String, form: Option<SettingsForm> },
-    ReferencesLoaded { package: String, list: ReferenceList },
-    SettingPreviewed { package: String, field_index: usize, preview: FieldPreview },
-    Granted { provider: String, setting: String, result: Result<(), ApiError> },
-    SettingsApplied(Result<(), ApiError>),
-    SettingsRolledBack { package: String, explanation: RollbackExplanation },
-    UpdateReviewLoaded {
-        review: Option<ReviewData>,
-        batch: Vec<String>,
-        pending_reviews: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    },
-    UpdatesApplied(UpdateReport),
-    AutoUpdateSaved(Result<(), String>),
-    LogsLoaded { source: String, view: LogView },
-    DriveResult(Result<Document, String>),
-    ExposureSet { after: ExposureAfter, result: Result<(), ApiError> },
-    PublicHostSet { result: Result<(), String>, then: Vec<Effect> },
-    Reachability { site: String, going_public: bool, result: Reachability },
-    ProviderAdded(Result<ConnectedProvider, String>),
-    ProvidersLoaded(Result<Vec<Provider>, String>),
-    ProviderRemoved(Result<(), String>),
-    ProviderRefreshed(Result<ConnectedProvider, String>),
-    AcmeSaved(Result<(), String>),
-    LocalNamesChecked(Result<Vec<nodo_api::LocalNameCheck>, String>),
-    DocumentLoaded(Document),
-    SetupDone(Result<(), ApiError>),
-    SshKeysLoaded(Result<Vec<nodo_api::SshKey>, String>),
-    SshKeyChanged(Result<(), String>),
-    BackupsLoaded(Result<Vec<nodo_api::BackupInfo>, String>),
-    BackupCreated(Result<nodo_api::BackupCreated, String>),
-    BackupInspected(Result<nodo_api::BackupContents, String>),
-    BackupRestored(Result<nodo_api::RestoreReport, String>),
-    UsbLoaded(Result<UsbView, String>),
-    OnionLoaded(Result<nodo_api::OnionStatus, String>),
-    OnionChanged(Result<(), String>),
-    RestoreDrives(Result<Vec<nodo_api::UsbDrive>, String>),
-    RestoreBackups(Result<nodo_api::UsbBackupList, String>),
-    RestoreInspected(Result<nodo_api::BackupContents, String>),
-    RestoreFinished(Result<nodo_api::RestoreReport, String>),
-    RollbacksLoaded(Result<RollbackView, String>),
-    RolledBack(Result<nodo_api::UpdateResult, String>),
-    NetworkLoaded {
-        wifi: Result<nodo_api::WifiStatus, String>,
-        bluetooth: Result<nodo_api::BluetoothStatus, String>,
-    },
-    /// After a Wi-Fi change. `quiet` results come from polling and never raise a notice.
-    WifiChanged { result: Result<nodo_api::WifiStatus, String>, quiet: bool },
-    WifiScanned(Result<Vec<nodo_api::WifiNetwork>, String>),
-    BluetoothChanged { result: Result<nodo_api::BluetoothStatus, String>, quiet: bool },
-    BundleInstalled(Result<nodo_api::BundleReport, String>),
-    OwnerPageLoaded { package: String, result: Result<nodo_api::OwnerPageView, ApiError> },
-}
-
-/// The USB drive the backup screen shows: the first one plugged in, with its backups when it
-/// can be used, or why it cannot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UsbView {
-    pub drive: nodo_api::UsbDrive,
-    pub list: Option<nodo_api::UsbBackupList>,
+    /// What an effect came to.
+    Done(Outcome),
 }

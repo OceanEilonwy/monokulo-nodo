@@ -10,7 +10,10 @@ use nodo_tui::app::*;
 use nodo_tui::fixtures::{ctrl, fixture, press};
 use nodo_ui_core::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
 use nodo_ui_core::model::*;
-use nodo_tui::runtime::{dispatch, execute_effect, load_snapshot};
+use nodo_ui_core::{Effect, Outcome};
+use nodo_ui_core::exec::{execute_effect, load_snapshot};
+use nodo_ui_core::screen::ScreenId;
+use nodo_tui::runtime::dispatch;
 use nodo_tui::update::update;
 
 const ENTER: KeyCode = KeyCode::Enter;
@@ -605,7 +608,7 @@ fn a_refused_key_says_so_in_the_card() {
     let (mut app, _mock) = fixture(ScreenId::WebProviders);
     let Screen::WebProviders(state) = &mut app.screen else { panic!("expected providers") };
     state.stage = ProviderStage::Key;
-    update(&mut app, Event::ProviderAdded(Err("Porkbun refused the key: invalid API key".to_owned())));
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Err("Porkbun refused the key: invalid API key".to_owned()))));
     assert!(screen_text(&app).contains("Porkbun refused the key: invalid API key"), "{}", screen_text(&app));
 }
 
@@ -759,7 +762,7 @@ fn assert_hidden(app: &App) {
 fn settings_app() -> (App, MockBackend) {
     let (mut app, mut mock) = loaded();
     let form = mock.settings_form("moneropay");
-    dispatch(&mut app, &mut mock, Event::SettingsLoaded { package: "moneropay".to_owned(), form });
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::SettingsLoaded { package: "moneropay".to_owned(), form }));
     (app, mock)
 }
 
@@ -905,7 +908,7 @@ fn a_failed_unlock_shows_an_error_and_keeps_the_app_usable() {
 #[test]
 fn other_unlock_errors_are_shown_too() {
     let (mut app, _) = at_unlock();
-    update(&mut app, Event::UnlockResult(Err(ApiError::Failed("helper is not responding".to_owned()))));
+    update(&mut app, Event::Done(Outcome::UnlockResult(Err(ApiError::Failed("helper is not responding".to_owned())))));
     assert_eq!(app.screen.id(), ScreenId::Unlock);
     assert!(screen_text(&app).contains("✕ Could not unlock: helper is not responding"));
 }
@@ -1057,7 +1060,7 @@ fn an_api_error_on_save_keeps_the_draft() {
     dispatch(&mut app, &mut mock, ctrl('u'));
     type_text(&mut app, &mut mock, "5001");
     key(&mut app, &mut mock, ENTER);
-    update(&mut app, Event::SettingsApplied(Err(ApiError::Denied)));
+    update(&mut app, Event::Done(Outcome::SettingsApplied(Err(ApiError::Denied))));
     assert!(screen_text(&app).contains("✕ Not saved: this user may not perform that action"));
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
     assert_eq!(state.changed_indices().len(), 1);
@@ -1194,8 +1197,8 @@ fn a_broken_reference_is_red_explained_on_enter_and_blocks_saving() {
         vec![Effect::PreviewSetting { package: "moneropay".into(), field_index: 0, key: "daemon_rpc".into(), value: state.draft[0].clone() }]
     };
     for effect in effects {
-        for event in nodo_tui::runtime::execute_effect(&mut mock, effect) {
-            dispatch(&mut app, &mut mock, event);
+        for event in nodo_ui_core::exec::execute_effect(&mut mock, effect) {
+            dispatch(&mut app, &mut mock, Event::Done(event));
         }
     }
     let screen = screen_text(&app);
@@ -1370,7 +1373,7 @@ fn a_waiting_install_is_not_polled_where_the_backend_reports_no_progress() {
     let Screen::Installing(snapshot) = &app.screen else { panic!("the installing fixture") };
     let mut claims = snapshot.clone();
     claims.can_cancel = true;
-    update(&mut app, Event::InstallProgress(Some(claims)));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(claims))));
     let Screen::Installing(snapshot) = &app.screen else { panic!("still installing") };
     assert!(!snapshot.can_cancel);
 }
@@ -1447,13 +1450,13 @@ fn an_install_shows_at_once_and_reports_its_end_after_the_page_is_left() {
 
     let mut done = InstallSnapshot::starting(&id, "1.0");
     done.outcome = InstallOutcome::Succeeded;
-    update(&mut app, Event::InstallProgress(Some(done.clone())));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(done.clone()))));
     let notice = app.notice.clone().expect("the result is told");
     assert_eq!(notice.kind, NoticeKind::Ok);
     assert!(notice.text.contains(&format!("{} is installed", id.name)), "{}", notice.text);
 
     done.outcome = InstallOutcome::Failed("the health check failed".into());
-    update(&mut app, Event::InstallProgress(Some(done)));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(done))));
     let notice = app.notice.clone().expect("the failure is told");
     assert_eq!(notice.kind, NoticeKind::Error);
     assert!(notice.text.contains("the health check failed"), "{}", notice.text);
@@ -1535,7 +1538,7 @@ fn home_l_opens_the_failing_service_log_as_the_attention_panel_promises() {
 #[test]
 fn a_backend_error_on_refresh_shows_and_does_not_crash() {
     let (mut app, _) = loaded();
-    update(&mut app, Event::Failed("Could not read device state".to_owned()));
+    update(&mut app, Event::Done(Outcome::Failed("Could not read device state".to_owned())));
     assert!(screen_text(&app).contains("✕ Could not read device state"));
 }
 
@@ -1736,7 +1739,7 @@ fn check_now_shows_it_is_running_and_says_what_it_found() {
     assert!(screen.contains("Checking…") && !screen.contains("Check now ›"), "{screen}");
     assert!(update(&mut app, press(KeyCode::Char('r'))).is_empty(), "a second press waits for the first");
     for event in execute_effect(&mut mock, Effect::CheckUpdates) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     let count = app.update_rows().len();
     assert!(screen_text(&app).contains(&format!("{count} updates available.")), "{}", screen_text(&app));
@@ -1791,7 +1794,7 @@ fn check_now_names_a_source_it_could_not_read() {
     mock.knobs.unreadable_feeds = vec![("community".to_owned(), "the feed index could not be downloaded".to_owned())];
     let events = execute_effect(&mut mock, Effect::CheckUpdates);
     for event in events {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     let notice = app.notice.clone().expect("told");
     assert_eq!(notice.kind, NoticeKind::Error);
@@ -1806,7 +1809,7 @@ fn check_now_names_a_source_it_could_not_read() {
     mock.knobs.unreadable_feeds.clear();
     mock.feeds.iter_mut().filter(|feed| feed.name == "community").for_each(|feed| feed.status = FeedStatus::Healthy);
     for event in execute_effect(&mut mock, Effect::CheckUpdates) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     assert_eq!(mock.updates.len(), 1);
 }
@@ -1824,7 +1827,7 @@ fn a_failed_check_or_source_change_says_why() {
     for effect in [Effect::RefreshFeeds, Effect::ToggleFeed(name.clone()), Effect::RemoveFeed(name)] {
         let events = execute_effect(&mut mock, effect.clone());
         assert!(
-            events.iter().any(|event| matches!(event, Event::Failed(text) if text.contains("did not answer"))),
+            events.iter().any(|event| matches!(event, Outcome::Failed(text) if text.contains("did not answer"))),
             "{effect:?}: {events:?}"
         );
     }
@@ -2109,7 +2112,7 @@ fn a_paused_log_does_not_poll() {
 #[test]
 fn a_late_log_reply_for_another_service_is_ignored() {
     let (mut app, _) = fixture(ScreenId::Logs);
-    update(&mut app, Event::LogsLoaded { source: "tor".to_owned(), view: LogView::default() });
+    update(&mut app, Event::Done(Outcome::LogsLoaded { source: "tor".to_owned(), view: LogView::default() }));
     let Screen::Logs(state) = &app.screen else { panic!("expected logs") };
     assert!(!state.view.lines.is_empty());
 }
@@ -2142,7 +2145,7 @@ fn the_missing_drive_replaces_home_on_startup() {
     let mut mock = MockBackend::with_missing_drive();
     let mut app = App::new();
     for event in execute_effect(&mut mock, Effect::Refresh) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     assert_eq!(app.screen.id(), ScreenId::NoDrive);
     assert!(screen_text(&app).contains("The data drive isn't connected"));
@@ -2268,7 +2271,7 @@ fn a_backup_goes_to_the_usb_drive_and_a_restore_reads_from_it() {
     let [Effect::CreateBackup { usb: Some(device), .. }] = effects.as_slice() else { panic!("{effects:?}") };
     assert_eq!(device, "sda1");
     for event in execute_effect(&mut mock, effects[0].clone()) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     // Tab moves to the drive's list, and a restore from it names the drive.
     keys(&mut app, &mut mock, &[TAB, ENTER]);
@@ -2625,7 +2628,7 @@ fn a_pairing_shows_the_passkey_to_type_and_polls_until_done() {
         address: "AA:BB:CC:00:00:01".to_owned(),
         stage: nodo_api::PairingStage::TypePasskey("482913".to_owned()),
     });
-    dispatch(&mut app, &mut mock, Event::BluetoothChanged { result: Ok(status), quiet: false });
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::BluetoothChanged { result: Ok(status), quiet: false }));
     let screen = screen_text(&app);
     assert!(screen.contains("Type 482913 on K380 Keyboard, then press its Enter key."), "{screen}");
     // Every second the screen asks again while the pairing waits for the owner.
@@ -2743,7 +2746,7 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         lists_domains: true,
         problem: None,
     };
-    update(&mut app, Event::ProviderAdded(Ok(again)));
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Ok(again))));
     let screen = screen_text(&app);
     assert!(
         screen.contains("already connected through Porkbun"),

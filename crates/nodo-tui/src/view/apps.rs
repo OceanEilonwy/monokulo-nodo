@@ -8,9 +8,11 @@ use super::home::{app_state, tagline};
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, focused, heading_link, inset, link, margin, progress, quiet, trail, trail_actions, Card, Screen3};
-use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewPurpose, ReviewState, SearchState, Tab, UnlockState, APP_SECTIONS};
+use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewPurpose, ReviewState, SearchState, UnlockState};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
+use nodo_ui_core::queries::APP_SECTIONS;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 
 fn pick(index: usize) -> Click {
@@ -152,7 +154,7 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
 
     let mut sections = Card::new(t, w);
     sections.blank(t);
-    let names = crate::app::app_sections(app, name);
+    let names = app.data.app_sections(name);
     let mut summaries = vec![hosting_summary(app, name), "Change how it works".to_owned(), log_summary(app, name)];
     if names.len() > APP_SECTIONS.len() {
         summaries.insert(0, "The steps to set it up, and whether each is done".to_owned());

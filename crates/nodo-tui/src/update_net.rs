@@ -10,6 +10,7 @@ use nodo_api::{PairingStage, WifiLink, WifiSecurity};
 use super::{notice, pop, push, step};
 use crate::app::*;
 use nodo_ui_core::secret::Input;
+use nodo_ui_core::{Effect, Outcome};
 
 pub(super) fn open_network(app: &mut App) -> Vec<Effect> {
     let mut state = NetworkState::new();
@@ -323,13 +324,13 @@ fn clamp(state: &mut NetworkState) {
     }
 }
 
-pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
+pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     let Screen::Network(state) = &mut app.screen else {
         return Vec::new();
     };
     let mut message: Option<(NoticeKind, String)> = None;
     match event {
-        Event::NetworkLoaded { wifi, bluetooth } => {
+        Outcome::NetworkLoaded { wifi, bluetooth } => {
             state.busy = None;
             // A radio with nothing shown yet says why in its panel; one already shown keeps its
             // last status, with the error under it.
@@ -358,7 +359,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::WifiChanged { result, quiet } => {
+        Outcome::WifiChanged { result, quiet } => {
             if !quiet {
                 state.busy = None;
             }
@@ -395,7 +396,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 Err(_) => {}
             }
         }
-        Event::WifiScanned(result) => {
+        Outcome::WifiScanned(result) => {
             state.busy = None;
             match result {
                 Ok(list) => {
@@ -408,7 +409,7 @@ pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 Err(e) => state.error = Some(e),
             }
         }
-        Event::BluetoothChanged { result, quiet } => {
+        Outcome::BluetoothChanged { result, quiet } => {
             if !quiet {
                 state.busy = None;
             }

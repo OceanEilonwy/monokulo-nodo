@@ -10,14 +10,17 @@ use nodo_api::{Request, ServiceState};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{fixture, press};
 use nodo_ui_core::mock::MockBackend;
-use nodo_tui::runtime::{dispatch, dispatch_async, execute_effect, EffectWorker};
+use nodo_ui_core::{Effect, Outcome};
+use nodo_ui_core::exec::{execute_effect, EffectWorker};
+use nodo_ui_core::screen::ScreenId;
+use nodo_tui::runtime::{dispatch, dispatch_async};
 
 fn first_boot() -> (App, MockBackend) {
     let mut mock = MockBackend::new();
     mock.setup_needed = true;
     let mut app = App::new();
     for event in execute_effect(&mut mock, Effect::Refresh) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     (app, mock)
 }
@@ -191,7 +194,7 @@ fn esc_leaves_the_drive_list_even_while_it_is_read_again() {
     key(&mut app, &mut mock, KeyCode::Esc);
     assert_eq!(app.screen.id(), ScreenId::Setup);
     // The late answer is dropped.
-    dispatch(&mut app, &mut mock, Event::RestoreDrives(Ok(Vec::new())));
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::RestoreDrives(Ok(Vec::new()))));
     assert_eq!(app.screen.id(), ScreenId::Setup);
 }
 
@@ -277,7 +280,7 @@ fn a_slow_helper_call_does_not_block_the_screen() {
     let (mut app, mut mock) = fixture(ScreenId::Main);
     app.screen = nodo_tui::app::Screen::AppPage(nodo_tui::app::AppPageState::new("cuprated"));
     mock.knobs.delay = Some(Duration::from_millis(300));
-    let mut worker = EffectWorker::spawn(mock);
+    let mut worker = EffectWorker::spawn(Box::new(mock));
     let started = Instant::now();
     // s on cuprated's page stops it.
     dispatch_async(&mut app, &mut worker, press(KeyCode::Char('s')));
@@ -291,7 +294,7 @@ fn a_slow_helper_call_does_not_block_the_screen() {
     let events = worker.wait_idle(Duration::from_secs(5));
     assert!(!worker.busy());
     for event in events {
-        dispatch_async(&mut app, &mut worker, event);
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
     }
     let cuprated = app.data.services.iter().find(|s| s.id == "cuprated").unwrap();
     assert_eq!(cuprated.state, ServiceState::Stopped);

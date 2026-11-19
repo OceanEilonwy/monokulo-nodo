@@ -9,6 +9,10 @@ use nodo_api::{ApiError, Exposure, Response, ServiceState};
 use crate::app::*;
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::{Input, Secret};
+use nodo_ui_core::{Effect, Outcome};
+use nodo_ui_core::effect::ExposureAfter;
+use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
+use nodo_ui_core::screen::{ScreenId, Tab};
 
 #[path = "update_more.rs"]
 mod more;
@@ -34,7 +38,7 @@ pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
             app.size = (width, height);
             Vec::new()
         }
-        other => on_result(app, other),
+        Event::Done(outcome) => on_result(app, outcome),
     };
     // A result ends the work a button started, and a button on another screen is not that one.
     // The runtime also clears it whenever the worker is idle, so it can never stay stuck.
@@ -410,7 +414,7 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         };
     }
     let has_update = app.data.updates.iter().any(|item| item.name == name && !item.held);
-    let sections = app_sections(app, &name);
+    let sections = app.data.app_sections(&name);
     let owner_row = sections.len() > APP_SECTIONS.len();
     let Screen::AppPage(state) = &mut app.screen else {
         return Vec::new();
@@ -2247,13 +2251,13 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     }
 }
 
-fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
+fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
-        Event::Refreshed(snapshot) => on_refreshed(app, *snapshot),
-        Event::Failed(text) => fail(app, text),
-        Event::Info(text) => notice(app, NoticeKind::Info, text),
-        Event::UnlockResult(result) => return on_unlock_result(app, result),
-        Event::SetupDone(result) => {
+        Outcome::Refreshed(snapshot) => on_refreshed(app, *snapshot),
+        Outcome::Failed(text) => fail(app, text),
+        Outcome::Info(text) => notice(app, NoticeKind::Info, text),
+        Outcome::UnlockResult(result) => return on_unlock_result(app, result),
+        Outcome::SetupDone(result) => {
             if let Screen::Setup(state) = &mut app.screen {
                 match result {
                     Ok(()) => {
@@ -2268,7 +2272,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::SshKeysLoaded(result) => {
+        Outcome::SshKeysLoaded(result) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = false;
                 match result {
@@ -2282,31 +2286,31 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::SshKeyChanged(result) => {
+        Outcome::SshKeyChanged(result) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.error = result.err();
             }
         }
-        Event::BackupsLoaded(_)
-        | Event::BackupCreated(_)
-        | Event::BackupInspected(_)
-        | Event::BackupRestored(_)
-        | Event::UsbLoaded(_) => return on_backup_result(app, event),
-        Event::OnionLoaded(_)
-        | Event::OnionChanged(_)
-        | Event::RestoreDrives(_)
-        | Event::RestoreBackups(_)
-        | Event::RestoreInspected(_)
-        | Event::RestoreFinished(_)
-        | Event::RollbacksLoaded(_)
-        | Event::RolledBack(_) => return more::on_result(app, event),
-        Event::NetworkLoaded { .. }
-        | Event::WifiChanged { .. }
-        | Event::WifiScanned(_)
-        | Event::BluetoothChanged { .. } => return net::on_result(app, event),
-        Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
-        Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
-        Event::GateLoaded(gate) => match gate {
+        Outcome::BackupsLoaded(_)
+        | Outcome::BackupCreated(_)
+        | Outcome::BackupInspected(_)
+        | Outcome::BackupRestored(_)
+        | Outcome::UsbLoaded(_) => return on_backup_result(app, event),
+        Outcome::OnionLoaded(_)
+        | Outcome::OnionChanged(_)
+        | Outcome::RestoreDrives(_)
+        | Outcome::RestoreBackups(_)
+        | Outcome::RestoreInspected(_)
+        | Outcome::RestoreFinished(_)
+        | Outcome::RollbacksLoaded(_)
+        | Outcome::RolledBack(_) => return more::on_result(app, event),
+        Outcome::NetworkLoaded { .. }
+        | Outcome::WifiChanged { .. }
+        | Outcome::WifiScanned(_)
+        | Outcome::BluetoothChanged { .. } => return net::on_result(app, event),
+        Outcome::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
+        Outcome::DetailLoaded(None) => fail(app, "No details are available for that package."),
+        Outcome::GateLoaded(gate) => match gate {
             InstallGate::Review(data) => push(app, Screen::Review(ReviewState::new(data, ReviewPurpose::Install))),
             InstallGate::Bundle(review) => owner::open_bundle(app, review),
             InstallGate::Rejected(data) => push(app, Screen::Rejected(data)),
@@ -2314,8 +2318,8 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 push(app, Screen::Capability(CapabilityState { data, choice: 0 }));
             }
         },
-        Event::InstallProgress(snapshot) => on_install_progress(app, snapshot),
-        Event::UpdatesChecked(report) => {
+        Outcome::InstallProgress(snapshot) => on_install_progress(app, snapshot),
+        Outcome::UpdatesChecked(report) => {
             let summary = report.summary(app.update_rows().len(), &app.data.feeds);
             let kind = match (summary.trouble, summary.found) {
                 (true, _) => NoticeKind::Error,
@@ -2324,7 +2328,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             };
             notice(app, kind, summary.text);
         }
-        Event::FeedProbed(result) => {
+        Outcome::FeedProbed(result) => {
             if let Screen::AddFeed(state) = &mut app.screen {
                 match result {
                     Ok(probe) => *state = AddFeedState::Confirm { probe, trust_focused: false },
@@ -2336,25 +2340,25 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::FeedTrusted(result) => match result {
+        Outcome::FeedTrusted(result) => match result {
             Ok(name) => {
                 pop(app);
                 notice(app, NoticeKind::Ok, format!("Added {name} and pinned its key."));
             }
             Err(text) => fail(app, text),
         },
-        Event::KeyChangeLoaded(Some(change)) => {
+        Outcome::KeyChangeLoaded(Some(change)) => {
             push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None }));
         }
-        Event::KeyChangeLoaded(None) => fail(app, "That feed has no pending key change."),
-        Event::NewKeyTrusted(result) => match result {
+        Outcome::KeyChangeLoaded(None) => fail(app, "That feed has no pending key change."),
+        Outcome::NewKeyTrusted(result) => match result {
             Ok(name) => {
                 pop(app);
                 notice(app, NoticeKind::Ok, format!("{name} now uses the new key."));
             }
             Err(text) => fail(app, text),
         },
-        Event::SettingsLoaded { package, form } => match form {
+        Outcome::SettingsLoaded { package, form } => match form {
             Some(form) => {
                 // A finished install is replaced so that Esc does not return to its progress list.
                 if matches!(app.screen, Screen::Installing(_)) {
@@ -2376,7 +2380,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 notice(app, NoticeKind::Info, format!("{package} has no settings to configure."));
             }
         },
-        Event::ReferencesLoaded { package, list } => {
+        Outcome::ReferencesLoaded { package, list } => {
             if let Screen::Reference(picker) = &mut app.screen {
                 if picker.package == package {
                     picker.list = list.clone();
@@ -2390,7 +2394,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::SettingPreviewed { package, field_index, preview } => {
+        Outcome::SettingPreviewed { package, field_index, preview } => {
             for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
                 if let Screen::Settings(state) = screen {
                     if state.form.package == package && field_index < state.previews.len() {
@@ -2399,7 +2403,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::Granted { provider, setting, result } => match result {
+        Outcome::Granted { provider, setting, result } => match result {
             Ok(()) => {
                 let package = match &mut app.screen {
                     Screen::Reference(picker) => {
@@ -2420,24 +2424,24 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 fail(app, format!("Not approved: {error}"));
             }
         },
-        Event::SettingsApplied(result) => on_settings_applied(app, result),
-        Event::SettingsRolledBack { package, explanation } => {
+        Outcome::SettingsApplied(result) => on_settings_applied(app, result),
+        Outcome::SettingsRolledBack { package, explanation } => {
             on_settings_rolled_back(app, package, explanation);
         }
-        Event::UpdateReviewLoaded { review, batch, pending_reviews, approvals } => match review {
+        Outcome::UpdateReviewLoaded { review, batch, pending_reviews, approvals } => match review {
             Some(data) => push(
                 app,
                 Screen::Review(ReviewState::new(data, ReviewPurpose::Update { batch, pending_reviews, approvals })),
             ),
             None => fail(app, "That update could not be reviewed, so nothing was applied."),
         },
-        Event::UpdatesApplied(report) => {
+        Outcome::UpdatesApplied(report) => {
             if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
                 pop(app);
             }
             push(app, Screen::UpdateResults(UpdateResultsState { report, choice: 0 }));
         }
-        Event::AutoUpdateSaved(result) => match result {
+        Outcome::AutoUpdateSaved(result) => match result {
             Ok(()) => {
                 if matches!(app.screen, Screen::AutoUpdate(_)) {
                     pop(app);
@@ -2446,7 +2450,7 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
             }
             Err(text) => fail(app, text),
         },
-        Event::LogsLoaded { source, view } => {
+        Outcome::LogsLoaded { source, view } => {
             let current = if let Screen::Logs(state) = &app.screen {
                 app.data.log_sources.get(state.selected).cloned()
             } else {
@@ -2459,20 +2463,20 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         }
-        Event::DriveResult(result) => match result {
+        Outcome::DriveResult(result) => match result {
             Ok(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
             Err(text) => fail(app, text),
         },
-        Event::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
-        Event::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
-        Event::Reachability { site, going_public, result } => {
+        Outcome::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
+        Outcome::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
+        Outcome::Reachability { site, going_public, result } => {
             web::on_reachability(app, site, going_public, result);
         }
-        Event::ProviderAdded(result) => return web::on_provider_added(app, result),
-        Event::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
-        Event::ProviderRemoved(result) => return web::on_provider_removed(app, result),
-        Event::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
-        Event::AcmeSaved(result) => match result {
+        Outcome::ProviderAdded(result) => return web::on_provider_added(app, result),
+        Outcome::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
+        Outcome::ProviderRemoved(result) => return web::on_provider_removed(app, result),
+        Outcome::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
+        Outcome::AcmeSaved(result) => match result {
             Ok(()) => {
                 if let Screen::WebDomain(state) = &mut app.screen {
                     state.error = None;
@@ -2489,15 +2493,14 @@ fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
                 }
             }
         },
-        Event::LocalNamesChecked(result) => {
+        Outcome::LocalNamesChecked(result) => {
             if let Screen::WebDomain(state) = &mut app.screen {
                 state.checks = Some(result);
             }
         }
-        Event::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-        Event::BundleInstalled(result) => owner::on_bundle_installed(app, result),
-        Event::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
-        Event::Key(_) | Event::Mouse { .. } | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
+        Outcome::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
+        Outcome::BundleInstalled(result) => owner::on_bundle_installed(app, result),
+        Outcome::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
     }
     Vec::new()
 }
@@ -2831,16 +2834,16 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 /// The helper enforces the same minimum. Checking here saves a round trip and a KDF run.
 const MIN_BACKUP_PASSPHRASE_CHARS: usize = 12;
 
-fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
+fn on_backup_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
     match event {
-        Event::BackupsLoaded(Ok(list)) => {
+        Outcome::BackupsLoaded(Ok(list)) => {
             state.selected = state.selected.min(list.len().saturating_sub(1));
             state.list = list;
         }
-        Event::UsbLoaded(result) => {
+        Outcome::UsbLoaded(result) => {
             state.busy = false;
             state.usb = result.ok();
             let len = state.usb_list().len();
@@ -2849,7 +2852,7 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
                 state.usb_focused = false;
             }
         }
-        Event::BackupCreated(Ok(created)) => {
+        Outcome::BackupCreated(Ok(created)) => {
             state.step = BackupStep::List;
             state.busy = true;
             let place = if state.target.take().is_some() { " to the USB drive" } else { "" };
@@ -2860,7 +2863,7 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
             notice(app, NoticeKind::Ok, text);
             return vec![Effect::LoadBackups];
         }
-        Event::BackupInspected(Ok(contents)) => {
+        Outcome::BackupInspected(Ok(contents)) => {
             state.busy = false;
             if let BackupStep::Unlock { name, passphrase } = &mut state.step {
                 state.step = BackupStep::Confirm {
@@ -2873,17 +2876,17 @@ fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
                 };
             }
         }
-        Event::BackupRestored(Ok(report)) => {
+        Outcome::BackupRestored(Ok(report)) => {
             state.busy = false;
             state.step = BackupStep::Restored(report);
         }
-        Event::BackupsLoaded(Err(e)) => {
+        Outcome::BackupsLoaded(Err(e)) => {
             // On first boot the device has no backups of its own, which is no error.
             if !state.fresh {
                 state.error = Some(e);
             }
         }
-        Event::BackupCreated(Err(e)) | Event::BackupInspected(Err(e)) | Event::BackupRestored(Err(e)) => {
+        Outcome::BackupCreated(Err(e)) | Outcome::BackupInspected(Err(e)) | Outcome::BackupRestored(Err(e)) => {
             state.busy = false;
             state.error = Some(e);
         }
@@ -2934,7 +2937,7 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
 /// would, so whatever key the click then presses acts on what was clicked.
 fn pick(app: &mut App, index: usize) {
     let sections = match &app.screen {
-        Screen::AppPage(state) => app_sections(app, &state.name).len(),
+        Screen::AppPage(state) => app.data.app_sections(&state.name).len(),
         _ => APP_SECTIONS.len(),
     };
     let counts = (

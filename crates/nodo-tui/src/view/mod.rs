@@ -23,9 +23,10 @@ use ratatui::Frame;
 
 use crossterm::event::KeyCode;
 
-use crate::app::{App, Modal, NoticeKind, Overlay, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{App, Modal, NoticeKind, Overlay, Screen, MIN_HEIGHT, MIN_WIDTH};
 use crate::hit::{self, Click, Target};
 use nodo_ui_core::model::Area;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 use layout::{draw_boxed, draw_page, FitReport, Item};
 
