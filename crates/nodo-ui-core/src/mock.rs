@@ -1083,6 +1083,7 @@ impl ScreenData for MockBackend {
             ],
             drive: self.drive.clone(),
             attention: Vec::new(),
+            cpu: Some(nodo_api::CpuStatus { load_average_milli: 1840, cores: 8, temperature_millicelsius: Some(52_000) }),
             restarted: s("Restarted 4 minutes ago"),
             unlock_targets: if self.is_locked() {
                 vec![

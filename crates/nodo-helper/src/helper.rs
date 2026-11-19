@@ -252,6 +252,7 @@ impl<S: System> Helper<S> {
             }
             Request::ListSites => self.list_sites(),
             Request::DeviceOverview => self.overview(),
+            Request::CpuStatus => self.cpu_status(),
             Request::ListPackages => self.list_packages(),
             Request::PackageDetail { id } => self.package_detail(&id),
             Request::LogSources => self.log_sources(),

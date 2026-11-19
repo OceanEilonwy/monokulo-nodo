@@ -129,6 +129,8 @@ async fn home_says_what_needs_the_owner_and_unlocks_what_is_still_locked() {
     let unlocked = browser.post_then("/unlock", &[("passphrase", MOCK_PASSPHRASE)]).await;
     unlocked.assert_has("Unlocked.").assert_lacks("Your Nodo is locked").assert_lacks(r#"action="/unlock""#);
     unlocked.assert_has("This Nodo").assert_has("412 GB of 1.9 TB");
+    // The processor's figure leads the meters: load over cores, and the board's temperature.
+    unlocked.assert_has("CPU, memory and storage").assert_has("23% · 8 cores · 52 °C").assert_has(r#"value="0.230""#);
 }
 
 #[tokio::test]

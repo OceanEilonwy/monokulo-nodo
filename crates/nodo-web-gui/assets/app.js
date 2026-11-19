@@ -36,3 +36,38 @@ document.addEventListener('click', function (event) {
     setTimeout(function () { button.textContent = 'Copy'; }, 1500);
   });
 });
+
+// The list of installed apps: Tick all, and how many are ticked, beside the buttons that act on
+// them. Without this file the boxes are ticked one by one and the bar has no count.
+function tickedCount(form) {
+  var boxes = document.querySelectorAll('input[type=checkbox][form="' + form.id + '"]');
+  var ticked = 0;
+  boxes.forEach(function (box) { if (box.checked) ticked += 1; });
+  var count = form.querySelector('.ticked-count');
+  if (count) count.textContent = ticked + ' ticked';
+  var all = document.querySelector('input.tick-all');
+  if (all) {
+    all.checked = boxes.length > 0 && ticked === boxes.length;
+    all.indeterminate = ticked > 0 && ticked < boxes.length;
+  }
+}
+
+function setUpTicks() {
+  var form = document.getElementById('ticked');
+  if (!form) return;
+  var all = document.querySelector('input.tick-all');
+  if (all) all.hidden = false;
+  tickedCount(form);
+}
+
+document.addEventListener('change', function (event) {
+  var form = document.getElementById('ticked');
+  if (!form || !event.target.matches) return;
+  if (event.target.matches('input.tick-all')) {
+    document.querySelectorAll('input[type=checkbox][form="ticked"]').forEach(function (box) { box.checked = event.target.checked; });
+  }
+  if (event.target.matches('input.tick-all, input[type=checkbox][form="ticked"]')) tickedCount(form);
+});
+
+document.addEventListener('DOMContentLoaded', setUpTicks);
+document.addEventListener('htmx:after:swap', setUpTicks);

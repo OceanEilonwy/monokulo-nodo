@@ -1,11 +1,19 @@
 //! Apps: the installed apps, and one app's page with start, stop, restart, update and removal
 //! (`flows::services`).
+//!
+//! The list of installed apps is also a form: each row has a tick box, and the bar under the
+//! table restarts the ticked apps or updates them as one batch (`services::restart_ticked`,
+//! `services::update_ticked`). The rows keep their own buttons, each its own small form, so the
+//! tick boxes and the bar belong to the bar's form by its id (`form="ticked"`) rather than by
+//! nesting, which HTML does not allow. It works without scripts; `app.js` adds Tick all and the
+//! count of ticked apps.
 
 use axum::extract::Path;
 use axum::response::Response;
+use axum::Form;
 use maud::{html, Markup};
 use nodo_api::ServiceState;
-use nodo_ui_core::flows::services::{installed_apps, AppPage};
+use nodo_ui_core::flows::services::{installed_apps, restart_ticked, update_ticked, AppPage};
 use nodo_ui_core::flows::Step;
 use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::queries::APP_SECTIONS;
@@ -16,6 +24,7 @@ use nodo_ui_core::words::{app_state, counted, hosting_summary, log_summary, tagl
 use crate::ctx::{Ctx, Out};
 use crate::dest;
 use crate::layout::{self, Page, Sub};
+use crate::pages::updates;
 use crate::runner::{no_flow, Reply};
 
 /// The colour of an app's state: running is fine, stopped is off, failing is bad, and waiting
@@ -89,6 +98,9 @@ pub fn app_frame(snapshot: &Snapshot, name: &str, on: &str, desc: Option<&str>, 
     Page::new(Tab::Apps, title, body).head(app_head(snapshot, name, desc)).strip(app_tabs(snapshot, name, on))
 }
 
+/// The id of the form under the list that the tick boxes belong to.
+const TICKED_FORM: &str = "ticked";
+
 fn list_page(snapshot: &Snapshot) -> Page {
     let apps = installed_apps(snapshot);
     let updates = apps.iter().filter(|name| AppPage::new(name).has_update(snapshot)).count();
@@ -103,13 +115,20 @@ fn list_page(snapshot: &Snapshot) -> Page {
             } @else {
                 div.tbox {
                     table {
-                        thead { tr { th { "Name" } th { "State" } th { "Update" } th.end { "Actions" } } }
+                        thead {
+                            tr {
+                                // Shown by `app.js`, which ticks every box; without it there is nothing to press.
+                                th { input.tick-all type="checkbox" aria-label="Tick all" hidden; }
+                                th { "Name" } th { "State" } th { "Update" } th.end { "Actions" }
+                            }
+                        }
                         tbody {
                             @for name in &apps {
                                 @let page = AppPage::new(name);
                                 @let here = dest::app(name);
                                 @let running = page.state(snapshot) == Some(ServiceState::Running);
                                 tr {
+                                    td { input type="checkbox" name="app" value=(name) form=(TICKED_FORM) aria-label=(format!("Tick {name}")); }
                                     td { a href=(here) { strong { (name) } } div.sub { (tagline(snapshot, name)) } }
                                     td { (state_label(snapshot, name)) }
                                     td { @if page.has_update(snapshot) { (layout::label("info", "Update ready")) } @else { span.sub { "Up to date" } } }
@@ -125,6 +144,14 @@ fn list_page(snapshot: &Snapshot) -> Page {
                                 }
                             }
                         }
+                    }
+                }
+                form.foot id=(TICKED_FORM) method="post" action=(dest::APPS) {
+                    // `app.js` says how many are ticked here.
+                    span.sub.ticked-count { "With the ticked apps:" }
+                    div.btns {
+                        button.btn type="submit" name="do" value="restart" { "Restart ticked" }
+                        button.btn.pos type="submit" name="do" value="update" { "Update the ticked apps" }
                     }
                 }
             }
@@ -195,6 +222,31 @@ fn app_page(snapshot: &Snapshot, name: &str) -> Page {
 /// `GET /apps`.
 pub async fn list(ctx: Ctx) -> Response {
     ctx.with(dest::HOME, |work| Out::Page(list_page(&work.snapshot))).await
+}
+
+/// `POST /apps`: the bar under the list, with the apps ticked as `app` and the button as `do`.
+/// Restarting happens at once; updating follows the Updates flow, with the ticked apps that
+/// have an update kept ticked for its page.
+pub async fn act_on_ticked(ctx: Ctx, Form(form): Form<Vec<(String, String)>>) -> Response {
+    ctx.with(dest::APPS, move |work| {
+        let ticked: Vec<String> = form.iter().filter(|(key, _)| key == "app").map(|(_, value)| value.clone()).collect();
+        let action = form.iter().find(|(key, _)| key == "do").map(|(_, value)| value.as_str()).unwrap_or_default();
+        match action {
+            "restart" => Out::Reply(work.run(restart_ticked(&work.snapshot, &ticked), &mut no_flow)),
+            "update" => {
+                let step = update_ticked(&work.snapshot, &ticked);
+                let ready: Vec<String> = ticked.iter().filter(|name| AppPage::new(name).has_update(&work.snapshot)).cloned().collect();
+                let out = updates::follow(work, step);
+                // As on the Updates page: a batch that goes on leaves the ticks behind.
+                if !matches!(out, Out::Job(..)) && !ready.is_empty() {
+                    work.session.inner().stash.ticks = Some(ready);
+                }
+                out
+            }
+            _ => Out::Go(dest::APPS.to_owned()),
+        }
+    })
+    .await
 }
 
 /// `GET /apps/{name}`.

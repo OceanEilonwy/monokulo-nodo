@@ -367,14 +367,33 @@ async fn every_answer_carries_the_security_headers_and_pages_load_only_their_own
 
     // The files a page loads are the only answers that may be kept, and for long: their
     // names change with their contents.
-    assets.sort();
-    assert_eq!(assets.len(), 4, "{assets:?}");
-    assert!(assets[0].starts_with("/static/app-") && assets[0].ends_with(".css"));
-    assert!(assets[1].starts_with("/static/app-") && assets[1].ends_with(".js"));
-    assert!(assets[2].starts_with("/static/htmx-4.0.2-") && assets[2].ends_with(".js"));
-    assert!(assets[3].starts_with("/static/logo-") && assets[3].ends_with(".svg"));
-    let kinds = ["text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "image/svg+xml"];
-    for (asset, kind) in assets.iter().zip(kinds) {
+    // Found by name, not by place: a hash decides whether `app-….css` sorts before `app-….js`.
+    assert_eq!(assets.len(), 5, "{assets:?}");
+    let find = |prefix: &str, suffix: &str| {
+        let found: Vec<&String> = assets.iter().filter(|url| url.starts_with(prefix) && url.ends_with(suffix)).collect();
+        assert_eq!(found.len(), 1, "{prefix}…{suffix} in {assets:?}");
+        found[0].clone()
+    };
+    let mut served = vec![
+        (find("/static/app-", ".css"), "text/css; charset=utf-8"),
+        (find("/static/app-", ".js"), "text/javascript; charset=utf-8"),
+        (find("/static/fonts-", ".css"), "text/css; charset=utf-8"),
+        (find("/static/htmx-4.0.2-", ".js"), "text/javascript; charset=utf-8"),
+        (find("/static/logo-", ".svg"), "image/svg+xml"),
+    ];
+    // The font stylesheet names the fonts, which a page does not load itself.
+    let fonts_css = visitor.get(&served[2].0).await.body;
+    let fonts: Vec<String> = fonts_css
+        .split("url(\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(fonts.len(), 2, "{fonts_css}");
+    assert!(fonts[0].starts_with("/static/inter-") && fonts[1].starts_with("/static/jetbrains-mono-"), "{fonts:?}");
+    served.extend(fonts.into_iter().map(|font| (font, "font/woff2")));
+    for (asset, kind) in &served {
+        let kind = *kind;
         let answer = visitor.get(asset).await;
         assert_eq!(answer.status, StatusCode::OK, "served without a login: the login page needs it");
         assert_eq!(answer.header("cache-control"), "public, max-age=31536000, immutable");
@@ -383,6 +402,7 @@ async fn every_answer_carries_the_security_headers_and_pages_load_only_their_own
         assert_eq!(answer.header("x-content-type-options"), "nosniff");
     }
     assert_eq!(visitor.get("/static/app-0000000000000000.css").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(visitor.get("/static/inter-0000000000000000.woff2").await.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

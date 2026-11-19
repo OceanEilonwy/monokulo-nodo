@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use nodo_api::{
-    ApiError, DeviceOverview, EncryptionState, LogChunk, PackageDetail, PackageInfo, Response,
+    ApiError, CpuStatus, DeviceOverview, EncryptionState, LogChunk, PackageDetail, PackageInfo,
+    Response,
 };
 use nodo_manifest::{Protocol, Scope};
 
@@ -18,6 +19,8 @@ const MAX_LOG_LINES: u32 = 2000;
 const MAX_LINE_CHARS: usize = 1000;
 /// Logs are read whole, so a runaway one is refused rather than loaded.
 const MAX_LOG_BYTES: usize = 16 * 1024 * 1024;
+/// The thermal zones looked at for the CPU's temperature, from `thermal_zone0`.
+const MAX_THERMAL_ZONES: u32 = 32;
 
 fn first_line(bytes: Option<Vec<u8>>) -> String {
     bytes
@@ -38,6 +41,34 @@ fn meminfo_kib(text: &str, field: &str) -> u64 {
         .find_map(|line| line.strip_prefix(field)?.strip_prefix(':'))
         .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
         .unwrap_or(0)
+}
+
+/// The one-minute load average of `/proc/loadavg` (`0.42 0.30 0.25 1/123 4567`), times 1000.
+fn load_average_milli(line: &str) -> u32 {
+    let Some(first) = line.split_whitespace().next() else {
+        return 0;
+    };
+    let (whole, fraction) = first.split_once('.').unwrap_or((first, ""));
+    let whole: u32 = whole.parse().unwrap_or(0);
+    // Three digits of the fraction, padded: `.4` is 400, `.425` is 425, `.4256` is 425.
+    let digits: String = fraction.chars().chain("000".chars()).take(3).collect();
+    let fraction: u32 = digits.parse().unwrap_or(0);
+    whole.saturating_mul(1000).saturating_add(fraction)
+}
+
+/// The cores in a kernel CPU list such as `0-3,6,8-9` (`/sys/devices/system/cpu/online`).
+fn cpu_list_count(list: &str) -> u32 {
+    list.trim()
+        .split(',')
+        .filter(|part| !part.is_empty())
+        .map(|part| match part.split_once('-') {
+            Some((low, high)) => match (low.parse::<u32>(), high.parse::<u32>()) {
+                (Ok(low), Ok(high)) if high >= low => high - low + 1,
+                _ => 0,
+            },
+            None => u32::from(part.parse::<u32>().is_ok()),
+        })
+        .fold(0, u32::saturating_add)
 }
 
 /// Keeps a log line from steering the terminal that shows it. Escape sequences and other
@@ -123,6 +154,29 @@ impl<S: System> Helper<S> {
             encryption: self.encryption_state()?,
             ssh_keys,
             drive: self.drive_status(),
+        }))
+    }
+
+    /// How busy the processor is and how warm it runs. Whatever cannot be read is left out
+    /// rather than refused: no load reads as idle, no core list as one core, no zone as no
+    /// temperature.
+    pub(crate) fn cpu_status(&self) -> Result<Response, ApiError> {
+        let read = |path: &str| self.sys.read_file(Path::new(path)).ok().flatten();
+        let load_average_milli = load_average_milli(&first_line(read("/proc/loadavg")));
+        let cores = cpu_list_count(&first_line(read("/sys/devices/system/cpu/online"))).max(1);
+        // Zones are numbered from 0 without gaps; the T6N has a handful. Read by number, as
+        // listing `/sys/class/thermal` gives symbolic links that only some readers follow.
+        let temperature_millicelsius = (0..MAX_THERMAL_ZONES)
+            .filter_map(|zone| {
+                first_line(read(&format!("/sys/class/thermal/thermal_zone{zone}/temp")))
+                    .parse::<i32>()
+                    .ok()
+            })
+            .max();
+        Ok(Response::Cpu(CpuStatus {
+            load_average_milli,
+            cores,
+            temperature_millicelsius,
         }))
     }
 
@@ -233,6 +287,57 @@ mod tests {
         assert_eq!((o.disk_total_bytes, o.disk_free_bytes), (1000, 400));
         assert_eq!(o.encryption, EncryptionState::NotSetUp);
         assert_eq!(o.ssh_keys, 2);
+    }
+
+    #[test]
+    fn cpu_status_reads_load_cores_and_the_hottest_zone() {
+        let sys = FakeSystem::default();
+        sys.put("/proc/loadavg", b"2.57 1.20 0.90 3/456 7890\n");
+        sys.put("/sys/devices/system/cpu/online", b"0-3,6,8-9\n");
+        sys.put("/sys/class/thermal/thermal_zone0/temp", b"48125\n");
+        sys.put("/sys/class/thermal/thermal_zone1/temp", b"52500\n");
+        sys.put("/sys/class/thermal/thermal_zone2/temp", b"not a number\n");
+        sys.put("/sys/class/thermal/cooling_device0/cur_state", b"1\n");
+        let h = helper(sys);
+        let Ok(Response::Cpu(cpu)) = h.cpu_status() else {
+            panic!()
+        };
+        assert_eq!(
+            cpu,
+            CpuStatus {
+                load_average_milli: 2570,
+                cores: 7,
+                temperature_millicelsius: Some(52500)
+            }
+        );
+    }
+
+    #[test]
+    fn cpu_status_without_the_files_is_idle_one_core_and_no_temperature() {
+        let h = helper(FakeSystem::default());
+        let Ok(Response::Cpu(cpu)) = h.cpu_status() else {
+            panic!()
+        };
+        assert_eq!(
+            cpu,
+            CpuStatus {
+                load_average_milli: 0,
+                cores: 1,
+                temperature_millicelsius: None
+            }
+        );
+    }
+
+    #[test]
+    fn load_and_core_lists_parse_as_the_kernel_writes_them() {
+        assert_eq!(load_average_milli("0.4 0 0"), 400);
+        assert_eq!(load_average_milli("12.3456 0 0"), 12345);
+        assert_eq!(load_average_milli("3"), 3000);
+        assert_eq!(load_average_milli(""), 0);
+        assert_eq!(cpu_list_count("0"), 1);
+        assert_eq!(cpu_list_count("0-7"), 8);
+        assert_eq!(cpu_list_count("0,2-3"), 3);
+        assert_eq!(cpu_list_count("x,3-1"), 0);
     }
 
     #[test]

@@ -24,6 +24,7 @@ use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
 use nodo_api::AliasMode;
+use nodo_ui_core::flows::staged::{self, Stageable};
 use nodo_ui_core::flows::web::certs::{Certificate, POLL_SECONDS};
 use nodo_ui_core::flows::web::hosting::{self, Hosting, Row};
 use nodo_ui_core::flows::web::providers::{self, Providers};
@@ -89,6 +90,7 @@ fn form(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Markup {
     let added_now = flow.names_added_while_public(snapshot);
     let domains = snapshot.domain_choices();
     let provider = domains.iter().find(|(domain, _)| *domain == flow.domain).map(|(_, provider)| provider.as_str());
+    let changes = flow.changes(snapshot);
     let tick = |name: &str, on: bool, label: &str, about: Markup| {
         let id = format!("reach-{name}");
         html! {
@@ -196,10 +198,14 @@ fn form(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Markup {
             }
             div.applybar {
                 noscript { button.btn.quiet type="submit" name="do" value="apply" { "Show what this needs" } }
-                a.btn href=(dest::app(&flow.site)) { "Cancel" }
                 @if rows.contains(&Row::Save) {
-                    button.btn.primary type="submit" name="do" value="save" { @if going_public { "Check and save" } @else { "Save" } }
+                    (layout::stage_buttons(if going_public { "Check & Apply" } else { "Save & Apply" }, layout::count_badge(changes), layout::count_badge(changes)))
+                } @else {
+                    button.btn type="submit" name="do" value="reset" { "Reset" }
                 }
+            }
+            @if rows.contains(&Row::Save) {
+                (layout::stage_hint())
             }
         }
     }
@@ -262,6 +268,27 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form_data): Form<Poste
         let (verb, argument) = action.split_once(':').unwrap_or((action, ""));
         let mut status = StatusCode::OK;
         match verb {
+            // Save: the draft stays in the session and the owner goes back to the app.
+            "keep" => {
+                let key = flow.stage_key();
+                let changes = flow.changes(&work.snapshot);
+                let mut inner = work.session.inner();
+                if changes == 0 {
+                    inner.stash.hosting.remove(&name);
+                    inner.notices.push(staged::nothing_to_keep(&key));
+                } else {
+                    inner.stash.hosting.insert(name.clone(), flow);
+                    inner.notices.push(staged::saved_notice(&key, changes));
+                }
+                return Out::Go(dest::app(&name));
+            }
+            // Reset: the draft goes, and the page shows what the device serves.
+            "reset" => {
+                let mut inner = work.session.inner();
+                inner.stash.hosting.remove(&name);
+                inner.notices.push(staged::reset_notice(&flow.stage_key()));
+                return Out::Go(here);
+            }
             "save" => {
                 // New names on a site that is public are asked about first (`Hosting::save`);
                 // the draft waits here for the answer, and for Cancel.

@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 
 use crate::ctx::Polling;
-use crate::pages::{apps, backups, bundle, drive, flow, home, hosting, install, keys, login, logs, network, owner, settings, sources, system, updates, web};
+use crate::pages::{apps, backups, bundle, changes, drive, flow, home, hosting, install, keys, login, logs, network, owner, settings, sources, system, updates, web};
 use crate::security;
 use crate::state::AppState;
 use crate::{assets, dest};
@@ -35,8 +35,9 @@ pub fn router(state: AppState) -> Router {
         // Home
         .route(dest::HOME, get(home::show))
         .route(dest::UNLOCK, get(home::unlock_page).post(home::unlock))
+        .route(dest::CHANGES, get(changes::show).post(changes::act))
         // Apps
-        .route(dest::APPS, get(apps::list))
+        .route(dest::APPS, get(apps::list).post(apps::act_on_ticked))
         .route("/apps/{name}", get(apps::show))
         .route("/apps/{name}/restart", post(apps::restart))
         .route("/apps/{name}/toggle", post(apps::toggle))

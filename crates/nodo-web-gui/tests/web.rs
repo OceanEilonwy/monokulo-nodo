@@ -105,7 +105,7 @@ async fn the_internet_comes_on_only_after_the_check_and_the_address_typed() {
     htmx.htmx = true;
     let form = htmx.post(HOSTING, &[("ticks", "1"), ("local", "on"), ("public", "on")]).await;
     assert!(form.body.starts_with("<form"), "{}", form.body);
-    form.assert_has(r#"name="sub" value="moneropay""#).assert_has(r#"<option value="example.com" selected>"#).assert_has("Check and save");
+    form.assert_has(r#"name="sub" value="moneropay""#).assert_has(r#"<option value="example.com" selected>"#).assert_has("Check &amp; Apply");
     form.assert_has("Visitors will be able to see your home's internet address.").assert_has("<p>Porkbun</p>");
     // The address in its two parts.
     let renamed = browser.post_then(HOSTING, &[("ticks", "1"), ("local", "on"), ("public", "on"), ("sub", "donate"), ("domain", "example.com")]).await;
@@ -534,7 +534,7 @@ async fn hosting_sends_the_owner_to_add_a_provider_and_takes_them_back_with_it()
     // Done: back on the Hosting page, the internet ticked and the provider's first domain chosen.
     assert_eq!(browser.post("/web/providers", &[("do", "finish")]).await.location(), HOSTING);
     let back = browser.get(HOSTING).await;
-    back.assert_has(r#"name="public" value="on" checked"#).assert_has(r#"<option value="example.org" selected>"#).assert_has("Check and save");
+    back.assert_has(r#"name="public" value="on" checked"#).assert_has(r#"<option value="example.org" selected>"#).assert_has("Check &amp; Apply");
     assert_eq!(browser.get("/web/providers").await.status, StatusCode::OK);
     browser.get("/web/providers").await.assert_has("<h1>Domain providers</h1>");
 }

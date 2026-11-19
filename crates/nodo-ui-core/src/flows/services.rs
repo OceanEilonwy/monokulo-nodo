@@ -3,16 +3,92 @@
 //! The page has no state beyond the app's name, so [`AppPage`] is that name with the actions on
 //! it; everything else is read from the device's `Snapshot`. What the helper answers to a start,
 //! stop, restart or removal comes back as the outcomes every page shares (`flows::apply`).
+//!
+//! The list of installed apps can act on several at once: the apps ticked there are restarted
+//! together ([`restart_ticked`]) or updated as one batch ([`update_ticked`]). An app that cannot
+//! take part is left out, and the step says which and why.
 
 use nodo_api::ServiceState;
 
-use super::{Confirm, Dest, Hint, Notice, Question, Step};
+use super::{updates, Confirm, Dest, Hint, Notice, Question, Step};
 use crate::model::Snapshot;
 use crate::Effect;
 
 /// The installed apps, in the order the device lists them.
 pub fn installed_apps(snapshot: &Snapshot) -> Vec<String> {
     snapshot.services.iter().map(|svc| svc.id.clone()).collect()
+}
+
+/// The ticked names that are installed, once each, in the order the device lists the apps.
+fn installed_ticked<'a>(snapshot: &'a Snapshot, ticked: &[String]) -> Vec<&'a str> {
+    snapshot.services.iter().filter(|svc| ticked.contains(&svc.id)).map(|svc| svc.id.as_str()).collect()
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn and_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// What a notice says about the ticked apps that were left out, each with its reason.
+fn left_out(skipped: &[(String, &str)]) -> String {
+    skipped.iter().map(|(name, why)| format!("{name} was left out: {why}.")).collect::<Vec<_>>().join(" ")
+}
+
+/// Restarts the ticked apps that are running or failing, in the order the device lists them.
+/// One that is stopped, locked or waiting is left out and the notice says why; a name that is
+/// not installed (any more) is dropped. With nothing ticked it asks for a tick first.
+pub fn restart_ticked(snapshot: &Snapshot, ticked: &[String]) -> Step {
+    if ticked.is_empty() {
+        return Step::Done(Notice::info("Tick at least one app first."));
+    }
+    let mut effects = Vec::new();
+    let mut skipped: Vec<(String, &str)> = Vec::new();
+    for name in installed_ticked(snapshot, ticked) {
+        match AppPage::new(name).state(snapshot) {
+            Some(ServiceState::Running | ServiceState::Failed) => effects.push(Effect::Restart(name.to_owned())),
+            Some(ServiceState::Stopped) => skipped.push((name.to_owned(), "it is stopped, so Start it instead")),
+            Some(ServiceState::Locked) => skipped.push((name.to_owned(), "it waits until you unlock the Nodo")),
+            Some(ServiceState::Waiting) => skipped.push((name.to_owned(), "it is waiting for another app it depends on")),
+            None => {}
+        }
+    }
+    let locked = skipped.iter().any(|(name, _)| AppPage::new(name).state(snapshot) == Some(ServiceState::Locked));
+    let note = |notice: Notice| if locked { notice.hinting(Hint::Unlock) } else { notice };
+    match (effects.is_empty(), skipped.is_empty()) {
+        (true, true) => Step::Done(Notice::info("None of the ticked apps is installed any more.")),
+        (true, false) => Step::Failed(note(Notice::error(format!("Nothing was restarted. {}", left_out(&skipped))))),
+        (false, true) => Step::Run(effects),
+        (false, false) => Step::All(vec![Step::Run(effects), Step::Done(note(Notice::info(left_out(&skipped))))]),
+    }
+}
+
+/// Updates the ticked apps that have an update ready, as one batch of the Updates flow
+/// (`updates::update_apps`), which reviews new permissions and asks for the passphrase as it
+/// does there. The others are left out and the notice names them. With none ready, a locked
+/// Nodo is sent to unlock, since it cannot tell what is new.
+pub fn update_ticked(snapshot: &Snapshot, ticked: &[String]) -> Step {
+    if ticked.is_empty() {
+        return Step::Done(Notice::info("Tick at least one app first."));
+    }
+    let (ready, current): (Vec<String>, Vec<String>) =
+        installed_ticked(snapshot, ticked).into_iter().map(str::to_owned).partition(|name| AppPage::new(name).has_update(snapshot));
+    if ready.is_empty() {
+        if snapshot.is_locked() {
+            return Step::Go(Dest::Unlock { resume: None });
+        }
+        return Step::Done(Notice::info("None of the ticked apps has an update ready."));
+    }
+    let batch = updates::update_apps(snapshot, &ready);
+    if current.is_empty() {
+        batch
+    } else {
+        let verb = if current.len() == 1 { "is" } else { "are" };
+        Step::All(vec![Step::Done(Notice::info(format!("{} {verb} up to date, so left out.", and_list(&current)))), batch])
+    }
 }
 
 /// One installed app's page.
@@ -111,6 +187,59 @@ mod tests {
         let mut changed = snapshot.clone();
         changed.services.iter_mut().find(|svc| svc.id == name).expect("installed").state = state;
         changed
+    }
+
+    #[test]
+    fn ticked_apps_restart_together_and_the_others_are_explained() {
+        let mut mock = MockBackend::new();
+        let snapshot = snapshot(&mut mock);
+        let names = installed_apps(&snapshot);
+        let [a, b, c, d, ..] = names.as_slice() else { panic!("the mock has four apps") };
+        let snapshot = with_state(&snapshot, a, ServiceState::Running);
+        let snapshot = with_state(&snapshot, b, ServiceState::Failed);
+        let snapshot = with_state(&snapshot, c, ServiceState::Stopped);
+        let snapshot = with_state(&snapshot, d, ServiceState::Waiting);
+
+        // The device's order, once each; a name not installed is dropped.
+        let ticked = vec![b.clone(), a.clone(), "nothing-here".to_owned(), a.clone()];
+        assert_eq!(restart_ticked(&snapshot, &ticked), Step::Run(vec![Effect::Restart(a.clone()), Effect::Restart(b.clone())]));
+
+        let Step::All(steps) = restart_ticked(&snapshot, &[a.clone(), c.clone()]) else { panic!("one restarts, one is left out") };
+        assert_eq!(steps[0], Step::Run(vec![Effect::Restart(a.clone())]));
+        let Step::Done(notice) = &steps[1] else { panic!("a notice follows") };
+        assert!(notice.text.contains(&format!("{c} was left out")) && notice.text.contains("Start it"), "{}", notice.text);
+
+        let Step::Failed(notice) = restart_ticked(&snapshot, &[d.clone()]) else { panic!("nothing to restart") };
+        assert!(notice.text.starts_with("Nothing was restarted.") && notice.text.contains("waiting"), "{}", notice.text);
+
+        let Step::Done(notice) = restart_ticked(&snapshot, &[]) else { panic!("nothing ticked") };
+        assert_eq!(notice.text, "Tick at least one app first.");
+    }
+
+    #[test]
+    fn ticked_apps_update_as_one_batch_of_those_with_an_update() {
+        let mut mock = MockBackend::new();
+        let snapshot = snapshot(&mut mock);
+        let ready: Vec<String> = installed_apps(&snapshot).into_iter().filter(|name| AppPage::new(name).has_update(&snapshot)).collect();
+        assert!(!ready.is_empty(), "the mock offers an app update");
+        assert_eq!(update_ticked(&snapshot, &ready), updates::update_apps(&snapshot, &ready));
+
+        let current = installed_apps(&snapshot).into_iter().find(|name| !AppPage::new(name).has_update(&snapshot)).expect("an app up to date");
+        let mut ticked = ready.clone();
+        ticked.push(current.clone());
+        let Step::All(steps) = update_ticked(&snapshot, &ticked) else { panic!("the up-to-date app is named") };
+        assert_eq!(steps[0], Step::Done(Notice::info(format!("{current} is up to date, so left out."))));
+        assert_eq!(steps[1], updates::update_apps(&snapshot, &ready));
+
+        let mut unlocked = snapshot.clone();
+        unlocked.overview.locked = false;
+        unlocked.services.iter_mut().filter(|svc| svc.state == ServiceState::Locked).for_each(|svc| svc.state = ServiceState::Running);
+        let Step::Done(notice) = update_ticked(&unlocked, &[current.clone()]) else { panic!("none ready") };
+        assert_eq!(notice.text, "None of the ticked apps has an update ready.");
+        let mut locked = unlocked.clone();
+        locked.overview.locked = true;
+        assert_eq!(update_ticked(&locked, &[current]), Step::Go(Dest::Unlock { resume: None }));
+        assert_eq!(update_ticked(&snapshot, &[]), Step::Done(Notice::info("Tick at least one app first.")));
     }
 
     #[test]

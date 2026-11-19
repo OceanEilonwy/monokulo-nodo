@@ -21,6 +21,7 @@ use axum::response::Response;
 use axum::Form;
 use maud::{html, Markup};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked, Settings};
+use nodo_ui_core::flows::staged::{self, Stageable};
 use nodo_ui_core::flows::{Dest, Notice, Step};
 use nodo_ui_core::model::{FieldKind, FieldValue, Piece, Snapshot};
 use nodo_ui_core::refs::kind_name;
@@ -290,9 +291,18 @@ fn field_actions(flow: &Settings, index: usize) -> Markup {
 /// The count of changes inside the Save button. With htmx it is replaced beside every field's
 /// row, as the summary is; the summary says it in words, so the count is not read out twice.
 fn save_count(flow: &Settings, out_of_band: bool) -> Markup {
+    count_span("save-count", flow, out_of_band)
+}
+
+/// The same count inside Save, which keeps the draft here.
+fn keep_count(flow: &Settings, out_of_band: bool) -> Markup {
+    count_span("keep-count", flow, out_of_band)
+}
+
+fn count_span(id: &str, flow: &Settings, out_of_band: bool) -> Markup {
     let changes = flow.changed_indices().len();
     html! {
-        span #save-count .bcnt aria-hidden="true" hidden[changes == 0] hx-swap-oob=[out_of_band.then_some("true")] { (changes) }
+        span id=(id) .bcnt aria-hidden="true" hidden[changes == 0] hx-swap-oob=[out_of_band.then_some("true")] { (changes) }
     }
 }
 
@@ -328,11 +338,9 @@ fn page(snapshot: &Snapshot, flow: &Settings) -> Page {
             div.applybar {
                 // Without scripts this is how a typed value is checked before saving.
                 noscript { button.btn.quiet type="submit" name="do" value="apply" { "Check what I typed" } }
-                // With htmx the question about unsaved changes comes over the form, which keeps
-                // what is typed if the answer is to stay.
-                button.btn type="submit" name="do" value="leave" hx-post=(here) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }
-                button.btn.primary type="submit" name="do" value="save" { "Save" (save_count(flow, false)) }
+                (layout::stage_buttons("Save & Apply", keep_count(flow, false), save_count(flow, false)))
             }
+            (layout::stage_hint())
         }
         @if !flow.form.public_settings.is_empty() {
             p.dim.small { "Other apps can refer to: " (flow.form.public_settings.join(", ")) }
@@ -446,6 +454,28 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form): Form<Posted>) -
                 flow.cancel_save();
                 to_form(Reply::default(), &flow)
             }
+            // Save: the draft stays in the session (`Stash::settings`) and the owner goes back
+            // to the app. A draft with nothing changed is not kept.
+            ("keep", None) => {
+                let key = flow.stage_key();
+                let changes = flow.changes(&work.snapshot);
+                let mut inner = work.session.inner();
+                if changes == 0 {
+                    inner.stash.settings.remove(&name);
+                    inner.notices.push(staged::nothing_to_keep(&key));
+                } else {
+                    inner.stash.settings.insert(name.clone(), flow);
+                    inner.notices.push(staged::saved_notice(&key, changes));
+                }
+                return Out::Go(dest::app(&name));
+            }
+            // Reset: the draft goes, and the form shows what is stored.
+            ("reset", None) => {
+                let mut inner = work.session.inner();
+                inner.stash.settings.remove(&name);
+                inner.notices.push(staged::reset_notice(&flow.stage_key()));
+                return Out::Go(dest::settings(&name));
+            }
             ("leave", _) => match flow.leave() {
                 // Changes would be lost: ask. Confirmed, the draft goes (`pages::flow`).
                 Step::Ask(question) => Out::Reply(Reply::ask(question).cancel_to(dest::settings(&name))),
@@ -490,7 +520,7 @@ pub async fn change(ctx: Ctx, Path((name, key)): Path<(String, String)>, Form(fo
         }
         keep(work, &flow);
         match flow.index_of(&key) {
-            Some(index) => Out::Fragment(html! { (field_row(&flow, index, &name)) (summary(&flow, true)) (save_count(&flow, true)) }),
+            Some(index) => Out::Fragment(html! { (field_row(&flow, index, &name)) (summary(&flow, true)) (save_count(&flow, true)) (keep_count(&flow, true)) }),
             None => Out::Go(dest::settings(&name)),
         }
     })

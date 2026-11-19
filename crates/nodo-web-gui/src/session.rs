@@ -18,12 +18,13 @@ use nodo_ui_core::flows::bundle::Bundle;
 use nodo_ui_core::flows::network::Network;
 use nodo_ui_core::flows::owner_page::OwnerPage;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
+use nodo_ui_core::flows::staged::{self, StageKey, Stageable, StagedChange};
 use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::flows::web::hosting::Hosting;
 use nodo_ui_core::flows::web::providers::Providers;
 use nodo_ui_core::flows::web::public::{Found, PublicConfirm};
 use nodo_ui_core::flows::{install, updates, Dest, Notice, Question};
-use nodo_ui_core::model::{CapabilityData, Document, FeedProbe, InstallSnapshot, KeyChange, RejectionData, UpdateReport};
+use nodo_ui_core::model::{CapabilityData, Document, FeedProbe, InstallSnapshot, KeyChange, RejectionData, Snapshot, UpdateReport};
 
 use crate::clock::Clock;
 use crate::runner::Reply;
@@ -159,6 +160,9 @@ pub struct Stash {
     /// opened and whether a provider is connected are in the draft, from the device, and never
     /// from a browser.
     pub hosting: BTreeMap<String, Hosting>,
+    /// The automatic-update choices kept with Save and not applied yet. Dropped when they are
+    /// applied or reset, and with the session.
+    pub auto_update: Option<updates::AutoUpdate>,
     /// What the last reachability check found, when it is not a clear way to the confirmation.
     pub found: Option<Found>,
     /// The confirmation before a site goes public: the address and the plan the helper gave.
@@ -190,6 +194,31 @@ pub struct Stash {
 }
 
 impl Stash {
+    /// The drafts kept here that would still change something on the device: the settings
+    /// forms, the Hosting drafts and the automatic-update choices (`flows::staged`).
+    pub fn staged(&self, snapshot: &Snapshot) -> Vec<StagedChange> {
+        let drafts = self
+            .settings
+            .values()
+            .map(|flow| flow as &dyn Stageable)
+            .chain(self.hosting.values().map(|flow| flow as &dyn Stageable))
+            .chain(self.auto_update.iter().map(|flow| flow as &dyn Stageable));
+        staged::summary(drafts, snapshot)
+    }
+
+    /// Drops one kept draft. Nothing happens when there is none.
+    pub fn drop_staged(&mut self, key: &StageKey) {
+        match key {
+            StageKey::AutoUpdate => self.auto_update = None,
+            StageKey::Settings(package) => {
+                self.settings.remove(package);
+            }
+            StageKey::Hosting(site) => {
+                self.hosting.remove(site);
+            }
+        }
+    }
+
     /// Keeps what a destination carries, for the page it leads to.
     pub fn keep(&mut self, dest: &Dest, back: &str) {
         match dest {
@@ -302,6 +331,8 @@ pub struct Inner {
     pub job: Option<Job>,
     /// The tabs' counts as last read, for pages drawn without reading the device.
     pub badges: (usize, usize),
+    /// The count of changes kept and not applied, as last worked out (`Stash::staged`).
+    pub unsaved: usize,
     next_id: u64,
 }
 

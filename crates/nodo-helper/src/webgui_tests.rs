@@ -158,6 +158,7 @@ fn a_login_opens_the_gate_for_what_an_owner_may_do() {
     assert_eq!(list[0].id, "shop");
     assert_eq!(h.handle_web(WEB, Request::StartService { id: "shop".into() }), Ok(Response::Ok));
     assert!(matches!(h.handle_web(WEB, Request::DeviceOverview), Ok(Response::Overview(_))));
+    assert!(matches!(h.handle_web(WEB, Request::CpuStatus), Ok(Response::Cpu(_))));
     assert!(matches!(h.handle_web(WEB, Request::ListSshKeys), Ok(Response::SshKeys(_))));
     // The screen's status and PIN, as on the main socket: the PIN still needs the passphrase.
     assert!(matches!(h.handle_web(WEB, Request::ScreenStatus), Ok(Response::Screen(_))));
@@ -458,6 +459,7 @@ fn every_socket_reads_the_status() {
     // The screen may always look, PIN or not.
     assert_eq!(status(h.handle_screen(SCREEN, Request::WebGuiStatus)), served);
     assert!(crate::screen::is_read_only(&Request::WebGuiStatus));
+    assert!(crate::screen::is_read_only(&Request::CpuStatus));
     assert!(!crate::screen::is_read_only(&Request::SetWebGui(true)));
     assert!(!crate::screen::is_read_only(&Request::WebGuiLogin { passphrase: Secret::new(PASS) }));
     // `open` is the caller's own gate, so a login shows only on the web socket.

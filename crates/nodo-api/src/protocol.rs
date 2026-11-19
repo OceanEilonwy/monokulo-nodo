@@ -373,6 +373,7 @@ mod tests {
             Request::WebGuiStatus,
             Request::SetWebGui(true),
             Request::SetWebGui(false),
+            Request::CpuStatus,
         ];
         for request in requests {
             let bytes = encode_request(&request).unwrap();
@@ -888,6 +889,8 @@ mod tests {
                 open: false,
             })),
             Err(ApiError::web_login_required()),
+            Ok(Response::Cpu(CpuStatus { load_average_milli: 2500, cores: 8, temperature_millicelsius: Some(52_125) })),
+            Ok(Response::Cpu(CpuStatus { load_average_milli: 0, cores: 1, temperature_millicelsius: None })),
         ];
         for result in results {
             let bytes = encode_response(&result).unwrap();
@@ -911,6 +914,18 @@ mod tests {
         for (offset, request) in appended.iter().enumerate() {
             assert_eq!(usize::from(position(request)), usize::from(owner_page) + 1 + offset, "{request:?}");
         }
+    }
+
+    /// `CpuStatus` was appended after the web GUI's requests, and its answer after `WebGui`, so
+    /// an older helper refuses it as malformed and still reads everything else.
+    #[test]
+    fn cpu_status_sits_after_every_older_variant() {
+        let request = |request: &Request| encode_request(request).unwrap()[1];
+        assert_eq!(request(&Request::CpuStatus), request(&Request::SetWebGui(true)) + 1);
+        let response = |result: &CallResult| encode_response(result).unwrap()[2];
+        let web_gui = Ok(Response::WebGui(WebGuiStatus { enabled: false, url: None, waiting: false, open: false }));
+        let cpu = Ok(Response::Cpu(CpuStatus { load_average_milli: 0, cores: 1, temperature_millicelsius: None }));
+        assert_eq!(response(&cpu), response(&web_gui) + 1);
     }
 
     /// Fixes the wire position of the first variants, so an accidental reorder fails here

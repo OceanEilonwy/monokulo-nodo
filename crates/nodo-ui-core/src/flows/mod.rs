@@ -79,6 +79,7 @@ pub mod owner_page;
 pub mod services;
 pub mod settings;
 pub mod setup;
+pub mod staged;
 pub mod sources;
 pub mod unlock;
 pub mod updates;

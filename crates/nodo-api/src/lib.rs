@@ -253,6 +253,20 @@ pub struct DeviceOverview {
     pub drive: Option<DriveStatus>,
 }
 
+/// How busy the processor is and how warm it runs: the answer to [`Request::CpuStatus`].
+///
+/// A request of its own rather than fields of [`DeviceOverview`], so an interface newer than its
+/// helper still reads the overview and only goes without this figure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuStatus {
+    /// The one-minute load average from `/proc/loadavg`, times 1000: `2.5` is `2500`.
+    pub load_average_milli: u32,
+    /// The processor cores the kernel has online, at least 1.
+    pub cores: u32,
+    /// The hottest thermal zone, in thousandths of a degree Celsius, when the board reports one.
+    pub temperature_millicelsius: Option<i32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub id: String,
@@ -1242,6 +1256,8 @@ pub enum Request {
     /// Turns the web GUI on or off. Only from SSH or the TUI, never from the web GUI or the
     /// touchscreen, and only once the device passphrase is set up.
     SetWebGui(bool),
+    /// The processor's load and temperature, for the overview's CPU figure.
+    CpuStatus,
 }
 
 /// The web GUI on the home network: the same screens as the TUI, in a browser.
@@ -1348,6 +1364,8 @@ pub enum Response {
     OwnerPage(OwnerPageView),
     /// Answer to `WebGuiStatus` and `WebGuiLogin`.
     WebGui(WebGuiStatus),
+    /// Answer to `CpuStatus`.
+    Cpu(CpuStatus),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1519,6 +1537,7 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::WebGuiLogout => "web-gui-logout",
         Request::WebGuiStatus => "web-gui-status",
         Request::SetWebGui(_) => "set-web-gui",
+        Request::CpuStatus => "cpu-status",
     }
 }
 

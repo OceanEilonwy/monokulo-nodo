@@ -23,6 +23,30 @@ pub enum Tone {
     Bad,
 }
 
+// Device
+
+/// How busy the processor is, in thousandths of its capacity: the one-minute load average over
+/// the cores, at most 1000 when more is waiting than the cores can run.
+pub fn cpu_busy_permille(cpu: &nodo_api::CpuStatus) -> u32 {
+    let capacity = u64::from(cpu.cores.max(1)) * 1000;
+    let busy = (u64::from(cpu.load_average_milli) * 1000 / capacity).min(1000);
+    u32::try_from(busy).unwrap_or(1000)
+}
+
+/// The processor in one line: `23% · 8 cores · 52 °C`, without the temperature when the board
+/// reports none.
+pub fn cpu_summary(cpu: &nodo_api::CpuStatus) -> String {
+    let percent = (cpu_busy_permille(cpu) + 5) / 10;
+    let cores = match cpu.cores {
+        1 => "1 core".to_owned(),
+        n => format!("{n} cores"),
+    };
+    match cpu.temperature_millicelsius {
+        Some(milli) => format!("{percent}% · {cores} · {} °C", (milli + 500).div_euclid(1000)),
+        None => format!("{percent}% · {cores}"),
+    }
+}
+
 // Apps
 
 /// An app's state in plain words, and whether it is a problem.
@@ -609,6 +633,18 @@ pub fn web_gui_summary(status: &nodo_api::WebGuiStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cpu_line_is_load_over_cores_capped_with_the_temperature() {
+        let cpu = |load_average_milli, cores, temperature_millicelsius| nodo_api::CpuStatus { load_average_milli, cores, temperature_millicelsius };
+        assert_eq!(cpu_summary(&cpu(1840, 8, Some(52_400))), "23% · 8 cores · 52 °C");
+        assert_eq!(cpu_busy_permille(&cpu(1840, 8, None)), 230);
+        assert_eq!(cpu_summary(&cpu(3000, 1, None)), "100% · 1 core");
+        assert_eq!(cpu_busy_permille(&cpu(3000, 1, None)), 1000);
+        // A board that says no cores still divides by one.
+        assert_eq!(cpu_busy_permille(&cpu(500, 0, Some(-1_600))), 500);
+        assert_eq!(cpu_summary(&cpu(0, 4, Some(-1_600))), "0% · 4 cores · -2 °C");
+    }
     use crate::exec::load_snapshot;
     use crate::mock::MockBackend;
 

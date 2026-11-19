@@ -89,13 +89,15 @@ pub struct Chrome {
     pub signed_in: bool,
     /// The counts beside Apps and System.
     pub badges: (usize, usize),
+    /// Changes kept with Save and not applied yet, linked to the list of them.
+    pub unsaved: usize,
     pub notices: Vec<Notice>,
 }
 
 impl Chrome {
     /// The frame of the login page: no tabs, nothing about the device.
     pub fn signed_out() -> Self {
-        Self { signed_in: false, badges: (0, 0), notices: Vec::new() }
+        Self { signed_in: false, badges: (0, 0), unsaved: 0, notices: Vec::new() }
     }
 }
 
@@ -229,6 +231,8 @@ fn head(title: &str, waiting: bool) -> Markup {
             title { (title) " · Nodo" }
             // The logo, so browsers do not ask for /favicon.ico on every page.
             link rel="icon" href=(assets::logo_path()) type="image/svg+xml";
+            // The fonts' faces first, so app.css's stacks find them.
+            link rel="stylesheet" href=(assets::fonts_css_path());
             link rel="stylesheet" href=(assets::css_path());
             script src=(assets::htmx_path()) defer {}
             script src=(assets::script_path()) defer {}
@@ -258,6 +262,11 @@ pub fn document(page: &Page, chrome: &Chrome) -> Markup {
                                     (tab.label())
                                     @if count > 0 { span.cnt title="Updates ready" { (count) } }
                                 }
+                            }
+                        }
+                        @if chrome.unsaved > 0 {
+                            a.unsaved href=(dest::CHANGES) {
+                                "Unsaved changes " span.cnt { (chrome.unsaved) }
                             }
                         }
                         form.out method="post" action=(dest::LOGOUT) {
@@ -311,6 +320,29 @@ pub fn notice(notice: &Notice) -> Markup {
 /// `"btn primary"`, `"btn danger"`, `"btn quiet"`.
 pub fn post(action: &str, label: &str, class: &str) -> Markup {
     html! { form method="post" action=(action) { button class=(class) type="submit" { (label) } } }
+}
+
+/// The count of changes inside a button, hidden when there are none. The page says the count
+/// in words elsewhere, so it is not read out.
+pub fn count_badge(changes: usize) -> Markup {
+    html! { span.bcnt aria-hidden="true" hidden[changes == 0] { (changes) } }
+}
+
+/// The three buttons of a page whose draft can be kept aside (`flows::staged`), inside its
+/// form: Reset (`do=reset`) drops the draft, Save (`do=keep`) keeps it here without touching
+/// the Nodo, and the apply button (`do=save`) is the page's own save, which checks the draft
+/// and puts it live. `keep_count` and `apply_count` go inside Save and the apply button.
+pub fn stage_buttons(apply: &str, keep_count: Markup, apply_count: Markup) -> Markup {
+    html! {
+        button.btn type="submit" name="do" value="reset" { "Reset" }
+        button.btn type="submit" name="do" value="keep" { "Save" (keep_count) }
+        button.btn.primary type="submit" name="do" value="save" { (apply) (apply_count) }
+    }
+}
+
+/// What the three buttons of [`stage_buttons`] do, in a line under them.
+pub fn stage_hint() -> Markup {
+    html! { p.hint.small { "Save keeps your changes here, without touching the Nodo. Save & Apply checks them and puts them live." } }
 }
 
 /// A button whose action asks first. With htmx the question appears as a dialog over the page;
