@@ -194,6 +194,9 @@ pub enum UpdateEventKind {
     /// The new version failed and the old one did not come back.
     RollbackFailed { reason: String, rollback_error: String },
     Postponed { wait: String },
+    /// Refused before anything changed: the old version kept running, nothing was put back and
+    /// the version is not held. The reason is the device's, not the app's.
+    NotUpdated { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,7 +226,7 @@ pub struct UpdateCandidate {
 pub struct UpdateStatus {
     pub candidates: Vec<UpdateCandidate>,
     pub last_check: Option<u64>,
-    /// Failed updates, kept for Home until dismissed.
+    /// Failed updates, and updates an unattended run refused, kept for Home until dismissed.
     pub attention: Vec<UpdateEvent>,
     pub history: Vec<UpdateEvent>,
     /// When the automatic install window next opens, as device-local `HH:MM`, if any package is
@@ -247,7 +250,8 @@ pub enum UpdateOutcome {
         recovered: bool,
         rollback_error: Option<String>,
     },
-    /// Nothing was changed, for the reason given.
+    /// Nothing was changed, for the reason given, and nothing is held. Also what an update the
+    /// helper started preparing but refused before changing anything reports.
     Refused(String),
     Postponed(String),
 }

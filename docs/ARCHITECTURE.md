@@ -150,7 +150,8 @@ codebase, and signed xbps packages from user-added feeds.
 - **Auto-update:** Off by default and chosen per package, within a scheduled window. It never installs
   an update that needs new permissions, has a changed feed key, fails install checks, is on hold or needs
   a system restart, and it waits while the device is locked or low on disk. A failed update rolls back
-  and that version is held until the user chooses to retry. System snapshot updates are a separate
+  and that version is held until the user chooses to retry. One refused before anything changed is
+  reported as not updated, not as a rollback, and holds nothing. System snapshot updates are a separate
   switch, also off: the schedule then only checks and reports, and a snapshot needing a restart
   always waits. A withdrawn snapshot is replaced by a newer manifest that names it; only devices on
   it move this project's packages back (`docs/UPDATES.md`, section 1). After a system update every

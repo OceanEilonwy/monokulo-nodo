@@ -909,6 +909,81 @@ check "a version declaring an older data layout is refused before anything chang
 check "2.0 still runs" running_for e2e-store 3
 ctl auto-set daily 00:00 23:59 e2e-pay >/dev/null
 
+# Data on the data drive across updates: a version declaring the same layout updates and rolls
+# back without copying the data; one raising it is copied next to the data on the drive first,
+# and the copy is removed once it is healthy or put back when it fails; one with no room for the
+# copy is refused before anything changes, without a rollback or a hold.
+
+# Builds e2e-drive, an app whose data the owner keeps on the data drive, at a version with a data
+# layout and a start step.
+mkdrive() {
+	ver=$1 layout=$2 start=$3
+	d=$APPROOT/e2e-drive-$ver
+	rm -rf "$d"
+	mkdir -p "$d/opt/nodo/apps/e2e-drive/bin"
+	chmod 755 "$d" "$d/opt" "$d/opt/nodo" "$d/opt/nodo/apps" "$d/opt/nodo/apps/e2e-drive" "$d/opt/nodo/apps/e2e-drive/bin"
+	printf 'api_version = 1\nid = "e2e-drive"\nversion = "%s"\nexec = ["bin/run"]\nstop_timeout_secs = 5\n\n[storage]\ndata_layout = %s\n' \
+		"$ver" "$layout" > "$d/opt/nodo/apps/e2e-drive/manifest.toml"
+	printf '#!/bin/sh\nD=/var/lib/apps/e2e-drive\n%s\necho "e2e-drive %s running"\nwhile :; do sleep 1; done\n' "$start" "$ver" \
+		> "$d/opt/nodo/apps/e2e-drive/bin/run"
+	chmod 644 "$d/opt/nodo/apps/e2e-drive/manifest.toml"
+	chmod 755 "$d/opt/nodo/apps/e2e-drive/bin/run"
+	(cd "$APPROOT" && xbps-create -A x86_64 -n "e2e-drive-${ver}_1" -s "e2e data drive app" "$d" >/dev/null)
+	publish "$APPROOT/e2e-drive-${ver}_1.x86_64.xbps"
+}
+DD=/media/e2e/e2e-drive
+mkdrive 1.0 1 '[ -e "$D/notes.txt" ] || echo "first note" > "$D/notes.txt"'
+ctl refresh-feeds >/dev/null
+# Chosen before the install from the package's manifest, as a bundle's data drive members are.
+printf 'api_version = 1\nid = "e2e-drive"\nversion = "1.0"\nexec = ["bin/run"]\n' > /var/lib/nodo/manifests/e2e-drive.toml
+ctl data-drive e2e-drive 1 >/dev/null
+rm -f /var/lib/nodo/manifests/e2e-drive.toml
+check "an app given the data drive installs from the feed and keeps its data there" sh -c '
+	ctl approve-install e2e-feed e2e-drive | tee /tmp/e2e.dd; grep -q "problem: None" /tmp/e2e.dd &&
+	for _ in $(seq 1 20); do [ -f '"$DD"'/notes.txt ] && exit 0; sleep 1; done; exit 1'
+echo user-data > "$DD/user.txt" && chown _e2e-drive: "$DD/user.txt"
+sum=$(cat "$DD/notes.txt" "$DD/user.txt" | sha256sum)
+mkdrive 1.1 1 'true'
+check "an update declaring the same layout installs without copying the data" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-drive 1.1_1 | tee /tmp/e2e.dd1; grep -q Updated /tmp/e2e.dd1 &&
+	[ "$(xbps-query -p pkgver e2e-drive)" = e2e-drive-1.1_1 ] && [ ! -e /media/e2e/.nodo-rollback/e2e-drive ] &&
+	[ ! -e /media/e2e/.nodo-layouts/e2e-drive ] && [ "$(cat '"$DD"'/notes.txt '"$DD"'/user.txt | sha256sum)" = "$0" ]' "$sum"
+check "1.1 runs on the same data" running_for e2e-drive 3
+mkdrive 1.2 1 'echo "1.2 cannot start" >&2; exit 1'
+check "a same-layout update that fails its health check puts 1.1 back on the same data" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-drive 1.2_1 | tee /tmp/e2e.dd2; grep -q RolledBack /tmp/e2e.dd2 &&
+	grep -q "recovered: true" /tmp/e2e.dd2 && [ "$(xbps-query -p pkgver e2e-drive)" = e2e-drive-1.1_1 ] &&
+	[ "$(cat '"$DD"'/notes.txt '"$DD"'/user.txt | sha256sum)" = "$0" ] && [ ! -e /media/e2e/.nodo-rollback/e2e-drive ]' "$sum"
+check "1.1 runs again" running_for e2e-drive 3
+mkdrive 2.0 2 'if [ -e "$D/notes.txt" ]; then { echo "format 2"; cat "$D/notes.txt"; } > "$D/notes.new" && mv "$D/notes.new" "$D/notes.v2" && rm "$D/notes.txt"; fi'
+# Leaves 100 MiB, short of the data plus the 256 MiB margin a copy needs.
+avail=$(df -B1 --output=avail /media/e2e | tail -n 1)
+fallocate -l $((avail - 100 * 1024 * 1024)) /media/e2e/e2e-fill
+check "a raised layout with no room for a copy on the drive is refused, saying how much to free" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-drive 2.0_1 | tee /tmp/e2e.dd3; grep -q Refused /tmp/e2e.dd3 &&
+	grep -q "Free up .* on the data drive" /tmp/e2e.dd3 && ! grep -q RolledBack /tmp/e2e.dd3 &&
+	[ "$(xbps-query -p pkgver e2e-drive)" = e2e-drive-1.1_1 ] && [ ! -e /media/e2e/.nodo-rollback/e2e-drive ]'
+check "the refusal holds nothing and is recorded as a refusal" sh -c '
+	ctl update-status | tee /tmp/e2e.dd4; grep -m1 -A6 "package: \"e2e-drive\"" /tmp/e2e.dd4 | grep -q "held: false" &&
+	grep -q NotUpdated /tmp/e2e.dd4'
+check "1.1 kept running through the refusal" running_for e2e-drive 3
+rm -f /media/e2e/e2e-fill
+check "with room, the raised layout is copied on the drive, converts its data, and the copy goes" sh -c '
+	ctl apply-update e2e-drive 2.0_1 | tee /tmp/e2e.dd5; grep -q Updated /tmp/e2e.dd5 &&
+	for _ in $(seq 1 20); do [ -f '"$DD"'/notes.v2 ] && break; sleep 1; done
+	grep -q "first note" '"$DD"'/notes.v2 && [ "$(cat '"$DD"'/user.txt)" = user-data ] &&
+	[ "$(cat /media/e2e/.nodo-layouts/e2e-drive)" = 2 ] && [ "$(stat -c "%a %U" /media/e2e/.nodo-layouts)" = "700 root" ] &&
+	[ ! -e /media/e2e/.nodo-rollback/e2e-drive ]'
+check "2.0 runs on the converted data" running_for e2e-drive 3
+sum=$(cat "$DD/notes.v2" "$DD/user.txt" | sha256sum)
+mkdrive 3.0 3 'rm -f "$D/notes.v2" "$D/user.txt"; echo "format 3, half done" > "$D/notes.v3"; echo "migration to layout 3 failed" >&2; exit 1'
+check "a raised layout that breaks its data and fails puts the copy from the drive back" sh -c '
+	ctl check-updates >/dev/null && ctl apply-update e2e-drive 3.0_1 | tee /tmp/e2e.dd6; grep -q RolledBack /tmp/e2e.dd6 &&
+	grep -q "recovered: true" /tmp/e2e.dd6 && [ "$(xbps-query -p pkgver e2e-drive)" = e2e-drive-2.0_1 ] &&
+	[ "$(cat '"$DD"'/notes.v2 '"$DD"'/user.txt | sha256sum)" = "$0" ] && [ ! -e '"$DD"'/notes.v3 ] &&
+	[ "$(cat /media/e2e/.nodo-layouts/e2e-drive)" = 2 ] && [ ! -e /media/e2e/.nodo-rollback/e2e-drive ]' "$sum"
+check "2.0 runs again after the rollback" running_for e2e-drive 3
+
 # A changed feed key blocks the feed until the user types its name
 KEY=/root/e2e-feed-key2.pem publish "$APPROOT/e2e-pay-1.3_1.x86_64.xbps"
 check "a re-signed feed shows as key changed" sh -c 'ctl refresh-feeds | grep -q "key_changed: true"'

@@ -51,6 +51,13 @@ fn the_mock_refuses_what_the_helper_refuses() {
 }
 
 #[test]
+fn the_mock_refuses_an_update_as_the_helper_does() {
+    let mut mock = MockBackend::new();
+    mock.knobs.update_refusals = vec![("moneropay".to_owned(), "not enough room on the data drive".to_owned())];
+    contract::refused_update_changes_nothing(&mut mock, "moneropay");
+}
+
+#[test]
 fn the_mock_names_a_source_it_could_not_read_as_the_helper_does() {
     let mut mock = MockBackend::new();
     mock.knobs.unreadable_feeds = vec![("community".to_owned(), "the feed did not answer".to_owned())];

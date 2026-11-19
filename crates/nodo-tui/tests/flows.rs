@@ -1821,9 +1821,35 @@ fn an_update_rollback_defaults_to_keeping_and_holding() {
     assert!(screen_text(&app).contains("update didn't start, so"));
     let screen = screen_text(&app);
     assert!(screen.contains("▸ OK"), "{screen}");
+    // A real rollback still says what was put back, what the app said, and offers the report.
+    assert!(screen.contains("and its data were restored"), "{screen}");
+    assert!(screen.contains("moneropay said: \"database migration 14"), "{screen}");
+    assert!(screen.contains("Copy a report for the publisher"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Updates);
     assert!(mock.updates.iter().find(|item| item.name == "moneropay").unwrap().held);
+}
+
+#[test]
+fn a_refused_update_says_not_updated_and_holds_nothing() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    let reason = "moneropay 2.8.0 moves its data to a newer layout, which 2.7.0 cannot read, so a copy of the data \
+                  is kept on the data drive to roll back to. That needs 3.3 GB free there and 1.0 GB is free. \
+                  Free up 2.3 GB on the data drive, then try again.";
+    mock.knobs.update_refusals.push(("moneropay".to_owned(), reason.to_owned()));
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Not updated: moneropay 2.8.0 moves its data"), "{screen}");
+    assert!(screen.contains("Nothing was changed."), "{screen}");
+    assert!(screen.contains("select the update again"), "{screen}");
+    for wrong in ["restored", "said", "publisher", "put back", "didn't start", "Try again", "on hold"] {
+        assert!(!screen.contains(wrong), "a refusal changed nothing, so no {wrong:?}: {screen}");
+    }
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::Updates);
+    assert!(!mock.updates.iter().find(|item| item.name == "moneropay").unwrap().held, "a refusal holds nothing");
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetHold { .. })), "{:?}", mock.calls);
 }
 
 #[test]

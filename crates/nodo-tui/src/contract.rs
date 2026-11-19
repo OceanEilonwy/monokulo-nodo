@@ -45,6 +45,22 @@ pub fn install(backend: &mut impl ScreenData, id: &PackageId) -> InstallSnapshot
     snapshot
 }
 
+/// An update refused before anything changed comes back as not applied with the device's reason,
+/// and with no rollback to explain: nothing was put back, nothing is held, and the same update is
+/// still offered. The caller makes the update of `name` one the backend refuses.
+pub fn refused_update_changes_nothing(backend: &mut impl ScreenData, name: &str) {
+    let before = backend.updates().into_iter().find(|u| u.name == name).expect("the update is offered");
+    let report = backend.apply_updates(&[name.to_owned()], &[]);
+    assert_eq!(report.failure, None, "a refusal is not a rollback: {report:?}");
+    let result = report.results.iter().find(|r| r.name == name).expect("the refused update has a result");
+    assert!(!result.applied, "{result:?}");
+    assert!(!result.note.trim().is_empty(), "a refusal says why: {result:?}");
+    assert_eq!(result.version, format!("still on {}", before.from), "{result:?}");
+    let after = backend.updates().into_iter().find(|u| u.name == name).expect("the update is still offered");
+    assert!(!after.held, "a refusal holds nothing: {after:?}");
+    assert_eq!(after.to, before.to);
+}
+
 /// Switching or removing a source that does not exist says so, instead of looking as if it worked.
 pub fn missing_sources_fail(backend: &mut impl ScreenData) {
     let missing = "no-such-source";

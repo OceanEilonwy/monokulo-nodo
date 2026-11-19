@@ -296,6 +296,8 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             card.row(t, vec![t.n(running)]);
             if !failure.log_line.is_empty() {
                 card.row(t, vec![t.d(format!("{} said: \"{}\"", failure.name, failure.log_line))]);
+            } else if !failure.reason.is_empty() {
+                card.row(t, vec![t.d(format!("Why: {}", failure.reason))]);
             }
             for result in report.results.iter().filter(|r| r.applied) {
                 let name = if result.name == SYSTEM_BASE { "The Nodo" } else { result.name.as_str() };
@@ -312,14 +314,46 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             let ok = super::v3::focused("OK", state.choice != 1);
             card.buttons(t, &[(again.as_str(), false, pick(1, Some(KeyCode::Enter))), (ok.as_str(), true, pick(0, Some(KeyCode::Enter)))]);
         }
+        // Without a rollback, an update that did not apply was refused before anything changed:
+        // nothing was put back, and the reason is the device's.
         None => {
             let applied = report.results.iter().filter(|r| r.applied).count();
-            card.row(t, vec![t.o("✓  "), t.b(if applied == 1 { "1 update is installed".to_owned() } else { format!("{applied} updates are installed") })]);
-            card.blank(t);
-            for result in &report.results {
-                let (mark, text) = if result.applied { (t.o("✓  "), t.n(format!("{} {}", result.name, result.version))) } else { (t.e("✕  "), t.e(format!("{} {}", result.name, result.version))) };
-                let note = if result.note.is_empty() { String::new() } else { format!("   {}", result.note) };
-                card.row(t, vec![mark, text, t.d(note)]);
+            let refused: Vec<_> = report.results.iter().filter(|r| !r.applied).collect();
+            match refused.as_slice() {
+                [only] if applied == 0 => {
+                    let name = if only.name == SYSTEM_BASE { "The Nodo" } else { only.name.as_str() };
+                    card.row(t, vec![t.a("▲  "), t.b(format!("Not updated: {}", only.note))]);
+                    card.blank(t);
+                    let stays = if only.version.is_empty() { format!("{name} stays as it was.") } else { format!("{name} is {}.", only.version) };
+                    card.row(t, vec![t.n(format!("{stays} Nothing was changed."))]);
+                }
+                _ => {
+                    let header = if applied == 0 && !refused.is_empty() {
+                        (t.a("▲  "), "Nothing was updated".to_owned())
+                    } else if applied == 1 {
+                        (t.o("✓  "), "1 update is installed".to_owned())
+                    } else {
+                        (t.o("✓  "), format!("{applied} updates are installed"))
+                    };
+                    card.row(t, vec![header.0, t.b(header.1)]);
+                    card.blank(t);
+                    for result in &report.results {
+                        let (mark, text) = if result.applied { (t.o("✓  "), t.n(format!("{} {}", result.name, result.version))) } else { (t.e("✕  "), t.e(format!("{} {}", result.name, result.version))) };
+                        let note = match (result.applied, result.note.is_empty()) {
+                            (_, true) => String::new(),
+                            (true, false) => format!("   {}", result.note),
+                            (false, false) => format!("   Not updated: {}", result.note),
+                        };
+                        card.row(t, vec![mark, text, t.d(note)]);
+                    }
+                    if !refused.is_empty() {
+                        card.blank(t);
+                        card.row(t, vec![t.n("Nothing was changed for those not updated.")]);
+                    }
+                }
+            }
+            if !refused.is_empty() {
+                card.row(t, vec![t.d("Once what it says is sorted out, select the update again in Updates.")]);
             }
             card.blank(t);
             card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);

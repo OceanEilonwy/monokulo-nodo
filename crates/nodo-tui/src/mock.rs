@@ -82,6 +82,9 @@ pub struct TestKnobs {
     pub system_check_failure: Option<String>,
     /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
     pub radios_failure: Option<String>,
+    /// Updates the helper refuses before changing anything, by name, with its reason, as it
+    /// refuses one whose data drive has no room for a copy.
+    pub update_refusals: Vec<(String, String)>,
 }
 
 impl Default for TestKnobs {
@@ -96,6 +99,7 @@ impl Default for TestKnobs {
             unreadable_feeds: Vec::new(),
             system_check_failure: None,
             radios_failure: None,
+            update_refusals: Vec::new(),
         }
     }
 }
@@ -1200,7 +1204,17 @@ impl ScreenData for MockBackend {
                 continue;
             };
             let approved = approvals.iter().any(|(n, _)| n == name);
-            if matches!(item.note, UpdateNote::NewPermission(_)) && !approved {
+            let refusal = self.knobs.update_refusals.iter().find(|(n, _)| n == name).map(|(_, r)| r.clone());
+            if let Some(reason) = refusal {
+                // Refused before anything changed, as nodo-helper's prepare step does: no
+                // rollback to report, and nothing held.
+                results.push(UpdateResult {
+                    name: name.clone(),
+                    applied: false,
+                    version: format!("still on {}", item.from),
+                    note: reason,
+                });
+            } else if matches!(item.note, UpdateNote::NewPermission(_)) && !approved {
                 // The helper's refusal, from nodo-helper's updates.rs.
                 results.push(UpdateResult {
                     name: name.clone(),
@@ -1222,6 +1236,7 @@ impl ScreenData for MockBackend {
                     restored: format!("Version {} and its data were restored.", item.from),
                     running: true,
                     log_line: s("database migration 14: table \"invoices\" already exists"),
+                    reason: s("moneropay did not pass its health check: connection refused"),
                     verdict: s("This looks like a package problem. Your settings were not the cause."),
                 });
             } else {
