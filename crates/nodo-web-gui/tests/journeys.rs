@@ -228,6 +228,36 @@ async fn sources_are_switched_removed_and_a_changed_key_is_decided_by_typing_the
 }
 
 #[tokio::test]
+async fn a_source_is_named_as_it_is_added_and_renamed_later() {
+    let app = App::new();
+    let mut browser = app.login().await;
+
+    browser.post("/sources/add", &[("address", "https://github.com/example/monero-tools-feed")]).await;
+    let confirmation = browser.get("/sources/add/confirm").await;
+    confirmation.assert_has(r#"<label for="label">Name</label>"#).assert_has(r#"placeholder="monero-tools""#);
+    let long = "x".repeat(49);
+    let refused = browser.post("/sources/add/confirm", &[("label", &long)]).await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    refused.assert_has("at most 48 characters");
+    let added = browser.post_then("/sources/add/confirm", &[("label", "Alice's tools")]).await;
+    added.assert_has("Added Alice's tools and pinned its key.").assert_has(r#"id="source-monero-tools""#);
+    browser.get("/apps/get").await.assert_has("Alice's tools");
+
+    // Renamed later: the page shows the name it has, and the device's own name as the placeholder.
+    let page = browser.get("/sources/of/monero-tools/rename").await;
+    page.assert_has(r#"value="Alice's tools""#).assert_has(r#"placeholder="monero-tools""#);
+    let taken = browser.post("/sources/of/monero-tools/rename", &[("label", "Official")]).await;
+    assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
+    taken.assert_has("already called Official").assert_has(r#"value="Official""#);
+    let renamed = browser.post("/sources/of/monero-tools/rename", &[("label", "Monero tools")]).await;
+    assert_eq!(renamed.location(), "/sources");
+    browser.get("/sources").await.assert_has("It's called Monero tools now.").assert_has(">Monero tools<");
+    // Empty: back to the name from its address.
+    browser.post_then("/sources/of/monero-tools/rename", &[("label", "")]).await.assert_has("It's called monero-tools now.");
+    assert_eq!(browser.get("/sources/of/nothing-here/rename").await.location(), "/sources");
+}
+
+#[tokio::test]
 async fn removing_a_source_from_its_key_page_cancels_back_to_it_and_confirms_back_to_the_sources() {
     let app = App::new();
     let mut browser = app.login().await;

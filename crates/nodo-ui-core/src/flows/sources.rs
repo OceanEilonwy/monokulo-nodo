@@ -1,5 +1,9 @@
-//! Sources (feeds): add one by probing its address and trusting its key, turn one on or off,
-//! remove one, read them all again, and decide about a source whose signing key changed.
+//! Sources (feeds): add one by probing its address and trusting its key, name one, turn one on or
+//! off, remove one, read them all again, and decide about a source whose signing key changed.
+//!
+//! A source is known by its `name`, which the device makes from its address and which installed
+//! apps and a changed key refer to. The owner may give it a name of their own (`label`), shown in
+//! its place, when adding it or later.
 //!
 //! The feature has no state of its own: the sources are in the `Snapshot`, a new source being
 //! added is the helper's `FeedProbe`, and a changed key is its `KeyChange`. So these are
@@ -49,9 +53,28 @@ pub fn probe(address: &str) -> Result<Vec<Effect>, String> {
     Ok(vec![Effect::ProbeFeed(address.trim().to_owned())])
 }
 
-/// The second step: adds the probed source and pins the key it showed.
+/// The most characters a source's own name may have, as the helper allows.
+pub const MAX_LABEL: usize = 48;
+
+/// The second step: adds the probed source, shown by `probe.label` if the owner gave it one, and
+/// pins the key it showed.
 pub fn trust(probe: &FeedProbe) -> Vec<Effect> {
     vec![Effect::TrustFeed(probe.clone())]
+}
+
+/// Gives source `name` the name the owner typed, or with a blank one goes back to the name the
+/// device made. The helper also refuses a name another source has. The error belongs beside the
+/// box.
+pub fn rename(name: &str, typed: &str) -> Result<Vec<Effect>, String> {
+    let label = typed.trim();
+    if label.chars().count() > MAX_LABEL {
+        return Err(format!("A source's name can be at most {MAX_LABEL} characters."));
+    }
+    if label.chars().any(char::is_control) {
+        return Err("A source's name can't contain control characters.".to_owned());
+    }
+    let label = (!label.is_empty() && label != name).then(|| label.to_owned());
+    Ok(vec![Effect::RenameFeed { name: name.to_owned(), label }])
 }
 
 /// The packages a probed source offers, as a document, before deciding to trust it.
@@ -82,6 +105,8 @@ pub fn apply(outcome: &Outcome) -> Step {
             Step::All(vec![Step::Go(Dest::Back), Step::Done(Notice::ok(format!("Added {name} and pinned its key.")))])
         }
         Outcome::FeedTrusted(Err(text)) => Step::Failed(Notice::error(text.clone())),
+        Outcome::FeedRenamed(Ok(name)) => Step::Done(Notice::ok(format!("It's called {name} now."))),
+        Outcome::FeedRenamed(Err(text)) => Step::Failed(Notice::error(text.clone())),
         Outcome::KeyChangeLoaded(Some(change)) => Step::Go(Dest::KeyChange(change.clone())),
         Outcome::KeyChangeLoaded(None) => Step::Failed(Notice::error("That feed has no pending key change.")),
         Outcome::NewKeyTrusted(Ok(name)) => {
@@ -131,6 +156,50 @@ mod tests {
         assert_eq!(all[1], Step::Done(Notice::ok(format!("Added {} and pinned its key.", probed.name))));
         assert_eq!(snapshot.feeds.len(), before + 1);
         assert_eq!(feed(&snapshot, &probed.name).fingerprint, probed.fingerprint);
+    }
+
+    #[test]
+    fn a_source_added_with_a_name_is_shown_by_it() {
+        let mut mock = MockBackend::new();
+        let (steps, _) = run(&mut mock, probe(NEW_FEED).expect("an address"));
+        let [Step::Go(Dest::ConfirmSource(probed))] = &steps[..] else { panic!("{steps:?}") };
+        let mut named = probed.clone();
+        named.label = "  Monero tools ".to_owned();
+        assert_eq!(named.shown(), "Monero tools");
+        let (steps, snapshot) = run(&mut mock, trust(&named));
+        let Step::All(all) = &steps[0] else { panic!("{steps:?}") };
+        assert_eq!(all[1], Step::Done(Notice::ok("Added Monero tools and pinned its key.")));
+        let added = feed(&snapshot, &probed.name);
+        assert_eq!((added.label.as_deref(), added.shown()), (Some("Monero tools"), "Monero tools"));
+    }
+
+    #[test]
+    fn a_source_is_renamed_and_named_back() {
+        let mut mock = MockBackend::new();
+        let snapshot = load_snapshot(&mut mock).expect("the mock answers");
+        let name = snapshot.feeds[0].name.clone();
+        assert_eq!(feed(&snapshot, &name).shown(), name);
+
+        let effects = rename(&name, " My feed ").expect("a short name");
+        assert_eq!(effects, [Effect::RenameFeed { name: name.clone(), label: Some("My feed".into()) }]);
+        let (steps, after) = run(&mut mock, effects);
+        assert_eq!(steps[0], Step::Done(Notice::ok("It's called My feed now.")));
+        assert_eq!(feed(&after, &name).shown(), "My feed");
+
+        // A blank name, or its own, goes back to the one the device made.
+        for back in ["", "   ", name.as_str()] {
+            assert_eq!(rename(&name, back).unwrap(), [Effect::RenameFeed { name: name.clone(), label: None }]);
+        }
+        let (steps, after) = run(&mut mock, rename(&name, "").unwrap());
+        assert_eq!(steps[0], Step::Done(Notice::ok(format!("It's called {name} now."))));
+        assert_eq!(feed(&after, &name).label, None);
+
+        assert!(rename(&name, &"x".repeat(MAX_LABEL + 1)).is_err());
+        assert!(rename(&name, "a\tb").is_err());
+        // Another source's name is refused, so two never look the same.
+        let other = after.feeds[1].name.to_uppercase();
+        let (steps, _) = run(&mut mock, rename(&name, &other).unwrap());
+        assert!(matches!(&steps[0], Step::Failed(notice) if notice.text.contains("already called")), "{steps:?}");
     }
 
     #[test]

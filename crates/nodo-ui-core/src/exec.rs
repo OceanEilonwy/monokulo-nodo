@@ -129,7 +129,7 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
         Effect::CancelInstall => vec![Outcome::InstallProgress(backend.cancel_install()), refresh(backend)],
         Effect::ProbeFeed(address) => vec![Outcome::FeedProbed(backend.probe_feed(&address))],
         Effect::TrustFeed(probe) => {
-            let result = backend.trust_feed(&probe).map(|()| probe.name);
+            let result = backend.trust_feed(&probe).map(|()| probe.shown().to_owned());
             vec![Outcome::FeedTrusted(result), refresh(backend)]
         }
         Effect::RefreshFeeds => {
@@ -143,6 +143,10 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
         Effect::RemoveFeed(name) => {
             let result = backend.remove_feed(&name);
             failed_then_refresh(backend, result)
+        }
+        Effect::RenameFeed { name, label } => {
+            let result = backend.rename_feed(&name, label.as_deref()).map(|()| label.unwrap_or(name));
+            vec![Outcome::FeedRenamed(result), refresh(backend)]
         }
         Effect::LoadKeyChange(name) => vec![Outcome::KeyChangeLoaded(backend.key_change(&name))],
         Effect::TrustNewKey { change, typed } => {

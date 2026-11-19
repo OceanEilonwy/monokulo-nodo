@@ -58,6 +58,9 @@ pub struct Paths {
     pub bindings: PathBuf,
     /// The screen PIN's salted hash, root-only. Missing means the screen can only look.
     pub screen_pin: PathBuf,
+    /// Installed apps whose service files the current generator has not written yet, one id per
+    /// line. Filled when a system update replaces the helper, emptied as each app is re-rendered.
+    pub rerender_pending: PathBuf,
 }
 
 impl Default for Paths {
@@ -80,6 +83,7 @@ impl Default for Paths {
             drive: None,
             bindings: "/var/lib/nodo/bindings.toml".into(),
             screen_pin: "/var/lib/nodo/screen-pin".into(),
+            rerender_pending: "/var/lib/nodo/rerender-pending".into(),
         }
     }
 }

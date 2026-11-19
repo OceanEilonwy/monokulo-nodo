@@ -456,7 +456,7 @@ fn a_sources_switch_and_link_stay_clickable_when_narrow() {
         app.size = size;
         let feeds = app.data.feeds.clone();
         for (index, feed) in feeds.iter().enumerate() {
-            app.screen = Screen::Feeds { selected: index, keys: false };
+            app.screen = Screen::Feeds { selected: index, keys: false, renaming: None };
             let (_, buffer, hits) = drawn(app.clone());
             let screen = common::text(&buffer);
             let lines: Vec<&str> = screen.lines().collect();

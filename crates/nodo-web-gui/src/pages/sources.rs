@@ -1,5 +1,5 @@
 //! Sources (`flows::sources`): the list, on and off, reading them again, adding one by probing
-//! its address and trusting its key, removing one, and deciding about a changed key.
+//! its address and trusting its key, naming one, removing one, and deciding about a changed key.
 
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -7,7 +7,7 @@ use axum::response::Response;
 use axum::Form;
 use maud::html;
 use nodo_ui_core::flows::{sources, Dest, Step};
-use nodo_ui_core::model::{counted, FeedProbe, FeedStatus, KeyChange, KeyState, Snapshot};
+use nodo_ui_core::model::{counted, Feed, FeedProbe, FeedStatus, KeyChange, KeyState, Snapshot};
 use nodo_ui_core::screen::Tab;
 use serde::Deserialize;
 
@@ -43,7 +43,8 @@ fn list_page(snapshot: &Snapshot) -> Page {
             section.card id=(format!("source-{}", dest::seg(&feed.name))) {
                 div.head {
                     h2 {
-                        a href=(here) { (feed.name) }
+                        a href=(here) { (feed.shown()) }
+                        @if feed.label.is_some() { " " span.dim { (feed.name) } }
                         @if feed.key_state == KeyState::BuiltIn { " " span.tag { "built in" } }
                     }
                     div.actions {
@@ -53,6 +54,7 @@ fn list_page(snapshot: &Snapshot) -> Page {
                                 @if on { span.ok aria-hidden="true" { "●" } " On" } @else { span.dim aria-hidden="true" { "○" } " Off" }
                             }
                         }
+                        a.btn href=(rename_url(&feed.name)) { "Rename" }
                         (layout::ask(&format!("{here}/remove"), "Remove", "btn danger"))
                     }
                 }
@@ -103,6 +105,78 @@ pub async fn open(ctx: Ctx, Path(name): Path<String>) -> Response {
 /// `POST /sources/of/{name}/toggle`: on or off.
 pub async fn toggle(ctx: Ctx, Path(name): Path<String>) -> Response {
     ctx.with(dest::SOURCES, move |work| Out::Reply(work.run(Step::run(sources::toggle(&name)), &mut no_flow))).await
+}
+
+fn rename_url(name: &str) -> String {
+    format!("{}/rename", dest::source(name))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct NameForm {
+    #[serde(default)]
+    label: String,
+}
+
+/// The name box of a source: what the owner typed, the name the device made as its placeholder,
+/// and why the last name was refused.
+fn name_field(typed: &str, made: &str, problem: Option<&str>) -> maud::Markup {
+    html! {
+        div.field {
+            label for="label" { "Name" }
+            input type="text" id="label" name="label" value=(typed) placeholder=(made) maxlength=(sources::MAX_LABEL) autocomplete="off"
+                aria-invalid=[problem.map(|_| "true")] aria-describedby=[problem.map(|_| "label-problem")];
+            @if let Some(problem) = problem { p.problem #label-problem { "✕ " (problem) } }
+            p.hint { "What the Nodo calls this source. Leave it empty to call it " (made) "." }
+        }
+    }
+}
+
+fn rename_page(feed: &Feed, typed: &str, problem: Option<&str>) -> Page {
+    let here = rename_url(&feed.name);
+    let body = html! {
+        h1 { "Rename " (feed.shown()) }
+        section.card {
+            form.stack method="post" action=(here) {
+                (name_field(typed, &feed.name, problem))
+                p.dim { (feed.address) }
+                div.actions.end {
+                    a.btn href=(dest::SOURCES) { "Cancel" }
+                    button.btn.primary type="submit" { "Save" }
+                }
+            }
+        }
+    };
+    let status = if problem.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
+    Page { trail: trail(&[(feed.shown(), &here)]), ..Page::new(Tab::Apps, format!("Rename {}", feed.shown()), body) }.status(status)
+}
+
+/// `GET /sources/of/{name}/rename`: the source's name, to change.
+pub async fn rename(ctx: Ctx, Path(name): Path<String>) -> Response {
+    ctx.with(dest::SOURCES, move |work| match work.snapshot.feeds.iter().find(|feed| feed.name == name) {
+        Some(feed) => Out::Page(rename_page(feed, feed.label.as_deref().unwrap_or_default(), None)),
+        None => Out::Go(dest::SOURCES.to_owned()),
+    })
+    .await
+}
+
+/// `POST /sources/of/{name}/rename`: gives the source the name typed. What is wrong with it, by
+/// the flow or the helper, is said beside the box.
+pub async fn save_name(ctx: Ctx, Path(name): Path<String>, Form(form): Form<NameForm>) -> Response {
+    ctx.with(dest::SOURCES, move |work| {
+        let Some(feed) = work.snapshot.feeds.iter().find(|feed| feed.name == name).cloned() else {
+            return Out::Go(dest::SOURCES.to_owned());
+        };
+        let effects = match sources::rename(&name, &form.label) {
+            Ok(effects) => effects,
+            Err(problem) => return Out::Page(rename_page(&feed, &form.label, Some(&problem))),
+        };
+        let reply = work.run(Step::run(effects), &mut no_flow);
+        match reply.error() {
+            Some(problem) => Out::Page(rename_page(&feed, &form.label, Some(problem))),
+            None => Out::Reply(Reply { go: Some(Dest::Sources { select: Some(name) }), ..reply }),
+        }
+    })
+    .await
 }
 
 /// `POST /sources/of/{name}/remove`: asks first.
@@ -163,9 +237,9 @@ pub async fn probe(ctx: Ctx, Form(form): Form<AddForm>) -> Response {
     .await
 }
 
-fn confirm_page(probe: &FeedProbe) -> Page {
+fn confirm_page(probe: &FeedProbe, problem: Option<&str>) -> Page {
     let body = html! {
-        h1 { "Add " (probe.name) "?" }
+        h1 { "Add " (probe.shown()) "?" }
         section.card.attn {
             p {
                 @if probe.signed { span.ok aria-hidden="true" { "✓ " } } @else { span.err aria-hidden="true" { "✕ " } }
@@ -186,14 +260,18 @@ fn confirm_page(probe: &FeedProbe) -> Page {
                     "Signatures still protect every app: nothing changed on the way can install. But anyone on the network can hold back updates or offer an older signed version, and this key arrives unprotected."
                 }
             }
-            div.actions.end {
-                a.btn.quiet href=(format!("{}/packages", dest::CONFIRM_SOURCE)) { "Its apps" }
-                a.btn href=(dest::SOURCES) { "Cancel" }
-                (layout::post(dest::CONFIRM_SOURCE, "Add source", "btn primary"))
+            form.stack method="post" action=(dest::CONFIRM_SOURCE) {
+                (name_field(&probe.label, &probe.name, problem))
+                div.actions.end {
+                    a.btn.quiet href=(format!("{}/packages", dest::CONFIRM_SOURCE)) { "Its apps" }
+                    a.btn href=(dest::SOURCES) { "Cancel" }
+                    button.btn.primary type="submit" { "Add source" }
+                }
             }
         }
     };
-    Page { trail: trail(&[("Add", dest::ADD_SOURCE)]), ..Page::new(Tab::Apps, "Add a source", body) }
+    let status = if problem.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
+    Page { trail: trail(&[("Add", dest::ADD_SOURCE)]), ..Page::new(Tab::Apps, "Add a source", body) }.status(status)
 }
 
 fn kept_probe(ctx: &Ctx) -> Option<FeedProbe> {
@@ -203,16 +281,24 @@ fn kept_probe(ctx: &Ctx) -> Option<FeedProbe> {
 /// `GET /sources/add/confirm`: what was found at the address, to trust or not.
 pub async fn confirm(ctx: Ctx) -> Response {
     match kept_probe(&ctx) {
-        Some(probe) => ctx.page(confirm_page(&probe)),
+        Some(probe) => ctx.page(confirm_page(&probe, None)),
         None => go_to(ctx.htmx, dest::ADD_SOURCE),
     }
 }
 
-/// `POST /sources/add/confirm`: adds the source and pins the key that was shown.
-pub async fn trust(ctx: Ctx) -> Response {
-    let Some(probe) = kept_probe(&ctx) else {
+/// `POST /sources/add/confirm`: adds the source, by the name typed if any, and pins the key
+/// that was shown.
+pub async fn trust(ctx: Ctx, Form(form): Form<NameForm>) -> Response {
+    let Some(mut probe) = kept_probe(&ctx) else {
         return go_to(ctx.htmx, dest::ADD_SOURCE);
     };
+    probe.label = form.label;
+    // The name is checked as a rename checks it, before anything is added.
+    if let Err(problem) = sources::rename(&probe.name, &probe.label) {
+        return ctx.page(confirm_page(&probe, Some(&problem)));
+    }
+    // Kept with its name, so a confirmation shown again after a refusal still has what was typed.
+    ctx.session.inner().stash.probe = Some(probe.clone());
     // Added: back to the sources. Refused: the notice says why, on the same page.
     ctx.with(dest::SOURCES, move |work| {
         let reply = work.run(Step::run(sources::trust(&probe)), &mut no_flow);

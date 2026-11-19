@@ -117,7 +117,14 @@ only). An apply waits while the disk is low, holds the same lock as package inst
 `--keep-running nodo-helper`, so the client does not stop the helper it is answering. When the
 helper's own package changed, the helper restarts itself once the reply is sent (holding the work
 lock, so no install starts first), and at start it records itself as restarted rather than
-deferred. A restarted helper no longer holds the secrets key, so the owner unlocks again with the
+deferred. Before recording that, it lists every installed app in `/var/lib/nodo/rerender-pending`
+(`crates/nodo-helper/src/rerender.rs`): the new program's generator may write different service
+files, such as a changed firewall, and nothing else would write them until each app changed for
+its own reasons. A background pass then re-renders each listed app as its own transaction, so a
+failed health check puts back only that app's old files. Files that come out the same are not
+written and their app does not restart. An app whose storage or sealed settings are locked stays
+on the list until the device is unlocked, and a pass a restart interrupted finishes at the next
+start. A restarted helper no longer holds the secrets key, so the owner unlocks again with the
 device passphrase; services keep running and open encrypted volumes stay open meanwhile. The same
 happens after an automatic system update. An open `nodo-tui` notices that its own program was
 replaced and starts the new one in place (same terminal, same login shell) the next time it is on

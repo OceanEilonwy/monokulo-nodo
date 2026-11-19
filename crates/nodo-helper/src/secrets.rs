@@ -190,6 +190,10 @@ impl<S: System> Helper<S> {
         if let Err(e) = self.web_unlocked() {
             problems.push(format!("web: {e}"));
         }
+        // Apps a system update's new generator could not reach while they were locked.
+        if let Err(e) = self.rerender_pending_held() {
+            problems.push(format!("re-rendering after the system update: {e}"));
+        }
         if problems.is_empty() {
             Ok(())
         } else {

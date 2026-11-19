@@ -7,6 +7,9 @@
 
        ✓  monero-tools   https://github.com/example/monero-tools-feed
 
+       Name       monero-tools
+                 Press n to give it a name of your own.
+
        It offers 9 apps.
 
        Its key         c41e8d07  2fa966b3  19e075cd  0b42e8a1
@@ -26,7 +29,4 @@
 
 
 
-
-
-
-    Keys: ←→ choose  ↵ confirm  p its apps  Esc cancel
+    Keys: ←→ choose  ↵ confirm  n name  p its apps  Esc cancel

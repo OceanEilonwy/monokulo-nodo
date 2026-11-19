@@ -404,6 +404,55 @@ fn a_feed_is_pinned_only_to_the_key_the_user_confirmed() {
 }
 
 #[test]
+fn a_feed_is_given_a_name_when_added_and_renamed_later_without_changing_what_it_is() {
+    let (h, _) = setup();
+    let Ok(Response::FeedProbe(probe)) = call(&h, Request::ProbeFeed { address: FEED.into() }) else {
+        panic!()
+    };
+    let labels = || match call(&h, Request::FeedLabels) {
+        Ok(Response::FeedLabels(labels)) => labels,
+        other => panic!("{other:?}"),
+    };
+    let Ok(Response::Feeds(feeds)) = call(
+        &h,
+        Request::AddNamedFeed {
+            address: FEED.into(),
+            fingerprint: probe.fingerprint,
+            label: "  Alice's apps ".into(),
+        },
+    ) else {
+        panic!()
+    };
+    assert_eq!(feeds[0].name, "apps");
+    assert_eq!(labels(), [("apps".to_owned(), "Alice's apps".to_owned())]);
+
+    let rename = |label: Option<&str>| {
+        call(
+            &h,
+            Request::RenameFeed {
+                name: "apps".into(),
+                label: label.map(str::to_owned),
+            },
+        )
+    };
+    let Ok(Response::Feeds(feeds)) = rename(Some("Monero tools")) else {
+        panic!()
+    };
+    assert_eq!(feeds[0].name, "apps");
+    assert_eq!(labels(), [("apps".to_owned(), "Monero tools".to_owned())]);
+    // Its own name again is fine; a blank one goes back to the name from its address.
+    assert!(rename(Some("APPS")).is_ok());
+    assert!(rename(Some("   ")).is_ok());
+    assert!(labels().is_empty());
+    assert!(rename(Some(&"x".repeat(49))).is_err());
+    assert!(rename(Some("two\nlines")).is_err());
+    assert!(matches!(
+        call(&h, Request::RenameFeed { name: "nope".into(), label: Some("x".into()) }),
+        Err(ApiError::NotFound(_))
+    ));
+}
+
+#[test]
 fn an_install_without_the_exact_approval_is_refused_and_changes_nothing() {
     let (h, packages) = setup();
     add_feed(&h);

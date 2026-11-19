@@ -404,12 +404,20 @@ impl<S: System> Helper<S> {
     }
 
     /// At start: a helper the last system update left running on its old program has restarted
-    /// since, so the record says it was restarted instead of deferred.
+    /// since, so the record says it was restarted instead of deferred, and installed apps are
+    /// marked to be re-rendered by the new program.
     pub fn note_helper_started(&self) {
         let deferred = |state: &SystemState| {
             state.last_applied.as_ref().is_some_and(|a| a.deferred.iter().any(|name| name == HELPER_SERVICE))
         };
         if !self.system_state().is_ok_and(|state| deferred(&state)) {
+            return;
+        }
+        // The update brought a new generator, so every installed app's service files are written
+        // again (`rerender_pending`). Marked first: if this fails, the record stays as it is and
+        // the next start tries again.
+        if let Err(e) = self.mark_installed_for_rerender() {
+            eprintln!("nodo-helper: could not mark installed apps for re-rendering: {e}");
             return;
         }
         let state = self.with_system_state(|state| {
@@ -691,8 +699,28 @@ mod tests {
     #[test]
     fn a_start_without_a_deferred_helper_writes_nothing() {
         let (h, _) = rig();
+        h.sys.add_manifest(crate::fake::SHOP);
+        h.sys.put("/s/installed/shop", b"");
         h.note_helper_started();
         assert!(h.sys.read_file(&h.system_state_path()).unwrap().is_none());
+        assert!(h.sys.get("/s/rerender-pending").is_none(), "no new generator, nothing to redo");
+    }
+
+    /// The new program's generator may write different service files, such as a changed firewall,
+    /// so every installed app is marked to be written again before the start is recorded.
+    #[test]
+    fn a_helper_an_update_replaced_marks_installed_apps_for_rerendering() {
+        let (h, snapshots) = rig();
+        h.sys.add_manifest(crate::fake::SHOP);
+        h.sys.put("/s/installed/shop", b"");
+        // A manifest the package manager placed but the helper never installed is left alone.
+        h.sys.add_manifest(&crate::fake::SHOP.replace("id = \"shop\"", "id = \"other\""));
+        snapshots.offer(6, false, false);
+        h.handle(1000, Request::CheckSystemUpdate).unwrap();
+        h.handle(1000, Request::ApplySystemUpdate { serial: 6 }).unwrap();
+        h.note_helper_started();
+        assert_eq!(h.sys.get("/s/rerender-pending").unwrap(), b"shop\n");
+        assert_eq!(status(&h).last_applied.unwrap().restarted, ["nodo-helper"]);
     }
 
     #[test]
