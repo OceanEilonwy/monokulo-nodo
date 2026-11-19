@@ -127,11 +127,14 @@ mod tests {
             assert_eq!(page.start_or_stop(&snapshot), Step::Run(vec![Effect::Start(name.clone())]));
         }
         // One that cannot start yet says why and asks nothing of the helper.
-        for (state, word) in [(ServiceState::Locked, "locked"), (ServiceState::Waiting, "waiting")] {
+        // What a locked one points at is said beside the words, which name no key.
+        for (state, word, hint) in [(ServiceState::Locked, "locked.", Some(Hint::Unlock)), (ServiceState::Waiting, "waiting", None)] {
             let Step::Failed(notice) = page.start_or_stop(&with_state(&snapshot, &name, state)) else {
                 panic!("{state:?} is refused");
             };
             assert!(notice.text.contains(word), "{}", notice.text);
+            assert!(!notice.text.contains("Press"), "{}", notice.text);
+            assert_eq!(notice.hint, hint);
         }
     }
 
