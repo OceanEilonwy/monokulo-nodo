@@ -1,7 +1,7 @@
 //! Where everything sits on the 1920 x 1080 screen, in pixels.
 //!
-//! The design (`docs/design/tui/ScreenTilesOled*.dc.html`, `ScreenShutdown*.dc.html`) is drawn at
-//! half size, 960 x 540, so every measure here is the design's doubled. Rust decides every
+//! The design (`docs/design/device-console/*.dc.html`) is drawn at half size, 960 x 540, so every
+//! measure here is the design's doubled. Rust decides every
 //! rectangle a finger can hit and hands them to the .slint files, so that what is drawn and what
 //! is hit can never disagree.
 
@@ -9,13 +9,17 @@ use nodo_panels::layout::{COLUMNS, ROWS};
 
 pub const WIDTH: f32 = 1920.0;
 pub const HEIGHT: f32 = 1080.0;
-pub const PAD_TOP: f32 = 24.0;
-pub const PAD_X: f32 = 36.0;
+pub const PAD_TOP: f32 = 32.0;
+pub const PAD_X: f32 = 40.0;
 pub const PAD_BOTTOM: f32 = 32.0;
-pub const HEADER_HEIGHT: f32 = 88.0;
-pub const HEADER_GAP: f32 = 20.0;
-pub const BUTTON_GAP: f32 = 24.0;
-pub const GRID_GAP: f32 = 16.0;
+/// The glance screen's header: 56 px in the design.
+pub const HEADER_HEIGHT: f32 = 112.0;
+pub const HEADER_GAP: f32 = 24.0;
+/// Between the header's buttons: 10 px in the design.
+pub const BUTTON_GAP: f32 = 20.0;
+pub const GRID_GAP: f32 = 24.0;
+/// An icon-only header button (Manage, Arrange, Lock, Power): 60 x 56 in the design.
+pub const ICON_BUTTON: f32 = 120.0;
 /// The resize grip in a selected tile's bottom-right corner: 52 px in the design.
 pub const GRIP: f32 = 104.0;
 /// The smallest touch target anywhere, which the tests hold every button to: about 9 mm on the
@@ -126,17 +130,49 @@ pub fn header_buttons(widths: &[f32]) -> Vec<Rect> {
     rects
 }
 
-/// The confirmation's two buttons, 300 x 110 in the design, side by side below its text.
-pub fn confirm_buttons() -> (Rect, Rect) {
-    let (w, h, gap, y) = (600.0, 220.0, 56.0, 600.0);
-    let centre = WIDTH / 2.0;
-    (Rect::new(centre - gap / 2.0 - w, y, w, h), Rect::new(centre + gap / 2.0, y, w, h))
+/// The power screen's three choices (PowerOff.dc.html): Cancel, Restart and Shut down, each
+/// 230 x 132 in the design, side by side in a 720 wide row below the question.
+pub fn confirm_buttons() -> [Rect; 3] {
+    let (row, gap, h, y) = (1440.0, 28.0, 264.0, 590.0);
+    let w = (row - 2.0 * gap) / 3.0;
+    let x = (WIDTH - row) / 2.0;
+    [0.0, 1.0, 2.0].map(|i| Rect::new(x + i * (w + gap), y, w, h))
 }
 
 /// "Back to the panels", after a shutdown that could not start.
 pub fn back_button() -> Rect {
     let (w, h) = (600.0, 140.0);
     Rect::new((WIDTH - w) / 2.0, HEIGHT - PAD_BOTTOM - h - 40.0, w, h)
+}
+
+/// The console's own touch targets, drawn by `ui/console.slint` at these sizes (Rust sets its
+/// `Touch` global from them at start), so the tests below hold what a finger meets.
+pub mod console {
+    /// A rail item, the orange pill when selected: 76 x 76 in the design.
+    pub const RAIL_ITEM: f32 = 152.0;
+    /// Buttons: 52 px tall in the design.
+    pub const BUTTON: f32 = 104.0;
+    /// A row of the Device lists: 52 px.
+    pub const ROW: f32 = 104.0;
+    /// A row of the services list: 62 px.
+    pub const SERVICE_ROW: f32 = 124.0;
+    /// The on/off switch: 72 x 44.
+    pub const SWITCH_W: f32 = 144.0;
+    pub const SWITCH_H: f32 = 88.0;
+    /// A "Turn display off after" choice: 44 px tall.
+    pub const SEGMENT: f32 = 88.0;
+    /// A key of the passphrase keyboards: 66 px tall (58 on the Unlock design, grown to fill the screen).
+    pub const KEY_UNLOCK: f32 = 132.0;
+    pub const KEY_TEXT: f32 = 132.0;
+    /// A key of the PIN pad: 92 px.
+    pub const PIN_KEY: f32 = 184.0;
+    #[cfg(test)]
+    /// Keys are ten across the 1920 px screen, 16 px apart inside 32 px margins.
+    pub const KEY_WIDTH: f32 = (super::WIDTH - 64.0 - 9.0 * 16.0) / 10.0;
+    /// The Show/Hide eye inside the passphrase box: 48 px.
+    pub const EYE: f32 = 96.0;
+    /// The "Manage via web" chip in a page's header: its QR, 52 px.
+    pub const WEB_CHIP: f32 = 104.0;
 }
 
 /// The list of panels to add: a package's name, then its panels, each a tall row.
@@ -155,28 +191,58 @@ mod tests {
     #[test]
     fn the_grid_fills_the_screen_below_the_top_bar_in_square_cells() {
         let g = grid();
-        assert_eq!(g, Rect::new(36.0, 132.0, 1848.0, 916.0));
-        assert_eq!(cell_width(), 217.0);
-        assert_eq!(cell_height(), 217.0);
+        assert_eq!(g, Rect::new(40.0, 168.0, 1840.0, 880.0));
+        assert_eq!(cell_width(), 209.0);
+        assert_eq!(cell_height(), 202.0);
         assert_eq!(cells(0, 0, 8, 4), g);
-        assert_eq!(cell_at(1883.0, 1047.0), Some((7, 3)));
+        assert_eq!(cell_at(1879.0, 1047.0), Some((7, 3)));
         assert_eq!(cell_at(100.0, 60.0), None, "the top bar is not the grid");
         assert_eq!(nearest_cell(-50.0, 2000.0), (0, 3));
         // A gap belongs to the cell before it.
-        assert_eq!(cell_at(36.0 + 217.0 + 8.0, 140.0), Some((0, 0)));
+        assert_eq!(cell_at(40.0 + 209.0 + 8.0, 180.0), Some((0, 0)));
     }
 
     #[test]
     fn buttons_are_right_aligned_and_never_smaller_than_a_finger() {
         let rects = header_buttons(&[224.0, 320.0, 224.0]);
-        assert_eq!(rects[2].right(), 1884.0);
+        assert_eq!(rects[2].right(), 1880.0);
         assert_eq!(rects[1].right() + BUTTON_GAP, rects[2].x);
         for r in rects {
             assert!(r.w >= MIN_TARGET && r.h >= MIN_TARGET);
         }
         assert!(button_width("Undo: show Wallet scanner · 8 s", 440.0) > 440.0);
-        let (a, b) = confirm_buttons();
-        assert!(a.right() < b.x && b.right() <= WIDTH);
+        let [a, b, c] = confirm_buttons();
+        assert!(a.right() < b.x && b.right() < c.x && c.right() <= WIDTH);
+        for r in [a, b, c, back_button()] {
+            assert!(r.w >= MIN_TARGET && r.h >= MIN_TARGET);
+        }
         assert!(grip(cells(0, 0, 1, 1)).w >= MIN_TARGET);
+    }
+
+    #[test]
+    fn every_console_target_is_finger_sized() {
+        use console::*;
+        for (name, size) in [
+            ("rail item", RAIL_ITEM),
+            ("button", BUTTON),
+            ("row", ROW),
+            ("service row", SERVICE_ROW),
+            ("switch", SWITCH_W),
+            ("switch", SWITCH_H),
+            ("segment", SEGMENT),
+            ("unlock key", KEY_UNLOCK),
+            ("key", KEY_TEXT),
+            ("key width", KEY_WIDTH),
+            ("pin key", PIN_KEY),
+            ("eye", EYE),
+            ("web chip", WEB_CHIP),
+            ("header button", ICON_BUTTON),
+        ] {
+            assert!(size >= MIN_TARGET, "a {name} is {size} px");
+        }
+        // The five "Turn display off after" choices share the Device page's right column, about
+        // 740 px wide inside its card.
+        let column = (WIDTH - 208.0 - 2.0 * 52.0 - 32.0) / 2.0 - 2.0 * 32.0;
+        assert!((column - 4.0 * 12.0) / 5.0 >= MIN_TARGET, "{column}");
     }
 }

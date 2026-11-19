@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Glance</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;gap:14px;padding:18px 22px;overflow:hidden;box-sizing:border-box}
+.btn{height:52px;padding:0 20px;border-radius:16px;background:#1a1a1a;color:#f2f2f2;border:0;font:600 17px Inter,system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;box-sizing:border-box;white-space:nowrap}
+.btn.neg{background:#2a1513;color:#ff9a8c}
+.btn svg{width:20px;height:20px}
+.s{font-size:15px;color:#b3b3b3;line-height:21px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.tl{background:#0d0d0d;border-radius:22px;padding:16px 20px;display:flex;flex-direction:column;gap:6px;box-sizing:border-box;min-width:0}
+.lab{display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#b3b3b3}
+.dot{width:12px;height:12px;border-radius:6px;background:#5fd3a8}
+.big{font:700 56px/60px "JetBrains Mono",monospace;letter-spacing:-0.02em}
+.mid{font:700 40px/46px "JetBrains Mono",monospace}
+.unit{font:500 20px Inter,sans-serif;color:#b3b3b3;margin-left:8px;letter-spacing:0}
+.kv{display:flex;justify-content:space-between;font-size:17px;line-height:24px}
+.kv span:first-child{color:#b3b3b3}
+.bar{height:10px;border-radius:5px;background:#262626;overflow:hidden}
+.bar span{display:block;height:100%;border-radius:5px}
+</style>
+</helmet>
+<div class="dev">
+<header style="display: flex; align-items: center; gap: 16px; height: 56px">
+<img src="logo.svg" alt="" width="40" height="40">
+<div style="display: flex; flex-direction: column">
+<span style="font-size: 20px; font-weight: 700">monokulo-nodo</span>
+<span class="s mono">192.168.1.155</span>
+</div>
+<div style="flex: 1 1 auto; text-align: center"><span class="mono" style="font-size: 30px; font-weight: 700">14:32</span><span class="s" style="margin-left: 10px">Thu 13 Nov</span></div>
+<a class="btn" href="Main.dc.html" aria-label="Manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10"></path><circle cx="16" cy="6" r="2"></circle><path d="M4 12h4"></path><path d="M12 12h8"></path><circle cx="10" cy="12" r="2"></circle><path d="M4 18h12"></path><circle cx="18" cy="18" r="2"></circle></svg></a>
+<button class="btn" type="button" aria-label="Arrange tiles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></button>
+<a class="btn" href="Unlock.dc.html" aria-label="Locked — unlock" style="color: #ff8c3a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg></a>
+<a class="btn neg" href="PowerOff.dc.html" aria-label="Shut down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9"></path><path d="M6.3 7.5a8 8 0 1 0 11.4 0"></path></svg></a>
+</header>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 14px; flex: 1 1 auto; min-height: 0">
+<section class="tl" style="grid-column: span 2">
+<div class="lab">Monero node<span class="dot" style="background: #ff6600"></span></div>
+<div class="big">61%<span class="unit">synced</span></div>
+<div class="bar"><span style="width: 61%; background: #ff6600"></span></div>
+<div style="flex: 1 1 auto"></div>
+<div class="kv"><span>Height</span><span class="mono">2,121,400 / 3,478,000</span></div>
+<div class="kv"><span>Left</span><span>about 9 h</span></div>
+</section>
+<section class="tl">
+<div class="lab">Payments today<span class="dot"></span></div>
+<div class="big">4.82<span class="unit">XMR</span></div>
+<div style="flex: 1 1 auto"></div>
+<div class="kv"><span>Paid</span><span class="mono">37</span></div>
+<div class="kv"><span>Waiting</span><span class="mono">2</span></div>
+</section>
+<section class="tl">
+<div class="lab">Device<span class="dot"></span></div>
+<div class="mid">52<span class="unit">°C</span></div>
+<div style="flex: 1 1 auto"></div>
+<div class="kv"><span>SSD</span><span class="mono">541 GB / 2.0 TB</span></div>
+<div class="kv"><span>Memory</span><span class="mono">6.1 / 31 GB</span></div>
+<div class="kv"><span>Up</span><span class="mono">3 d 4 h</span></div>
+</section>
+<section class="tl">
+<div class="lab">Bell<span class="dot"></span></div>
+<div class="mid" style="font-family: Inter, sans-serif">Ringing</div>
+<div style="flex: 1 1 auto"></div>
+<div class="kv"><span>Last</span><span>0.8 s ago</span></div>
+</section>
+<section class="tl">
+<div class="lab">Wallet scanner<span class="dot"></span></div>
+<div class="mid">214<span class="unit">accounts</span></div>
+<div style="flex: 1 1 auto"></div>
+<div class="kv"><span>Behind</span><span>0 blocks</span></div>
+</section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -3137,6 +3137,7 @@ dependencies = [
  "nodo-splash",
  "nodo-ui-core",
  "png 0.17.16",
+ "qrcodegen",
  "serde",
  "signal-hook",
  "slint",

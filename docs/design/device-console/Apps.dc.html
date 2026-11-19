@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Services</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;overflow:hidden;box-sizing:border-box}
+.rail{width:104px;flex:0 0 104px;background:#050505;display:flex;flex-direction:column;padding:10px 8px;gap:6px;box-sizing:border-box}
+.railnav{display:flex;flex-direction:column;gap:14px;flex:1 1 auto;justify-content:center}
+.ri{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;height:76px;border-radius:18px;color:#b3b3b3;font:600 14px Inter,system-ui,sans-serif;background:transparent;border:0;cursor:pointer;width:76px;margin:0 auto;box-sizing:border-box;padding:0}
+.ri svg{width:28px;height:28px}
+.ri img{width:34px;height:34px}
+.ri.on{background:#ff6600;color:#000000}
+.ri.lock{color:#ff8c3a}
+.ri.pwr{color:#ff9a8c}
+.main{flex:1 1 auto;padding:22px 26px;display:flex;flex-direction:column;gap:14px;min-width:0;box-sizing:border-box}
+h1{font-size:30px;line-height:36px;margin:0;font-weight:700;letter-spacing:-0.01em;flex:1 1 auto}
+.btn{height:52px;padding:0 22px;border-radius:16px;background:#1a1a1a;color:#f2f2f2;border:0;font:600 17px Inter,system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;box-sizing:border-box;white-space:nowrap}
+.card{background:#0d0d0d;border-radius:22px;padding:18px 20px;box-sizing:border-box}
+.t1{font-size:26px;font-weight:700;line-height:32px}
+.t2{font-size:18px;font-weight:600;line-height:24px}
+.s{font-size:15px;color:#b3b3b3;line-height:21px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+.chip{font-size:14px;font-weight:700;padding:6px 12px;border-radius:999px;white-space:nowrap;line-height:16px}
+.c-ok{background:#123a2c;color:#74e3ba}
+.mg{width:40px;height:40px;border-radius:12px;background:#262626;color:#e6e6e6;display:flex;align-items:center;justify-content:center;font:700 17px "JetBrains Mono",monospace;flex:0 0 40px}
+.mg.lg{width:56px;height:56px;flex-basis:56px;border-radius:16px;font-size:24px;background:#2a2a2a}
+.row{display:flex;align-items:center;gap:12px;height:62px;padding:0 6px 0 10px;border-radius:16px;box-sizing:border-box}
+.row.sel{background:#242424}
+.row .nm{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+.st-ok{color:#74e3ba}.st-bad{color:#ffa194}.st-warn{color:#ff8c3a}.st-off{color:#b3b3b3}
+.sw{width:72px;height:44px;border-radius:22px;background:#4c4c4c;position:relative;border:0;cursor:pointer;flex:0 0 72px;padding:0}
+.sw span{position:absolute;top:5px;left:5px;width:34px;height:34px;border-radius:17px;background:#e6e6e6}
+.sw.on{background:#ff6600}
+.sw.on span{left:33px;background:#000000}
+.kv{display:flex;gap:16px;font-size:17px;line-height:24px;padding:7px 0}
+.kv span:first-child{width:130px;flex:0 0 130px;color:#b3b3b3}
+.qrm{background:#fff;border-radius:10px;padding:4px;width:64px;height:64px;box-sizing:border-box;flex:0 0 64px}
+.qrm img{width:100%;height:100%;display:block}
+</style>
+</helmet>
+<div class="dev">
+<nav class="rail" aria-label="Device">
+<a class="ri" href="Glance.dc.html"><img src="logo.svg" alt=""><span>Home</span></a>
+<div class="railnav">
+<a class="ri" href="Main.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg><span>Status</span></a>
+<a class="ri on" href="Apps.dc.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg><span>Services</span></a>
+<a class="ri" href="Network.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0"></path><path d="M8.5 16a5 5 0 0 1 7 0"></path><path d="M12 19.5h.01"></path><path d="M2 9a14.5 14.5 0 0 1 20 0"></path></svg><span>Network</span></a>
+<a class="ri" href="System.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10"></path><circle cx="16" cy="6" r="2"></circle><path d="M4 12h4"></path><path d="M12 12h8"></path><circle cx="10" cy="12" r="2"></circle><path d="M4 18h12"></path><circle cx="18" cy="18" r="2"></circle></svg><span>Device</span></a>
+</div>
+</nav>
+<main class="main">
+<div style="display: flex; align-items: center; min-height: 52px"><h1>Services</h1><span class="s">{{onCount}} of 6 on</span></div>
+<div style="display: flex; gap: 16px; flex: 1 1 auto; min-height: 0">
+<section class="card" style="width: 350px; flex: 0 0 350px; padding: 10px; display: flex; flex-direction: column; gap: 4px" aria-label="Services">
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+<div class="{{r.rowCls}}">
+<span class="mg">{{r.mg}}</span>
+<span class="nm"><span class="t2">{{r.name}}</span><span class="{{r.stCls}}" style="font-size: 15px; line-height: 20px; font-weight: 600">{{r.state}}</span></span>
+<button class="{{r.swCls}}" type="button" aria-label="{{r.label}}" aria-pressed="{{r.on}}" onClick="{{r.toggle}}"><span></span></button>
+</div>
+</sc-for>
+</section>
+<section class="card" style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 14px; margin-bottom: 4px">
+<span class="mg lg">m</span>
+<div style="flex: 1 1 auto; min-width: 0"><div class="t1">moneropay</div><div class="s">up 3 d 4 h · version 2.7.0</div></div>
+<span class="chip c-ok">Running</span>
+</div>
+<div class="kv"><span>Home network</span><span class="mono">https://shop.local</span></div>
+<div class="kv"><span>Internet</span><span class="mono">https://shop.example.com</span></div>
+<div class="kv"><span>Tor</span><span class="mono">[onion].onion</span></div>
+<div class="kv"><span>Ports</span><span class="mono">443 https · [port] API</span></div>
+<div style="flex: 1 1 auto"></div>
+<div style="display: flex; gap: 10px; justify-content: flex-end">
+<button class="btn" type="button">Restart</button>
+</div>
+</section>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { on: { cuprated: true, tor: true, moneropay: true, 'wallet-relay': true, bell: true, monerod: false } };
+}
+renderVals() {
+const base = [
+{ name: 'cuprated', st: 'Running', cls: 'st-ok' },
+{ name: 'tor', st: 'Running', cls: 'st-ok' },
+{ name: 'moneropay', st: 'Running', cls: 'st-ok' },
+{ name: 'wallet-relay', st: 'Locked until you unlock', cls: 'st-warn' },
+{ name: 'bell', st: 'Keeps stopping', cls: 'st-bad' },
+{ name: 'monerod', st: 'Running', cls: 'st-ok' }
+];
+const on = this.state.on;
+const rows = base.map((b) => {
+const isOn = !!on[b.name];
+return {
+name: b.name, mg: b.name[0], on: isOn,
+state: isOn ? b.st : 'Off',
+stCls: isOn ? b.cls : 'st-off',
+rowCls: b.name === 'moneropay' ? 'row sel' : 'row',
+swCls: isOn ? 'sw on' : 'sw',
+label: (isOn ? 'Turn off ' : 'Turn on ') + b.name,
+toggle: () => this.setState({ on: Object.assign({}, on, { [b.name]: !isOn }) })
+};
+});
+return { rows: rows, onCount: rows.filter((r) => r.on).length };
+}
+}
+</script>
+</body>
+</html>

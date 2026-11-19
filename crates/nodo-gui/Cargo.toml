@@ -29,6 +29,8 @@ libc = "0.2"
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-linuxkms-noseat", "renderer-software"] }
 # For --screenshot, which renders a screen to a PNG file without a display.
 png = "0.17"
+# "Manage via web" and the one-time web password link, as on the TUI and the web GUI.
+qrcodegen = "1.8"
 
 [build-dependencies]
 slint-build = "1.18"

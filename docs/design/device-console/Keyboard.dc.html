@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Text entry</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;gap:14px;padding:16px;overflow:hidden;box-sizing:border-box}
+.btn{height:56px;padding:0 26px;border-radius:16px;background:#1a1a1a;color:#f2f2f2;border:0;font:600 18px Inter,system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;white-space:nowrap}
+.btn.pri{background:#ff6600;color:#000000}
+.fld{flex:1 1 auto;min-width:0;height:84px;border-radius:18px;background:#0d0d0d;box-shadow:inset 0 0 0 2px #ff6600;padding:10px 18px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.fl{font-size:15px;font-weight:600;color:#ff8c3a}
+.val{font:500 28px/36px "JetBrains Mono",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.caret{display:inline-block;width:3px;height:30px;background:#ff6600;vertical-align:-5px;margin-left:2px}
+.kb{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:8px;flex:1 1 auto}
+.k{height:66px;border-radius:14px;background:#1c1c1c;color:#f2f2f2;border:0;font:500 26px Inter,system-ui,sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.k:active{background:#4c4c4c}
+.k.fn{background:#0d0d0d;font-size:18px;font-weight:600;color:#d9d9d9}
+.k.on{background:#ff6600;color:#000000}
+.k svg{width:26px;height:26px}
+</style>
+</helmet>
+<div class="dev">
+<div style="display: flex; gap: 12px; align-items: center">
+<div class="fld" role="textbox" aria-label="Wi-Fi passphrase for HomeNet">
+<span class="fl">Wi-Fi passphrase · HomeNet</span>
+<span class="val">{{value}}<span class="caret"></span></span>
+</div>
+<a class="btn" href="System.dc.html">Cancel</a>
+<a class="btn pri" href="System.dc.html">Join</a>
+</div>
+<div class="kb">
+<sc-for list="{{keys}}" as="key" hint-placeholder-count="40">
+<button class="k" type="button" onClick="{{key.press}}">{{key.label}}</button>
+</sc-for>
+<button class="{{shiftCls}}" type="button" aria-label="Shift" aria-pressed="{{shift}}" onClick="{{toggleShift}}" style="grid-column: span 2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l8 8h-4v7H8v-7H4z"></path></svg></button>
+<button class="k fn" type="button" onClick="{{symbols}}" aria-label="Symbols">#+=</button>
+<button class="k fn" type="button" onClick="{{space}}" style="grid-column: span 5">space</button>
+<button class="k fn" type="button" aria-label="Delete" onClick="{{back}}" style="grid-column: span 2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 5H9l-6 7 6 7h12z"></path><path d="M17 9l-6 6"></path><path d="M11 9l6 6"></path></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { value: 'blue-otter-41', shift: false };
+}
+renderVals() {
+const s = this.state;
+const rows = '1234567890qwertyuiopasdfghjkl:zxcvbnm./-';
+const keys = rows.split('').map((c) => {
+const label = s.shift ? c.toUpperCase() : c;
+return { label: label, press: () => this.setState({ value: s.value + label, shift: false }) };
+});
+return {
+value: s.value,
+keys: keys,
+shift: s.shift,
+shiftCls: s.shift ? 'k fn on' : 'k fn',
+toggleShift: () => this.setState({ shift: !s.shift }),
+symbols: () => this.setState({ value: s.value + '#' }),
+space: () => this.setState({ value: s.value + ' ' }),
+back: () => this.setState({ value: s.value.slice(0, -1) })
+};
+}
+}
+</script>
+</body>
+</html>

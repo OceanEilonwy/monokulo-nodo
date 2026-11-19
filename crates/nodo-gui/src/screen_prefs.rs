@@ -1,4 +1,4 @@
-//! System › Screen and the logo tile's options: the screen's own preferences, kept next to the
+//! Device › Screen and the logo tile's options: the screen's own preferences, kept next to the
 //! layout in `/var/lib/nodo-screen`, which the screen's account owns.
 
 #![deny(clippy::let_underscore_must_use, unused_must_use)]
@@ -8,12 +8,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub const TIMEOUT_LABELS: [&str; 4] = ["1 min", "2 min", "5 min", "Never"];
-const TIMEOUTS: [u64; 4] = [60, 120, 300, 0];
-pub const DIM_LABELS: [&str; 4] = ["Off", "10%", "20%", "40%"];
-const DIMS: [u8; 4] = [0, 10, 20, 40];
-pub const BRIGHTNESS_LABELS: [&str; 4] = ["40%", "60%", "80%", "100%"];
+/// "Turn display off after", as Device › Screen offers it.
+pub const DISPLAY_OFF_LABELS: [&str; 5] = ["1 min", "5 min", "15 min", "1 hour", "Never"];
+const DISPLAY_OFF: [u64; 5] = [60, 300, 900, 3600, 0];
 const BRIGHTNESS: [u8; 4] = [40, 60, 80, 100];
+/// When the console goes back to the tiles by itself.
+const IDLE_RETURN: Duration = Duration::from_secs(120);
 
 /// How the Nodo logo tile draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -25,11 +25,12 @@ pub enum LogoStyle {
     Text,
 }
 
+/// Unknown keys, such as the earlier `timeout_index` and `dim_index`, are ignored, so a file
+/// written by an older screen still loads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    pub timeout_index: usize,
-    pub dim_index: usize,
+    pub display_off_index: usize,
     pub brightness_index: usize,
     pub logo_style: LogoStyle,
     pub logo_shimmer: bool,
@@ -40,15 +41,14 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { timeout_index: 1, dim_index: 2, brightness_index: 3, logo_style: LogoStyle::Drawn, logo_shimmer: true, logo_name: true, path: None }
+        Self { display_off_index: 2, brightness_index: 3, logo_style: LogoStyle::Drawn, logo_shimmer: true, logo_name: true, path: None }
     }
 }
 
 impl Prefs {
     pub fn load(path: PathBuf) -> Self {
         let mut prefs: Prefs = std::fs::read_to_string(&path).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
-        prefs.timeout_index = prefs.timeout_index.min(TIMEOUTS.len() - 1);
-        prefs.dim_index = prefs.dim_index.min(DIMS.len() - 1);
+        prefs.display_off_index = prefs.display_off_index.min(DISPLAY_OFF.len() - 1);
         prefs.brightness_index = prefs.brightness_index.min(BRIGHTNESS.len() - 1);
         prefs.path = Some(path);
         prefs
@@ -67,11 +67,24 @@ impl Prefs {
         }
     }
 
-    /// When management goes back to the tiles; "Never" is a day.
-    pub fn timeout(&self) -> Duration {
-        match TIMEOUTS[self.timeout_index] {
-            0 => Duration::from_secs(86_400),
-            s => Duration::from_secs(s),
+    /// When the console goes back to the tiles.
+    pub fn idle_return(&self) -> Duration {
+        IDLE_RETURN
+    }
+
+    /// How long without a touch before the display goes off; `None` keeps it on.
+    pub fn display_off(&self) -> Option<Duration> {
+        match DISPLAY_OFF[self.display_off_index] {
+            0 => None,
+            s => Some(Duration::from_secs(s)),
+        }
+    }
+
+    /// "After 15 min idle", or "Always on".
+    pub fn display_off_label(&self) -> String {
+        match self.display_off_index {
+            i if DISPLAY_OFF[i] == 0 => "Always on".to_owned(),
+            i => format!("After {} idle", DISPLAY_OFF_LABELS[i]),
         }
     }
 
@@ -80,9 +93,9 @@ impl Prefs {
         BRIGHTNESS[self.brightness_index]
     }
 
-    /// The idle brightness in percent; 0 keeps the screen bright.
-    pub fn dim_percent(&self) -> u8 {
-        DIMS[self.dim_index]
+    /// The next brightness step, round to the first after the brightest.
+    pub fn step_brightness(&mut self) {
+        self.brightness_index = (self.brightness_index + 1) % BRIGHTNESS.len();
     }
 }
 
@@ -95,13 +108,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gui.toml");
         let mut p = Prefs::load(path.clone());
-        p.timeout_index = 3;
+        assert_eq!(p.display_off_label(), "After 15 min idle");
+        p.display_off_index = 4;
         p.logo_style = LogoStyle::Text;
         p.save();
         let q = Prefs::load(path.clone());
-        assert_eq!(q.timeout_index, 3);
+        assert_eq!(q.display_off_index, 4);
+        assert_eq!((q.display_off(), q.display_off_label().as_str()), (None, "Always on"));
         assert_eq!(q.logo_style, LogoStyle::Text);
-        std::fs::write(&path, "timeout_index = 99\n").unwrap();
-        assert_eq!(Prefs::load(path).timeout_index, 3);
+        // An older file's keys are ignored, and an index out of range is clamped.
+        std::fs::write(&path, "timeout_index = 1\ndim_index = 2\ndisplay_off_index = 99\n").unwrap();
+        assert_eq!(Prefs::load(path).display_off_index, 4);
+    }
+
+    #[test]
+    fn brightness_steps_round() {
+        let mut p = Prefs::default();
+        assert_eq!(p.brightness(), 100);
+        p.step_brightness();
+        assert_eq!(p.brightness(), 40);
     }
 }

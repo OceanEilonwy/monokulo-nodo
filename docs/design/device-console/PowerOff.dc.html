@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo device — Power</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+.dev{width:960px;height:540px;background:#000;color:#f2f2f2;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px;overflow:hidden;box-sizing:border-box;text-align:center}
+.s{font-size:18px;color:#b3b3b3;line-height:26px;max-width:560px}
+.opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;width:720px;margin-top:14px}
+.op{height:132px;border-radius:22px;border:0;background:#0d0d0d;color:#f2f2f2;font:600 19px Inter,system-ui,sans-serif;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0;box-shadow:inset 0 0 0 2px #262626}
+.op svg{width:36px;height:36px}
+.op.stop{background:#c62828;color:#ffffff;box-shadow:none}
+.op.re svg{color:#ff8c3a}
+</style>
+</helmet>
+<div class="dev">
+<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#ff9a8c" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9"></path><path d="M6.3 7.5a8 8 0 1 0 11.4 0"></path></svg>
+<h1 style="margin: 0; font-size: 34px; line-height: 40px; font-weight: 700">Turn off the Nodo?</h1>
+<div class="s">Every service stops, and the web admin goes offline. After a restart, encrypted services wait until you unlock again.</div>
+<div class="opts">
+<a class="op" href="Glance.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>Cancel</a>
+<button class="op re" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v5h-5"></path></svg>Restart</button>
+<a class="op stop" href="ShuttingDown.dc.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9"></path><path d="M6.3 7.5a8 8 0 1 0 11.4 0"></path></svg>Shut down</a>
+</div>
+<div class="s" style="font-size: 15px">Safe to unplug once the screen goes dark.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":540}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

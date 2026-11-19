@@ -1,4 +1,4 @@
-//! nodo-gui: package panels on the device's built-in screen (docs/SCREEN.md).
+//! nodo-gui: package panels and the device console on the built-in screen (docs/SCREEN.md).
 //!
 //! Draws straight to the panel through KMS with Slint's software renderer and reads the
 //! touchscreen through libinput, as `_nodo_screen`. The panels themselves (manifests, Lua, layout)
@@ -7,8 +7,10 @@
 
 mod backlight;
 mod config;
+mod console;
 mod geometry;
-mod manage;
+mod missing;
+mod qr;
 mod screen_prefs;
 mod screenshot;
 mod state;
@@ -36,7 +38,7 @@ use crate::state::{App, Effect, Key, Mode};
 use crate::view::Presenter;
 
 const USAGE: &str = "usage: nodo-gui [--layout PATH] [--config PATH] [--once] [--screenshot SCENE PATH]\n\
-scenes: view, arrange, drag, hidden, add, confirm, progress, failed, off";
+scenes: view, arrange, drag, hidden, add, confirm, progress, failed, off, and the console's c-…";
 
 struct Options {
     layout: PathBuf,
@@ -108,7 +110,7 @@ fn address() -> String {
     }
 }
 
-/// ("thu 13 nov", "14:32") in the device's local time.
+/// ("Thu 13 Nov", "14:32") in the device's local time.
 fn clock() -> (String, String) {
     // SAFETY: time and localtime_r write only into the provided values; strftime writes at most
     // `buf.len()` bytes and returns how many it wrote.
@@ -121,7 +123,7 @@ fn clock() -> (String, String) {
         let format = |f: &std::ffi::CStr| {
             let mut buf = [0u8; 64];
             let n = libc::strftime(buf.as_mut_ptr().cast(), buf.len(), f.as_ptr(), &tm);
-            String::from_utf8_lossy(&buf[..n]).to_lowercase()
+            String::from_utf8_lossy(&buf[..n]).into_owned()
         };
         (format(c"%a %d %b"), format(c"%H:%M"))
     }
@@ -244,18 +246,19 @@ struct Runtime {
     layout_seen: Option<SystemTime>,
     layout_checked: Instant,
     stop: Arc<AtomicBool>,
-    manage: manage::Manage,
-    /// The management version last shown, so its models are only rebuilt on change.
-    manage_shown: Option<u64>,
+    console: console::Console,
+    /// The console version last shown, so its models are only rebuilt on change.
+    console_shown: Option<u64>,
 }
 
 impl Runtime {
     fn set_backlight(&self, level: backlight::Level) {
         if let Some(device) = &self.backlight {
-            // System › Screen: the brightness in use, and how far idle dims it (Off never dims).
-            let bright = self.manage.prefs.brightness();
+            // Device › Screen: the brightness in use; idle dims it, then turns it off.
+            let bright = self.console.prefs.brightness();
             let dim = self.dimmer.percent;
             let (level, percent) = match level {
+                backlight::Level::Off => (backlight::Level::Off, 0),
                 backlight::Level::Dim if dim > 0 => (backlight::Level::Dim, dim.min(bright)),
                 _ if bright >= 100 => (backlight::Level::Full, 100),
                 _ => (backlight::Level::Dim, bright),
@@ -280,8 +283,13 @@ impl Runtime {
                 log("shutting down, as asked on the screen");
                 power_off(self.power_tx.clone());
             }
-            Effect::OpenManage => self.manage.open(),
-            Effect::LogoOptions => self.manage.open_at_screen_settings(),
+            Effect::OpenManage => self.console.open_at(console::Page::Status),
+            Effect::OpenUnlock => self.console.open_unlock(),
+            Effect::LogoOptions => self.console.open_logo_options(),
+            Effect::RestartDevice => match self.console.missing.restart_device() {
+                Ok(()) => log("restarting, as asked on the screen"),
+                Err(_) => self.app.power_note = Some(format!("Restarting from the screen is {}.", missing::NOT_YET)),
+            },
         }
     }
 
@@ -368,16 +376,17 @@ impl Runtime {
             }
         }
         self.app.tick(now);
-        self.manage.poll();
-        self.dimmer.percent = self.manage.prefs.dim_percent();
-        let prefs = &self.manage.prefs;
+        self.console.poll();
+        self.app.locked = self.console.locked();
+        self.dimmer.off_after = self.console.prefs.display_off();
+        let prefs = &self.console.prefs;
         self.app.logo = state::LogoLook {
             text: prefs.logo_style == screen_prefs::LogoStyle::Text,
             shimmer: prefs.logo_shimmer,
             name: prefs.logo_name,
             frame: glint(),
         };
-        if let Some(level) = self.dimmer.tick(now, self.app.mode == Mode::View && !self.manage.open) {
+        if let Some(level) = self.dimmer.tick(now, self.app.mode == Mode::View && !self.console.open) {
             self.set_backlight(level);
         }
     }
@@ -432,8 +441,10 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
         signal_hook::flag::register(signal, Arc::clone(&stop)).map_err(|e| e.to_string())?;
     }
     let ui = MainWindow::new().map_err(|e| format!("cannot open the screen: {e}"))?;
-    ui.set_host(hostname().into());
-    ui.set_address(address().into());
+    set_touch_sizes(&ui);
+    let (host, ip) = (hostname(), address());
+    ui.set_host(host.clone().into());
+    ui.set_address(ip.clone().into());
 
     let (job_tx, job_rx) = mpsc::channel::<Job>();
     let (done_tx, done_rx) = mpsc::channel::<Done>();
@@ -451,15 +462,16 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
             (None, Some(format!("{socket}: {e}")))
         }
     };
-    let mut manage = manage::Manage::new(worker);
+    let mut console = console::Console::new(worker, Box::new(missing::NotYet));
     if let Some(why) = offline {
-        manage.set_offline(why);
+        console.set_offline(why);
     }
-    manage.prefs = screen_prefs::Prefs::load(options.layout.with_file_name("gui.toml"));
-    manage.idle_return = manage.prefs.timeout();
+    console.host = host;
+    console.address = ip;
+    console.prefs = screen_prefs::Prefs::load(options.layout.with_file_name("gui.toml"));
     let runtime = Rc::new(RefCell::new(Runtime {
-        manage,
-        manage_shown: None,
+        console,
+        console_shown: None,
         app: App::new(offered, layout, Instant::now()),
         presenter: Presenter::new(&ui),
         options,
@@ -485,9 +497,9 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
             let Some(ui) = weak.upgrade() else { return };
             let mut r = runtime.borrow_mut();
             let (day, time) = clock();
-            let Runtime { app, presenter, manage, manage_shown, .. } = &mut *r;
+            let Runtime { app, presenter, console, console_shown, .. } = &mut *r;
             presenter.show(&ui, app, Instant::now(), (&day, &time));
-            show_manage(&ui, manage, manage_shown);
+            show_console(&ui, console, console_shown);
         }
     };
     let show = Rc::new(show);
@@ -527,40 +539,19 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
         });
     }
 
-    // Management's callbacks: Slint reports the action, Manage decides.
+    // The console's callbacks: Slint reports the tap, the console decides.
     {
         let runtime = Rc::clone(&runtime);
         let show = Rc::clone(&show);
-        ui.on_m_act(move |id| {
+        ui.on_c_act(move |id| {
             {
                 let mut r = runtime.borrow_mut();
-                if id == "power" {
-                    r.manage.close();
+                let brightness = r.console.prefs.brightness();
+                if r.console.act(&id) == console::Handoff::Power {
                     let effect = r.app.act(state::Button::ShutDown, Instant::now());
                     r.apply(effect);
-                } else {
-                    r.manage.act(&id);
                 }
-            }
-            show();
-        });
-    }
-    {
-        let runtime = Rc::clone(&runtime);
-        let show = Rc::clone(&show);
-        ui.on_m_toggled(move |id, on| {
-            runtime.borrow_mut().manage.toggled(&id, on);
-            show();
-        });
-    }
-    {
-        let runtime = Rc::clone(&runtime);
-        let show = Rc::clone(&show);
-        ui.on_m_segment(move |id, n| {
-            {
-                let mut r = runtime.borrow_mut();
-                r.manage.segment(&id, n.max(0) as usize);
-                if id == "screen-brightness" {
+                if r.console.prefs.brightness() != brightness {
                     r.set_backlight(backlight::Level::Full);
                 }
             }
@@ -570,24 +561,8 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     {
         let runtime = Rc::clone(&runtime);
         let show = Rc::clone(&show);
-        ui.on_m_tab_clicked(move |t| {
-            runtime.borrow_mut().manage.tab_clicked(t.max(0) as usize);
-            show();
-        });
-    }
-    {
-        let runtime = Rc::clone(&runtime);
-        let show = Rc::clone(&show);
-        ui.on_m_crumb(move |i| {
-            runtime.borrow_mut().manage.crumb(i.max(0) as usize);
-            show();
-        });
-    }
-    {
-        let runtime = Rc::clone(&runtime);
-        let show = Rc::clone(&show);
-        ui.on_m_key(move |k| {
-            runtime.borrow_mut().manage.key(&k);
+        ui.on_c_key(move |k| {
+            runtime.borrow_mut().console.key(&k);
             show();
         });
     }
@@ -618,41 +593,38 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     Ok(())
 }
 
-/// Pushes management's page to the window, only when something changed since the last time.
-pub(crate) fn show_manage(ui: &MainWindow, manage: &manage::Manage, shown: &mut Option<u64>) {
-    if !manage.open {
+/// Pushes the console to the window, only when something changed since the last time.
+pub(crate) fn show_console(ui: &MainWindow, console: &console::Console, shown: &mut Option<u64>) {
+    if !console.open {
         if shown.is_some() {
-            ui.set_manage_open(false);
+            ui.set_c_open(false);
             *shown = None;
         }
         return;
     }
-    if *shown == Some(manage.version) {
+    if *shown == Some(console.version) {
         return;
     }
-    let new_screen = shown.is_none();
-    *shown = Some(manage.version);
-    let page = manage.page();
-    let model = |v: Vec<SharedString>| slint::ModelRc::new(slint::VecModel::from(v));
-    ui.set_m_tab(manage.tab() as i32);
-    ui.set_m_badges(model(manage.badges().into_iter().map(SharedString::from).collect()));
-    ui.set_m_unlocked(manage.unlocked());
-    ui.set_m_pin_set(manage.pin_set());
-    ui.set_m_crumbs(model(page.crumbs.into_iter().map(SharedString::from).collect()));
-    ui.set_m_title(page.title.into());
-    ui.set_m_actions(slint::ModelRc::new(slint::VecModel::from(page.actions)));
-    ui.set_m_cards(slint::ModelRc::new(slint::VecModel::from(page.cards)));
-    let (toast, error) = manage.toast();
-    ui.set_m_toast(toast.into());
-    ui.set_m_toast_error(error);
-    ui.set_m_dialog(manage.dialog_view());
-    ui.set_m_picker(manage.picker_view());
-    ui.set_m_keyboard(manage.keyboard_view());
-    ui.set_m_pin(manage.pin_view());
-    if new_screen {
-        ui.set_m_scroll(0.0);
-    }
-    ui.set_manage_open(true);
+    *shown = Some(console.version);
+    console.show(ui);
+}
+
+/// The console's touch targets, as src/geometry.rs holds them to a finger's size.
+pub(crate) fn set_touch_sizes(ui: &MainWindow) {
+    use geometry::console::*;
+    let touch = ui.global::<Touch>();
+    touch.set_rail_item(RAIL_ITEM);
+    touch.set_button(BUTTON);
+    touch.set_row(ROW);
+    touch.set_service_row(SERVICE_ROW);
+    touch.set_switch_w(SWITCH_W);
+    touch.set_switch_h(SWITCH_H);
+    touch.set_segment(SEGMENT);
+    touch.set_key_unlock(KEY_UNLOCK);
+    touch.set_key_text(KEY_TEXT);
+    touch.set_pin_key(PIN_KEY);
+    touch.set_eye(EYE);
+    touch.set_web_chip(WEB_CHIP);
 }
 
 /// Where the boot splash's glint is now: it crosses the text logo in a second, every four.
