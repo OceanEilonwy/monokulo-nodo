@@ -85,6 +85,8 @@ pub struct WebInput {
     pub secrets: Option<Arc<SecretsKey>>,
     /// The node's restricted RPC on an onion address, while that is wanted and possible.
     pub node_onion: Option<crate::onion::NodeOnionTarget>,
+    /// The owner turned the web GUI on. See `crate::webgui`.
+    pub web_gui: bool,
 }
 
 fn not_connected() -> ApiError {
@@ -181,6 +183,16 @@ pub trait ExposureApplier: Send + Sync {
     fn onion_addresses(&self, _input: &WebInput) -> Result<crate::onion::OnionAddresses, ApiError> {
         Ok(crate::onion::OnionAddresses::default())
     }
+    /// Where the web GUI is being served, while it is on and the local address exists. Without a
+    /// proxy it is served nowhere.
+    fn web_gui_url(&self, _input: &WebInput) -> Option<String> {
+        None
+    }
+    /// Starts or stops the web GUI's service to match the saved choice, and nothing else. For the
+    /// helper's start; a change of the choice goes through [`Self::apply`].
+    fn sync_web_gui_service(&self, _input: &WebInput) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Persists state and changes nothing else. Used by tests.
@@ -267,7 +279,13 @@ impl<S: System> Helper<S> {
                 });
             }
         }
-        Ok(WebInput { sites, secrets: self.secrets_key(), node_onion: self.node_onion_target() })
+        Ok(WebInput {
+            sites,
+            secrets: self.secrets_key(),
+            node_onion: self.node_onion_target(),
+            // A choice that cannot be read counts as off.
+            web_gui: self.web_gui_wanted().unwrap_or(false),
+        })
     }
 
     /// After an unlock, gives the web side its sealed credentials again. The caller holds the

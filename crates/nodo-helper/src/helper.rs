@@ -94,6 +94,10 @@ pub struct Timing {
     pub unlock_backoff_max: Duration,
     /// How long the screen stays unlocked for changes after its last change.
     pub screen_idle: Duration,
+    /// How long the web GUI's login stays open after its last request finished.
+    pub web_idle: Duration,
+    /// How long the web GUI's login stays open at most, counted from the last login.
+    pub web_session: Duration,
 }
 
 impl Default for Timing {
@@ -105,6 +109,8 @@ impl Default for Timing {
             unlock_backoff_base: Duration::from_secs(2),
             unlock_backoff_max: Duration::from_secs(60),
             screen_idle: Duration::from_secs(5 * 60),
+            web_idle: Duration::from_secs(15 * 60),
+            web_session: Duration::from_secs(12 * 60 * 60),
         }
     }
 }
@@ -133,6 +139,8 @@ pub struct Helper<S: System> {
     pub(crate) radios: crate::radio::Radios,
     /// Whether the touchscreen may make changes right now.
     pub(crate) screen: crate::screen::ScreenGate,
+    /// Whether the web GUI is logged in right now, and its own count of failed logins.
+    pub(crate) web: crate::webgui::WebGate,
     /// The last reachability check and when it ran (unix seconds), which owner pages report
     /// rather than run the slow check again. Only in memory, so empty after a restart.
     pub(crate) last_reachability: Mutex<Option<(u64, nodo_api::ReachabilityDetail)>>,
@@ -171,6 +179,7 @@ impl<S: System> Helper<S> {
             secrets: Mutex::new(None),
             radios: crate::radio::Radios::default(),
             screen: crate::screen::ScreenGate::default(),
+            web: crate::webgui::WebGate::default(),
             last_reachability: Mutex::new(None),
         }
     }
@@ -210,6 +219,10 @@ impl<S: System> Helper<S> {
             Request::ScreenStatus | Request::ScreenUnlock { .. } | Request::ScreenLock | Request::SetScreenPin { .. }
         ) {
             return self.screen_request_from_owner(request);
+        }
+        // Only here: the touchscreen and the web GUI itself can never turn the web GUI on or off.
+        if let Request::SetWebGui(enabled) = request {
+            return self.set_web_gui(enabled);
         }
         self.handle_trusted(uid, request)
     }
@@ -297,6 +310,10 @@ impl<S: System> Helper<S> {
             Request::PairBluetooth { address } => self.pair_bluetooth(&address),
             Request::ConnectBluetooth { address, connect } => self.connect_bluetooth(&address, connect),
             Request::RemoveBluetooth { address } => self.remove_bluetooth(&address),
+            Request::WebGuiStatus => Ok(Response::WebGui(self.web_gui_status(false))),
+            // The switch belongs to the main socket (see `handle`), and logging in and out to the
+            // web GUI's own socket (`crate::webgui`).
+            Request::SetWebGui(_) | Request::WebGuiLogin { .. } | Request::WebGuiLogout => Err(ApiError::Denied),
             // Only root may ask, which is what the nodo-localnet service runs as.
             Request::LocalAddressChanged if uid != 0 => Err(ApiError::Denied),
             Request::LocalAddressChanged => self.check_local_address().map(|_| Response::Ok),

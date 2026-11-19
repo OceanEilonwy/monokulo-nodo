@@ -1,10 +1,10 @@
 //! The mock the other tests drive must do what the device does. The same scenarios run against
 //! `HelperBackend` and the real helper in nodo-helper's `tui_contract_tests`.
 
-use nodo_tui::contract;
-use nodo_tui::helper_backend::HelperBackend;
-use nodo_tui::mock::MockBackend;
-use nodo_tui::model::*;
+use nodo_ui_core::contract;
+use nodo_ui_core::helper_backend::HelperBackend;
+use nodo_ui_core::mock::MockBackend;
+use nodo_ui_core::model::*;
 
 /// The guard that keeps the two in step: raising a capability in one and not the other fails here.
 #[test]

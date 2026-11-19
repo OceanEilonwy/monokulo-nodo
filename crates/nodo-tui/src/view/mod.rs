@@ -15,17 +15,17 @@ mod system;
 pub mod v3;
 mod web;
 
-pub use apps::empty_catalog_line;
-
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crossterm::event::KeyCode;
 
-use crate::app::{App, Modal, NoticeKind, Overlay, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{App, Modal, Overlay, Screen, MIN_HEIGHT, MIN_WIDTH};
+use nodo_ui_core::flows::NoticeKind;
 use crate::hit::{self, Click, Target};
-use crate::model::Area;
+use nodo_ui_core::model::Area;
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 use layout::{draw_boxed, draw_page, FitReport, Item};
 
@@ -101,6 +101,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
         Screen::Restore(state) => v3::modern(app, t, more::restore(app, t, state)),
         Screen::Rollbacks(state) => v3::modern(app, t, more::rollbacks(t, state)),
         Screen::Network(state) => v3::modern(app, t, network::network(t, state)),
+        Screen::WebGui(state) => system::web_gui(app, t, state),
     };
     for (index, note) in notes(app, t).into_iter().enumerate() {
         page.footer.insert(index, note);

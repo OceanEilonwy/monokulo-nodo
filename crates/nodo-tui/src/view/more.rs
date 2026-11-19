@@ -2,13 +2,16 @@
 //! `Restore.dc.html` and `Rollbacks.dc.html`: a breadcrumb header, bordered panels, the safe
 //! choice first, typed confirmation before anything is overwritten, and key hints in the footer.
 
-use nodo_api::{UpdateEventKind, UpdateOutcome};
+use nodo_api::UpdateEventKind;
 use ratatui::text::Line;
 
 use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{App, OnionRow, OnionState, RestoreState, RestoreStep, RollbacksState, RESTORE_WORD, TICKS_PER_SECOND};
+use crate::app::{App, OnionState, RestoreState, RestoreStep, RollbacksState, TICKS_PER_SECOND};
+use nodo_ui_core::flows::backup::RESTORE_WORD;
+use nodo_ui_core::words::{day, drive_name};
 use crate::theme::Theme;
+use nodo_ui_core::flows::web::onion::Row;
 
 pub(super) fn crumbs(t: &Theme, parts: &[&str]) -> Line<'static> {
     let mut spans = Vec::new();
@@ -71,7 +74,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
     for (index, which) in rows.iter().enumerate() {
         let selected = index == state.selected;
         match which {
-            OnionRow::Node => {
+            Row::Node => {
                 let Some(node) = &status.node else { continue };
                 let left = format!(" {} {}", checkbox(node.enabled), pad(&node.provider, 14));
                 let address = match (&node.address, node.enabled, node.restricted_rpc) {
@@ -86,7 +89,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
                     Line::from(vec![address, t.n(" ")]),
                 ));
             }
-            OnionRow::Site(i) => {
+            Row::Site(i) => {
                 let Some(site) = status.sites.get(*i) else { continue };
                 let name = if site.id.site == "web" {
                     site.id.package.clone()
@@ -144,14 +147,6 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
 
 // Restore
 
-fn drive_name(drive: &nodo_api::UsbDrive) -> String {
-    let mut name = if drive.model.is_empty() { "USB drive".to_owned() } else { drive.model.clone() };
-    if let Some(label) = &drive.label {
-        name.push_str(&format!(", {label}"));
-    }
-    name
-}
-
 fn field(t: &Theme, label: &str, value: String, focused: bool) -> Item {
     let left = Line::from(if focused { t.b(label.to_owned()) } else { t.d(label.to_owned()) });
     let mut spans = vec![t.n(value)];
@@ -183,7 +178,7 @@ fn steps_panel(t: &Theme, current: usize) -> Panel {
 pub fn restore(app: &App, t: &Theme, state: &RestoreState) -> Page {
     let header = |step: &str| crumbs(t, &["Set up this device", "Restore from a USB backup", step]);
     let busy = Line::from(t.d(if state.busy { "Working…" } else { "" }));
-    let errors = error_items(t, &state.error);
+    let errors = error_items(t, &crate::keys::error(&state.error, state.error_hint()));
     match &state.step {
         RestoreStep::Drives => {
             let mut items: Vec<Item> = state
@@ -357,21 +352,6 @@ pub fn restore(app: &App, t: &Theme, state: &RestoreState) -> Page {
 
 // Rollbacks
 
-/// The UTC date, which unlike a relative time reads the same in every snapshot.
-fn when(at: u64) -> String {
-    // Howard Hinnant's days-to-civil conversion.
-    let z = (at / 86_400) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year}-{month:02}-{day:02}")
-}
-
 pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
     let header = crumbs(t, &["System", "Updates", "Undo an update"]);
     let right = Line::from(t.d(if state.busy { "Working…" } else { "" }));
@@ -397,17 +377,10 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
     }
     if let Some(result) = &state.result {
         options.push(Item::Blank);
-        options.push(Item::Text(Line::from(match &result.outcome {
-            UpdateOutcome::Updated => t.o(format!("✓ {} is back on {}.", result.package, result.to)),
-            UpdateOutcome::RolledBack { reason, recovered: true, .. } => {
-                t.a(format!("▲ {} stayed on {}: {reason}", result.package, result.from))
-            }
-            UpdateOutcome::RolledBack { reason, .. } => {
-                t.e(format!("✕ {} failed and did not come back: {reason}", result.package))
-            }
-            UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => {
-                t.a(format!("▲ {} was not rolled back, nothing changed: {reason}", result.package))
-            }
+        options.push(Item::Text(Line::from(match nodo_ui_core::words::rollback_result(result) {
+            (nodo_ui_core::words::Tone::Good, words) => t.o(format!("✓ {words}")),
+            (nodo_ui_core::words::Tone::Working, words) => t.a(format!("▲ {words}")),
+            (nodo_ui_core::words::Tone::Bad, words) => t.e(format!("✕ {words}")),
         })));
     }
     options.extend(error_items(t, &state.error));
@@ -423,7 +396,7 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
         };
         happened.push(Item::Row(
             Line::from(vec![symbol, t.n(format!(" {} {} → {} ", event.package, event.from, event.to)), t.d(text)]),
-            Line::from(t.d(format!("{} ", when(event.at)))),
+            Line::from(t.d(format!("{} ", day(event.at)))),
         ));
     }
     if happened.is_empty() {

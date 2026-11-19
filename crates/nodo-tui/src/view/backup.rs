@@ -7,18 +7,10 @@ use ratatui::text::Line;
 
 use super::hints;
 use super::layout::{Item, Page, Panel};
-use crate::app::{BackupState, BackupStep, RESTORE_WORD};
+use crate::app::{BackupState, BackupStep};
+use nodo_ui_core::flows::backup::{restore_warning, restores, usb_facts, CHECKED_FIRST, HOLDS, HOLDS_NOTES, PASSPHRASE_NOTES, RESTORE_WORD, USB_NOTE};
+use nodo_ui_core::words::{drive_name, size};
 use crate::theme::Theme;
-
-fn size(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.1} GB", bytes as f64 / 1e9)
-    } else if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1e6)
-    } else {
-        format!("{:.0} KB", (bytes as f64 / 1e3).max(1.0))
-    }
-}
 
 fn field(t: &Theme, label: &str, value: String, focused: bool) -> Item {
     let left = Line::from(if focused { t.b(label.to_owned()) } else { t.d(label.to_owned()) });
@@ -39,18 +31,10 @@ fn errors(t: &Theme, state: &BackupState) -> Vec<Item> {
 }
 
 fn holds(t: &Theme) -> Panel {
-    Panel::new(
-        "A backup holds",
-        vec![
-            bullet(t, true, "Package settings, secrets, certificates and Tor onion keys"),
-            bullet(t, true, "The device key, so encrypted storage can be restored"),
-            bullet(t, true, "The contents of unlocked encrypted storage"),
-            bullet(t, true, "Feeds, pinned keys, approvals and the verified package files"),
-            Item::Blank,
-            Item::Text(Line::from(t.d("Never chain data. The node syncs it again."))),
-            Item::Text(Line::from(t.d("Encrypted with its own passphrase, at the same cost as the device key."))),
-        ],
-    )
+    let mut items: Vec<Item> = HOLDS.iter().map(|line| bullet(t, true, line)).collect();
+    items.push(Item::Blank);
+    items.extend(HOLDS_NOTES.iter().map(|line| Item::Text(Line::from(t.d(*line)))));
+    Panel::new("A backup holds", items)
 }
 
 pub fn backup(t: &Theme, state: &BackupState) -> Page {
@@ -109,13 +93,9 @@ pub fn backup(t: &Theme, state: &BackupState) -> Page {
             items.push(field(t, "Backup passphrase", first.display(), *focus == 1));
             items.push(field(t, "Again", second.display(), *focus == 2));
             items.extend(errors(t, state));
-            let mut about = vec![
-                bullet(t, false, "The backup passphrase opens this backup on any device. Keep it apart from the device."),
-                bullet(t, false, "Use at least 12 characters. It is as valuable as the device passphrase."),
-                bullet(t, false, "Nothing can open the backup without it."),
-            ];
+            let mut about: Vec<Item> = PASSPHRASE_NOTES.iter().map(|line| bullet(t, false, line)).collect();
             let title = if state.target.is_some() {
-                about.push(bullet(t, false, "The drive is unmounted when the backup is written. Wait for it before unplugging."));
+                about.push(bullet(t, false, USB_NOTE));
                 format!("New backup on {}", usb_name())
             } else {
                 "New backup".to_owned()
@@ -134,47 +114,19 @@ pub fn backup(t: &Theme, state: &BackupState) -> Page {
                 .panel(Panel::accent("Open this backup", items))
                 .panel(Panel::new(
                     "Nothing changes yet",
-                    vec![Item::Text(Line::from(t.d(
-                        "The whole backup is checked first. A wrong passphrase or a damaged file restores nothing.",
-                    )))],
+                    vec![Item::Text(Line::from(t.d(CHECKED_FIRST)))],
                 ).grow())
                 .footer(Item::Text(hints(t, &[("↵", "check backup"), ("Esc", "cancel")])))
         }
         BackupStep::Confirm { name, contents, typed, device, field: focus, .. } => {
-            let mut what = Vec::new();
-            for id in &contents.settings {
-                what.push(bullet(t, true, &format!("{id} settings")));
-            }
-            for id in &contents.storage {
-                what.push(bullet(t, true, &format!("{id} encrypted storage")));
-            }
-            if contents.onion_keys {
-                what.push(bullet(t, true, "Tor onion keys"));
-            }
-            if state.fresh {
-                what.push(bullet(t, true, "Feeds, their pinned keys, approvals and the packages installed from them"));
-                if contents.has_device_key {
-                    what.push(bullet(t, true, "Device key, so the backed-up storage opens"));
-                }
-            } else if contents.has_device_key {
-                what.push(bullet(t, true, "Device key, kept if this device's storage already uses its own"));
-            }
+            let what: Vec<Item> = restores(contents, state.fresh).iter().map(|line| bullet(t, true, line)).collect();
             let asks_device = contents.has_device_key || state.fresh;
             let mut confirm = vec![field(t, &format!("Type {RESTORE_WORD}"), typed.display(), *focus == 0)];
             if asks_device {
                 confirm.push(field(t, "New device passphrase", device.display(), *focus == 1));
             }
             confirm.extend(errors(t, state));
-            let (services, tone_title) = if state.fresh {
-                ("Each package is installed, its storage filled, then started.".to_owned(), "Set up this device from the backup")
-            } else if contents.services_to_stop.is_empty() {
-                ("Nothing needs to stop.".to_owned(), "This overwrites what is on the device now")
-            } else {
-                (
-                    format!("Stops while restoring: {}", contents.services_to_stop.join(", ")),
-                    "This overwrites what is on the device now",
-                )
-            };
+            let (services, tone_title) = restore_warning(contents, state.fresh);
             let title = if state.fresh { "It will restore" } else { "It will replace" };
             Page::new(header("Restore"), Line::from(t.a(format!("✓ {name} verified"))))
                 .panel(Panel::new(title, what).grow())
@@ -201,28 +153,10 @@ pub fn backup(t: &Theme, state: &BackupState) -> Page {
     }
 }
 
-fn drive_name(drive: &nodo_api::UsbDrive) -> String {
-    let mut name = if drive.model.is_empty() { "USB drive".to_owned() } else { drive.model.clone() };
-    if let Some(label) = &drive.label {
-        name.push_str(&format!(", {label}"));
-    }
-    name
-}
-
 fn usb_title(state: &BackupState) -> String {
     match &state.usb {
         Some(usb) => format!("USB drive · {}", drive_name(&usb.drive)),
         None => "USB drive".to_owned(),
-    }
-}
-
-fn filesystem(name: Option<&str>) -> &str {
-    match name {
-        Some("vfat") => "FAT32",
-        Some("exfat") => "exFAT",
-        Some("ext4") => "ext4",
-        Some(other) => other,
-        None => "no filesystem",
     }
 }
 
@@ -255,11 +189,7 @@ fn usb_rows(t: &Theme, state: &BackupState) -> Vec<Item> {
         }))));
     }
     if let Some(list) = &usb.list {
-        let mut info = format!(" {} · {} free", filesystem(usb.drive.filesystem.as_deref()), size(list.free_bytes));
-        if list.read_only {
-            info.push_str(" · read-only");
-        }
-        rows.push(Item::Text(Line::from(t.d(info))));
+        rows.push(Item::Text(Line::from(t.d(format!(" {}", usb_facts(&usb.drive, list))))));
     }
     rows
 }

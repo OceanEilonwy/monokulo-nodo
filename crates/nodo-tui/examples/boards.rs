@@ -15,6 +15,8 @@ use nodo_tui::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 use unicode_width::UnicodeWidthStr;
+use nodo_ui_core::Outcome;
+use nodo_ui_core::screen::ScreenId;
 
 /// Cell size on the board, in CSS pixels. JetBrains Mono's advance is 0.6 em.
 /// 15 px makes JetBrains Mono's 0.6 em advance a whole 9 px, so cells meet without seams.
@@ -207,13 +209,13 @@ renderVals() {{ return {{}}; }}
 fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use nodo_tui::app::{Event, Screen};
-    use nodo_tui::mock::MockBackend;
+    use nodo_ui_core::mock::MockBackend;
     use nodo_tui::runtime::dispatch;
 
     fn start() -> (nodo_tui::app::App, MockBackend) {
-        let (mut app, mut mock) = nodo_tui::fixtures::fixture(nodo_tui::app::ScreenId::Main);
-        let form = nodo_tui::model::ScreenData::settings_form(&mock, "moneropay");
-        dispatch(&mut app, &mut mock, Event::SettingsLoaded { package: "moneropay".to_owned(), form });
+        let (mut app, mut mock) = nodo_tui::fixtures::fixture(nodo_ui_core::screen::ScreenId::Main);
+        let form = nodo_ui_core::model::ScreenData::settings_form(&mock, "moneropay");
+        dispatch(&mut app, &mut mock, Event::Done(Outcome::SettingsLoaded { package: "moneropay".to_owned(), form }));
         (app, mock)
     }
     fn key(app: &mut nodo_tui::app::App, mock: &mut MockBackend, code: KeyCode) {
@@ -244,20 +246,20 @@ fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
     let (mut app, mut mock) = start();
     mixed(&mut app, &mut mock);
     if let Screen::Settings(state) = &mut app.screen {
-        state.draft[3] = nodo_tui::model::FieldValue::Pieces(vec![
-            nodo_tui::model::Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
-            nodo_tui::model::Piece::Text("/orders".into()),
+        state.draft[3] = nodo_ui_core::model::FieldValue::Pieces(vec![
+            nodo_ui_core::model::Piece::Ref { app: "old-shop".into(), setting: "webhook_url".into() },
+            nodo_ui_core::model::Piece::Text("/orders".into()),
         ]);
     }
     let value = match &app.screen {
         Screen::Settings(state) => state.draft[3].clone(),
         _ => unreachable!(),
     };
-    for event in nodo_tui::runtime::execute_effect(
+    for event in nodo_ui_core::exec::execute_effect(
         &mut mock,
-        nodo_tui::app::Effect::PreviewSetting { package: "moneropay".into(), field_index: 3, key: "payment_address".into(), value },
+        nodo_ui_core::Effect::PreviewSetting { package: "moneropay".into(), field_index: 3, key: "payment_address".into(), value },
     ) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     scenes.push(("real-tui-refs-field".to_owned(), "References: text and chips, one broken (real)".to_owned(), app.clone()));
 
@@ -312,7 +314,7 @@ fn refs_scenes() -> Vec<(String, String, nodo_tui::app::App)> {
 
 /// Every real screen, from its fixture, at 120×36 and 80×24: `real-tui-<slug>` boards and text.
 pub fn real_all(out: &std::path::Path) {
-    use nodo_tui::app::{Screen, ScreenId};
+    use nodo_tui::app::Screen;
     use nodo_tui::fixtures::fixture;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -414,7 +416,8 @@ fn main() {
 /// The real web screens (web flow v3 as built), rendered through `view::render` from the mock
 /// device, for comparing with the approved proposal boards.
 pub fn real_screens(out: &std::path::Path) {
-    use nodo_tui::app::{ProviderStage, Screen, ScreenId};
+    use nodo_tui::app::Screen;
+    use nodo_ui_core::flows::web::providers::ProviderStage;
     use nodo_tui::fixtures::fixture;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -463,11 +466,11 @@ pub fn real_screens(out: &std::path::Path) {
     scenes.push(("real-web3-provider-done", "Provider connected (real)", app));
     // Two connected providers: Porkbun with example.com, Gandi with the domains its key lists.
     let with_gandi = |id: ScreenId| {
-        use nodo_tui::model::ScreenData;
+        use nodo_ui_core::model::ScreenData;
         let (mut app, mut mock) = fixture(id);
-        let key = nodo_tui::secret::Secret::new("k");
+        let key = nodo_ui_core::secret::Secret::new("k");
         mock.add_provider("Gandi", None, &key, &key).expect("mock provider");
-        app.data = nodo_tui::runtime::load_snapshot(&mut mock).expect("snapshot");
+        app.data = nodo_ui_core::exec::load_snapshot(&mut mock).expect("snapshot");
         app
     };
     let mut app = with_gandi(ScreenId::WebExposure);

@@ -1,0 +1,295 @@
+//! The frame every page is drawn in, and the pieces pages are made of.
+//!
+//! Everything is plain HTML that works without scripts: real links, forms and buttons. htmx adds
+//! three things where it is loaded, and nothing depends on them: a question appears as a dialog
+//! over the page instead of on a page of its own, a page that waits asks again by itself, and a
+//! search narrows as it is typed. `assets/app.js` gives that dialog the keyboard's focus.
+//!
+//! The content security policy allows no inline script or style, so there is no `style=`
+//! attribute and no `on…=` attribute anywhere; every look is a class of `assets/app.css`.
+
+use axum::http::StatusCode;
+use maud::{html, Markup, DOCTYPE};
+use nodo_ui_core::flows::{Notice, NoticeKind};
+use nodo_ui_core::model::Document;
+use nodo_ui_core::screen::Tab;
+
+use crate::assets;
+use nodo_ui_core::words::fingerprint_groups;
+use crate::dest;
+use crate::session::{JobView, Pending};
+
+/// One page: what goes inside the frame.
+pub struct Page {
+    /// For the browser's tab and history.
+    pub title: String,
+    /// The tab it sits under, shown as the current one. `None` for pages that belong to none.
+    pub tab: Option<Tab>,
+    /// The way here from the tab: each a name and its URL, the last one this page.
+    pub trail: Vec<(String, String)>,
+    pub body: Markup,
+    pub status: StatusCode,
+    /// The page waits for something and, without scripts, loads itself again.
+    pub waiting: bool,
+}
+
+impl Page {
+    pub fn new(tab: Tab, title: impl Into<String>, body: Markup) -> Self {
+        Self { title: title.into(), tab: Some(tab), trail: Vec::new(), body, status: StatusCode::OK, waiting: false }
+    }
+
+    /// A page under no tab.
+    pub fn plain(title: impl Into<String>, body: Markup) -> Self {
+        Self { title: title.into(), tab: None, trail: Vec::new(), body, status: StatusCode::OK, waiting: false }
+    }
+
+    /// The breadcrumbs: names and URLs from the tab down to this page.
+    pub fn trail(mut self, crumbs: &[(&str, &str)]) -> Self {
+        self.trail = crumbs.iter().map(|(name, url)| ((*name).to_owned(), (*url).to_owned())).collect();
+        self
+    }
+
+    pub fn status(mut self, status: StatusCode) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub fn waiting(mut self) -> Self {
+        self.waiting = true;
+        self
+    }
+}
+
+/// What the frame shows around a page.
+pub struct Chrome {
+    /// Tabs and the way out are shown only to someone logged in.
+    pub signed_in: bool,
+    /// The counts beside Apps and System.
+    pub badges: (usize, usize),
+    pub notices: Vec<Notice>,
+}
+
+impl Chrome {
+    /// The frame of the login page: no tabs, nothing about the device.
+    pub fn signed_out() -> Self {
+        Self { signed_in: false, badges: (0, 0), notices: Vec::new() }
+    }
+}
+
+fn tab_url(tab: Tab) -> &'static str {
+    match tab {
+        Tab::Home => dest::HOME,
+        Tab::Apps => dest::APPS,
+        Tab::Web => dest::WEB,
+        Tab::System => dest::SYSTEM,
+    }
+}
+
+fn head(title: &str, waiting: bool) -> Markup {
+    html! {
+        head {
+            meta charset="utf-8";
+            meta name="viewport" content="width=device-width, initial-scale=1";
+            meta name="color-scheme" content="dark";
+            // htmx would add its indicator styles through a stylesheet of its own making. The
+            // classes are in app.css instead, so nothing about the look comes from a script.
+            meta name="htmx-config" content=r#"{"includeIndicatorCSS":false}"#;
+            title { (title) " · Nodo" }
+            // An empty icon, so browsers do not ask for /favicon.ico on every page.
+            link rel="icon" href="data:,";
+            link rel="stylesheet" href=(assets::css_path());
+            script src=(assets::htmx_path()) defer {}
+            script src=(assets::script_path()) defer {}
+            @if waiting {
+                // Without scripts the page loads itself again. With htmx the fragment asks.
+                noscript { meta http-equiv="refresh" content="2"; }
+            }
+        }
+    }
+}
+
+/// A whole HTML document: the frame with `page` inside.
+pub fn document(page: &Page, chrome: &Chrome) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" {
+            (head(&page.title, page.waiting))
+            body {
+                @if chrome.signed_in {
+                    a.skip href="#main" { "Skip to the page" }
+                    header.top {
+                        div.bar {
+                            a.brand href=(dest::HOME) { span.mark {} "Nodo" }
+                            nav.tabs aria-label="Sections" {
+                                @for tab in Tab::ALL {
+                                    @let count = match tab { Tab::Apps => chrome.badges.0, Tab::System => chrome.badges.1, _ => 0 };
+                                    a href=(tab_url(tab)) aria-current=[(page.tab == Some(tab)).then_some("page")] {
+                                        (tab.label())
+                                        @if count > 0 { span.badge title="Updates ready" { (count) } }
+                                    }
+                                }
+                            }
+                            form.out method="post" action=(dest::LOGOUT) {
+                                button.btn.quiet type="submit" { "Log out" }
+                            }
+                        }
+                    }
+                }
+                main #main {
+                    @if !page.trail.is_empty() {
+                        nav.trail aria-label="Where this page is" {
+                            @for (index, (name, url)) in page.trail.iter().enumerate() {
+                                @if index > 0 { span.sep aria-hidden="true" { "›" } }
+                                @if index + 1 == page.trail.len() {
+                                    span aria-current="page" { (name) }
+                                } @else {
+                                    a href=(url) { (name) }
+                                }
+                            }
+                        }
+                    }
+                    @if !chrome.notices.is_empty() {
+                        div.notices role="status" {
+                            @for each in &chrome.notices { (notice(each)) }
+                        }
+                    }
+                    (page.body)
+                }
+                // Where a question is put by htmx, over the page.
+                div #dialog {}
+            }
+        }
+    }
+}
+
+/// One line about what just happened.
+pub fn notice(notice: &Notice) -> Markup {
+    let (class, sign) = match notice.kind {
+        NoticeKind::Info => ("notice", "▸"),
+        NoticeKind::Ok => ("notice ok", "✓"),
+        NoticeKind::Error => ("notice error", "✕"),
+    };
+    html! { p class=(class) { span.sign aria-hidden="true" { (sign) } span { (notice.text) (crate::hints::linked(notice.hint)) } } }
+}
+
+/// A form of one button that posts to `action`. `class` is the button's look: `"btn"`,
+/// `"btn primary"`, `"btn danger"`, `"btn quiet"`.
+pub fn post(action: &str, label: &str, class: &str) -> Markup {
+    html! { form method="post" action=(action) { button class=(class) type="submit" { (label) } } }
+}
+
+/// A button whose action asks first. With htmx the question appears as a dialog over the page;
+/// without it the same post leads to the question's own page.
+pub fn ask(action: &str, label: &str, class: &str) -> Markup {
+    html! {
+        form method="post" action=(action) hx-post=(action) hx-target="#dialog" hx-swap="innerHTML" {
+            button class=(class) type="submit" { (label) }
+        }
+    }
+}
+
+/// A hidden field of a form.
+pub fn hidden(name: &str, value: &str) -> Markup {
+    html! { input type="hidden" name=(name) value=(value); }
+}
+
+/// A row of a list that opens a page: its name, a few words, and something at the end.
+pub fn row(href: &str, name: &str, what: &str, end: Markup) -> Markup {
+    html! {
+        a.row href=(href) {
+            span.name { (name) }
+            span.what { (what) }
+            span.end { (end) }
+            span.go aria-hidden="true" { "›" }
+        }
+    }
+}
+
+/// A row for a page that is not built yet. It says so and leads nowhere.
+pub fn coming(name: &str, what: &str) -> Markup {
+    html! {
+        div.row.off {
+            span.name { (name) }
+            span.what { (what) }
+            span.end { span.tag { "From the terminal for now" } }
+            span.go {}
+        }
+    }
+}
+
+/// A key's fingerprint in groups. `check` marks the one the owner is asked to compare.
+pub fn fingerprint(fp: &str, check: bool) -> Markup {
+    html! {
+        span class=(if check { "fp check" } else { "fp" }) {
+            @for group in fingerprint_groups(fp).split_whitespace() { span { (group) } }
+        }
+    }
+}
+
+/// The passphrase box. `current-password` lets a password manager fill the device passphrase.
+pub fn passphrase(id: &str, label: &str, problem: Option<&str>, focus: bool) -> Markup {
+    html! {
+        div.field {
+            label for=(id) { (label) }
+            input type="password" id=(id) name="passphrase" autocomplete="current-password" required
+                autofocus[focus] aria-invalid=[problem.map(|_| "true")] aria-describedby=[problem.map(|_| format!("{id}-problem"))];
+            @if let Some(problem) = problem {
+                p.problem id=(format!("{id}-problem")) { "✕ " (problem) }
+            }
+        }
+    }
+}
+
+/// The question before something that cannot be taken back, with its two answers. Cancel comes
+/// first, so it is what Tab reaches first and a stray Enter in the page confirms nothing.
+pub fn question(pending: &Pending) -> Markup {
+    let question = &pending.question;
+    html! {
+        h2 #question-title { (question.title) }
+        @for (index, line) in question.body.iter().enumerate() {
+            p class=[(index > 0).then_some("dim")] { (line) }
+        }
+        div.actions.end {
+            a.btn href=(pending.cancel) autofocus[question.cancel_is_default] { "Cancel" }
+            form method="post" action=(dest::CONFIRM) {
+                (hidden("id", &pending.id.to_string()))
+                button.btn.danger type="submit" autofocus[!question.cancel_is_default] { (question.confirm_label) }
+            }
+        }
+    }
+}
+
+/// The question as a dialog over the page, for htmx to put into `#dialog`.
+pub fn dialog(pending: &Pending) -> Markup {
+    html! {
+        div.backdrop {
+            div.dialog role="alertdialog" aria-modal="true" aria-labelledby="question-title" {
+                (question(pending))
+            }
+        }
+    }
+}
+
+/// What a page shows while a job runs: what, for how long, and that it will go on by itself.
+/// With htmx it asks `/working` again every second and is replaced by the answer; `to` is the
+/// page to return to when the job is over, for a page that was only waiting for the backend.
+pub fn working(job: &JobView, to: Option<&str>) -> Markup {
+    let poll = match to {
+        Some(to) => format!("{}?to={}", dest::WORKING, dest::seg(to)),
+        None => dest::WORKING.to_owned(),
+    };
+    html! {
+        section.card.working #working hx-get=(poll) hx-trigger="every 1s" hx-swap="outerHTML" {
+            div.spinner aria-hidden="true" {}
+            h1 { (job.what) }
+            p role="status" { "Working for " (nodo_ui_core::model::counted(job.seconds, "second")) "." }
+            @for line in &job.note { p.dim { (line) } }
+            p.dim.small { "This page moves on by itself when it is done." }
+        }
+    }
+}
+
+/// A text the device wrote, line for line.
+pub fn document_text(document: &Document) -> Markup {
+    html! { pre.text { (document.lines.join("\n")) } }
+}

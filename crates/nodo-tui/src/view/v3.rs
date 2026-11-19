@@ -14,9 +14,11 @@ use ratatui::text::{Line, Span};
 
 use super::layout::{Item, Page};
 use super::pad;
-use crate::app::{App, Tab};
+use crate::app::App;
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
+use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::fingerprint_groups;
 
 pub const MARGIN: &str = "    ";
 
@@ -559,14 +561,8 @@ impl Screen3 {
 /// target.
 pub fn top(app: &App, t: &Theme, tab: Tab, w: u16, targets: &mut Vec<Target>) -> Page {
     let mut tabs = vec![t.n("  ")];
-    let apps = app.data.updates.iter().filter(|u| !u.held && u.name != crate::model::SYSTEM_BASE).count();
-    let nodo = app.data.updates.iter().filter(|u| !u.held && u.name == crate::model::SYSTEM_BASE).count();
     for each in Tab::ALL {
-        let count = match each {
-            Tab::Apps => apps,
-            Tab::System => nodo,
-            _ => 0,
-        };
+        let count = nodo_ui_core::words::tab_badge(&app.data, each);
         let extra = if count > 0 { format!(" {count}") } else { String::new() };
         if each == tab {
             let style = if t.is_mono() {
@@ -665,16 +661,6 @@ pub fn toggle(t: &Theme, on_: bool) -> Vec<Span<'static>> {
     } else {
         vec![t.d("[ ]"), t.d(" Off")]
     }
-}
-
-/// A key fingerprint as groups of four, to compare by eye.
-pub fn fingerprint_groups(fp: &str) -> String {
-    // A "SHA256:" or similar label is not part of the key; its digits must not join the groups.
-    let body = fp.rsplit_once(": ").map_or(fp, |(_, rest)| rest);
-    let body = body.split_once("256:").map_or(body, |(_, rest)| rest);
-    let hex: String = body.chars().filter(char::is_ascii_hexdigit).collect();
-    let pieces: Vec<String> = hex.as_bytes().chunks(8).map(|c| String::from_utf8_lossy(c).into_owned()).collect();
-    pieces.join("  ")
 }
 
 /// A key with its label on one row, the value as groups (highlighted when it is the one to

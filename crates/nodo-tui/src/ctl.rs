@@ -76,7 +76,10 @@ nodo-tui --ctl COMMAND [ARGS]
   bt | bt-on 0|1 | bt-scan | bt-pair ADDRESS | bt-connect ADDRESS 0|1 | bt-remove ADDRESS
   screen-pin                       (device passphrase, then the new 6-digit PIN, on stdin)
   screen-pin-clear                 (device passphrase on stdin; the screen can then only look)
-  screen-status";
+  screen-status
+  web-gui 0|1                      (the admin pages at https://nodo.local on the home network;
+                                    their login is the device passphrase)
+  web-gui-status";
 
 /// A secret line where an empty line means none was given.
 fn optional_secret() -> Result<Option<Secret>, String> {
@@ -214,6 +217,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["screen-pin"] => Request::SetScreenPin { passphrase: secret_line()?, pin: Some(secret_line()?) },
         ["screen-pin-clear"] => Request::SetScreenPin { passphrase: secret_line()?, pin: None },
         ["screen-status"] => Request::ScreenStatus,
+        ["web-gui", on] => Request::SetWebGui(flag(on)?),
+        ["web-gui-status"] => Request::WebGuiStatus,
         ["set", package, name, kind, rest @ ..] => {
             let value = match (*kind, rest) {
                 ("text", [v]) => SettingInput::Literal(SettingLiteral::Text(id(v))),
@@ -520,6 +525,27 @@ mod tests {
         assert!(matches!(parse(&args("bt-on 1")), Ok(Request::SetBluetoothEnabled { enabled: true })));
         assert!(matches!(parse(&args("bt-connect AA:BB:CC:DD:EE:FF 0")), Ok(Request::ConnectBluetooth { connect: false, .. })));
         assert!(matches!(parse(&args("bt-remove AA:BB:CC:DD:EE:FF")), Ok(Request::RemoveBluetooth { .. })));
+    }
+
+    #[test]
+    fn parses_the_web_gui_switch_and_status() {
+        assert!(matches!(parse(&args("web-gui 1")), Ok(Request::SetWebGui(true))));
+        assert!(matches!(parse(&args("web-gui 0")), Ok(Request::SetWebGui(false))));
+        assert!(matches!(parse(&args("web-gui-status")), Ok(Request::WebGuiStatus)));
+        // 0 or 1 like every other switch here, and never a bare `web-gui`.
+        assert_eq!(parse(&args("web-gui on")).unwrap_err(), "expected 0 or 1, got on");
+        assert_eq!(parse(&args("web-gui")).unwrap_err(), USAGE);
+        assert_eq!(parse(&args("web-gui-status 1")).unwrap_err(), USAGE);
+        assert!(USAGE.contains("web-gui 0|1") && USAGE.contains("web-gui-status"));
+        // Neither needs a second request.
+        let status = nodo_api::Response::WebGui(nodo_api::WebGuiStatus {
+            enabled: true,
+            url: Some(nodo_api::WEBGUI_URL.into()),
+            waiting: false,
+            open: false,
+        });
+        assert!(matches!(follow_up(&args("web-gui 1"), &status), Ok(None)));
+        assert!(matches!(follow_up(&args("web-gui-status"), &status), Ok(None)));
     }
 
     #[test]

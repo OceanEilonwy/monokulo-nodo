@@ -4,7 +4,8 @@ use ratatui::text::Line;
 
 use super::hints;
 use super::layout::{Item, Page, Panel};
-use crate::app::{SetupState, SetupStep, MIN_PASSPHRASE_CHARS};
+use crate::app::{SetupState, SetupStep};
+use nodo_ui_core::flows::setup::MIN_PASSPHRASE_CHARS;
 use crate::theme::Theme;
 
 fn error_items(t: &Theme, state: &SetupState) -> Vec<Item> {
@@ -43,7 +44,8 @@ pub fn setup(t: &Theme, state: &SetupState) -> Page {
                 .panel(Panel::new("About the passphrase", about).grow())
                 .footer(Item::Text(hints(t, keys)))
         }
-        SetupStep::Keys { keys, selected, adding } => {
+        SetupStep::Keys { selected, adding } => {
+            let keys = &state.keys;
             let mut items: Vec<Item> = keys
                 .iter()
                 .enumerate()

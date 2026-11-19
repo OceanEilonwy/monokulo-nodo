@@ -1,0 +1,32 @@
+
+    Home     Apps 2     Web     System 1                                           monokulo-nodo
+
+
+    System  ›  Web GUI
+
+
+       Web GUI        [x] On    https://nodo.local
+
+       The same pages as here, in a browser on your home network.
+       You log in with the device passphrase. A login ends after 15 minutes without use.
+       It is never on the internet or on Tor, and it is off until you turn it on here.
+
+       ▲  While it is on, anyone on your home network can try the device passphrase at its
+       login page. Until now that took an SSH key.
+       ▲  Wrong tries are slowed down, up to a minute each. The pages can add SSH keys, so the
+       passphrase alone then leads to a shell.
+
+       Address        https://nodo.local
+       Local CA       3F:9A:21:C4:7E:05:B8:D2:61:4A:93:0C:EE:17:5B:28
+                      A6:D9:40:7F:12:C3:8B:65:E0:94:2D:71:BC:58:0A:F6
+       The address has a certificate from this Nodo's own local CA, as local sites do.
+       A browser warns until its device trusts that CA: open http://nodo.local there and follow
+       its steps.
+       Install the root only if that page shows this same fingerprint.
+
+                                                           Back               Turn it off
+
+
+
+
+    Keys: ↵ turn it on or off  r read again  Esc back

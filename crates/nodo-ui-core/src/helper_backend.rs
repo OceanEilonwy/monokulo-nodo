@@ -27,6 +27,8 @@ pub struct HelperBackend {
     /// The most recent read-only drive check, which a repair must quote.
     drive_check: Cell<Option<u64>>,
     pub(crate) manage: RefCell<crate::helper_manage::Cache>,
+    /// The refusals for want of an unlock, each once, until `take_refusals` asks for them.
+    refused: RefCell<Vec<ApiError>>,
 }
 
 fn origin_label(origin: &Origin) -> String {
@@ -303,11 +305,22 @@ impl HelperBackend {
             unavailable: RefCell::new(Vec::new()),
             drive_check: Cell::new(None),
             manage: RefCell::new(crate::helper_manage::Cache::default()),
+            refused: RefCell::new(Vec::new()),
         })
     }
 
+    /// Every request to the helper goes through here, so a refusal for want of an unlock is
+    /// noted whichever call met it.
     pub(crate) fn ask(&self, request: Request) -> Result<Response, ApiError> {
-        self.client.borrow_mut().call(request)
+        let result = self.client.borrow_mut().call(request);
+        if let Err(refusal @ ApiError::Locked(_)) = &result {
+            // Each once: nothing may ever ask for them, and the helper has few such answers.
+            let mut refused = self.refused.borrow_mut();
+            if !refused.contains(refusal) {
+                refused.push(refusal.clone());
+            }
+        }
+        result
     }
 
     /// Records an area as unavailable when the helper says it is, and passes other errors on.
@@ -361,6 +374,10 @@ impl Backend for HelperBackend {
 impl ScreenData for HelperBackend {
     fn capabilities(&self) -> Capabilities {
         Self::CAPABILITIES
+    }
+
+    fn take_refusals(&mut self) -> Vec<ApiError> {
+        std::mem::take(&mut *self.refused.borrow_mut())
     }
 
     fn overview(&self) -> Overview {
@@ -450,7 +467,7 @@ impl ScreenData for HelperBackend {
             unlock_targets,
             updates_checked: match status.as_ref().and_then(|s| s.last_check) {
                 Some(at) => format!("Last checked {}.", crate::helper_manage::ago(at)),
-                None => "Not checked yet. Press r to check now.".to_owned(),
+                None => "Not checked yet.".to_owned(),
             },
             setup_needed: o.encryption == EncryptionState::NotSetUp,
             locked: o.encryption == EncryptionState::Locked,
@@ -476,6 +493,7 @@ impl ScreenData for HelperBackend {
             // Feed packages were verified against their pinned key when they were installed.
             signature_verified: true,
             about: if d.info.roles.is_empty() { String::new() } else { format!("Provides {}", d.info.roles.join(", ")) },
+            about_hint: None,
             version: d.info.version,
             size: String::new(),
             license: String::new(),
@@ -614,9 +632,10 @@ impl ScreenData for HelperBackend {
                     })
                     .collect(),
                 suggestion: Vec::new(),
+                suggestion_hint: None,
             },
             Ok(_) => LogView::default(),
-            Err(e) => LogView { lines: vec![LogLine { kind: LogKind::Error, text: e.to_string() }], suggestion: Vec::new() },
+            Err(e) => LogView { lines: vec![LogLine { kind: LogKind::Error, text: e.to_string() }], suggestion: Vec::new(), suggestion_hint: None },
         }
     }
 

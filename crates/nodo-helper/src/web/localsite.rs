@@ -50,15 +50,16 @@ impl<I: WebIo> NodoWeb<I> {
 
     /// Whether the trust files differ from what the plan and Caddy's root call for.
     fn trust_stale(&self, plan: &WebPlan) -> bool {
-        let wanted = plan.local.trust_url.as_ref().map(|_| trust::files(self.local_ca_root().as_ref()));
+        let web_gui = plan.local.web_gui_url.is_some();
+        let wanted = plan.local.trust_url.as_ref().map(|_| trust::files(self.local_ca_root().as_ref(), web_gui));
         match wanted {
             Some(files) => files.iter().any(|(name, bytes)| self.io.read(&self.paths.trust_dir.join(name)).as_ref() != Some(bytes)),
             None => self.io.read(&self.paths.trust_dir.join(trust::INDEX_FILE)).is_some(),
         }
     }
 
-    /// Writes the trust page and the root for Caddy to serve, or removes them when no `.local`
-    /// site uses the local CA. Caddy creates its CA when it first loads a config that needs one,
+    /// Writes the trust page and the root for Caddy to serve, or removes them when neither a
+    /// `.local` site nor the web GUI uses the local CA. Caddy creates its CA when it first loads a config that needs one,
     /// so a just started Caddy gets a moment to do that.
     pub(super) fn apply_trust(&self, plan: &WebPlan, wait: bool) -> Result<(), String> {
         let names = [trust::INDEX_FILE, trust::PEM_FILE, trust::DER_FILE];
@@ -73,7 +74,7 @@ impl<I: WebIo> NodoWeb<I> {
         }
         let root = self.local_ca_root();
         self.io.ensure_dir(&self.paths.trust_dir, TRUST_DIR_OWNER)?;
-        let files = trust::files(root.as_ref());
+        let files = trust::files(root.as_ref(), plan.local.web_gui_url.is_some());
         // The certificate files go first, so the page never offers a file that is not there yet.
         for (name, bytes) in files.iter().rev() {
             let path = self.paths.trust_dir.join(name);

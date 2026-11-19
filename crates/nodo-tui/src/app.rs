@@ -1,355 +1,286 @@
 //! Application state, plus the events that change it and the effects it asks for.
 //!
 //! `update::update` turns `(state, event)` into a new state and a list of `Effect`s without any
-//! I/O. `runtime::execute` performs each effect against the backend and turns the result back into
-//! events. Tests can therefore drive every flow without a terminal or a device.
+//! I/O. `nodo_ui_core::exec::execute_effect` performs each effect against the backend, and its
+//! outcomes come back as `Event::Done`. Tests can therefore drive every flow without a terminal
+//! or a device.
 
 use crossterm::event::KeyEvent;
-use nodo_api::{ApiError, Exposure, Response};
+use nodo_api::Exposure;
 
-use crate::model::*;
-use crate::secret::{Input, Secret};
+use nodo_ui_core::flows::backup::{self, Backups, Restore};
+use nodo_ui_core::flows::bundle::Bundle;
+use nodo_ui_core::flows::owner_page::OwnerPage;
+use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
+use nodo_ui_core::flows::logs::Logs;
+use nodo_ui_core::flows::network::{self, Network};
+use nodo_ui_core::flows::services::AppPage;
+use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
+use nodo_ui_core::flows::setup::Setup;
+use nodo_ui_core::flows::unlock::Unlock;
+use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::domain::{self, Domain};
+use nodo_ui_core::flows::web::hosting::{self, Hosting};
+use nodo_ui_core::flows::web::onion::Onion;
+use nodo_ui_core::flows::web::providers::{KeyField, Providers};
+use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
+use nodo_ui_core::flows::{Confirm, Notice, Question};
+use nodo_ui_core::model::*;
+use nodo_ui_core::queries::HomeItem;
+use nodo_ui_core::screen::{ScreenId, Tab};
+use nodo_ui_core::secret::Input;
+use nodo_ui_core::{Effect, Outcome};
 
 /// Below this size the layout cannot show enough context to act safely, so input is refused.
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 16;
 
 pub const TICKS_PER_SECOND: u64 = 4;
-/// Upper bound of the unlock retry delay. The helper must enforce its own limit as well, because
-/// this one only protects against an impatient user at this screen.
-pub const MAX_UNLOCK_DELAY_SECONDS: u64 = 30;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
-    Home,
-    /// Installed apps, each with its own page (update, hosting, settings, logs), and Get apps.
-    Apps,
-    Web,
-    /// The Nodo itself: its updates, backups, network and device logs.
-    System,
-}
-
-impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Apps, Tab::Web, Tab::System];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Tab::Home => "Home",
-            Tab::Apps => "Apps",
-            Tab::Web => "Web",
-            Tab::System => "System",
-        }
-    }
-}
-
-/// One entry per design file, so fixtures and tests can enumerate the whole design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScreenId {
-    Main,
-    Search,
-    Detail,
-    Review,
-    Installing,
-    Unlock,
-    Feeds,
-    AddFeed,
-    FeedKey,
-    Settings,
-    Reference,
-    ApplyFailed,
-    Updates,
-    UpdateFailed,
-    Logs,
-    Rejected,
-    Capability,
-    NoDrive,
-    WebSites,
-    WebExposure,
-    WebProviders,
-    WebCheck,
-    WebConfirm,
-    WebCgnat,
-    AutoUpdate,
-    WebDomain,
-    WebCertificate,
-    WebTrust,
-    /// First boot, and SSH keys afterwards. It has no design file, so it is not in `ALL`.
-    Setup,
-    /// Backups and restore, on the device and on a USB drive.
-    Backup,
-    /// Tor exposure of the node and the sites.
-    Onion,
-    /// First boot: rebuilding the device from a backup on a USB drive.
-    Restore,
-    /// Rollbacks that happened, and putting a package back to its previous version.
-    Rollbacks,
-    /// Wi-Fi and Bluetooth.
-    Network,
-    /// The installed apps.
-    Apps,
-    /// One installed app's page.
-    AppPage,
-    /// Confirming an app's removal.
-    AppRemove,
-    /// The Nodo itself: updates, backups, network, device logs, about.
-    System,
-    /// Installing a suite of apps together: review, questions, passphrase, progress, result.
-    Bundle,
-    /// An app's setup checklist for the owner.
-    OwnerPage,
-}
-
-impl ScreenId {
-    pub const ALL: [ScreenId; 39] = [
-        ScreenId::Main,
-        ScreenId::Search,
-        ScreenId::Detail,
-        ScreenId::Review,
-        ScreenId::Installing,
-        ScreenId::Unlock,
-        ScreenId::Feeds,
-        ScreenId::AddFeed,
-        ScreenId::FeedKey,
-        ScreenId::Settings,
-        ScreenId::Reference,
-        ScreenId::ApplyFailed,
-        ScreenId::Updates,
-        ScreenId::UpdateFailed,
-        ScreenId::Logs,
-        ScreenId::Rejected,
-        ScreenId::Capability,
-        ScreenId::NoDrive,
-        ScreenId::WebSites,
-        ScreenId::WebExposure,
-        ScreenId::WebProviders,
-        ScreenId::WebCheck,
-        ScreenId::WebConfirm,
-        ScreenId::WebCgnat,
-        ScreenId::AutoUpdate,
-        ScreenId::WebDomain,
-        ScreenId::WebCertificate,
-        ScreenId::WebTrust,
-        ScreenId::Backup,
-        ScreenId::Onion,
-        ScreenId::Restore,
-        ScreenId::Rollbacks,
-        ScreenId::Network,
-        ScreenId::Apps,
-        ScreenId::AppPage,
-        ScreenId::AppRemove,
-        ScreenId::System,
-        ScreenId::Bundle,
-        ScreenId::OwnerPage,
-    ];
-
-    /// The design file's stem in lowercase, which also names `--screen` values and snapshots.
-    pub fn slug(self) -> &'static str {
-        match self {
-            ScreenId::Main => "main",
-            ScreenId::Search => "search",
-            ScreenId::Detail => "detail",
-            ScreenId::Review => "review",
-            ScreenId::Installing => "installing",
-            ScreenId::Unlock => "unlock",
-            ScreenId::Feeds => "feeds",
-            ScreenId::AddFeed => "addfeed",
-            ScreenId::FeedKey => "feedkey",
-            ScreenId::Settings => "settings",
-            ScreenId::Reference => "reference",
-            ScreenId::ApplyFailed => "applyfailed",
-            ScreenId::Updates => "updates",
-            ScreenId::UpdateFailed => "updatefailed",
-            ScreenId::Logs => "logs",
-            ScreenId::Rejected => "rejected",
-            ScreenId::Capability => "capability",
-            ScreenId::NoDrive => "nodrive",
-            ScreenId::WebSites => "websites",
-            ScreenId::WebExposure => "webexposure",
-            ScreenId::WebProviders => "webproviders",
-            ScreenId::WebCheck => "webcheck",
-            ScreenId::WebConfirm => "webconfirm",
-            ScreenId::WebCgnat => "webcgnat",
-            ScreenId::AutoUpdate => "autoupdate",
-            ScreenId::WebDomain => "webdomain",
-            ScreenId::WebCertificate => "webcertificate",
-            ScreenId::WebTrust => "webtrust",
-            ScreenId::Setup => "setup",
-            ScreenId::Backup => "backup",
-            ScreenId::Onion => "onion",
-            ScreenId::Restore => "restore",
-            ScreenId::Rollbacks => "rollbacks",
-            ScreenId::Network => "network",
-            ScreenId::Apps => "apps",
-            ScreenId::AppPage => "app",
-            ScreenId::AppRemove => "appremove",
-            ScreenId::System => "system",
-            ScreenId::Bundle => "bundle",
-            ScreenId::OwnerPage => "owner",
-        }
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|id| id.slug() == slug)
-    }
-}
-
+/// Get apps: the search box, which of the box and the list has the focus, and the chosen row.
+/// What narrows the list besides the words typed is the core's `Search`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchState {
+    pub flow: Search,
     pub query: Input,
     /// Letters filter while the query has focus and act as shortcuts once the list has focus.
     pub list_focused: bool,
     pub selected: usize,
-    pub feed_filter: Option<String>,
 }
 
+impl std::ops::Deref for SearchState {
+    type Target = Search;
+
+    fn deref(&self) -> &Search {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for SearchState {
+    fn deref_mut(&mut self) -> &mut Search {
+        &mut self.flow
+    }
+}
+
+/// The review page: what is reviewed and what approving does are the core's `Review`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewState {
-    pub data: ReviewData,
+    pub flow: Review,
     /// False until the user moves to it, so a stray Enter cancels.
     pub confirm_focused: bool,
-    pub purpose: ReviewPurpose,
     /// Shown after confirming a package whose new encrypted storage needs the device passphrase.
     pub passphrase: Option<Input>,
 }
 
 impl ReviewState {
     pub fn new(data: ReviewData, purpose: ReviewPurpose) -> Self {
-        Self { data, confirm_focused: false, purpose, passphrase: None }
+        Self::of(Review::new(data, purpose))
+    }
+
+    pub fn of(flow: Review) -> Self {
+        Self { flow, confirm_focused: false, passphrase: None }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReviewPurpose {
-    Install,
-    /// `approvals` gathers each confirmed review, which the helper requires for those updates.
-    Update { batch: Vec<String>, pending_reviews: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
+impl std::ops::Deref for ReviewState {
+    type Target = Review;
+
+    fn deref(&self) -> &Review {
+        &self.flow
+    }
 }
 
+impl std::ops::DerefMut for ReviewState {
+    fn deref_mut(&mut self) -> &mut Review {
+        &mut self.flow
+    }
+}
+
+/// The unlock page: the core's rules, the passphrase box and when the next try is allowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnlockState {
+    pub flow: Unlock,
     pub input: Input,
-    pub error: Option<String>,
-    pub failures: u32,
+    /// The tick from which a try is allowed again, after a wrong passphrase.
     pub retry_at_tick: u64,
-    /// Why a screen sent the owner here. Once unlocked, that screen gets its Enter again, so
-    /// what was asked for carries on without typing it twice.
-    pub resume: Option<String>,
+}
+
+impl UnlockState {
+    /// `resume` is why a screen sent the owner here; see `Unlock::resume`.
+    pub fn new(resume: Option<String>) -> Self {
+        Self { flow: Unlock::new(resume), input: Input::secret(), retry_at_tick: 0 }
+    }
 }
 
 impl Default for UnlockState {
     /// Written out because a derived default would make the passphrase input a plain one.
     fn default() -> Self {
-        Self { input: Input::secret(), error: None, failures: 0, retry_at_tick: 0, resume: None }
+        Self::new(None)
     }
 }
 
+impl std::ops::Deref for UnlockState {
+    type Target = Unlock;
+
+    fn deref(&self) -> &Unlock {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for UnlockState {
+    fn deref_mut(&mut self) -> &mut Unlock {
+        &mut self.flow
+    }
+}
+
+/// What is being typed on a setup page, and the selected key. The page's rules and the keys
+/// themselves are the core's `Setup`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetupStep {
     /// The passphrase twice. `confirming` is true once the first is entered.
     Passphrase { first: Input, second: Input, confirming: bool },
-    Keys { keys: Vec<nodo_api::SshKey>, selected: usize, adding: Option<Input> },
+    Keys { selected: usize, adding: Option<Input> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupState {
+    pub flow: Setup,
+    /// Always the step of `flow.stage`.
     pub step: SetupStep,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl SetupState {
     pub fn passphrase() -> Self {
         let step = SetupStep::Passphrase { first: Input::secret(), second: Input::secret(), confirming: false };
-        Self { step, error: None, busy: false }
+        Self { flow: Setup::passphrase(), step }
     }
 
     pub fn keys() -> Self {
-        Self { step: SetupStep::Keys { keys: Vec::new(), selected: 0, adding: None }, error: None, busy: true }
+        Self { flow: Setup::keys(), step: SetupStep::Keys { selected: 0, adding: None } }
     }
 }
 
-/// The helper enforces this too. Checking here saves a round trip and a KDF run.
-pub const MIN_PASSPHRASE_CHARS: usize = 8;
+impl std::ops::Deref for SetupState {
+    type Target = Setup;
 
+    fn deref(&self) -> &Setup {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for SetupState {
+    fn deref_mut(&mut self) -> &mut Setup {
+        &mut self.flow
+    }
+}
+
+/// The boxes of the Backups page's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupStep {
     List,
     /// The device passphrase, when the device has one, then the backup passphrase twice.
     Create { device: Input, first: Input, second: Input, field: usize },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Unlock { name: String, passphrase: Input },
-    /// What a restore replaces, the typed word, and a new device passphrase when it holds a key.
-    Confirm { name: String, passphrase: Secret, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
+    /// The typed word, and a new device passphrase when the restore asks for one.
+    Confirm { name: String, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
     Restored(nodo_api::RestoreReport),
 }
 
+/// The Backups page: the chosen rows and the boxes. The lists, the order of the steps and what
+/// each one checks are the core's `Backups`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupState {
-    pub list: Vec<nodo_api::BackupInfo>,
+    pub flow: Backups,
     pub selected: usize,
     pub step: BackupStep,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The device key exists, so a backup asks for the device passphrase to include it.
-    pub device_set_up: bool,
-    /// The USB drive, `None` while none is plugged in.
-    pub usb: Option<UsbView>,
     /// The USB list has the focus rather than the device's own list.
     pub usb_focused: bool,
     pub usb_selected: usize,
-    /// The removable drive the step under way uses, `None` for the device's own backups.
-    pub target: Option<String>,
-    /// First boot: restoring a whole device from a USB drive instead of setting it up.
-    pub fresh: bool,
 }
 
 impl BackupState {
     pub fn new(device_set_up: bool) -> Self {
-        Self {
-            list: Vec::new(),
-            selected: 0,
-            step: BackupStep::List,
-            error: None,
-            busy: true,
-            device_set_up,
-            usb: None,
-            usb_focused: false,
-            usb_selected: 0,
-            target: None,
-            fresh: false,
-        }
+        Self::of(Backups::new(device_set_up))
     }
 
     /// The first-boot restore, which only offers USB drives.
     pub fn fresh() -> Self {
-        Self { usb_focused: true, fresh: true, ..Self::new(false) }
+        Self { usb_focused: true, ..Self::of(Backups::fresh()) }
     }
 
-    /// Backups on the USB drive, when one can be used.
-    pub fn usb_list(&self) -> &[nodo_api::BackupInfo] {
-        self.usb.as_ref().and_then(|u| u.list.as_ref()).map(|l| l.backups.as_slice()).unwrap_or(&[])
+    pub fn of(flow: Backups) -> Self {
+        Self { flow, selected: 0, step: BackupStep::List, usb_focused: false, usb_selected: 0 }
+    }
+
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    pub fn sync(&mut self) {
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (backup::Stage::List, BackupStep::List)
+                | (backup::Stage::Create, BackupStep::Create { .. })
+                | (backup::Stage::Unlock { .. }, BackupStep::Unlock { .. })
+                | (backup::Stage::Confirm { .. }, BackupStep::Confirm { .. })
+                | (backup::Stage::Restored(_), BackupStep::Restored(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            backup::Stage::List => BackupStep::List,
+            backup::Stage::Create => BackupStep::Create {
+                device: Input::secret(),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: if self.flow.asks_device_passphrase() { 0 } else { 1 },
+            },
+            backup::Stage::Unlock { name } => BackupStep::Unlock { name: name.clone(), passphrase: Input::secret() },
+            backup::Stage::Confirm { name, contents, .. } => BackupStep::Confirm {
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                device: Input::secret(),
+                field: 0,
+            },
+            backup::Stage::Restored(report) => BackupStep::Restored(report.clone()),
+        };
     }
 }
 
-/// Onion exposure: the node's restricted RPC first, then every site.
+impl std::ops::Deref for BackupState {
+    type Target = Backups;
+
+    fn deref(&self) -> &Backups {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BackupState {
+    fn deref_mut(&mut self) -> &mut Backups {
+        &mut self.flow
+    }
+}
+
+/// System › Web GUI. Whether it is on is in the device's snapshot; what the switch does and
+/// asks first is the core's `WebGui`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebGuiState {
+    pub flow: nodo_ui_core::flows::web_gui::WebGui,
+}
+
+/// The onion page: the chosen row./// The onion page: the chosen row. What Tor reports and what each switch does are the core's
+/// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnionState {
-    pub status: Option<nodo_api::OnionStatus>,
+    pub flow: Onion,
+    /// An index into the flow's `rows`.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl OnionState {
     pub fn new() -> Self {
-        Self { status: None, selected: 0, error: None, busy: true }
-    }
-
-    /// The rows in order: the node, when one is installed, then the sites.
-    pub fn rows(&self) -> Vec<OnionRow> {
-        let Some(status) = &self.status else { return Vec::new() };
-        let node = status.node.iter().map(|_| OnionRow::Node);
-        node.chain((0..status.sites.len()).map(OnionRow::Site)).collect()
+        Self { flow: Onion::new(), selected: 0 }
     }
 }
 
@@ -359,26 +290,28 @@ impl Default for OnionState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnionRow {
-    Node,
-    /// An index into `OnionStatus::sites`.
-    Site(usize),
+impl std::ops::Deref for OnionState {
+    type Target = Onion;
+
+    fn deref(&self) -> &Onion {
+        &self.flow
+    }
 }
 
+/// The boxes of the first-boot restore's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreStep {
     /// Every removable drive, with why one cannot be used.
     Drives,
     /// The backups on the chosen drive.
     Backups { device: String },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Passphrase { device: String, name: String, passphrase: Input },
     /// What comes back, the typed word and a new device passphrase, twice.
     Confirm {
         device: String,
         name: String,
-        passphrase: Secret,
         contents: nodo_api::BackupContents,
         typed: Input,
         first: Input,
@@ -392,24 +325,60 @@ pub enum RestoreStep {
     Done(nodo_api::RestoreReport),
 }
 
-/// The first-boot restore from a USB drive.
+/// The first-boot restore from a USB drive: the chosen row and the boxes. The drives, the order
+/// of the steps and what each one checks are the core's `Restore`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreState {
-    pub drives: Vec<nodo_api::UsbDrive>,
-    pub backups: Option<nodo_api::UsbBackupList>,
+    pub flow: Restore,
     pub selected: usize,
     pub step: RestoreStep,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl RestoreState {
     pub fn new() -> Self {
-        Self { drives: Vec::new(), backups: None, selected: 0, step: RestoreStep::Drives, error: None, busy: true }
+        Self { flow: Restore::new(), selected: 0, step: RestoreStep::Drives }
     }
 
-    pub fn drive(&self, device: &str) -> Option<&nodo_api::UsbDrive> {
-        self.drives.iter().find(|d| d.device == device)
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    /// `now` is the tick, for a restore that starts.
+    pub fn sync(&mut self, now: u64) {
+        use backup::RestoreStage as Stage;
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (Stage::Drives, RestoreStep::Drives)
+                | (Stage::Backups { .. }, RestoreStep::Backups { .. })
+                | (Stage::Passphrase { .. }, RestoreStep::Passphrase { .. })
+                | (Stage::Confirm { .. }, RestoreStep::Confirm { .. })
+                | (Stage::Restoring { .. }, RestoreStep::Restoring { .. })
+                | (Stage::Failed { .. }, RestoreStep::Failed { .. })
+                | (Stage::Done(_), RestoreStep::Done(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            Stage::Drives => RestoreStep::Drives,
+            Stage::Backups { device } => RestoreStep::Backups { device: device.clone() },
+            Stage::Passphrase { device, name } => {
+                RestoreStep::Passphrase { device: device.clone(), name: name.clone(), passphrase: Input::secret() }
+            }
+            Stage::Confirm { device, name, contents, .. } => RestoreStep::Confirm {
+                device: device.clone(),
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: 0,
+            },
+            Stage::Restoring { device, name } => {
+                RestoreStep::Restoring { device: device.clone(), name: name.clone(), started: now }
+            }
+            Stage::Failed { device, name, reason } => {
+                RestoreStep::Failed { device: device.clone(), name: name.clone(), reason: reason.clone() }
+            }
+            Stage::Done(report) => RestoreStep::Done(report.clone()),
+        };
     }
 }
 
@@ -419,30 +388,32 @@ impl Default for RestoreState {
     }
 }
 
-/// What the Rollbacks screen shows: rollbacks that happened and versions that can be put back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RollbackView {
-    pub options: Vec<nodo_api::RollbackOption>,
-    /// Failed updates that were rolled back, newest first.
-    pub events: Vec<nodo_api::UpdateEvent>,
-    /// The system went back to its previous version at boot, and why.
-    pub boot_fallback: Option<String>,
+impl std::ops::Deref for RestoreState {
+    type Target = Restore;
+
+    fn deref(&self) -> &Restore {
+        &self.flow
+    }
 }
 
+impl std::ops::DerefMut for RestoreState {
+    fn deref_mut(&mut self) -> &mut Restore {
+        &mut self.flow
+    }
+}
+
+/// The page that undoes an update: the chosen row./// The page that undoes an update: the chosen row. The list, what is running and how the last
+/// rollback went are the core's `Rollbacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbacksState {
-    pub view: Option<RollbackView>,
-    /// Over `view.options`.
+    pub flow: Rollbacks,
+    /// Over the versions that can be put back.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The last rollback's outcome, shown until the next action.
-    pub result: Option<nodo_api::UpdateResult>,
 }
 
 impl RollbacksState {
     pub fn new() -> Self {
-        Self { view: None, selected: 0, error: None, busy: true, result: None }
+        Self { flow: Rollbacks::new(), selected: 0 }
     }
 }
 
@@ -452,140 +423,81 @@ impl Default for RollbacksState {
     }
 }
 
-/// Which list on the Network screen has the focus.
+impl std::ops::Deref for RollbacksState {
+    type Target = Rollbacks;
+
+    fn deref(&self) -> &Rollbacks {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for RollbacksState {
+    fn deref_mut(&mut self) -> &mut Rollbacks {
+        &mut self.flow
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkFocus {
     Wifi,
     Bluetooth,
 }
 
-/// A row of the Wi-Fi list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiRow {
-    /// An index into the last scan.
-    InRange(usize),
-    /// An index into the saved networks, for one the last scan did not find.
-    Saved(usize),
-}
+/// How long the Network screen waits for the radios before saying there is no answer yet: the
+/// core's wait, in ticks.
+pub const NO_ANSWER_TICKS: u64 = network::NO_ANSWER_SECONDS * TICKS_PER_SECOND;
 
-/// The passphrase for the network being joined.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WifiPrompt {
-    pub ssid: String,
-    pub security: nodo_api::WifiSecurity,
-    pub passphrase: Input,
-}
-
-/// Where reading one radio's state from the helper stands, kept apart from the status itself so
-/// a panel with nothing to show yet can tell asking from failing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RadioRead {
-    Asking,
-    /// Asked [`NO_ANSWER_TICKS`] ago and still no answer. The helper does one thing at a time,
-    /// so the answer may only be waiting behind something slower.
-    NoAnswer,
-    Failed(String),
-    Read,
-}
-
-/// How long the Network screen waits for the radios before saying there is no answer yet.
-pub const NO_ANSWER_TICKS: u64 = 10 * TICKS_PER_SECOND;
-
-/// Wi-Fi and Bluetooth: both radios, the networks in range and the saved ones, and devices.
+/// The Network page: which radio and which row are chosen, the passphrase box and when the
+/// radios were asked. The radios, the lists and every rule about them are the core's `Network`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkState {
-    pub wifi: Option<nodo_api::WifiStatus>,
-    pub wifi_read: RadioRead,
-    pub bluetooth_read: RadioRead,
+    pub flow: Network,
     /// The tick the radios were last asked for.
     pub asked_at: u64,
-    /// The last scan, strongest first.
-    pub networks: Vec<nodo_api::WifiNetwork>,
-    pub bluetooth: Option<nodo_api::BluetoothStatus>,
     pub focus: NetworkFocus,
     pub wifi_selected: usize,
     pub bt_selected: usize,
-    pub prompt: Option<WifiPrompt>,
-    pub error: Option<String>,
-    /// What the helper is doing, while it works.
-    pub busy: Option<String>,
+    /// The passphrase of the network being joined, typed while the flow's `prompt` is set.
+    pub passphrase: Input,
 }
 
 impl NetworkState {
     pub fn new() -> Self {
         Self {
-            wifi: None,
-            wifi_read: RadioRead::Asking,
-            bluetooth_read: RadioRead::Asking,
+            flow: Network::new(),
             asked_at: 0,
-            networks: Vec::new(),
-            bluetooth: None,
             focus: NetworkFocus::Wifi,
             wifi_selected: 0,
             bt_selected: 0,
-            prompt: None,
-            error: None,
-            busy: Some("Reading the radios…".to_owned()),
+            passphrase: Input::secret(),
         }
-    }
-
-    /// Networks in range, then saved networks the last scan did not find.
-    pub fn wifi_rows(&self) -> Vec<WifiRow> {
-        let mut rows: Vec<WifiRow> = (0..self.networks.len()).map(WifiRow::InRange).collect();
-        if let Some(status) = &self.wifi {
-            for (index, saved) in status.saved.iter().enumerate() {
-                if !self.networks.iter().any(|n| n.ssid == saved.ssid) {
-                    rows.push(WifiRow::Saved(index));
-                }
-            }
-        }
-        rows
-    }
-
-    /// The name, security and saved state of a Wi-Fi row.
-    pub fn wifi_row(&self, row: WifiRow) -> Option<(String, nodo_api::WifiSecurity, bool)> {
-        match row {
-            WifiRow::InRange(i) => self.networks.get(i).map(|n| (n.ssid.clone(), n.security, n.saved || self.is_saved(&n.ssid))),
-            WifiRow::Saved(i) => self.wifi.as_ref()?.saved.get(i).map(|n| (n.ssid.clone(), n.security, true)),
-        }
-    }
-
-    pub fn is_saved(&self, ssid: &str) -> bool {
-        self.wifi.as_ref().is_some_and(|w| w.saved.iter().any(|s| s.ssid == ssid))
-    }
-
-    /// The network the device is joined to, if any.
-    pub fn joined(&self) -> Option<&str> {
-        let wifi = self.wifi.as_ref()?;
-        (wifi.link == nodo_api::WifiLink::Connected).then_some(())?;
-        wifi.ssid.as_deref()
-    }
-
-    /// Whether a radio with nothing to show failed or went unanswered, so asking again helps.
-    pub fn can_ask_again(&self) -> bool {
-        let stuck = |read: &RadioRead| matches!(read, RadioRead::NoAnswer | RadioRead::Failed(_));
-        (self.wifi.is_none() && stuck(&self.wifi_read)) || (self.bluetooth.is_none() && stuck(&self.bluetooth_read))
     }
 
     /// Asks for both radios again, counting the wait from tick `now`.
     pub fn ask_again(&mut self, now: u64) -> Vec<Effect> {
-        self.error = None;
-        self.busy = Some("Reading the radios…".to_owned());
-        self.wifi_read = RadioRead::Asking;
-        self.bluetooth_read = RadioRead::Asking;
         self.asked_at = now;
-        vec![Effect::LoadNetwork]
+        self.flow.ask_again()
     }
 
-    pub fn pairing_running(&self) -> bool {
-        self.bluetooth.as_ref().and_then(|b| b.pairing.as_ref()).is_some_and(|p| {
-            matches!(
-                p.stage,
-                nodo_api::PairingStage::Pairing
-                    | nodo_api::PairingStage::TypePasskey(_)
-                    | nodo_api::PairingStage::ComparePasskey(_)
-            )
-        })
+    /// The owner confirmed a question of this page. The scan goes with the radio, and the cursor
+    /// with the scan.
+    pub fn confirmed(&mut self, confirm: &Confirm) {
+        self.flow.confirmed(confirm);
+        if matches!(confirm, Confirm::WifiOff) {
+            self.wifi_selected = 0;
+        }
+    }
+
+    /// Keeps both selections inside their lists.
+    pub fn clamp(&mut self) {
+        let rows = self.flow.wifi_rows().len();
+        if self.wifi_selected >= rows {
+            self.wifi_selected = rows.saturating_sub(1);
+        }
+        let devices = self.flow.bluetooth.as_ref().map_or(0, |b| b.devices.len());
+        if self.bt_selected >= devices {
+            self.bt_selected = devices.saturating_sub(1);
+        }
     }
 }
 
@@ -595,8 +507,19 @@ impl Default for NetworkState {
     }
 }
 
-/// The helper also requires this word, so the check here only saves a round trip.
-pub const RESTORE_WORD: &str = nodo_api::RESTORE_WORD;
+impl std::ops::Deref for NetworkState {
+    type Target = Network;
+
+    fn deref(&self) -> &Network {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for NetworkState {
+    fn deref_mut(&mut self) -> &mut Network {
+        &mut self.flow
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
@@ -613,25 +536,18 @@ pub struct FeedKeyState {
     pub error: Option<String>,
 }
 
+/// The Settings form: which field is chosen and what is being typed in it. The form, its draft
+/// and every rule about them are the core's `Settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsState {
-    pub form: SettingsForm,
-    pub draft: Vec<FieldValue>,
+    pub flow: Settings,
     pub selected: usize,
     /// A secret being typed. Other fields are typed in `editor`.
     pub editing: Option<Input>,
     /// Text and reference chips being typed in the selected field.
-    pub editor: Option<crate::refs::PieceEditor>,
-    /// What the other apps offer to reference, once loaded.
-    pub catalog: Option<ReferenceList>,
-    /// The latest preview of each field's draft, from the helper.
-    pub previews: Vec<Option<FieldPreview>>,
+    pub editor: Option<nodo_ui_core::refs::PieceEditor>,
     /// The selected field's chip whose menu is open, and the highlighted action.
     pub chip_menu: Option<ChipMenu>,
-    /// One step back, offered as "↺ …" under the field while it applies.
-    pub undo: Option<Undo>,
-    /// The save confirmation, listing what the changed references allow.
-    pub confirm: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -644,157 +560,60 @@ pub struct ChipMenu {
 
 pub const CHIP_ACTIONS: [&str; 3] = ["Replace…", "Type a value instead", "Remove"];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Undo {
-    pub field: usize,
-    /// The value before the step, and the value right after it: the link shows only while the
-    /// field still holds what the step made, so it never undoes something else.
-    pub before: FieldValue,
-    pub after: FieldValue,
-    pub label: String,
-}
-
 impl SettingsState {
     pub fn new(form: SettingsForm) -> Self {
-        let draft: Vec<FieldValue> = form.fields.iter().map(|field| field.value.clone()).collect();
-        let previews = vec![None; draft.len()];
-        Self {
-            form,
-            draft,
-            selected: 0,
-            editing: None,
-            editor: None,
-            catalog: None,
-            previews,
-            chip_menu: None,
-            undo: None,
-            confirm: None,
-        }
-    }
-
-    pub fn changed_indices(&self) -> Vec<usize> {
-        (0..self.draft.len()).filter(|&i| self.draft[i] != self.form.fields[i].value).collect()
-    }
-
-    pub fn error_for(&self, index: usize) -> Option<String> {
-        let field = &self.form.fields[index];
-        let empty = self.draft[index] == FieldValue::Text(String::new());
-        // An optional field left empty has no value, which is always allowed; only what is typed
-        // has to fit the kind.
-        if !field.required && empty {
-            return None;
-        }
-        // A required one must have a value. Only a number's parse caught this before, so a fresh
-        // install with an empty required name or choice saved, and the app could not start. An
-        // unset secret is left to the helper: it may be one the helper makes when it saves.
-        if empty {
-            return Some("Required: give it a value.".to_owned());
-        }
-        validate(&field.kind, &self.draft[index])
-    }
-
-    /// The preview of a field, if it is for the value the field holds now.
-    pub fn preview(&self, index: usize) -> Option<&FieldPreview> {
-        self.previews.get(index)?.as_ref().filter(|p| p.for_value.as_ref() == Some(&self.draft[index]))
-    }
-
-    /// References that do not resolve, over every field, as far as the previews know.
-    pub fn broken(&self) -> usize {
-        (0..self.draft.len()).filter_map(|i| self.preview(i)).map(FieldPreview::broken).sum()
-    }
-
-    /// The undo step for a field, while the field still holds what that step made.
-    pub fn undo_for(&self, index: usize) -> Option<&Undo> {
-        self.undo.as_ref().filter(|u| u.field == index && self.draft[index] == u.after)
+        Self { flow: Settings::new(form), selected: 0, editing: None, editor: None, chip_menu: None }
     }
 }
 
-/// Field validation, kept pure so that it can be tested and so save can refuse early.
-pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
-    // A value with references is checked by the helper's preview, against what it resolves to.
-    let FieldValue::Text(text) = value else {
-        return None;
-    };
-    match kind {
-        FieldKind::Port => match text.parse::<u16>() {
-            Ok(port) if port > 0 => None,
-            _ => Some("Port must be a number from 1 to 65535.".to_owned()),
-        },
-        FieldKind::Number { min, max } => match text.parse::<i64>() {
-            Ok(n) if min.is_none_or(|min| n >= min) && max.is_none_or(|max| n <= max) => None,
-            Ok(_) => Some(format!(
-                "Must be from {} to {}.",
-                min.map_or("any".to_owned(), |n| n.to_string()),
-                max.map_or("any".to_owned(), |n| n.to_string())
-            )),
-            Err(_) => Some("Must be a whole number.".to_owned()),
-        },
-        FieldKind::Url => (!(text.starts_with("http://") || text.starts_with("https://")))
-            .then(|| "Must start with http:// or https://.".to_owned()),
-        FieldKind::MoneroAddress => {
-            const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-            match text.chars().count() {
-                n if n < 95 => Some("Address is too short. A Monero address has 95 characters.".to_owned()),
-                n if n > 95 => Some("Address is too long. A Monero address has 95 characters.".to_owned()),
-                _ if !text.chars().all(|c| BASE58.contains(c)) => {
-                    Some("Address contains characters a Monero address cannot have.".to_owned())
-                }
-                _ => None,
-            }
-        }
-        FieldKind::Choice(_) | FieldKind::Secret | FieldKind::Toggle | FieldKind::Text => None,
+impl std::ops::Deref for SettingsState {
+    type Target = Settings;
+
+    fn deref(&self) -> &Settings {
+        &self.flow
     }
 }
 
-/// Where a picked reference goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickMode {
-    /// At the cursor of the field's editor, or as the whole value when nothing is being typed.
-    Insert,
-    /// In place of this reference of the field.
-    Replace(usize),
+impl std::ops::DerefMut for SettingsState {
+    fn deref_mut(&mut self) -> &mut Settings {
+        &mut self.flow
+    }
 }
 
-/// The one reference picker, for every field: search everything the other apps offer.
+/// The reference picker: the search box, which of the box and the list has the focus, and the
+/// chosen row. What is listed, what fits and the approval of a locked setting are the core's
+/// `Picker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceState {
-    pub package: String,
-    pub field_index: usize,
-    pub field_label: String,
-    pub field_kind: FieldKind,
-    pub mode: PickMode,
-    /// Whether the reference would sit beside other text or references.
-    pub assembled: bool,
-    pub list: ReferenceList,
+    pub flow: Picker,
     pub query: Input,
     pub list_focused: bool,
     pub selected: usize,
-    /// A locked setting the user chose, waiting for their approval.
-    pub granting: Option<ReferenceOption>,
 }
 
 impl ReferenceState {
     /// The options the search shows, in the order they are listed, each with whether it fits.
     pub fn visible(&self) -> Vec<(&ReferenceOption, Result<(), String>)> {
-        crate::refs::ordered(&self.field_kind, crate::refs::search(&self.list.options, self.query.text()), self.assembled)
+        self.flow.visible(self.query.text())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DraftRow {
-    pub label: String,
-    pub from: String,
-    pub to: String,
-    pub blamed: bool,
+impl std::ops::Deref for ReferenceState {
+    type Target = Picker;
+
+    fn deref(&self) -> &Picker {
+        &self.flow
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailedState {
-    pub package: String,
-    pub explanation: RollbackExplanation,
-    pub rows: Vec<DraftRow>,
+impl std::ops::DerefMut for ReferenceState {
+    fn deref_mut(&mut self) -> &mut Picker {
+        &mut self.flow
+    }
 }
 
+/// The Updates page: the chosen row, the updates ticked, and the passphrase box when a batch
+/// waits for it. What ticking, checking and updating do are the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatesState {
     pub selected: usize,
@@ -803,29 +622,26 @@ pub struct UpdatesState {
     pub passphrase: Option<UpdatePassphrase>,
 }
 
-/// The device passphrase for a batch of updates, and the batch it is for.
+/// The device passphrase being typed for a batch of updates, and the batch it is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatePassphrase {
-    pub names: Vec<String>,
-    pub approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    /// Each growing update in words, such as "vault: 256 MB to 512 MB".
-    pub growing: Vec<String>,
+    pub batch: Batch,
     pub input: Input,
 }
 
+/// The automatic-update choices: the chosen row and the window being typed. The choices and
+/// what is checked about them are the core's `AutoUpdate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoUpdateState {
-    pub saved: AutoUpdatePrefs,
-    pub draft: AutoUpdatePrefs,
+    pub flow: AutoUpdate,
     /// 0 is the frequency selector, and the package rows follow it.
     pub selected: usize,
     pub editing_window: Option<Input>,
-    pub error: Option<String>,
 }
 
 impl AutoUpdateState {
     pub fn new(prefs: AutoUpdatePrefs) -> Self {
-        Self { saved: prefs.clone(), draft: prefs, selected: 0, editing_window: None, error: None }
+        Self { flow: AutoUpdate::new(prefs), selected: 0, editing_window: None }
     }
 
     pub fn focused_package(&self) -> Option<usize> {
@@ -833,38 +649,57 @@ impl AutoUpdateState {
     }
 }
 
-/// Parses `HH:MM to HH:MM`. A window may cross midnight, so only an empty one is refused.
-pub fn parse_window(text: &str) -> Option<(String, String)> {
-    fn time(text: &str) -> Option<String> {
-        let (hours, minutes) = text.trim().split_once(':')?;
-        if hours.len() != 2 || minutes.len() != 2 {
-            return None;
-        }
-        let (hours, minutes) = (hours.parse::<u8>().ok()?, minutes.parse::<u8>().ok()?);
-        (hours < 24 && minutes < 60).then(|| format!("{hours:02}:{minutes:02}"))
+impl std::ops::Deref for AutoUpdateState {
+    type Target = AutoUpdate;
+
+    fn deref(&self) -> &AutoUpdate {
+        &self.flow
     }
-    let (start, end) = text.split_once(" to ")?;
-    let (start, end) = (time(start)?, time(end)?);
-    (start != end).then_some((start, end))
 }
 
+impl std::ops::DerefMut for AutoUpdateState {
+    fn deref_mut(&mut self) -> &mut AutoUpdate {
+        &mut self.flow
+    }
+}
+
+/// What a batch of updates came to, and the chosen way on after a failure. What each way does
+/// is the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateResultsState {
     pub report: UpdateReport,
     pub choice: usize,
 }
 
+/// The logs page: which source is chosen and the search box. The lines and what narrows them
+/// are the core's `Logs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogsState {
+    pub flow: Logs,
+    /// An index into the device's log sources.
     pub selected: usize,
-    pub view: LogView,
-    pub errors_only: bool,
-    pub follow: bool,
     pub find: Input,
     pub finding: bool,
-    /// Opened from an app's page: only that app's log, under Apps. Otherwise the device logs,
-    /// under System, with every source as a filter.
-    pub app: Option<String>,
+}
+
+impl LogsState {
+    pub fn new(flow: Logs, selected: usize) -> Self {
+        Self { flow, selected, find: Input::plain(""), finding: false }
+    }
+}
+
+impl std::ops::Deref for LogsState {
+    type Target = Logs;
+
+    fn deref(&self) -> &Logs {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for LogsState {
+    fn deref_mut(&mut self) -> &mut Logs {
+        &mut self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -873,25 +708,21 @@ pub struct CapabilityState {
     pub choice: usize,
 }
 
+/// A site's Hosting page: the cursor, the boxes being typed in and the open domain list. The
+/// draft and every rule about it are the core's `Hosting`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureState {
-    pub site: String,
-    pub draft: Exposure,
+    pub flow: Hosting,
     /// An index into [`ExposureState::order`].
     pub selected: usize,
-    /// The part of the public address before the domain, such as `pay` in `pay.example.com`.
+    /// The part of the public address before the domain, as it is typed. `sync` hands it to the
+    /// draft.
     pub sub: Input,
-    /// The chosen domain, one of [`App::domain_choices`].
-    pub domain: String,
     /// The domain list is open.
     pub picking: bool,
     /// Index into the open domain list: the domains, then "Add a provider".
     pub pick: usize,
     pub details: bool,
-    /// A domain provider is connected, so the internet choice can pick a domain.
-    pub has_provider: bool,
-    /// The other names the site answers at, as they will be saved.
-    pub aliases: Vec<nodo_api::PublicAlias>,
     /// The new name being put together: the part before its domain, empty for the domain itself.
     pub alias_sub: Input,
     /// The new name's domain, one of [`App::domain_choices`].
@@ -899,8 +730,6 @@ pub struct ExposureState {
     pub alias_mode: nodo_api::AliasMode,
     /// The open domain list is for the new name, not the main address.
     pub picking_alias: bool,
-    /// Why the new name could not be added.
-    pub alias_error: Option<String>,
     /// The controls that put a new name together are open. They stay closed until the owner asks
     /// for another address, so a site with one address shows only that one.
     pub adding_alias: bool,
@@ -914,7 +743,7 @@ pub enum HostingFocus {
     Internet,
     Domain,
     Address,
-    /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
+    /// One of the other names, by index into the draft's `aliases`: x removes it.
     Alias(usize),
     /// The button that opens the controls for a new name.
     AliasOpen,
@@ -928,59 +757,59 @@ pub enum HostingFocus {
 }
 
 impl ExposureState {
-    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`]. The domain is
-    /// the longest one the host is under, or the first.
+    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`].
     pub fn new(site: &str, draft: Exposure, host: Option<&str>, domains: &[(String, String)]) -> Self {
-        let under = |host: &str, domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-        let domain = host
-            .and_then(|host| domains.iter().filter(|(d, _)| under(host, d)).max_by_key(|(d, _)| d.len()))
-            .or(domains.first())
-            .map(|(d, _)| d.clone())
-            .unwrap_or_default();
-        let sub = host
-            .filter(|host| under(host, &domain))
-            .and_then(|host| host.strip_suffix(domain.as_str()))
-            .map(|rest| rest.trim_end_matches('.').to_owned())
-            .unwrap_or_else(|| site.split('-').next_back().unwrap_or(site).to_owned());
+        Self::of(Hosting::new(site, draft, host, domains), domains)
+    }
+
+    pub fn of(flow: Hosting, domains: &[(String, String)]) -> Self {
         Self {
-            site: site.to_owned(),
-            draft,
             selected: 0,
-            sub: Input::plain(sub),
-            domain,
+            sub: Input::plain(flow.sub.clone()),
             picking: false,
             pick: 0,
             details: false,
-            has_provider: !domains.is_empty(),
-            aliases: Vec::new(),
             alias_sub: Input::plain(String::new()),
             alias_domain: domains.first().map(|(d, _)| d.clone()).unwrap_or_default(),
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
-            alias_error: None,
             adding_alias: false,
+            flow,
         }
     }
 
-    /// The focus order, which depends on whether the internet is ticked and a provider exists.
+    /// Hands what is typed to the draft and brings both in line with the providers connected
+    /// now. Every key on the page starts with it.
+    pub fn sync(&mut self, data: &Snapshot) {
+        self.flow.set_sub(self.sub.text());
+        self.flow.sync(data);
+        self.alias_domain = hosting::domain_or_first(&self.alias_domain, &data.domain_choices());
+    }
+
+    /// The focus order: the rows the draft offers, with the new name's four controls and the
+    /// details toggle, which are this screen's own.
     pub fn order(&self) -> Vec<HostingFocus> {
-        let has_provider = self.has_provider;
-        let mut order = vec![HostingFocus::Home, HostingFocus::Tor, HostingFocus::Internet];
-        if self.draft.public {
-            if has_provider {
-                order.extend([HostingFocus::Domain, HostingFocus::Address]);
-                order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if self.adding_alias {
-                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
-                } else {
-                    order.push(HostingFocus::AliasOpen);
+        let mut order = Vec::new();
+        let mut save = false;
+        for row in self.flow.rows() {
+            match row {
+                hosting::Row::Home => order.push(HostingFocus::Home),
+                hosting::Row::Tor => order.push(HostingFocus::Tor),
+                hosting::Row::Internet => order.push(HostingFocus::Internet),
+                hosting::Row::Domain => order.push(HostingFocus::Domain),
+                hosting::Row::Address => order.push(HostingFocus::Address),
+                hosting::Row::Alias(index) => order.push(HostingFocus::Alias(index)),
+                // The controls stay behind their button until the owner asks for another address.
+                hosting::Row::NewAlias if self.adding_alias => {
+                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd])
                 }
-            } else {
-                order.push(HostingFocus::AddProvider);
+                hosting::Row::NewAlias => order.push(HostingFocus::AliasOpen),
+                hosting::Row::AddProvider => order.push(HostingFocus::AddProvider),
+                hosting::Row::Save => save = true,
             }
         }
         order.push(HostingFocus::Details);
-        if !self.draft.public || has_provider {
+        if save {
             order.push(HostingFocus::Save);
         }
         order
@@ -991,16 +820,14 @@ impl ExposureState {
         order[self.selected.min(order.len() - 1)]
     }
 
-    /// The public host the choices make: the address part and the chosen domain.
+    /// The public host the choices make, from the box as it is typed.
     pub fn host(&self) -> String {
-        let sub = self.sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.domain.clone() } else { format!("{sub}.{}", self.domain) }
+        hosting::join_host(self.sub.text(), &self.flow.domain)
     }
 
     /// The new name the choices make, the same way: an empty part is the domain itself.
     pub fn alias_host(&self) -> String {
-        let sub = self.alias_sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+        hosting::join_host(self.alias_sub.text(), &self.alias_domain)
     }
 
     /// Puts the focus on `focus` when it is in the order.
@@ -1016,13 +843,27 @@ impl ExposureState {
         self.adding_alias = false;
         self.alias_sub.clear();
         self.alias_mode = nodo_api::AliasMode::Redirect;
-        self.alias_error = None;
+        self.flow.clear_alias_error();
         self.focus_on(HostingFocus::AliasOpen);
     }
 
     /// The domain list is open, for either address.
     pub fn list_open(&self) -> bool {
         self.picking || self.picking_alias
+    }
+}
+
+impl std::ops::Deref for ExposureState {
+    type Target = Hosting;
+
+    fn deref(&self) -> &Hosting {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ExposureState {
+    fn deref_mut(&mut self) -> &mut Hosting {
+        &mut self.flow
     }
 }
 
@@ -1034,69 +875,89 @@ pub enum ProviderFocus {
     SecretKey,
 }
 
-/// Where the domain provider screens are.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderStage {
-    /// The providers added, with a button to add one.
-    List,
-    /// Choosing the company.
-    Pick,
-    /// The domain and key for the chosen company.
-    Key,
-    /// Connected. Holds the provider's name, the domains its key controls that sites can use, the
-    /// providers already holding the rest (the same account connected twice, most often), and the
-    /// account's domains the key may not change yet with what to switch on.
-    Done { provider: String, domains: Vec<String>, held_by: Vec<String>, blocked: Vec<(String, String)> },
-    /// One connected provider (`selected` in the list): which key it holds, when its domains were
-    /// last looked up, each domain and who uses it, and the domains it cannot change with the reason.
-    Details,
+impl From<KeyField> for ProviderFocus {
+    fn from(field: KeyField) -> Self {
+        match field {
+            KeyField::Domain => ProviderFocus::Domain,
+            KeyField::ApiKey => ProviderFocus::ApiKey,
+            KeyField::SecretKey => ProviderFocus::SecretKey,
+        }
+    }
 }
 
+/// The provider screens: the cursor and the boxes of the key step. Where the screens are and
+/// what each step does are the core's `Providers`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvidersState {
-    pub stage: ProviderStage,
-    /// The chosen company, an index into the provider catalog.
+    pub flow: Providers,
+    /// The chosen row: a connected provider in the list, a company of the catalog while adding.
     pub selected: usize,
     pub focus: ProviderFocus,
     pub domain: Input,
     pub api_key: Input,
     pub secret_key: Input,
-    pub test: Option<Result<String, String>>,
-    /// The site whose Hosting screen opened this, to go back to once a provider is added.
-    pub return_to: Option<String>,
 }
 
 impl ProvidersState {
     /// The add flow, at choosing the company.
     pub fn new(domain: &str) -> Self {
+        Self::of(Providers::adding(None), domain)
+    }
+
+    /// The list of providers added.
+    pub fn list(domain: &str) -> Self {
+        Self::of(Providers::list(), domain)
+    }
+
+    pub fn of(flow: Providers, domain: &str) -> Self {
         Self {
-            stage: ProviderStage::Pick,
+            flow,
             selected: 0,
             focus: ProviderFocus::List,
             domain: Input::plain(domain),
             api_key: Input::secret(),
             secret_key: Input::secret(),
-            test: None,
-            return_to: None,
         }
     }
 
-    /// The list of providers added.
-    pub fn list(domain: &str) -> Self {
-        Self { stage: ProviderStage::List, ..Self::new(domain) }
+    /// Empties the boxes of the key step. Keys typed for one provider must never be sent to
+    /// another, so every way into and out of that step starts from this.
+    pub fn empty_boxes(&mut self) {
+        self.domain = Input::plain("");
+        self.api_key = Input::secret();
+        self.secret_key = Input::secret();
+        self.focus = ProviderFocus::List;
     }
 }
 
+impl std::ops::Deref for ProvidersState {
+    type Target = Providers;
+
+    fn deref(&self) -> &Providers {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ProvidersState {
+    fn deref_mut(&mut self) -> &mut Providers {
+        &mut self.flow
+    }
+}
+
+/// The checks that found a problem: whether the details are open. The checks and what can be
+/// done about them are the core's `PublicCheck`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCheckState {
-    pub site: String,
-    pub checks: Vec<Check>,
-    pub router: Option<RouterHelp>,
-    pub plan: Option<PublicPlan>,
-    /// True when this check is a step towards going public, not just a test from the overview.
-    pub going_public: bool,
-    pub manual: Vec<String>,
+    pub flow: PublicCheck,
     pub details: bool,
+}
+
+impl std::ops::Deref for WebCheckState {
+    type Target = PublicCheck;
+
+    fn deref(&self) -> &PublicCheck {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1105,87 +966,86 @@ pub enum ConfirmFocus {
     GoPublic,
 }
 
+/// The confirmation before going public: which button has the focus. What is confirmed is the
+/// core's `PublicConfirm`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebConfirmState {
-    pub site: String,
-    pub plan: PublicPlan,
-    pub access: PublicAccess,
+    pub flow: PublicConfirm,
     pub focus: ConfirmFocus,
     pub details: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DomainFocus {
-    Email,
-    Staging,
-    DotLocal,
-    UnderDomain,
-    Dns01First,
-    Dns01Second,
-}
-
-impl DomainFocus {
-    /// Fields that take typing rather than a toggle.
-    pub fn is_text(self) -> bool {
-        matches!(self, DomainFocus::Email | DomainFocus::UnderDomain | DomainFocus::Dns01First | DomainFocus::Dns01Second)
+impl WebConfirmState {
+    /// The focus starts on Cancel, as the core says the answer does.
+    pub fn new(flow: PublicConfirm) -> Self {
+        let focus = if flow.cancel_is_default() { ConfirmFocus::Cancel } else { ConfirmFocus::GoPublic };
+        Self { flow, focus, details: false }
     }
 }
 
-/// Domains and certificates: the ACME email, staging, local names and DNS-01 credentials.
+impl std::ops::Deref for WebConfirmState {
+    type Target = PublicConfirm;
+
+    fn deref(&self) -> &PublicConfirm {
+        &self.flow
+    }
+}
+
+/// Domains and certificates: the field that has the focus and what is typed. The choices, what
+/// Save sends and what comes back are the core's `Domain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainState {
-    pub focus: DomainFocus,
+    pub flow: Domain,
+    /// One of the core's `domain::fields`.
+    pub focus: domain::Field,
     pub email: Input,
-    pub staging: bool,
-    pub under_domain: bool,
     pub local_domain: Input,
     pub dns01_first: Input,
     pub dns01_second: Input,
-    pub checks: Option<Result<Vec<nodo_api::LocalNameCheck>, String>>,
-    pub error: Option<String>,
 }
 
 impl DomainState {
     pub fn new(acme: &AcmeView, domain: &str) -> Self {
-        let suggested = if domain.contains('.') { format!("home.{domain}") } else { String::new() };
         Self {
-            focus: DomainFocus::Email,
+            flow: Domain::new(acme),
+            focus: domain::Field::Email,
             email: Input::plain(acme.email.clone()),
-            staging: acme.staging,
-            under_domain: acme.local_domain.is_some(),
-            local_domain: Input::plain(acme.local_domain.clone().unwrap_or(suggested)),
+            local_domain: Input::plain(domain::suggested_local_domain(acme, domain)),
             dns01_first: Input::secret(),
             dns01_second: Input::secret(),
-            checks: None,
-            error: None,
         }
-    }
-
-    pub fn order(acme: &AcmeView) -> Vec<DomainFocus> {
-        let mut order = vec![DomainFocus::Email, DomainFocus::Staging, DomainFocus::DotLocal, DomainFocus::UnderDomain];
-        if !acme.dns01_fields.is_empty() {
-            order.extend([DomainFocus::Dns01First, DomainFocus::Dns01Second]);
-        }
-        order
     }
 }
 
-/// A public or local host while Caddy gets its certificate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CertificateState {
-    pub site: String,
-    pub host: String,
+impl std::ops::Deref for DomainState {
+    type Target = Domain;
+
+    fn deref(&self) -> &Domain {
+        &self.flow
+    }
 }
 
+impl std::ops::DerefMut for DomainState {
+    fn deref_mut(&mut self) -> &mut Domain {
+        &mut self.flow
+    }
+}
+
+/// The CGNAT guidance: the chosen way on. What each way does is the core's `Cgnat`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgnatState {
-    pub site: String,
-    pub wan_address: String,
-    pub wan_range: String,
-    pub internet_address: String,
+    pub flow: Cgnat,
+    /// An index into the core's `CgnatWay::ALL`.
     pub choice: usize,
-    pub going_public: bool,
     pub details: bool,
+}
+
+impl std::ops::Deref for CgnatState {
+    type Target = Cgnat;
+
+    fn deref(&self) -> &Cgnat {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1203,7 +1063,7 @@ pub enum Screen {
     FeedKey(FeedKeyState),
     Settings(SettingsState),
     Reference(ReferenceState),
-    ApplyFailed(ApplyFailedState),
+    ApplyFailed(ApplyFailed),
     Updates(UpdatesState),
     AutoUpdate(AutoUpdateState),
     UpdateResults(UpdateResultsState),
@@ -1217,12 +1077,14 @@ pub enum Screen {
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
     WebDomain(DomainState),
-    WebCertificate(CertificateState),
+    /// A public or local host while Caddy gets its certificate.
+    WebCertificate(Certificate),
     /// The local CA's fingerprint and the page where LAN devices get its root.
     WebTrust,
     Setup(SetupState),
     Backup(BackupState),
     Onion(OnionState),
+    WebGui(WebGuiState),
     Restore(RestoreState),
     Rollbacks(RollbacksState),
     Network(NetworkState),
@@ -1238,7 +1100,8 @@ pub enum Screen {
 /// Settings and Logs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPageState {
-    pub name: String,
+    /// Which app, with what its buttons do.
+    pub page: AppPage,
     pub selected: usize,
     /// At 80 columns the page actions fold into "⋯ More", which opens them as a list.
     pub more_open: bool,
@@ -1246,98 +1109,71 @@ pub struct AppPageState {
 
 impl AppPageState {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_owned(), selected: 0, more_open: false }
+        Self { page: AppPage::new(name), selected: 0, more_open: false }
     }
 }
 
-/// Where installing a bundle stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BundleStep {
-    /// The apps it installs with their permissions, the grants and the data drive choices.
-    Review,
-    /// The settings the bundle asks for once, before anything installs.
-    Answers,
-    /// The device passphrase, for new encrypted storage or a secret answer while locked.
-    Passphrase,
-    /// The helper is installing.
-    Installing,
-    Done(nodo_api::BundleReport),
+impl std::ops::Deref for AppPageState {
+    type Target = AppPage;
+
+    fn deref(&self) -> &AppPage {
+        &self.page
+    }
 }
 
-/// Installing a suite of apps together, from the review of the head that declares it.
+/// Installing a suite of apps together: the focus, the boxes and the scroll. The steps and what
+/// each one checks are the core's `Bundle`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleState {
-    pub review: nodo_api::BundleReview,
-    pub step: BundleStep,
+    pub flow: Bundle,
     /// In the review: an index into the data drive toggles, then Cancel, then Continue. In the
     /// questions: the field.
     pub focus: usize,
-    /// Per `review.data_drive`: keep that app's data on the data drive. On by default when one
-    /// is present.
-    pub drive: Vec<bool>,
-    /// One per ask, in order. A secret ask is a masked field.
+    /// One per ask, in order, as the core makes them.
     pub answers: Vec<Input>,
     pub passphrase: Input,
-    pub error: Option<String>,
     /// Rows scrolled past in a long review or result.
     pub scroll: usize,
 }
 
 impl BundleState {
     pub fn new(review: nodo_api::BundleReview) -> Self {
-        let drive = vec![review.data_drive_present; review.data_drive.len()];
-        let answers = review.asks.iter().map(|a| if a.secret { Input::secret() } else { Input::plain("") }).collect();
-        let focus = drive.len();
-        Self { review, step: BundleStep::Review, focus, drive, answers, passphrase: Input::secret(), error: None, scroll: 0 }
-    }
-
-    /// The asks the owner answers: those for apps not installed yet.
-    pub fn open_asks(&self) -> Vec<usize> {
-        (0..self.review.asks.len()).filter(|&i| !self.review.asks[i].skipped).collect()
+        let flow = Bundle::new(review);
+        let answers = flow.answer_boxes();
+        let focus = flow.drive.len();
+        Self { flow, focus, answers, passphrase: Input::secret(), scroll: 0 }
     }
 
     /// The review's Cancel button, after the toggles; Continue is the one after it.
     pub fn cancel_index(&self) -> usize {
-        self.drive.len()
-    }
-
-    /// The apps this install puts their data on the data drive for.
-    pub fn chosen_drive(&self) -> Vec<String> {
-        self.review.data_drive.iter().zip(&self.drive).filter(|(_, on)| **on).map(|(id, _)| id.clone()).collect()
-    }
-
-    /// The answers as the helper takes them, every value a secret.
-    pub fn answers_for_helper(&self) -> Vec<nodo_api::BundleAnswer> {
-        self.open_asks()
-            .into_iter()
-            .map(|i| {
-                let ask = &self.review.asks[i];
-                nodo_api::BundleAnswer {
-                    package: ask.package.clone(),
-                    setting: ask.setting.clone(),
-                    value: nodo_api::Secret::new(self.answers[i].secret_value().expose()),
-                }
-            })
-            .collect()
+        self.flow.drive.len()
     }
 }
 
-/// An app's setup page: the passphrase first, then the checklist. The passphrase stays in memory
-/// only while the page is open, so `r` can fetch it again; leaving the page drops it.
+impl std::ops::Deref for BundleState {
+    type Target = Bundle;
+
+    fn deref(&self) -> &Bundle {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BundleState {
+    fn deref_mut(&mut self) -> &mut Bundle {
+        &mut self.flow
+    }
+}
+
+/// An app's setup page: the passphrase box, the scroll and the chosen copy target. The gate, the
+/// page and the passphrase held to read it again are the core's `OwnerPage`; leaving the page
+/// drops them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerPageState {
-    pub package: String,
-    /// The row's name on the app's page, such as "Setup".
-    pub title: String,
+    pub flow: OwnerPage,
     pub passphrase: Input,
-    pub held: Option<Secret>,
-    pub view: Option<nodo_api::OwnerPageView>,
-    pub error: Option<String>,
-    /// A fetch is under way.
-    pub loading: bool,
     /// Rows scrolled past.
     pub scroll: usize,
-    /// An index into [`copy_targets`].
+    /// An index into the flow's `copy_targets`.
     pub focus: usize,
     /// The copy target last copied, for the "Copied" note.
     pub copied: Option<usize>,
@@ -1347,94 +1183,42 @@ pub struct OwnerPageState {
 
 impl OwnerPageState {
     pub fn new(package: &str, title: &str) -> Self {
-        Self {
-            package: package.to_owned(),
-            title: title.to_owned(),
-            passphrase: Input::secret(),
-            held: None,
-            view: None,
-            error: None,
-            loading: false,
-            scroll: 0,
-            focus: 0,
-            copied: None,
-            follow: false,
-        }
+        Self::of(OwnerPage::new(package, title))
+    }
+
+    pub fn of(flow: OwnerPage) -> Self {
+        Self { flow, passphrase: Input::secret(), scroll: 0, focus: 0, copied: None, follow: false }
     }
 }
 
-/// Everything on a setup page that can be copied, in the order drawn: values, QR codes' data and
-/// the DNS records' values, each with its label.
-pub fn copy_targets(view: &nodo_api::OwnerPageView) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for step in &view.steps {
-        for item in &step.items {
-            match item {
-                nodo_api::OwnerItem::Value { label, value } => out.push((label.clone(), value.clone())),
-                nodo_api::OwnerItem::Qr { label, data } => out.push((label.clone(), data.clone())),
-                nodo_api::OwnerItem::Site(site) => {
-                    if let Some(host) = &site.host {
-                        out.push(("Address".to_owned(), host.clone()));
-                    }
-                    for record in &site.records {
-                        out.push((format!("{} record {}", record.kind, record.name), record.value.clone()));
-                    }
-                }
-                _ => {}
-            }
-        }
+impl std::ops::Deref for OwnerPageState {
+    type Target = OwnerPage;
+
+    fn deref(&self) -> &OwnerPage {
+        &self.flow
     }
-    out
 }
 
-/// The rows of an app's page: its setup page first when it has one, then Hosting, Settings and
-/// Logs.
-pub fn app_sections(app: &App, name: &str) -> Vec<String> {
-    let mut rows: Vec<String> = app.data.owner_pages.iter().filter(|(p, _)| p == name).map(|(_, t)| t.clone()).collect();
-    rows.extend(APP_SECTIONS.iter().map(|s| (*s).to_owned()));
-    rows
+impl std::ops::DerefMut for OwnerPageState {
+    fn deref_mut(&mut self) -> &mut OwnerPage {
+        &mut self.flow
+    }
 }
 
-/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
+/// Removing an app asks first. The confirm button starts unfocused, so Enter cancels./// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppRemoveState {
     pub name: String,
+    /// What is asked and what confirming does, from the core. It is drawn as a page of its own.
+    pub question: Question,
     pub confirm_focused: bool,
 }
 
-/// What Home lets one act on, in order: what needs the owner first (each with its one button),
-/// then every app.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HomeItem {
-    Unlock,
-    /// An app that keeps failing: its log.
-    Failing(String),
-    Updates,
-    App(String),
-}
-
-impl App {
-    pub fn home_items(&self) -> Vec<HomeItem> {
-        let mut items = Vec::new();
-        if self.is_locked() {
-            items.push(HomeItem::Unlock);
-        }
-        for svc in self.data.services.iter().filter(|svc| svc.state == nodo_api::ServiceState::Failed) {
-            items.push(HomeItem::Failing(svc.id.clone()));
-        }
-        if self.pending_updates() > 0 {
-            items.push(HomeItem::Updates);
-        }
-        items.extend(self.data.services.iter().map(|svc| HomeItem::App(svc.id.clone())));
-        items
+impl AppRemoveState {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_owned(), question: nodo_ui_core::flows::services::ask_remove(name), confirm_focused: false }
     }
 }
-
-/// The rows of the app page, in order.
-pub const APP_SECTIONS: [&str; 3] = ["Hosting", "Settings", "Logs"];
-
-/// The rows of the System page, in order.
-pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
 
 impl Screen {
     pub fn id(&self) -> ScreenId {
@@ -1470,6 +1254,7 @@ impl Screen {
             Screen::Setup(_) => ScreenId::Setup,
             Screen::Backup(_) => ScreenId::Backup,
             Screen::Onion(_) => ScreenId::Onion,
+            Screen::WebGui(_) => ScreenId::WebGui,
             Screen::Restore(_) => ScreenId::Restore,
             Screen::Rollbacks(_) => ScreenId::Rollbacks,
             Screen::Network(_) => ScreenId::Network,
@@ -1506,6 +1291,7 @@ impl Screen {
             | Screen::UpdateResults(_)
             | Screen::Rollbacks(_)
             | Screen::Backup(_)
+            | Screen::WebGui(_)
             | Screen::Network(_) => Tab::System,
             Screen::Logs(state) if state.app.is_none() => Tab::System,
             _ => Tab::Apps,
@@ -1513,49 +1299,29 @@ impl Screen {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeKind {
-    Info,
-    Ok,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notice {
-    pub kind: NoticeKind,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModalAction {
-    RemoveFeed(String),
-    AllSitesOffline,
-    RepairDrive,
-    DiscardSettings,
-    DiscardAutoUpdate,
-    RemoveSshKey(String),
-    /// Puts a package back to the version given.
-    RollBack { package: String, to: String },
-    /// Joins an open network, whose traffic anyone nearby can read.
-    JoinOpenWifi(String),
-    ForgetWifi(String),
-    /// Turns Wi-Fi off while it may be the connection in use.
-    WifiOff,
-    RemoveBluetooth(String),
-    /// Disconnects a domain provider, by id.
-    RemoveProvider(String),
-    /// Saves Hosting with these new names, which go on the internet at once: the site is public.
-    AddPublicNames(Vec<String>),
-}
-
-/// A yes-or-no question whose focus always starts on the safe answer.
+/// A question on top of the screen, and which of its two buttons has the focus. The wording and
+/// what confirming does are the core's `Question`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Modal {
-    pub title: String,
-    pub body: Vec<String>,
-    pub confirm_label: String,
+    pub question: Question,
     pub confirm_focused: bool,
-    pub action: ModalAction,
+}
+
+impl Modal {
+    /// The focus starts on Cancel unless the question says its default is to go ahead.
+    pub fn ask(question: Question) -> Self {
+        let confirm_focused = !question.cancel_is_default;
+        Self { question, confirm_focused }
+    }
+}
+
+/// The question's own fields read as the modal's, which is how the views and tests name them.
+impl std::ops::Deref for Modal {
+    type Target = Question;
+
+    fn deref(&self) -> &Question {
+        &self.question
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1607,30 +1373,26 @@ impl Default for App {
 }
 
 impl App {
+    // These only read the snapshot, where the rules live (`nodo_ui_core::queries`). They stay
+    // here as short names for the views.
+
     /// The sites that are online somewhere: on the home network, Tor or the internet.
     pub fn active_sites(&self) -> Vec<&Site> {
-        self.data.web.sites.iter().filter(|site| site.exposure.local || site.exposure.onion || site.exposure.public).collect()
+        self.data.active_sites()
     }
 
     /// A domain provider is connected with at least one domain an app can use.
     pub fn has_provider(&self) -> bool {
-        !self.domain_choices().is_empty()
+        self.data.has_provider()
     }
 
-    /// The domains apps can be put under, each with its provider's name. A domain another provider
-    /// already holds is left out: it is used through that one.
+    /// The domains apps can be put under, each with its provider's name.
     pub fn domain_choices(&self) -> Vec<(String, String)> {
-        let mut choices: Vec<(String, String)> = self
-            .data
-            .connected
-            .iter()
-            .flat_map(|p| p.domains.iter().filter(|d| d.held_by.is_none()).map(move |d| (d.name.clone(), p.name.clone())))
-            .collect();
-        // Before the helper reports providers (or with an older one), the single connected domain.
-        if choices.is_empty() && !self.data.web.domain.is_empty() && !self.data.web.provider.is_empty() {
-            choices.push((self.data.web.domain.clone(), self.data.web.provider.clone()));
-        }
-        choices
+        self.data.domain_choices()
+    }
+
+    pub fn home_items(&self) -> Vec<HomeItem> {
+        self.data.home_items()
     }
 
     pub fn new() -> Self {
@@ -1658,158 +1420,21 @@ impl App {
 
     /// Held-back versions are not offered, so they do not count towards the badge.
     pub fn pending_updates(&self) -> usize {
-        self.data.updates.iter().filter(|item| !item.held).count()
+        self.data.pending_updates()
     }
 
-    /// The device key is not in memory. The helper says so even when no app waits, such as
-    /// before the first encrypted app is installed, and DNS keys still need it.
     pub fn is_locked(&self) -> bool {
-        self.data.overview.locked || self.data.services.iter().any(|svc| svc.state == nodo_api::ServiceState::Locked)
+        self.data.is_locked()
     }
 
     /// Available updates first, then held ones, matching the rows the Updates screen shows.
     pub fn update_rows(&self) -> Vec<&UpdateItem> {
-        let (held, available): (Vec<_>, Vec<_>) = self.data.updates.iter().partition(|item| item.held);
-        available.into_iter().chain(held).collect()
+        self.data.update_rows()
     }
 
     pub fn search_results(&self, state: &SearchState) -> Vec<&PackageSummary> {
-        let query = state.query.text().to_lowercase();
-        self.data
-            .catalog
-            .iter()
-            .filter(|pkg| state.feed_filter.as_ref().is_none_or(|feed| &pkg.id.feed == feed))
-            .filter(|pkg| {
-                pkg.id.name.to_lowercase().contains(&query) || pkg.tagline.to_lowercase().contains(&query)
-            })
-            .collect()
+        state.flow.results(&self.data, state.query.text())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExposureAfter {
-    Back,
-    Stay,
-    WentPublic,
-}
-
-/// A request for I/O. `Debug` is safe to print: anything secret is held in a `Secret`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Effect {
-    Refresh,
-    Start(String),
-    Stop(String),
-    Restart(String),
-    /// Removes an installed app. Its data stays on the drive, so installing it again brings it back.
-    RemovePackage(String),
-    Unlock(Secret),
-    OpenService(String),
-    LoadDetail(PackageId),
-    CheckInstall(PackageId),
-    StartInstall { id: PackageId, approval: Option<nodo_api::PermissionApproval>, passphrase: Option<Secret> },
-    PollInstall,
-    CancelInstall,
-    ProbeFeed(String),
-    TrustFeed(FeedProbe),
-    RefreshFeeds,
-    ToggleFeed(String),
-    RemoveFeed(String),
-    LoadKeyChange(String),
-    TrustNewKey { change: KeyChange, typed: String },
-    OpenSettings(String),
-    LoadReferences { package: String },
-    PreviewSetting { package: String, field_index: usize, key: String, value: FieldValue },
-    Grant { consumer: String, provider: String, setting: String },
-    /// The changed fields. `None` puts a setting back to having no value of its own: an emptied
-    /// optional field.
-    ApplySettings { package: String, values: Vec<(String, Option<FieldValue>)> },
-    CheckUpdates,
-    ReviewUpdate {
-        name: String,
-        batch: Vec<String>,
-        pending_reviews: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    },
-    ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
-    SetHeld { name: String, held: bool },
-    SaveAutoUpdate(AutoUpdatePrefs),
-    LoadLogs(String),
-    Drive(DriveAction),
-    Shell,
-    /// `confirmation` is the host the user typed, which the helper requires to go public.
-    SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
-    /// Saves the host and every other name of a site. `then` runs only once that worked, so a
-    /// refused name never goes on to the checks or to going public with the old names.
-    /// `confirm_added` are the new names the owner confirmed putting on a site that is public.
-    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, confirm_added: Vec<String>, then: Vec<Effect> },
-    SetPublicAccess { site: String, access: PublicAccess },
-    CheckReachability { site: String, going_public: bool },
-    /// `domain` only for a provider that cannot list its domains.
-    AddProvider { provider: String, domain: Option<String>, api_key: Secret, secret_key: Secret },
-    /// Reads the provider catalog again, as the add flow opens.
-    LoadProviders,
-    RemoveProvider(String),
-    RefreshProvider(String),
-    /// `dns01` holds the provider's separate certificate credentials, when it needs them.
-    SaveAcme { settings: nodo_api::AcmeSettingsInput, dns01: Option<(Secret, Secret)> },
-    CheckLocalNames,
-    ShowDocument(DocKind),
-    CopyReport(String),
-    InitEncryption(Secret),
-    LoadSshKeys,
-    AddSshKey(String),
-    RemoveSshKey(String),
-    /// The device's backups, and the first USB drive with its backups.
-    LoadBackups,
-    /// `usb` names a removable drive to use instead of the device's own backup folder.
-    CreateBackup { device_passphrase: Option<Secret>, backup_passphrase: Secret, usb: Option<String> },
-    InspectBackup { name: String, passphrase: Secret, usb: Option<String> },
-    RestoreBackup {
-        name: String,
-        passphrase: Secret,
-        new_device_passphrase: Option<Secret>,
-        typed: String,
-        usb: Option<String>,
-    },
-    /// Like `ApplyUpdates`, with the device passphrase for updates that grow encrypted storage.
-    ApplyUpdatesWithPassphrase {
-        names: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-        passphrase: Secret,
-    },
-    LoadOnion,
-    SetNodeOnion(bool),
-    SetSiteExposure { site: nodo_api::SiteId, exposure: Exposure },
-    LoadRestoreDrives,
-    LoadRestoreBackups(String),
-    InspectRestore { device: String, name: String, passphrase: Secret },
-    RunRestore { device: String, name: String, passphrase: Secret, new_device_passphrase: Secret, typed: String },
-    LoadRollbacks,
-    RollBack { package: String, to: String },
-    /// Both radios' status.
-    LoadNetwork,
-    /// Wi-Fi's status alone, quietly, while an address is awaited.
-    PollWifi,
-    SetWifi(bool),
-    ScanWifi,
-    JoinWifi { ssid: String, security: nodo_api::WifiSecurity, passphrase: Option<Secret>, accept_open: bool },
-    ForgetWifi(String),
-    SetBluetooth(bool),
-    ScanBluetooth,
-    PairBluetooth(String),
-    /// Bluetooth's status, quietly, while a pairing runs.
-    PollBluetooth,
-    ConnectBluetooth { address: String, connect: bool },
-    RemoveBluetooth(String),
-    /// Installs a reviewed bundle with the owner's answers and data drive choices.
-    InstallBundle {
-        review: Box<nodo_api::BundleReview>,
-        answers: Vec<nodo_api::BundleAnswer>,
-        data_drive: Vec<String>,
-        passphrase: Option<Secret>,
-    },
-    /// Fetches an app's setup page with the device passphrase.
-    LoadOwnerPage { package: String, passphrase: Secret },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1830,78 +1455,6 @@ pub enum Event {
     Paste(String),
     Tick,
     Resize(u16, u16),
-    Refreshed(Box<Snapshot>),
-    Failed(String),
-    Info(String),
-    UnlockResult(Result<Response, ApiError>),
-    DetailLoaded(Option<PackageDetail>),
-    GateLoaded(InstallGate),
-    InstallProgress(Option<InstallSnapshot>),
-    /// How Check now went. It comes after the snapshot that holds what it found, and the sources
-    /// as they were read.
-    UpdatesChecked(CheckReport),
-    FeedProbed(Result<FeedProbe, String>),
-    FeedTrusted(Result<String, String>),
-    KeyChangeLoaded(Option<KeyChange>),
-    NewKeyTrusted(Result<String, String>),
-    SettingsLoaded { package: String, form: Option<SettingsForm> },
-    ReferencesLoaded { package: String, list: ReferenceList },
-    SettingPreviewed { package: String, field_index: usize, preview: FieldPreview },
-    Granted { provider: String, setting: String, result: Result<(), ApiError> },
-    SettingsApplied(Result<(), ApiError>),
-    SettingsRolledBack { package: String, explanation: RollbackExplanation },
-    UpdateReviewLoaded {
-        review: Option<ReviewData>,
-        batch: Vec<String>,
-        pending_reviews: Vec<String>,
-        approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    },
-    UpdatesApplied(UpdateReport),
-    AutoUpdateSaved(Result<(), String>),
-    LogsLoaded { source: String, view: LogView },
-    DriveResult(Result<Document, String>),
-    ExposureSet { after: ExposureAfter, result: Result<(), ApiError> },
-    PublicHostSet { result: Result<(), String>, then: Vec<Effect> },
-    Reachability { site: String, going_public: bool, result: Reachability },
-    ProviderAdded(Result<ConnectedProvider, String>),
-    ProvidersLoaded(Result<Vec<Provider>, String>),
-    ProviderRemoved(Result<(), String>),
-    ProviderRefreshed(Result<ConnectedProvider, String>),
-    AcmeSaved(Result<(), String>),
-    LocalNamesChecked(Result<Vec<nodo_api::LocalNameCheck>, String>),
-    DocumentLoaded(Document),
-    SetupDone(Result<(), ApiError>),
-    SshKeysLoaded(Result<Vec<nodo_api::SshKey>, String>),
-    SshKeyChanged(Result<(), String>),
-    BackupsLoaded(Result<Vec<nodo_api::BackupInfo>, String>),
-    BackupCreated(Result<nodo_api::BackupCreated, String>),
-    BackupInspected(Result<nodo_api::BackupContents, String>),
-    BackupRestored(Result<nodo_api::RestoreReport, String>),
-    UsbLoaded(Result<UsbView, String>),
-    OnionLoaded(Result<nodo_api::OnionStatus, String>),
-    OnionChanged(Result<(), String>),
-    RestoreDrives(Result<Vec<nodo_api::UsbDrive>, String>),
-    RestoreBackups(Result<nodo_api::UsbBackupList, String>),
-    RestoreInspected(Result<nodo_api::BackupContents, String>),
-    RestoreFinished(Result<nodo_api::RestoreReport, String>),
-    RollbacksLoaded(Result<RollbackView, String>),
-    RolledBack(Result<nodo_api::UpdateResult, String>),
-    NetworkLoaded {
-        wifi: Result<nodo_api::WifiStatus, String>,
-        bluetooth: Result<nodo_api::BluetoothStatus, String>,
-    },
-    /// After a Wi-Fi change. `quiet` results come from polling and never raise a notice.
-    WifiChanged { result: Result<nodo_api::WifiStatus, String>, quiet: bool },
-    WifiScanned(Result<Vec<nodo_api::WifiNetwork>, String>),
-    BluetoothChanged { result: Result<nodo_api::BluetoothStatus, String>, quiet: bool },
-    BundleInstalled(Result<nodo_api::BundleReport, String>),
-    OwnerPageLoaded { package: String, result: Result<nodo_api::OwnerPageView, ApiError> },
-}
-
-/// The USB drive the backup screen shows: the first one plugged in, with its backups when it
-/// can be used, or why it cannot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UsbView {
-    pub drive: nodo_api::UsbDrive,
-    pub list: Option<nodo_api::UsbBackupList>,
+    /// What an effect came to.
+    Done(Outcome),
 }

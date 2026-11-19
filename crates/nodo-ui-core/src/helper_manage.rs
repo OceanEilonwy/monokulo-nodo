@@ -141,9 +141,10 @@ pub fn available_detail(b: &HelperBackend, id: &PackageId) -> Option<PackageDeta
         installed: false,
         signature_verified: false,
         about: format!(
-            "Offered by the feed {}. Press i to download and check it. You then see everything it asks for before anything installs.",
+            "Offered by the feed {}. Installing downloads and checks it first. You then see everything it asks for before anything installs.",
             id.feed
         ),
+        about_hint: Some(Hint::Install),
         version: entry.version,
         size: size(entry.size_bytes),
         license: String::new(),
@@ -869,7 +870,7 @@ pub fn attention(health: Option<&HealthSummary>, status: Option<&UpdateStatus>) 
             ),
             UpdateEventKind::RollbackFailed { .. } => (
                 AttentionLevel::Critical,
-                format!("{} {} failed and {} did not come back. Press `l` to read its log.", e.package, e.to, e.from),
+                format!("{} {} failed and {} did not come back. Its log says why.", e.package, e.to, e.from),
             ),
             // Refused by an automatic run, which nobody watched. Nothing changed and nothing is held.
             UpdateEventKind::NotUpdated { reason } => (

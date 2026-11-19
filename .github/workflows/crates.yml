@@ -37,8 +37,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
 
-      - name: Test nodo-api, nodo-helper and nodo-tui
-        run: cargo test --locked -p nodo-api -p nodo-helper -p nodo-tui
+      - name: Test nodo-api, nodo-helper, nodo-tui, nodo-ui-core and nodo-web-gui
+        run: cargo test --locked -p nodo-api -p nodo-helper -p nodo-tui -p nodo-ui-core -p nodo-web-gui
 
       # Only these rules, not the whole of clippy. Reading the terminal anywhere but nodo_tui::input
       # brings back a TUI that spins after a hangup. A result dropped with `let _ =` or as a bare
@@ -48,3 +48,15 @@ jobs:
         run: >-
           cargo clippy --locked -p nodo-tui --all-targets --
           -A clippy::all -D clippy::disallowed_methods -D clippy::let_underscore_must_use -D unused_must_use
+
+      # The same rules for what the interfaces share: the helper calls are made there.
+      - name: nodo-ui-core never reads a terminal, and drops no result unsaid
+        run: >-
+          cargo clippy --locked -p nodo-ui-core --all-targets --
+          -A clippy::all -D clippy::disallowed_methods -D clippy::let_underscore_must_use -D unused_must_use
+
+      # And for the web GUI, where a dropped result would be a click that failed without a word.
+      - name: nodo-web-gui drops no result unsaid
+        run: >-
+          cargo clippy --locked -p nodo-web-gui --all-targets --
+          -A clippy::all -D clippy::let_underscore_must_use -D unused_must_use

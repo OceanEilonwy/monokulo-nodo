@@ -1,0 +1,36 @@
+[package]
+name = "nodo-web-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "The Monokulo Nodo admin pages for a browser on the home network, behind Caddy at https://nodo.local"
+
+[[bin]]
+name = "nodo-web-gui"
+path = "src/main.rs"
+
+[dependencies]
+nodo-api = { path = "../nodo-api" }
+nodo-ui-core = { path = "../nodo-ui-core" }
+# The router and the server. Only HTTP/1 (Caddy speaks it to the Unix socket), forms and query
+# strings; no JSON, no WebSockets, no tracing.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "form", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "time", "sync", "macros"] }
+# HTML written in Rust and checked at compile time, escaped by default. No template files.
+maud = { version = "0.27", features = ["axum"] }
+# Typed query strings and form bodies.
+serde = { workspace = true }
+zeroize = "1"
+# Session tokens, from the kernel.
+getrandom = "0.3"
+# QR codes on apps' setup pages, drawn as SVG on the server. MIT, no dependencies; the terminal
+# interface uses the same.
+qrcodegen = "1.8"
+# umask before the listening socket is made.
+libc = "0.2"
+
+[dev-dependencies]
+# `ServiceExt::oneshot`, to drive the router in-process.
+tower = { version = "0.5", default-features = false, features = ["util"] }

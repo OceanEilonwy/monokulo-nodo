@@ -64,7 +64,9 @@ codebase, and signed xbps packages from user-added feeds.
   nodo-caddy, nodo-ddns, nodo-localnet) and start nodo-helper, nodo-healthd and
   nodo-autoupdate at boot; the helper starts the web services when sites need them. The helper also
   serves the touchscreen (nodo-gui, as `_nodo_screen`) on `/run/nodo/screen.sock`, where reading is
-  always allowed and changes need the screen PIN (docs/SCREEN.md, "Changes need the screen PIN"). They also
+  always allowed and changes need the screen PIN (docs/SCREEN.md, "Changes need the screen PIN"),
+  and the web GUI (as `_nodo_webgui`) on `/run/nodo/webgui.sock`, where nothing is allowed before
+  a login (see Web GUI). They also
   start udevd, which loads the board's driver modules and firmware and handles USB hotplug, and
   `nodo-sound` for the mixer state; [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) lists the hardware
   setup. The helper's run script does not rely on udev's `/dev/disk` links: it takes the data
@@ -177,7 +179,8 @@ codebase, and signed xbps packages from user-added feeds.
   manifest declares one (`[owner_page]`, the row named by its title, such as Setup). Get apps (`g`) searches the sources,
   and Sources (the old Feeds) sits under it, a card per source. System holds the Nodo's own update,
   then Updates (the Nodo and the apps on one page, each with its own button), Backups, Network,
-  Device logs and About; automatic updates and undoing an update are reached from Updates. Every
+  Web GUI (Off, On with its address, or waiting for the local address; its page explains it and
+  holds the switch, see Web GUI), Device logs and About; automatic updates and undoing an update are reached from Updates. Every
   screen uses the same pieces (`crates/nodo-tui/src/view/v3.rs`): surfaces instead of lines, cards
   as even rectangles, inset fields, buttons inside the card they act on with a ▸ on the one Enter
   presses, and one dim line of keys. Screens drawn as bordered panels (backups, restore, undo,
@@ -276,15 +279,17 @@ codebase, and signed xbps packages from user-added feeds.
   site does not answer at yet does (a record pointing at the home, and a certificate that public
   logs keep), and the going-public confirmation never listed it, so the helper takes it only when
   `SetPublicHost` lists it in `confirm_added`, and answers `NeedsConfirmation` otherwise. The TUI
-  asks before it saves, naming the new names; `--ctl` takes `confirm=NAME`. Going public checks
+  and the web GUI ask before they save, naming the new names (one rule, `Hosting::save` in the
+  core's `flows::web::hosting`, whose question carries the draft it confirms); `--ctl` takes
+  `confirm=NAME`. Going public checks
   again that every name still has its provider. `SetPublicHost` carries the names (`aliases`,
   `None` keeping the saved ones), and `SiteInfo::public_aliases` reports them (protocol version 5;
   `confirm_added` is version 6). `public-hosts.toml` keeps a site
   without other names as the plain host string, and one with them as `{ host, aliases = [{ host,
   mode }] }`; a helper from before this cannot read that table, so before a downgrade remove the
   names (or the downgraded helper treats the whole file as corrupt until they are gone). Backups
-  carry the file as it is. The GUI shows the names on a site's page; they are changed in the TUI or
-  with `nodo-tui --ctl host PACKAGE SITE HOST NAME=serve|NAME=redirect… [confirm=NAME…]`.
+  carry the file as it is. The GUI shows the names on a site's page; they are changed in the TUI,
+  the web GUI, or with `nodo-tui --ctl host PACKAGE SITE HOST NAME=serve|NAME=redirect… [confirm=NAME…]`.
 - **Mouse:** The TUI turns on mouse reporting (crossterm's `EnableMouseCapture`; it is turned off
   again on exit and from the panic hook). Screens declare click targets by the text they draw, which
   are found in the drawn frame (`crates/nodo-tui/src/hit.rs`), so a click lands on exactly what is
@@ -295,7 +300,7 @@ codebase, and signed xbps packages from user-added feeds.
   says `"on"`, or with `"auto"` (the default) in kitty, WezTerm and Ghostty, which bundle the symbols;
   elsewhere they are flat with plain ends.
 - **References in the TUI:** App › Settings fields that take text, a number, a URL or an address hold
-  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-tui/src/refs.rs`):
+  typed text and reference chips (`app·setting`) together, edited as pieces (`crates/nodo-ui-core/src/refs.rs`):
   a chip is one cursor step and is only ever made by the picker or a suggestion, so typed `$(` stays text.
   Typing `$(` suggests fitting references at the cursor; Ctrl+R, F4 or a field's "+ reference" link opens
   the one picker, which searches every other app's settings (`ListReferences`) by app, name,
@@ -322,7 +327,8 @@ codebase, and signed xbps packages from user-added feeds.
   owner's domain. Records need the sealed provider credentials, so while locked they wait for the
   unlock and `LocalSiteStatus` says why in plain words; while the address is gone they are left
   alone rather than removed and written again.
-- **Local CA trust page:** While any `.local` site uses Caddy's internal CA, Caddy serves a plain
+- **Local CA trust page:** While any `.local` site uses Caddy's internal CA, or the web GUI is on
+  (see Web GUI), Caddy serves a plain
   HTTP page at `http://nodo.local` (also by the bare local address) on the local address's port
   80, which nftables sends to a listener bound to that address alone, for LAN sources only. It
   offers the root in DER and PEM, its SHA-256 fingerprint, and short install steps per platform.
@@ -382,6 +388,95 @@ codebase, and signed xbps packages from user-added feeds.
   root service whose socket only `_nodo_screen` may open and which accepts only `poweroff`: it stops
   every service (cuprated given five minutes to save), syncs and turns the device off.
   [SCREEN.md](SCREEN.md) is the contract.
+- **Web GUI:** The TUI's screens in a browser on the home network, at `https://nodo.local`, for the
+  owner. It is off until the owner turns it on over SSH (System › Web GUI in the TUI, or
+  `nodo-tui --ctl web-gui 1`; both send `SetWebGui`),
+  which needs the device passphrase to be set up, and only SSH turns it on or off: the main socket
+  alone takes `SetWebGui`, never the touchscreen and never the web GUI itself. The TUI's page says
+  what it is and what turning it on means, shows the address and the local CA's fingerprint, and
+  asks before turning it on, starting on Cancel; turning it off does not ask (`flows::web_gui` in
+  the core). The web GUI's own System page and the touchscreen's show the same state, read-only. The choice is
+  `/var/lib/nodo/web-gui.toml`; backups do not carry it, so a restored device starts with it off.
+  `WebGuiStatus` (`--ctl web-gui-status`) says whether it is on, its address while it is served, and
+  whether it waits for the local address, on every socket. `nodo-web-gui` (nodo-tools) runs as
+  `_nodo_webgui` in a bubblewrap sandbox with `nodo-confine`, like the other device services, seeing
+  only `/usr`, `/run/nodo` and its own socket directory of the device's files. Its runit service is in
+  no board's list: the helper links and starts it when the web GUI is turned on and stops it when it is
+  turned off, as it does Caddy and nodo-localnet, and brings it to the saved choice when the helper
+  starts. It listens only on a Unix socket, `/run/nodo-web-gui/http.sock`, never on the network, and
+  keeps nothing on disk. The helper serves it on a third socket, `/run/nodo/webgui.sock` (0600, owned
+  by `_nodo_webgui`, made only with `--web-uid`), and answers only that uid there. Until someone has
+  logged in, that socket answers `WebGuiLogin` and `WebGuiStatus` (then only on or off) and refuses
+  everything else, reads included, with `Locked("web login required")`: a web process nobody has logged
+  into can do nothing. The login opens a gate in the helper's memory. It closes on `WebGuiLogout`, 12
+  hours after the last login, 15 minutes after the last request finished with none still running (so a
+  long backup does not close it under itself), when the web GUI is turned off, and when the helper
+  restarts. While open, the socket takes what the main socket takes from an owner, SSH keys included,
+  except the requests only root sends (`LocalAddressChanged`, `RunAutoUpdate`, `RunSystemUpdate`), the
+  touchscreen's own `ScreenUnlock` and `ScreenLock`, and `SetWebGui`. The login is the device
+  passphrase; there is no separate web password. `WebGuiLogin` checks it with the unlock's growing
+  delay (2 s doubling to 60 s) but under its own failure count and lock, so guesses at the login page
+  never hold the lock the owner's own unlock over SSH waits on, and neither count raises the other. A
+  right passphrase also unlocks a locked device, taking the unlock's lock only for the mounts.
+  Passphrases asked for again in the TUI (backups, owner pages, growing storage, the screen PIN) are
+  asked for again in the browser and count with the unlock's. While it is on and the device has its
+  local address, `nodo.local` is one more host on the local listener (port 10444 on that address,
+  reached as 443, for LAN sources only), with Caddy's internal CA, proxied to that socket. It is
+  reached by name only: `https://` with the bare local address is not served, because a browser sends
+  no server name for an address and the listener's TLS policies answer only the names they know. The
+  plain HTTP trust page still answers by the bare address. It needs no `.local` site: on its own it
+  turns on the local listener, the internal CA, the trust page (which then links to it), the local
+  firewall block, the mDNS name and nodo-localnet. Without a local address it waits like a local site
+  and is never served on the main address. Off, the generated Caddy config and firewall are exactly
+  what they were before it existed. No site may use `nodo.local` on the local network while it is on.
+  The socket's directory, `/run/nodo-web-gui` (2750, `_nodo_webgui:_caddy`, made by both run scripts so
+  Caddy's sandbox has it whichever starts first), lets only the web GUI's account and Caddy's group in,
+  and being setgid gives the socket Caddy's group, which `nodo-web-gui` opens to it with mode 0660. So
+  an installed app can neither reach the login page around Caddy nor put a socket of its own where
+  Caddy looks, which a loopback port would have allowed; a site's own socket upstream must be under
+  `/run/apps`. `_nodo_webgui` may send nothing on the network (`web_gui_output` in nodo-tools' firewall
+  fragment, a chain of its own on the output hook, where a drop is final whatever another fragment's
+  rules accept). The web GUI cannot be reached from the Internet or through Tor, turn itself on or off,
+  act before a login or after the gate has closed, run as root, or read anything on the device but the
+  helper's answers. Turning it on has a price. Until then the device passphrase can only be tried by
+  someone who already has an SSH key on the device. With the web GUI on, anyone on the home network can
+  try it at the login page. The delay (up to 60 s per wrong guess, about 1,400 guesses a day) and the
+  8-character minimum are what stand in the way, and since the web GUI can add and remove SSH keys like
+  the TUI can, the passphrase alone then leads to a shell. That is why it is off by default.
+  Inside the process (`crates/nodo-web-gui`): sessions are its own and live only in its memory, so
+  restarting it logs everyone out. A session is a random 256-bit token in the cookie `__Host-nodo`
+  (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`), ends after 15 minutes without a request by
+  the owner or 12 hours at most, and there are at most 4; a page's own polling (a job's progress, a
+  followed log, a certificate, the radios) does not count as use. One login is checked at a time,
+  and an address that guessed wrong waits before its next guess is passed to the helper. Every
+  request must name the host `nodo.local` (421 otherwise), and one that changes something must
+  carry an `Origin` or `Referer` of `https://nodo.local` (403 otherwise). Every answer has
+  `Cache-Control: no-store`, a content security policy that allows only the compiled-in stylesheet
+  and scripts (htmx and a few lines of `app.js` for the dialog's focus and the Copy buttons), and
+  `Referrer-Policy: same-origin`. Each session has one connection to the helper, behind a lock,
+  because the helper backend keeps state between calls; the helper's gate is one for the process,
+  and the process sends `WebGuiLogout` when its last session ends. Before every page it asks
+  `WebGuiStatus`; a closed gate there, or the typed refusal from any call, drops every session and
+  sends the browser to the login. A multi-step flow (a backup or restore, a bundle's questions, a
+  hosting draft on its way to the internet, the reference picker, an app's setup page) keeps its
+  core flow value in the session and never rebuilds it from what a browser sends; single-request
+  forms carry their own draft. A call that takes minutes (`Effect::is_long` in the core) runs as a
+  job on the blocking pool holding the session's connection: the browser is sent to `/working`,
+  which asks again every second, and the session's other pages show what is running instead of
+  waiting for the connection. The helper reports no progress, so the page shows what runs and for
+  how long. Logging in unlocks the device; `/unlock` is for what is still locked afterwards (its
+  storage failed to open, or a flow needs the passphrase again) and returns to the page that sent
+  the owner there. Passphrases are held in `Secret` and in zeroizing strings once the page's code
+  has them, and are never logged or sent back; what is not wiped is the request body as hyper and
+  axum read it, the form fields of the pages that take a whole form as plain strings (backups,
+  network, bundle answers, settings), and whatever the allocator keeps of them. A setup page that
+  is open keeps the device passphrase in its session, to read the page again, until it is closed or
+  the session ends. One caveat after an upgrade: Caddy's sandbox binds `/run/nodo-web-gui` only if
+  the directory existed when Caddy started, so a Caddy that was already running when nodo-tools
+  with the web GUI was installed must be restarted once (a reboot does it) before the address
+  answers. `tests/web-gui-e2e.sh` proves the path in the dev VM: refused while off, on over SSH,
+  the service on a socket only Caddy's group may open, wrong logins counted apart from unlocks, a
+  login, pages, one setting changed, and off again with the session dead and the gate closed.
 - **Logging in over SSH** opens `nodo-tui` (`/etc/profile.d/nodo-tui.sh`, from `nodo-tools`).
   Only an interactive login shell on a terminal does: `ssh nodo some-command`, scp and sftp are
   untouched, and a shell started from that login does not open it again. Quitting it (`q`) leaves
@@ -398,5 +493,31 @@ codebase, and signed xbps packages from user-added feeds.
   differs from its pinned recipe stops a package build, since xbps-src would otherwise compile the
   old recipe; the fix is a `VOID_PACKAGES_REV` with the mirror's versions. Image builds list every
   such difference in `out/images/<board>/void-drift.txt` (`scripts/_void-drift.sh`).
-- `crates/`: the Rust workspace.
+- `crates/`: the Rust workspace. `crates/nodo-ui-core` is what the interfaces share and has no
+  terminal or toolkit in it: the screens' data (`model`), the helper backend (`helper_backend`,
+  `helper_manage`) and its in-memory double (`mock`), the scenarios both must pass (`contract`),
+  the text and reference editing buffers (`secret`, `refs`), the screens' names (`screen`), what
+  the screens work out from the device's state (`queries`, where the owner lands among them), and
+  what an interface asks for and gets back (`Effect` and `Outcome` in `effect`, with
+  `Effect::is_long` for the calls that take minutes) with the code and the worker thread that make
+  the helper calls (`exec`). `flows` holds each feature's rules and sequences of helper calls, one
+  module per feature: what an action does, what must be asked first (`Question`), what a result
+  means (`Step`), where it leads (`Dest`), validation, and the wording of consequences and
+  refusals; its module documentation is the convention every flow and every interface follows.
+  Wording never names a key or a button: a message that points at something to do carries a `Hint`,
+  which the terminal turns into a key, the web GUI into a link or a button. `words` holds the
+  short wordings every interface shows alike (an app's state, Home's cards, the unlock page's
+  lines, the tab counts, a System row's summary, an update's row). A rule or a sentence that a
+  second interface would need belongs in the core, never in an interface. `crates/nodo-tui` (the terminal) and `crates/nodo-gui` (the built-in
+  screen) are built on it, and `nodo-tui` re-exports none of it.
+  `crates/nodo-web-gui` is the web GUI's process (see Web GUI): axum on a Unix socket behind
+  Caddy, HTML written with maud, htmx 4, one stylesheet and a few lines of script compiled in (`assets/`), nothing on
+  disk. `session` and `state` hold the logged-in browsers and the helper's one login gate;
+  `security` is what every request and answer is held to; `runner` is its one function that
+  follows a `Step` of the core's flows, `dest` its one mapping from a `Dest` to a URL, and `ctx`
+  what a page handler is written with, including the jobs for calls that take minutes; `pages`
+  are the screens, each a thin layer over a flow; `hints` turns a `Hint` of the core into a link
+  or a button, and `glue` holds the few things that are this interface's alone (a form field as
+  a secret, a standing as a CSS class), each with why it is local. `nodo-web-gui --mock` serves the same
+  pages over the in-memory device on a loopback address.
 - `docs/design/tui/`: the TUI design, one `.dc.html` per screen, grouped in `canvas.json`.

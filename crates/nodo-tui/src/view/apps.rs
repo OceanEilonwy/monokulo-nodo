@@ -4,13 +4,16 @@
 use crossterm::event::KeyCode;
 use nodo_api::ServiceState;
 
-use super::home::{app_state, tagline};
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, focused, heading_link, inset, link, margin, progress, quiet, trail, trail_actions, Card, Screen3};
-use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewPurpose, ReviewState, SearchState, Tab, UnlockState, APP_SECTIONS};
+use crate::app::{App, AppPageState, AppRemoveState, CapabilityState, ReviewState, SearchState, UnlockState};
+use nodo_ui_core::flows::install::ReviewPurpose;
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
+use nodo_ui_core::queries::APP_SECTIONS;
+use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::{app_state, empty_catalog_line, hosting_summary, log_summary, tagline};
 use crate::theme::Theme;
 
 fn pick(index: usize) -> Click {
@@ -28,14 +31,14 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
     let mut before_targets = Vec::new();
     screen.before = vec![Item::Blank, heading_link(t, t.b("Installed"), "Get apps ›", key('g'), &mut before_targets), Item::Blank];
     screen.targets.extend(before_targets);
-    let names = crate::update::installed_apps(app);
+    let names = nodo_ui_core::flows::services::installed_apps(&app.data);
     let mut card = Card::new(t, w);
     card.blank(t);
     let rows: Vec<(String, bool, bool)> = names
         .iter()
         .map(|name| {
             let has_update = app.data.updates.iter().any(|u| &u.name == name && !u.held);
-            let (state, bad) = app_state(app, name);
+            let (state, bad) = app_state(&app.data, name);
             if has_update { ("Update ready".to_owned(), false, true) } else { (state, bad, false) }
         })
         .collect();
@@ -56,7 +59,7 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
             t.d(shown)
         };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
-        let what = truncate(&tagline(app, name), cols.what);
+        let what = truncate(&tagline(&app.data, name), cols.what);
         card.row_end_with(t, vec![lead, t.b(pad(name, cols.name)), t.n(what)], vec![status, t.d("  ›")], [Target::card_row(name.clone(), pick(index))]);
     }
     if names.is_empty() {
@@ -135,11 +138,11 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
 
     let mut status = Card::new(t, w);
     status.blank(t);
-    status.row(t, vec![t.b(name.to_owned()), t.d(format!("   {}", tagline(app, name)))]);
-    let (words, bad) = app_state(app, name);
+    status.row(t, vec![t.b(name.to_owned()), t.d(format!("   {}", tagline(&app.data, name)))]);
+    let (words, bad) = app_state(&app.data, name);
     let site = app.data.web.sites.iter().find(|s| s.package == name);
     let mut line = vec![if bad { t.e("●  ") } else if running { t.o("●  ") } else { t.d("○  ") }, if bad { t.e(words) } else { t.n(words) }];
-    if let Some(url) = site.and_then(|s| s.public_host.clone().map(|h| format!("https://{h}")).or_else(|| (!s.local_url.is_empty() && s.exposure.local).then(|| s.local_url.clone()))) {
+    if let Some(url) = site.and_then(nodo_ui_core::words::open_url) {
         line.push(t.n(format!("   ·   open at {url}")));
     }
     status.row(t, line);
@@ -152,8 +155,8 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
 
     let mut sections = Card::new(t, w);
     sections.blank(t);
-    let names = crate::app::app_sections(app, name);
-    let mut summaries = vec![hosting_summary(app, name), "Change how it works".to_owned(), log_summary(app, name)];
+    let names = app.data.app_sections(name);
+    let mut summaries = vec![hosting_summary(&app.data, name), "Change how it works".to_owned(), log_summary(&app.data, name)];
     if names.len() > APP_SECTIONS.len() {
         summaries.insert(0, "The steps to set it up, and whether each is done".to_owned());
     }
@@ -178,35 +181,6 @@ pub fn app_page(app: &App, t: &Theme, state: &AppPageState) -> Page {
     screen.stack(t, vec![status, sections], "Keys: ↑↓ choose  ↵ open  u update  r restart  Esc back", w, h)
 }
 
-fn hosting_summary(app: &App, name: &str) -> String {
-    let Some(site) = app.data.web.sites.iter().find(|s| s.package == name) else {
-        return "No web page".to_owned();
-    };
-    let mut parts = Vec::new();
-    if site.exposure.local {
-        parts.push("Home network");
-    }
-    if site.exposure.onion {
-        parts.push("Tor");
-    }
-    if site.exposure.public {
-        parts.push("internet");
-    }
-    if parts.is_empty() {
-        return "Not online".to_owned();
-    }
-    let joined = parts.join(", ");
-    let mut chars = joined.chars();
-    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
-}
-
-fn log_summary(app: &App, name: &str) -> String {
-    match app.data.services.iter().find(|svc| svc.id == name).map(|svc| svc.state) {
-        Some(ServiceState::Failed) => "It keeps stopping; the log says why".to_owned(),
-        _ => "What it has been doing".to_owned(),
-    }
-}
-
 /// Removing an app asks first, and says what goes and what stays.
 pub fn app_remove(app: &App, t: &Theme, state: &AppRemoveState) -> Page {
     let (w, h) = super::frame_size();
@@ -217,38 +191,19 @@ pub fn app_remove(app: &App, t: &Theme, state: &AppRemoveState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    card.row(t, vec![t.e("▲  "), t.b(format!("Remove {name}?"))]);
+    let question = &state.question;
+    card.row(t, vec![t.e("▲  "), t.b(question.title.clone())]);
     card.blank(t);
-    card.row(t, vec![t.n(format!("{name} stops and its program is removed. Anything that relies on it stops working."))]);
-    card.row(t, vec![t.d("Its data stays on the drive, so installing it again brings everything back. A site still online has to be taken offline first, in Hosting.")]);
+    // What goes, then what stays and what blocks it, the second one dimmed.
+    for (index, line) in question.body.iter().enumerate() {
+        card.row(t, vec![if index == 0 { t.n(line.clone()) } else { t.d(line.clone()) }]);
+    }
     card.blank(t);
     let cancel = focused("Cancel", !state.confirm_focused);
-    let confirm = focused(&format!("!Remove {name}"), state.confirm_focused);
+    let confirm = focused(&format!("!{}", question.confirm_label), state.confirm_focused);
     card.buttons(t, &[(cancel.as_str(), false, pick(0)), (confirm.as_str(), true, pick(1))]);
     let keys = if state.confirm_focused { "Keys: ↵ remove  ←→ choose  Esc cancel" } else { "Keys: ←→ choose  Esc cancel  (Enter cancels until you move to Remove)" };
     screen.card(t, card, keys, w, h)
-}
-
-/// What an empty result list says: a search that matched nothing, or why the catalog itself is
-/// empty (no sources, sources still being read, or a source that could not be read).
-pub fn empty_catalog_line(app: &App, state: &SearchState) -> String {
-    if !app.data.catalog.is_empty() || !state.query.text().is_empty() {
-        return "Nothing matches that search.".to_owned();
-    }
-    let enabled: Vec<_> = app.data.feeds.iter().filter(|f| f.status != FeedStatus::Disabled).collect();
-    if let Some((name, problem)) = enabled.iter().find_map(|f| match &f.status {
-        FeedStatus::Unreachable(problem) => Some((&f.name, problem)),
-        _ => None,
-    }) {
-        return format!("Could not read the source {name}: {problem}");
-    }
-    if enabled.iter().any(|f| f.checked.is_empty()) {
-        return "Checking sources…".to_owned();
-    }
-    if enabled.is_empty() {
-        return "No sources are on. Add or turn one on under Sources.".to_owned();
-    }
-    "The sources offer no apps yet.".to_owned()
 }
 
 /// Apps › Get apps: a search box, the results, and Sources.
@@ -271,11 +226,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    let tag_of = |status: &PackageStatus| match status {
-        PackageStatus::Installed => "Installed",
-        PackageStatus::UpdateReady => "Update ready",
-        PackageStatus::Available => "",
-    };
+    let tag_of = |status: &PackageStatus| nodo_ui_core::words::status_word(*status);
     let cols = Columns::fit(&card, results.iter().map(|pkg| pkg.id.name.as_str()), results.iter().map(|pkg| tag_of(&pkg.status)), 0);
     for (index, pkg) in results.iter().enumerate() {
         if index > 0 {
@@ -296,7 +247,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
         card.row_end_with(t, vec![lead, t.b(pad(&pkg.id.name, cols.name)), t.n(truncate(&what, cols.what))], vec![t.d(tag.to_owned())], [target]);
     }
     if results.is_empty() {
-        card.row(t, vec![t.d(empty_catalog_line(app, state))]);
+        card.row(t, vec![t.d(empty_catalog_line(&app.data, state.query.text()))]);
     }
     card.blank(t);
     let keys = if state.list_focused { "Keys: ↑↓ choose  ↵ open  i install  s sources  Esc back" } else { "Type to search.   Keys: ↓ results  ↵ open  Esc back" };
@@ -318,7 +269,7 @@ pub fn detail(app: &App, t: &Theme, detail: &PackageDetail) -> Page {
     card.row(t, vec![t.b(name.to_owned()), t.d(format!("   {}", facts.join(" · ")))]);
     card.blank(t);
     if !detail.about.is_empty() {
-        card.row(t, vec![t.n(detail.about.clone())]);
+        card.row(t, vec![t.n(crate::keys::with_key(&detail.about, detail.about_hint))]);
         card.blank(t);
     }
     let mut asks: Vec<String> = detail.needs.iter().map(|need| format!("Use {}", need.name)).collect();
@@ -484,21 +435,13 @@ pub fn unlock(app: &App, t: &Theme, state: &UnlockState) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::Home, w);
     screen.before = vec![Item::Blank, Item::Blank];
-    let overview = &app.data.overview;
     let mut card = Card::new(t, w);
     card.blank(t);
     card.row(t, vec![t.b("Unlock your Nodo")]);
     card.blank(t);
-    let waiting: Vec<&str> = overview.unlock_targets.iter().filter(|target| target.encrypted).map(|target| target.name.as_str()).collect();
-    if let Some(reason) = &state.resume {
-        card.row(t, vec![t.n(format!("{reason} Type it to unlock the Nodo and carry on."))]);
-    } else {
-        let restarted = if overview.restarted.is_empty() { "The Nodo restarted.".to_owned() } else { format!("{}.", overview.restarted.trim_end_matches('.')) };
-        let what = if waiting.is_empty() { "Saved keys and secret settings stay" } else { "Your apps' data is" };
-        card.row(t, vec![t.n(format!("{restarted} {what} locked until you type the device passphrase."))]);
-    }
-    if !waiting.is_empty() {
-        card.row(t, vec![t.d(format!("{} start after you unlock.", waiting.join(", ")))]);
+    // Why the passphrase is asked, then the apps that wait for it.
+    for (index, line) in nodo_ui_core::words::unlock_lines(&app.data, state.resume.as_deref()).into_iter().enumerate() {
+        card.row(t, vec![if index == 0 { t.n(line) } else { t.d(line) }]);
     }
     card.blank(t);
     let mut pass = vec![t.d(pad("Passphrase", 13))];

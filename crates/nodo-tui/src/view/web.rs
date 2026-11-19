@@ -14,7 +14,12 @@ use super::pad;
 use super::v3::{heading, inset, line, margin, quiet, tick, trail, Card, Screen3};
 use crate::app::*;
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::providers::ProviderStage;
+use nodo_ui_core::flows::web::public::CgnatWay;
+use nodo_ui_core::words::{provider_field_name, provider_labels, reach_words, site_address};
+use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 use nodo_api::AliasMode;
 
@@ -39,34 +44,6 @@ fn label(t: &Theme, text: &str, focused: bool) -> Span<'static> {
     } else {
         t.b(text.to_owned())
     }
-}
-
-/// Who can open a site, in words.
-pub fn reach_words(site: &Site) -> &'static str {
-    let e = site.exposure;
-    match (e.local, e.onion, e.public) {
-        (_, _, true) if e.local || e.onion => "Home and internet",
-        (_, _, true) => "Internet",
-        (true, true, false) => "Home network and Tor",
-        (true, false, false) => "Home network",
-        (false, true, false) => "Tor",
-        (false, false, false) => "Not online",
-    }
-}
-
-fn site_address(site: &Site) -> String {
-    if site.exposure.public {
-        if let Some(host) = &site.public_host {
-            return format!("https://{host}");
-        }
-    }
-    if site.exposure.local && !site.local_url.is_empty() {
-        return site.local_url.clone();
-    }
-    if site.exposure.onion && !site.onion_url.is_empty() {
-        return site.onion_url.clone();
-    }
-    String::new()
 }
 
 fn short(text: &str, width: usize) -> String {
@@ -406,32 +383,6 @@ fn open_button(card: &mut Card, t: &Theme, state: &ExposureState, index_of: &dyn
     let label = super::v3::focused("Add another address", focused);
     card.row_with_button(t, Vec::new(), &label, false, Click::Pick { index: index_of(HostingFocus::AliasOpen), then: Some(KeyCode::Enter) });
 }
-
-/// Each connected provider's name, numbered when the owner connected two accounts at one company.
-fn provider_labels(connected: &[ConnectedProvider]) -> Vec<String> {
-    connected
-        .iter()
-        .enumerate()
-        .map(|(index, provider)| {
-            let earlier = connected[..index].iter().filter(|p| p.name == provider.name).count();
-            if earlier == 0 { provider.name.clone() } else { format!("{} {}", provider.name, earlier + 1) }
-        })
-        .collect()
-}
-
-fn field_name(field: &str) -> String {
-    match field {
-        "api_key" => "API key".to_owned(),
-        "secret_key" => "Secret key".to_owned(),
-        "api_token" => "API token".to_owned(),
-        "personal_access_token" => "Access token".to_owned(),
-        "username" => "Username".to_owned(),
-        "access_key_id" => "AccessKey ID".to_owned(),
-        "access_key_secret" => "AccessKey secret".to_owned(),
-        other => other.replace('_', " "),
-    }
-}
-
 /// Domain providers: the list, choosing a company, its key, and done.
 pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     let (w, h) = size(app);
@@ -491,8 +442,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                     card.row(t, vec![t.n("   "), t.d(held.join(". "))]);
                 }
                 if !provider.blocked.is_empty() {
-                    let names: Vec<&str> = provider.blocked.iter().map(|(name, _)| name.as_str()).collect();
-                    let text = format!("Can't be used yet: {}", names.join(", "));
+                    let text = nodo_ui_core::words::provider_blocked_line(&provider.blocked);
                     card.row_link(t, vec![t.n("   "), t.d(text)], "Why", Click::Pick { index, then: Some(KeyCode::Enter) });
                 }
                 if let Some(problem) = &provider.problem {
@@ -526,49 +476,30 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 Some(provider) => {
                     card.row(t, vec![field("Connection"), t.n(provider.id.clone())]);
                     match &provider.key {
-                        Some((name, hint)) => card.row(t, vec![field(&field_name(name)), t.n(hint.clone())]),
-                        None => card.row(
-                            t,
-                            vec![field("Key"), t.d("Not read yet. Look again while the Nodo is unlocked to show which key this is.")],
-                        ),
+                        Some((name, hint)) => card.row(t, vec![field(&provider_field_name(name)), t.n(hint.clone())]),
+                        None => card.row(t, vec![field("Key"), t.d(nodo_ui_core::words::PROVIDER_KEY_NOT_READ)]),
                     }
-                    card.row(t, vec![field(""), t.d("The rest of the key stays locked on this Nodo and is never shown.")]);
-                    let checked = provider.checked.clone().unwrap_or_else(|| "Not since it was connected".to_owned());
-                    card.row(t, vec![field("Domains read"), t.n(checked)]);
+                    card.row(t, vec![field(""), t.d(nodo_ui_core::words::PROVIDER_KEY_STAYS_LOCKED)]);
+                    card.row(t, vec![field("Domains read"), t.n(nodo_ui_core::words::provider_checked(provider))]);
                     card.blank(t);
                     card.row(t, vec![t.b("Domains apps can use")]);
                     if provider.domains.is_empty() {
                         card.row(t, vec![t.d("   None.")]);
                     }
                     for domain in &provider.domains {
-                        let note = match (&domain.held_by, domain.used_by.is_empty()) {
-                            (Some(other), _) => format!("used through {other}, which was connected first"),
-                            (None, false) => format!("used by {}", domain.used_by.join(", ")),
-                            (None, true) => "not used by an app yet".to_owned(),
-                        };
+                        let note = nodo_ui_core::words::provider_domain_note(domain);
                         card.row(t, vec![t.n("   "), t.n(pad(&domain.name, 26)), t.n("  "), t.d(note)]);
                     }
                     card.blank(t);
                     if provider.blocked.is_empty() {
-                        if provider.lists_domains {
-                            card.row(t, vec![t.d(format!(
-                                "A domain missing here is one this key may not change. Allow it in your {} account, then look again.",
-                                provider.name
-                            ))]);
-                        } else {
-                            card.row(t, vec![t.d(format!("{} can't list its domains, so each is added by name.", provider.name))]);
-                        }
+                        card.row(t, vec![t.d(nodo_ui_core::words::provider_missing_domain(provider))]);
                     } else {
                         card.row(t, vec![t.b("In the account, but this key can't change them yet")]);
-                        let mut reasons: Vec<&str> = Vec::new();
-                        for (name, reason) in &provider.blocked {
+                        for (name, _) in &provider.blocked {
                             card.row(t, vec![t.n("   "), t.n(name.clone())]);
-                            if !reasons.contains(&reason.as_str()) {
-                                reasons.push(reason);
-                            }
                         }
-                        for reason in reasons {
-                            card.row(t, vec![t.d(format!("   {reason}, then look again."))]);
+                        for remedy in nodo_ui_core::words::provider_blocked_remedies(&provider.blocked) {
+                            card.row(t, vec![t.d(format!("   {remedy}"))]);
                         }
                     }
                     if let Some(problem) = &provider.problem {
@@ -633,7 +564,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
         ProviderStage::Key => {
             let provider = app.data.providers.get(state.selected);
             let name = provider.map_or("the provider", |p| p.name.as_str());
-            let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| field_name(f)).collect()).unwrap_or_default();
+            let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| provider_field_name(f)).collect()).unwrap_or_default();
             let lists = provider.is_some_and(|p| p.lists_domains);
             // Targets follow the boxes in order, the same order the keys move through.
             let mut index = 0;
@@ -693,15 +624,11 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 // The domains the owner is about to go looking for, with what to switch on.
                 card.blank(t);
                 card.row(t, vec![t.d("   Also in the account, but this key can't change them yet:")]);
-                let mut reasons: Vec<&str> = Vec::new();
-                for (name, reason) in blocked {
+                for (name, _) in blocked {
                     card.row(t, vec![t.n(format!("   {name}"))]);
-                    if !reasons.contains(&reason.as_str()) {
-                        reasons.push(reason);
-                    }
                 }
-                for reason in reasons {
-                    card.row(t, vec![t.d(format!("   {reason}, then look again."))]);
+                for remedy in nodo_ui_core::words::provider_blocked_remedies(blocked) {
+                    card.row(t, vec![t.d(format!("   {remedy}"))]);
                 }
             }
             card.blank(t);
@@ -855,15 +782,13 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
         card.row(t, vec![t.d(format!("  Your router's outside address  {} (in {}, the shared range)", state.wan_address, state.wan_range))]);
         card.row(t, vec![t.d(format!("  What the internet sees         {}", state.internet_address))]);
         card.blank(t);
-        for (index, option) in ["Ask your provider for a public address", "Use IPv6, if your provider has it", "Use a relay that forwards visitors"]
-            .into_iter()
-            .enumerate()
-        {
+        // Tor, the first way, is the button below.
+        for (index, option) in CgnatWay::ALL[1..].iter().map(|way| way.label()).enumerate() {
             card.row_with(t, vec![marker(t, state.choice == index + 1), t.n(format!("{option} ›"))], [Target::row(option, Click::Pick { index: index + 1, then: Some(KeyCode::Enter) })]);
         }
     }
     card.blank(t);
-    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))]);
+    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), (CgnatWay::Tor.label(), true, Click::Key(KeyCode::Char('o')))]);
     screen.before = vec![
         Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
@@ -875,19 +800,16 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
 }
 
 /// After going public: online, with the secure connection followed until it is in place.
-pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
+pub fn online(app: &App, t: &Theme, state: &Certificate) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;
     let mut card = Card::new(t, w);
-    let cert = web.cert(&state.host);
-    let cert_state = cert.map(|c| c.state).unwrap_or(nodo_api::CertState::Waiting);
-    let broken = matches!(cert_state, nodo_api::CertState::Failed | nodo_api::CertState::Expired);
     card.blank(t);
-    match cert_state {
-        nodo_api::CertState::Valid => card.row(t, vec![t.o("✓  "), t.b(format!("{} is online", state.site))]),
-        _ if broken => card.row(t, vec![t.e("✕  "), t.b("The secure connection isn't ready")]),
-        _ => card.row(t, vec![t.a("◆  "), t.b(format!("{} is online. Getting its secure connection…", state.site))]),
+    match state.heading(&app.data) {
+        (nodo_ui_core::words::Tone::Good, words) => card.row(t, vec![t.o("✓  "), t.b(words)]),
+        (nodo_ui_core::words::Tone::Bad, words) => card.row(t, vec![t.e("✕  "), t.b(words)]),
+        (nodo_ui_core::words::Tone::Working, words) => card.row(t, vec![t.a("◆  "), t.b(words)]),
     }
     card.blank(t);
     card.row(t, vec![t.n(format!("   https://{}", state.host))]);
@@ -901,13 +823,10 @@ pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
         }
     }
     card.blank(t);
-    match cert.and_then(|c| c.problem.clone()) {
-        Some(problem) if broken => {
-            card.row(t, vec![t.e(format!("   {problem}"))]);
-            card.row(t, vec![t.d("   The Nodo keeps trying. Visitors see a warning until it works.")]);
-        }
-        _ => card.row(t, vec![t.d("   The Nodo renews the secure connection and follows your home's address by itself.")]),
+    if let Some(problem) = state.problem(&app.data) {
+        card.row(t, vec![t.e(format!("   {problem}"))]);
     }
+    card.row(t, vec![t.d(format!("   {}", state.outlook(&app.data)))]);
     card.blank(t);
     card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);
     screen.before = vec![Item::Blank, trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets), Item::Blank, Item::Blank];

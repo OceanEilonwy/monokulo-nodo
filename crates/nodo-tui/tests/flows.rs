@@ -8,9 +8,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::{ApiError, Backend, Exposure, Request, ServiceState, SettingChange, SettingInput, SettingLiteral};
 use nodo_tui::app::*;
 use nodo_tui::fixtures::{ctrl, fixture, press};
-use nodo_tui::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
-use nodo_tui::model::*;
-use nodo_tui::runtime::{dispatch, execute_effect, load_snapshot};
+use nodo_ui_core::mock::{sample_address, MockBackend, MOCK_PASSPHRASE};
+use nodo_ui_core::model::*;
+use nodo_ui_core::{Effect, Outcome};
+use nodo_ui_core::exec::{execute_effect, load_snapshot};
+use nodo_ui_core::flows::install::ReviewPurpose;
+use nodo_ui_core::flows::web::providers::ProviderStage;
+use nodo_ui_core::flows::NoticeKind;
+use nodo_ui_core::screen::ScreenId;
+use nodo_tui::runtime::dispatch;
 use nodo_tui::update::update;
 
 const ENTER: KeyCode = KeyCode::Enter;
@@ -563,7 +569,7 @@ fn a_device_locked_with_no_app_waiting_still_unlocks_from_home_and_from_connect(
 #[test]
 fn hosting_picks_a_domain_from_any_connected_provider() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     app.data = load_snapshot(&mut mock).unwrap();
     let names: Vec<_> = app.domain_choices().into_iter().map(|(d, p)| format!("{d} {p}")).collect();
     assert_eq!(names, ["example.com Porkbun", "example.org Gandi", "myshop.net Gandi"]);
@@ -587,7 +593,7 @@ fn hosting_picks_a_domain_from_any_connected_provider() {
 #[test]
 fn the_providers_list_shows_every_provider_and_removes_one_after_a_confirm() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
-    mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+    mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     app.data = load_snapshot(&mut mock).unwrap();
     key(&mut app, &mut mock, KeyCode::Char('p'));
     let screen = screen_text(&app);
@@ -605,7 +611,7 @@ fn a_refused_key_says_so_in_the_card() {
     let (mut app, _mock) = fixture(ScreenId::WebProviders);
     let Screen::WebProviders(state) = &mut app.screen else { panic!("expected providers") };
     state.stage = ProviderStage::Key;
-    update(&mut app, Event::ProviderAdded(Err("Porkbun refused the key: invalid API key".to_owned())));
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Err("Porkbun refused the key: invalid API key".to_owned()))));
     assert!(screen_text(&app).contains("Porkbun refused the key: invalid API key"), "{}", screen_text(&app));
 }
 
@@ -729,7 +735,7 @@ fn hosting_with_new_address() -> (App, MockBackend) {
     let (mut app, mut mock) = exposure_with_public_off();
     keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE]);
     let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
-    state.sub = nodo_tui::secret::Input::plain("store");
+    state.sub = nodo_ui_core::secret::Input::plain("store");
     (app, mock)
 }
 
@@ -740,12 +746,13 @@ fn hosting_with_new_address() -> (App, MockBackend) {
 /// as the terminal does.
 #[test]
 fn check_and_save_stays_busy_until_the_checks_are_done() {
-    use nodo_tui::runtime::{dispatch_async, EffectWorker};
+    use nodo_tui::runtime::dispatch_async;
+    use nodo_ui_core::exec::EffectWorker;
     use std::time::Duration;
 
     let (mut app, mock) = hosting_with_new_address();
     let click = click_at(&app, "Check and save");
-    let mut worker = EffectWorker::spawn(mock);
+    let mut worker = EffectWorker::spawn(Box::new(mock));
     dispatch_async(&mut app, &mut worker, click.clone());
     assert!(app.working && app.pending.is_some(), "the click marks the button");
     assert_eq!(pending_step(&app), Some("Saving…"));
@@ -753,9 +760,9 @@ fn check_and_save_stays_busy_until_the_checks_are_done() {
 
     // The names are saved: the checks are the next step of the same work.
     let events = worker.wait_idle(Duration::from_secs(5));
-    assert!(matches!(events.first(), Some(Event::PublicHostSet { result: Ok(()), then }) if !then.is_empty()), "{events:?}");
+    assert!(matches!(events.first(), Some(Outcome::PublicHostSet { result: Ok(()), then, .. }) if !then.is_empty()), "{events:?}");
     for event in events {
-        dispatch_async(&mut app, &mut worker, event);
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
         assert_eq!(app.screen.id(), ScreenId::WebExposure);
         assert!(worker.busy() && app.working, "the checks are running");
         assert_eq!(pending_step(&app), Some("Checking…"), "the button stays busy while the checks run");
@@ -769,9 +776,9 @@ fn check_and_save_stays_busy_until_the_checks_are_done() {
 
     // The checks' result ends it.
     let events = worker.wait_idle(Duration::from_secs(5));
-    assert!(matches!(events.as_slice(), [Event::Reachability { going_public: true, .. }]), "{events:?}");
+    assert!(matches!(events.as_slice(), [Outcome::Reachability { going_public: true, .. }]), "{events:?}");
     for event in events {
-        dispatch_async(&mut app, &mut worker, event);
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
     }
     assert!(!worker.busy() && !app.working);
     assert_eq!(app.screen.id(), ScreenId::WebCheck, "the checks are on screen");
@@ -781,18 +788,19 @@ fn check_and_save_stays_busy_until_the_checks_are_done() {
 /// A refused name ends Check and save at once, and the button can be pressed again.
 #[test]
 fn a_refused_address_ends_check_and_save() {
-    use nodo_tui::runtime::{dispatch_async, EffectWorker};
+    use nodo_tui::runtime::dispatch_async;
+    use nodo_ui_core::exec::EffectWorker;
     use std::time::Duration;
 
     let (mut app, mock) = hosting_with_new_address();
     let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
-    state.sub = nodo_tui::secret::Input::plain("Not_A_Name");
+    state.sub = nodo_ui_core::secret::Input::plain("Not_A_Name");
     let click = click_at(&app, "Check and save");
-    let mut worker = EffectWorker::spawn(mock);
+    let mut worker = EffectWorker::spawn(Box::new(mock));
     dispatch_async(&mut app, &mut worker, click);
     assert_eq!(pending_step(&app), Some("Saving…"));
     for event in worker.wait_idle(Duration::from_secs(5)) {
-        dispatch_async(&mut app, &mut worker, event);
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
     }
     assert!(!worker.busy());
     assert_eq!(app.pending, None, "the refusal ends it");
@@ -825,7 +833,7 @@ fn saving_and_checking_in_one_batch_stays_busy_until_the_checks_are_done() {
     let mut effects = std::collections::VecDeque::from(effects);
     let first = effects.pop_front().expect("the change");
     for event in execute_effect(&mut mock, first) {
-        assert!(update(&mut app, event).is_empty());
+        assert!(update(&mut app, Event::Done(event)).is_empty());
     }
     assert_eq!(exposure_calls(&mock), [Exposure { local: false, onion: true, public: false }]);
     assert_eq!(pending_step(&app), Some("Checking…"), "the checks are still to come");
@@ -834,7 +842,7 @@ fn saving_and_checking_in_one_batch_stays_busy_until_the_checks_are_done() {
 
     let checks = effects.pop_front().expect("the checks");
     for event in execute_effect(&mut mock, checks) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     assert_eq!(app.screen.id(), ScreenId::WebCheck);
     assert_eq!(app.pending, None);
@@ -887,7 +895,7 @@ fn assert_hidden(app: &App) {
 fn settings_app() -> (App, MockBackend) {
     let (mut app, mut mock) = loaded();
     let form = mock.settings_form("moneropay");
-    dispatch(&mut app, &mut mock, Event::SettingsLoaded { package: "moneropay".to_owned(), form });
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::SettingsLoaded { package: "moneropay".to_owned(), form }));
     (app, mock)
 }
 
@@ -1033,7 +1041,7 @@ fn a_failed_unlock_shows_an_error_and_keeps_the_app_usable() {
 #[test]
 fn other_unlock_errors_are_shown_too() {
     let (mut app, _) = at_unlock();
-    update(&mut app, Event::UnlockResult(Err(ApiError::Failed("helper is not responding".to_owned()))));
+    update(&mut app, Event::Done(Outcome::UnlockResult(Err(ApiError::Failed("helper is not responding".to_owned())))));
     assert_eq!(app.screen.id(), ScreenId::Unlock);
     assert!(screen_text(&app).contains("✕ Could not unlock: helper is not responding"));
 }
@@ -1185,7 +1193,7 @@ fn an_api_error_on_save_keeps_the_draft() {
     dispatch(&mut app, &mut mock, ctrl('u'));
     type_text(&mut app, &mut mock, "5001");
     key(&mut app, &mut mock, ENTER);
-    update(&mut app, Event::SettingsApplied(Err(ApiError::Denied)));
+    update(&mut app, Event::Done(Outcome::SettingsApplied(Err(ApiError::Denied))));
     assert!(screen_text(&app).contains("✕ Not saved: this user may not perform that action"));
     let Screen::Settings(state) = &app.screen else { panic!("expected settings") };
     assert_eq!(state.changed_indices().len(), 1);
@@ -1322,8 +1330,8 @@ fn a_broken_reference_is_red_explained_on_enter_and_blocks_saving() {
         vec![Effect::PreviewSetting { package: "moneropay".into(), field_index: 0, key: "daemon_rpc".into(), value: state.draft[0].clone() }]
     };
     for effect in effects {
-        for event in nodo_tui::runtime::execute_effect(&mut mock, effect) {
-            dispatch(&mut app, &mut mock, event);
+        for event in nodo_ui_core::exec::execute_effect(&mut mock, effect) {
+            dispatch(&mut app, &mut mock, Event::Done(event));
         }
     }
     let screen = screen_text(&app);
@@ -1498,7 +1506,7 @@ fn a_waiting_install_is_not_polled_where_the_backend_reports_no_progress() {
     let Screen::Installing(snapshot) = &app.screen else { panic!("the installing fixture") };
     let mut claims = snapshot.clone();
     claims.can_cancel = true;
-    update(&mut app, Event::InstallProgress(Some(claims)));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(claims))));
     let Screen::Installing(snapshot) = &app.screen else { panic!("still installing") };
     assert!(!snapshot.can_cancel);
 }
@@ -1575,13 +1583,13 @@ fn an_install_shows_at_once_and_reports_its_end_after_the_page_is_left() {
 
     let mut done = InstallSnapshot::starting(&id, "1.0");
     done.outcome = InstallOutcome::Succeeded;
-    update(&mut app, Event::InstallProgress(Some(done.clone())));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(done.clone()))));
     let notice = app.notice.clone().expect("the result is told");
     assert_eq!(notice.kind, NoticeKind::Ok);
     assert!(notice.text.contains(&format!("{} is installed", id.name)), "{}", notice.text);
 
     done.outcome = InstallOutcome::Failed("the health check failed".into());
-    update(&mut app, Event::InstallProgress(Some(done)));
+    update(&mut app, Event::Done(Outcome::InstallProgress(Some(done))));
     let notice = app.notice.clone().expect("the failure is told");
     assert_eq!(notice.kind, NoticeKind::Error);
     assert!(notice.text.contains("the health check failed"), "{}", notice.text);
@@ -1663,7 +1671,7 @@ fn home_l_opens_the_failing_service_log_as_the_attention_panel_promises() {
 #[test]
 fn a_backend_error_on_refresh_shows_and_does_not_crash() {
     let (mut app, _) = loaded();
-    update(&mut app, Event::Failed("Could not read device state".to_owned()));
+    update(&mut app, Event::Done(Outcome::Failed("Could not read device state".to_owned())));
     assert!(screen_text(&app).contains("✕ Could not read device state"));
 }
 
@@ -1890,7 +1898,7 @@ fn check_now_shows_it_is_running_and_says_what_it_found() {
     assert!(screen.contains("Checking…") && !screen.contains("Check now ›"), "{screen}");
     assert!(update(&mut app, press(KeyCode::Char('r'))).is_empty(), "a second press waits for the first");
     for event in execute_effect(&mut mock, Effect::CheckUpdates) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     let count = app.update_rows().len();
     assert!(screen_text(&app).contains(&format!("{count} updates available.")), "{}", screen_text(&app));
@@ -1945,7 +1953,7 @@ fn check_now_names_a_source_it_could_not_read() {
     mock.knobs.unreadable_feeds = vec![("community".to_owned(), "the feed index could not be downloaded".to_owned())];
     let events = execute_effect(&mut mock, Effect::CheckUpdates);
     for event in events {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     let notice = app.notice.clone().expect("told");
     assert_eq!(notice.kind, NoticeKind::Error);
@@ -1960,7 +1968,7 @@ fn check_now_names_a_source_it_could_not_read() {
     mock.knobs.unreadable_feeds.clear();
     mock.feeds.iter_mut().filter(|feed| feed.name == "community").for_each(|feed| feed.status = FeedStatus::Healthy);
     for event in execute_effect(&mut mock, Effect::CheckUpdates) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     assert_eq!(mock.updates.len(), 1);
 }
@@ -1978,7 +1986,7 @@ fn a_failed_check_or_source_change_says_why() {
     for effect in [Effect::RefreshFeeds, Effect::ToggleFeed(name.clone()), Effect::RemoveFeed(name)] {
         let events = execute_effect(&mut mock, effect.clone());
         assert!(
-            events.iter().any(|event| matches!(event, Event::Failed(text) if text.contains("did not answer"))),
+            events.iter().any(|event| matches!(event, Outcome::Failed(text) if text.contains("did not answer"))),
             "{effect:?}: {events:?}"
         );
     }
@@ -2263,7 +2271,7 @@ fn a_paused_log_does_not_poll() {
 #[test]
 fn a_late_log_reply_for_another_service_is_ignored() {
     let (mut app, _) = fixture(ScreenId::Logs);
-    update(&mut app, Event::LogsLoaded { source: "tor".to_owned(), view: LogView::default() });
+    update(&mut app, Event::Done(Outcome::LogsLoaded { source: "tor".to_owned(), view: LogView::default() }));
     let Screen::Logs(state) = &app.screen else { panic!("expected logs") };
     assert!(!state.view.lines.is_empty());
 }
@@ -2296,7 +2304,7 @@ fn the_missing_drive_replaces_home_on_startup() {
     let mut mock = MockBackend::with_missing_drive();
     let mut app = App::new();
     for event in execute_effect(&mut mock, Effect::Refresh) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     assert_eq!(app.screen.id(), ScreenId::NoDrive);
     assert!(screen_text(&app).contains("The data drive isn't connected"));
@@ -2315,7 +2323,7 @@ fn backups_open_from_home_and_a_restore_needs_the_passphrase_then_the_typed_word
     assert!(screen_text(&app).contains("passphrase did not open"), "{}", screen_text(&app));
     let Screen::Backup(state) = &mut app.screen else { panic!() };
     state.step =
-        BackupStep::Unlock { name: "nodo-1762560000.nodobak".into(), passphrase: nodo_tui::secret::Input::secret() };
+        BackupStep::Unlock { name: "nodo-1762560000.nodobak".into(), passphrase: nodo_ui_core::secret::Input::secret() };
     state.error = None;
     type_text(&mut app, &mut mock, MOCK_PASSPHRASE);
     key(&mut app, &mut mock, ENTER);
@@ -2422,7 +2430,7 @@ fn a_backup_goes_to_the_usb_drive_and_a_restore_reads_from_it() {
     let [Effect::CreateBackup { usb: Some(device), .. }] = effects.as_slice() else { panic!("{effects:?}") };
     assert_eq!(device, "sda1");
     for event in execute_effect(&mut mock, effects[0].clone()) {
-        dispatch(&mut app, &mut mock, event);
+        dispatch(&mut app, &mut mock, Event::Done(event));
     }
     // Tab moves to the drive's list, and a restore from it names the drive.
     keys(&mut app, &mut mock, &[TAB, ENTER]);
@@ -2779,7 +2787,7 @@ fn a_pairing_shows_the_passkey_to_type_and_polls_until_done() {
         address: "AA:BB:CC:00:00:01".to_owned(),
         stage: nodo_api::PairingStage::TypePasskey("482913".to_owned()),
     });
-    dispatch(&mut app, &mut mock, Event::BluetoothChanged { result: Ok(status), quiet: false });
+    dispatch(&mut app, &mut mock, Event::Done(Outcome::BluetoothChanged { result: Ok(status), quiet: false }));
     let screen = screen_text(&app);
     assert!(screen.contains("Type 482913 on K380 Keyboard, then press its Enter key."), "{screen}");
     // Every second the screen asks again while the pairing waits for the owner.
@@ -2898,7 +2906,7 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         problem: None,
         ..ConnectedProvider::default()
     };
-    update(&mut app, Event::ProviderAdded(Ok(again)));
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Ok(again))));
     let screen = screen_text(&app);
     assert!(
         screen.contains("already connected through Porkbun"),
@@ -2990,7 +2998,7 @@ fn removing_a_provider_from_its_details_returns_to_the_list() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     keys(&mut app, &mut mock, &[KeyCode::Char('p'), ENTER, KeyCode::Char('x')]);
     assert!(app.modal.as_ref().is_some_and(|m| m.title == "Remove Porkbun?"), "{:?}", app.modal);
-    update(&mut app, Event::ProviderRemoved(Ok(())));
+    update(&mut app, Event::Done(Outcome::ProviderRemoved(Ok(()))));
     let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
     assert_eq!(state.stage, ProviderStage::List);
 }
@@ -3006,7 +3014,7 @@ fn a_new_connection_names_the_domains_its_key_cannot_change() {
         blocked: vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())],
         ..ConnectedProvider::default()
     };
-    update(&mut app, Event::ProviderAdded(Ok(added)));
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Ok(added))));
     let screen = screen_text(&app);
     assert!(screen.contains("example.com") && screen.contains("example.net"), "{screen}");
     assert!(screen.contains("this key can't change them yet") && screen.contains("API Access is off"), "{screen}");
@@ -3121,7 +3129,7 @@ fn an_apex_redirect_is_added_saved_and_listed_on_the_going_public_confirmation()
 #[test]
 fn a_name_under_a_second_providers_domain_can_serve_the_same_site() {
     let (mut app, mut mock) = pay_hosting(|mock| {
-        mock.add_provider("Gandi", None, &nodo_tui::secret::Secret::new("k"), &nodo_tui::secret::Secret::new("s")).unwrap();
+        mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     });
     open_new_name(&mut app, &mut mock);
     focus_on(&mut app, &mut mock, HostingFocus::AliasDomain);
@@ -3227,7 +3235,7 @@ fn a_public_site_gains_a_name_once_the_owner_confirms_it() {
 
 #[test]
 fn the_device_refuses_a_public_sites_new_name_that_was_not_confirmed() {
-    use nodo_tui::model::ScreenData;
+    use nodo_ui_core::model::ScreenData;
     let mut mock = MockBackend::new();
     let both = [redirect("example.com"), serve("www.example.com")];
     let refused = mock.set_public_host("shop", "shop.example.com", &both, &[]);
@@ -3286,4 +3294,135 @@ fn a_name_twice_or_another_sites_name_is_refused_on_the_spot() {
     key(&mut app, &mut mock, ENTER);
     assert!(hosting(&app).alias_error.as_deref().is_some_and(|e| e.contains("main address")), "{:?}", hosting(&app).alias_error);
     assert_eq!(hosting(&app).aliases.len(), 1);
+}
+
+// Web GUI
+
+fn open_web_gui() -> (App, MockBackend) {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)));
+    assert_eq!(app.screen.id(), ScreenId::System);
+    let row = nodo_ui_core::words::SYSTEM_ROWS.iter().position(|row| *row == "Web GUI").expect("a row of System");
+    for _ in 0..row {
+        key(&mut app, &mut mock, DOWN);
+    }
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::WebGui);
+    (app, mock)
+}
+
+fn web_gui_calls(mock: &MockBackend) -> Vec<bool> {
+    mock.calls.iter().filter_map(|call| if let Request::SetWebGui(on) = call { Some(*on) } else { None }).collect()
+}
+
+#[test]
+fn system_has_a_row_for_the_web_gui_that_says_how_it_stands() {
+    let (mut app, mut mock) = loaded();
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    dispatch(&mut app, &mut mock, Event::Key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)));
+    let row = |app: &App| screen_text(app).lines().find(|line| line.contains("Web GUI")).map(str::to_owned).expect("the row");
+    assert!(row(&app).contains("Off"), "{}", row(&app));
+
+    // On, as the device reports it after the next read.
+    assert!(mock.call(Request::SetWebGui(true)).is_ok());
+    for event in execute_effect(&mut mock, Effect::Refresh) {
+        dispatch(&mut app, &mut mock, Event::Done(event));
+    }
+    assert!(row(&app).contains("On · https://nodo.local"), "{}", row(&app));
+
+    // On, but the device has no address on the home network yet.
+    mock.knobs.web_gui_waiting = true;
+    for event in execute_effect(&mut mock, Effect::Refresh) {
+        dispatch(&mut app, &mut mock, Event::Done(event));
+    }
+    assert!(row(&app).contains("On · waiting for the local address"), "{}", row(&app));
+}
+
+#[test]
+fn the_web_gui_page_explains_it_and_shows_where_it_answers() {
+    let (app, mock) = open_web_gui();
+    let screen = screen_text(&app);
+    assert!(screen.contains("System  ›  Web GUI"), "{screen}");
+    assert!(screen.contains("[ ] Off"), "{screen}");
+    assert!(screen.contains("You log in with the device passphrase."), "{screen}");
+    assert!(screen.contains("anyone on your home network can try the device passphrase"), "{screen}");
+    assert!(screen.contains("https://nodo.local") && screen.contains("Local CA"), "{screen}");
+    assert!(screen.contains("3F:9A:21:C4") && screen.contains("shows this same fingerprint"), "{screen}");
+    assert!(screen.contains("Turn it on…"), "{screen}");
+    assert!(web_gui_calls(&mock).is_empty(), "opening the page changes nothing");
+}
+
+#[test]
+fn turning_the_web_gui_on_asks_first_with_the_safe_answer_focused() {
+    let (mut app, mut mock) = open_web_gui();
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.as_ref().expect("asks first");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert_eq!(modal.question.title, "Turn the web GUI on?");
+    assert!(modal.body.iter().any(|line| line.contains("can try the device passphrase")), "{:?}", modal.body);
+    // Enter on Cancel does nothing, and neither does Esc.
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none() && web_gui_calls(&mock).is_empty());
+    keys(&mut app, &mut mock, &[ENTER, KeyCode::Esc]);
+    assert!(app.modal.is_none() && web_gui_calls(&mock).is_empty());
+    assert_eq!(app.screen.id(), ScreenId::WebGui, "Esc closed the question, not the page");
+
+    // Confirmed: sent to the helper, and the page shows the address.
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[x] On") && screen.contains("Turn it off"), "{screen}");
+    assert!(screen.contains("The web GUI is on at https://nodo.local."), "{screen}");
+    let Screen::WebGui(state) = &app.screen else { panic!("still on its page") };
+    assert!(!state.flow.busy);
+}
+
+#[test]
+fn turning_the_web_gui_off_does_not_ask() {
+    let (mut app, mut mock) = open_web_gui();
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "off needs no question");
+    assert_eq!(web_gui_calls(&mock), [true, false]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[ ] Off") && screen.contains("Turn it on…"), "{screen}");
+    assert!(screen.contains("The web GUI is off. Every browser was logged out."), "{screen}");
+    // Back on System, the row says the same.
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::System);
+    assert!(screen_text(&app).lines().any(|line| line.contains("Web GUI") && line.contains("Off")));
+}
+
+#[test]
+fn the_web_gui_waits_for_the_local_address_and_says_so() {
+    let (mut app, mut mock) = open_web_gui();
+    mock.knobs.web_gui_waiting = true;
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("[x] On") && screen.contains("waiting for the local address"), "{screen}");
+    assert!(screen.contains("It waits for the Nodo's address on the home network."), "{screen}");
+}
+
+#[test]
+fn the_web_gui_cannot_be_turned_on_before_the_passphrase_is_set_up() {
+    let (mut app, mut mock) = open_web_gui();
+    // A device whose passphrase is not chosen yet.
+    mock.setup_needed = true;
+    app.data.overview.setup_needed = true;
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "nothing to ask");
+    assert!(web_gui_calls(&mock).is_empty());
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up the device passphrase first: the web GUI logs in with it."), "{screen}");
+    assert!(screen.contains("[ ] Off"), "{screen}");
+
+    // The helper refuses it too, when the snapshot the page holds is behind.
+    app.data.overview.setup_needed = false;
+    keys(&mut app, &mut mock, &[ENTER, RIGHT, ENTER]);
+    assert_eq!(web_gui_calls(&mock), [true]);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Set up the device passphrase first"), "{screen}");
+    assert!(!mock.web_gui.enabled.load(std::sync::atomic::Ordering::SeqCst));
 }

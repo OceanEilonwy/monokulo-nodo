@@ -6,9 +6,11 @@ use crossterm::event::KeyCode;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{focused, heading, heading_button, inset, key_row, link, quiet, toggle, trail, Card, Screen3};
-use crate::app::{AddFeedState, App, FeedKeyState, Tab};
+use crate::app::{AddFeedState, App, FeedKeyState};
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
+use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::{counted, is_plain_http};
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {
@@ -17,20 +19,6 @@ fn key(c: char) -> Click {
 
 fn pick(index: usize, then: Option<KeyCode>) -> Click {
     Click::Pick { index, then }
-}
-
-/// A source reached over plain HTTP. Allowed, because every package must still carry a signature
-/// by the pinned key, but the person adding it should know what HTTP leaves open.
-pub fn is_plain_http(address: &str) -> bool {
-    address.starts_with("http://")
-}
-
-fn counted(n: u64, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
-    }
 }
 
 fn sources_trail(t: &Theme, last: &[&str], targets: &mut Vec<Target>) -> Vec<Item> {

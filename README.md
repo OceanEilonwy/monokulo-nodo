@@ -33,7 +33,7 @@
 - **Every service in its own box.** Each one gets its own user, a bubblewrap sandbox, per-user nftables rules and a Landlock and seccomp layer, all generated from its manifest. Packages never write system configuration.
 - **Apps from signed feeds.** The [project's feed](docs/FEED.md) at https://nodo.monokulo.com carries Monokulo, the Bell, the push relay, the light wallet server, Kringle and the Library. You can add feeds of your own; every package is checked against its feed's pinned key, and new permissions wait for you.
 - **Updates that can be undone.** The base system arrives in tested, signed snapshots, never straight from Void's rolling `current`, with A/B rollback, opt-in auto-updates and backups to USB. See [updates, rollback, health and backups](docs/UPDATES.md).
-- **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system.
+- **Its own screen.** The T6N's touchscreen shows the panels packages offer, OLED dark, arranged as you like. A terminal UI covers the rest: apps, hosting, network and system. The same pages can be turned on for a browser on the home network, at `https://nodo.local`.
 
 <table>
   <tr>
@@ -55,6 +55,9 @@ scripts/test.sh fast                      # static checks, a few seconds
 scripts/test.sh vm                        # changed packages in a running KVM VM
 scripts/test.sh full                      # aarch64 image, cold boot, reboot and size checks
 tests/tui-e2e.sh --fresh device           # the real TUI and helper in a clean KVM VM, through a terminal
+# The helper and the web GUI end to end, run inside that VM (each script's header says what it needs)
+scripts/dev-vm.sh ssh 'cat > /tmp/e2e.sh' < tests/helper-e2e.sh && scripts/dev-vm.sh ssh 'sh /tmp/e2e.sh </dev/null'
+scripts/dev-vm.sh ssh 'cat > /tmp/web-gui-e2e.sh' < tests/web-gui-e2e.sh && scripts/dev-vm.sh ssh 'sh /tmp/web-gui-e2e.sh </dev/null'
 scripts/build-packages.sh aarch64 cuprated cuprated-service nodo-base linux-nanopc-t6n
 scripts/build-image.sh nanopc-t6n ~/.ssh/id_ed25519.pub
 # The same image on the mainline longterm kernel, see docs/MAINLINE_KERNEL.md

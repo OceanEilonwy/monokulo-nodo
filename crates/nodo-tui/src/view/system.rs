@@ -8,9 +8,11 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, heading, inset, link, margin, quiet, tick, toggle, trail, Card, Screen3};
-use crate::app::{App, AutoUpdateState, LogsState, Tab, UpdateResultsState, UpdatesState, SYSTEM_ROWS};
+use crate::app::{App, AutoUpdateState, LogsState, UpdateResultsState, UpdatesState, WebGuiState};
 use crate::hit::{Click, Target};
-use crate::model::*;
+use nodo_ui_core::model::*;
+use nodo_ui_core::screen::Tab;
+use nodo_ui_core::words::{nodo_update, system_row_summary, SYSTEM_ROWS};
 use crate::theme::Theme;
 
 fn key(c: char) -> Click {
@@ -27,48 +29,17 @@ fn system_trail(t: &Theme, last: &[&str], targets: &mut Vec<Target>) -> Vec<Item
     vec![Item::Blank, trail(t, &parts, targets), Item::Blank]
 }
 
-fn nodo_update(app: &App) -> Option<&UpdateItem> {
-    app.data.updates.iter().find(|item| item.name == SYSTEM_BASE && !item.held)
-}
-
-fn row_summary(app: &App, row: &str) -> String {
-    match row {
-        "Updates" => {
-            let apps = app.data.updates.iter().filter(|u| u.name != SYSTEM_BASE && !u.held).count();
-            let nodo = nodo_update(app).is_some();
-            let mut parts = Vec::new();
-            if apps > 0 {
-                parts.push(if apps == 1 { "1 for an app".to_owned() } else { format!("{apps} for apps") });
-            }
-            if nodo {
-                parts.push("1 for the Nodo".to_owned());
-            }
-            let auto = app.data.auto_update.enabled_count();
-            let automatic = if auto == 0 { "automatic updates off".to_owned() } else { format!("automatic for {auto}") };
-            if parts.is_empty() {
-                format!("Up to date · {automatic}")
-            } else {
-                format!("{} · {automatic}", parts.join(", "))
-            }
-        }
-        "Backups" => "Make one now, or on a schedule".to_owned(),
-        "Network" => "Cable, Wi-Fi and Bluetooth".to_owned(),
-        "Device logs" => "What the Nodo and its apps have been doing".to_owned(),
-        _ => app.data.overview.device.iter().take(2).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(" · "),
-    }
-}
-
 /// The System page: a waiting Nodo update first, then the Nodo's parts.
 pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::System, w);
     screen.before = vec![Item::Blank, heading(t, "This Nodo"), Item::Blank];
     let mut cards = Vec::new();
-    if let Some(update) = nodo_update(app) {
+    if let Some(update) = nodo_update(&app.data) {
         let mut card = Card::new(t, w);
         card.blank(t);
-        let restart = if update.note == UpdateNote::RestartNeeded { "   needs a restart" } else { "   no restart needed" };
-        card.row(t, vec![t.b("A Nodo update is ready"), t.d(format!("   {}{restart}", update.to))]);
+        let restart = nodo_ui_core::words::nodo_update_note(update);
+        card.row(t, vec![t.b("A Nodo update is ready"), t.d(format!("   {}   {restart}", update.to))]);
         if let UpdateNote::Withdrawal(withdrawn) = &update.note {
             card.row(t, vec![t.a("▲  "), t.n(format!("The publisher withdrew {withdrawn}, which this Nodo runs."))]);
         }
@@ -86,7 +57,7 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
             parts.focus_here();
         }
         let room = parts.width.saturating_sub(6 + 20 + 2);
-        let summary = row_summary(app, row);
+        let summary = system_row_summary(&app.data, row);
         let summary: String = if summary.chars().count() > room { format!("{}…", summary.chars().take(room.saturating_sub(1)).collect::<String>()) } else { summary };
         let lead = if index == selected { t.a("▸ ") } else { t.n("  ") };
         parts.row_with(t, vec![lead, t.b(pad(row, 18)), t.d(pad(&summary, room)), t.d("›")], [Target::card_row(*row, pick(index, Some(KeyCode::Enter)))]);
@@ -94,6 +65,55 @@ pub fn system(app: &App, t: &Theme, selected: usize) -> Page {
     parts.blank(t);
     cards.push(parts);
     screen.stack(t, cards, "Keys: ↑↓ choose  ↵ open  1-4 tabs", w, h)
+}
+
+/// System › Web GUI: what it is, what turning it on means, where it answers and how a browser
+/// comes to trust that address, and its switch.
+pub fn web_gui(app: &App, t: &Theme, state: &WebGuiState) -> Page {
+    use nodo_ui_core::flows::web::certs::Trust;
+    use nodo_ui_core::flows::web_gui::{trust_lines, WebGui, ABOUT, SECURITY};
+    let (w, h) = super::frame_size();
+    let mut screen = Screen3::new(app, t, Tab::System, w);
+    let mut before_targets = Vec::new();
+    screen.before = system_trail(t, &["Web GUI"], &mut before_targets);
+    screen.targets.extend(before_targets);
+    let status = WebGui::status(&app.data);
+    let mut card = Card::new(t, w);
+    card.blank(t);
+    let mut head = vec![t.b(pad("Web GUI", 15))];
+    head.extend(toggle(t, status.is_some_and(|status| status.enabled)));
+    match status {
+        _ if state.flow.busy => head.push(t.d("   Working…")),
+        Some(status) if status.waiting => head.push(t.a("   waiting for the local address")),
+        Some(status) => head.extend(status.url.iter().map(|url| t.o(format!("   {url}")))),
+        None => head.push(t.d("   The Nodo did not say whether it is on.")),
+    }
+    card.row(t, head);
+    card.blank(t);
+    for line in ABOUT {
+        card.row(t, vec![t.n(line)]);
+    }
+    card.blank(t);
+    for line in SECURITY {
+        card.row(t, vec![t.a("▲  "), t.n(line)]);
+    }
+    card.blank(t);
+    card.row(t, vec![t.d(pad("Address", 15)), t.b(nodo_api::WEBGUI_URL)]);
+    let trust = Trust::of(&app.data);
+    match &trust.fingerprint {
+        Some(_) => {
+            for (index, line) in trust.fingerprint_lines().into_iter().enumerate() {
+                card.row(t, vec![t.d(pad(if index == 0 { "Local CA" } else { "" }, 15)), t.b(line)]);
+            }
+        }
+        None => card.row(t, vec![t.d(pad("Local CA", 15)), t.d("Not created yet. It is made when the web GUI or a local site first needs it.")]),
+    }
+    for line in trust_lines(trust.url.as_deref()) {
+        card.row(t, vec![t.d(line)]);
+    }
+    card.blank(t);
+    card.buttons(t, &[("Back", false, Click::Key(KeyCode::Esc)), (WebGui::switch_label(&app.data), true, Click::Key(KeyCode::Enter))]);
+    screen.card(t, card, "Keys: ↵ turn it on or off  r read again  Esc back", w, h)
 }
 
 /// One review page for the Nodo and the apps.
@@ -110,7 +130,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         let mut card = Card::new(t, w);
         card.blank(t);
         card.row(t, vec![t.a("◆  "), t.b("Some apps need more locked storage")]);
-        for line in &prompt.growing {
+        for line in &prompt.batch.growing {
             card.row(t, vec![t.n(format!("  ·  {line}"))]);
         }
         card.blank(t);
@@ -153,23 +173,11 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             card.focus_here();
         }
         let ticked = state.checked.contains(&item.name);
-        let note = match &item.note {
-            UpdateNote::Ready if item.grows.is_some() => t.a("needs the device passphrase"),
-            UpdateNote::Ready => t.d(""),
-            UpdateNote::RestartNeeded => t.d("needs a restart"),
-            UpdateNote::NewPermission(_) => t.a("▲ asks for something new; you'll review it first"),
-            UpdateNote::Skipped => t.d("you skipped this version"),
-            UpdateNote::Blocked(reason) => t.a(format!("▲ {reason}")),
-            UpdateNote::Withdrawal(_) => t.a("▲ replaces a withdrawn version"),
-        };
+        let (words, marked) = nodo_ui_core::words::update_note(item);
+        let note = if marked { t.a(words) } else { t.d(words) };
         let lead = if selected { t.a("▸ ") } else { t.n("  ") };
         let name_width = apps.iter().map(|(_, i)| i.name.chars().count()).max().unwrap_or(0).clamp(10, 20) + 2;
         let name = if item.held { t.d(pad(&item.name, name_width)) } else { t.n(pad(&item.name, name_width)) };
-        let note = match (&item.note, item.held) {
-            (UpdateNote::Skipped, _) => t.d("you skipped this version"),
-            (_, true) => t.d("held back"),
-            _ => note,
-        };
         let target = Target::card_row(item.name.clone(), pick(*index, Some(KeyCode::Char(' '))));
         card.row_with(t, vec![lead, tick(t, ticked), t.n("  "), name, t.d(pad(&format!("{}  →  {}", item.from, item.to), 22)), note], [target]);
     }
@@ -181,7 +189,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
             1 => "Update 1 app".to_owned(),
             n => format!("Update {n} apps"),
         };
-        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(app).is_none(), Click::Key(KeyCode::Enter));
+        card.row_with_button(t, vec![t.d("Each app keeps its settings and can be undone.")], &label, nodo_update(&app.data).is_none(), Click::Key(KeyCode::Enter));
         card.blank(t);
     }
     cards.push(card);
@@ -294,10 +302,8 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             card.blank(t);
             let running = if failure.running { format!("{} {} is running again as before.", failure.restored, failure.name) } else { format!("{} {} isn't running; its log says why.", failure.restored, failure.name) };
             card.row(t, vec![t.n(running)]);
-            if !failure.log_line.is_empty() {
-                card.row(t, vec![t.d(format!("{} said: \"{}\"", failure.name, failure.log_line))]);
-            } else if !failure.reason.is_empty() {
-                card.row(t, vec![t.d(format!("Why: {}", failure.reason))]);
+            if let Some(said) = nodo_ui_core::words::update_failure_said(failure) {
+                card.row(t, vec![t.d(said)]);
             }
             for result in report.results.iter().filter(|r| r.applied) {
                 let name = if result.name == SYSTEM_BASE { "The Nodo" } else { result.name.as_str() };
@@ -314,46 +320,26 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             let ok = super::v3::focused("OK", state.choice != 1);
             card.buttons(t, &[(again.as_str(), false, pick(1, Some(KeyCode::Enter))), (ok.as_str(), true, pick(0, Some(KeyCode::Enter)))]);
         }
-        // Without a rollback, an update that did not apply was refused before anything changed:
-        // nothing was put back, and the reason is the device's.
+        // Without a rollback, an update that did not apply was refused before anything changed.
+        // What that comes to, and its words, are the core's.
         None => {
-            let applied = report.results.iter().filter(|r| r.applied).count();
-            let refused: Vec<_> = report.results.iter().filter(|r| !r.applied).collect();
-            match refused.as_slice() {
-                [only] if applied == 0 => {
-                    let name = if only.name == SYSTEM_BASE { "The Nodo" } else { only.name.as_str() };
-                    card.row(t, vec![t.a("▲  "), t.b(format!("Not updated: {}", only.note))]);
-                    card.blank(t);
-                    let stays = if only.version.is_empty() { format!("{name} stays as it was.") } else { format!("{name} is {}.", only.version) };
-                    card.row(t, vec![t.n(format!("{stays} Nothing was changed."))]);
-                }
-                _ => {
-                    let header = if applied == 0 && !refused.is_empty() {
-                        (t.a("▲  "), "Nothing was updated".to_owned())
-                    } else if applied == 1 {
-                        (t.o("✓  "), "1 update is installed".to_owned())
-                    } else {
-                        (t.o("✓  "), format!("{applied} updates are installed"))
-                    };
-                    card.row(t, vec![header.0, t.b(header.1)]);
-                    card.blank(t);
-                    for result in &report.results {
-                        let (mark, text) = if result.applied { (t.o("✓  "), t.n(format!("{} {}", result.name, result.version))) } else { (t.e("✕  "), t.e(format!("{} {}", result.name, result.version))) };
-                        let note = match (result.applied, result.note.is_empty()) {
-                            (_, true) => String::new(),
-                            (true, false) => format!("   {}", result.note),
-                            (false, false) => format!("   Not updated: {}", result.note),
-                        };
-                        card.row(t, vec![mark, text, t.d(note)]);
-                    }
-                    if !refused.is_empty() {
-                        card.blank(t);
-                        card.row(t, vec![t.n("Nothing was changed for those not updated.")]);
-                    }
-                }
+            let came_to = nodo_ui_core::words::update_results(report);
+            let mark = if came_to.tone == nodo_ui_core::words::Tone::Good { t.o("✓  ") } else { t.a("▲  ") };
+            card.row(t, vec![mark, t.b(came_to.headline.clone())]);
+            card.blank(t);
+            for row in &came_to.rows {
+                let (mark, text) = if row.applied { (t.o("✓  "), t.n(row.text.clone())) } else { (t.e("✕  "), t.e(row.text.clone())) };
+                let note = if row.note.is_empty() { String::new() } else { format!("   {}", row.note) };
+                card.row(t, vec![mark, text, t.d(note)]);
             }
-            if !refused.is_empty() {
-                card.row(t, vec![t.d("Once what it says is sorted out, select the update again in Updates.")]);
+            if let Some(unchanged) = &came_to.unchanged {
+                if !came_to.rows.is_empty() {
+                    card.blank(t);
+                }
+                card.row(t, vec![t.n(unchanged.clone())]);
+            }
+            if let Some(advice) = came_to.advice {
+                card.row(t, vec![t.d(advice)]);
             }
             card.blank(t);
             card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);
@@ -410,14 +396,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
     screen.before = before;
     screen.targets.extend(before_targets);
 
-    let needle = state.find.text().to_lowercase();
-    let lines: Vec<&LogLine> = state
-        .view
-        .lines
-        .iter()
-        .filter(|line| !state.errors_only || line.kind == LogKind::Error)
-        .filter(|line| needle.is_empty() || line.text.to_lowercase().contains(&needle))
-        .collect();
+    let lines = state.lines(state.find.text());
     let mut card = Card::new(t, w);
     card.blank(t);
     if state.app.is_none() {
@@ -436,12 +415,14 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
         card.row(t, vec![text]);
     }
     if lines.is_empty() {
-        let empty = if state.errors_only { "No problems in this log." } else { "Nothing in this log yet." };
-        card.row(t, vec![t.d(empty)]);
+        card.row(t, vec![t.d(state.empty_text())]);
     }
     card.blank(t);
-    for suggestion in &state.view.suggestion {
-        card.row(t, vec![t.i("▸  "), t.n(suggestion.replace('`', ""))]);
+    let last = state.view.suggestion.len().saturating_sub(1);
+    for (index, suggestion) in state.view.suggestion.iter().enumerate() {
+        // What the last one points at is said with its key.
+        let hint = state.view.suggestion_hint.filter(|_| index == last);
+        card.row(t, vec![t.i("▸  "), t.n(crate::keys::suggestion(suggestion, hint).replace('`', ""))]);
     }
     if !state.view.suggestion.is_empty() {
         card.blank(t);

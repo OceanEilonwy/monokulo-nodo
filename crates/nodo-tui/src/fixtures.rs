@@ -7,10 +7,18 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nodo_api::Exposure;
 
 use crate::app::*;
-use crate::mock::{reachability_checks, sample_references, MockBackend};
-use crate::model::*;
-use crate::runtime::load_snapshot;
-use crate::secret::Input;
+use nodo_ui_core::mock::{reachability_checks, sample_references, MockBackend};
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::Input;
+use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::exec::load_snapshot;
+use nodo_ui_core::flows::install::ReviewPurpose;
+use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow, PickMode, Picker};
+use nodo_ui_core::flows::updates::Rollbacks;
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::onion::Onion;
+use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
+use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 
 /// A loaded app on the given screen, plus the device behind it.
@@ -30,6 +38,10 @@ pub fn fixture(id: ScreenId) -> (App, MockBackend) {
         shop.days_left = None;
         shop.renewed = None;
         shop.issuer = String::new();
+    }
+    // Its own page is shown turned on, with the address it answers at.
+    if id == ScreenId::WebGui {
+        mock.web_gui.enabled.store(true, std::sync::atomic::Ordering::SeqCst);
     }
     let mut app = App::new();
     app.data = load_snapshot(&mut mock).expect("the mock always answers");
@@ -71,37 +83,35 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::Main => Screen::Home { selected: 0 },
         ScreenId::Apps => Screen::Apps { selected: 0 },
         ScreenId::AppPage => Screen::AppPage(crate::app::AppPageState::new(&sample_app(app))),
-        ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState { name: sample_app(app), confirm_focused: false }),
+        ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState::new(&sample_app(app))),
         ScreenId::System => Screen::System { selected: 0 },
         // A suite like Pingers, at its review, with Cancel focused.
-        ScreenId::Bundle => Screen::Bundle(Box::new(BundleState::new(crate::mock::sample_bundle_review()))),
+        ScreenId::Bundle => Screen::Bundle(Box::new(BundleState::new(nodo_ui_core::mock::sample_bundle_review()))),
         // A setup page like Pingers', opened with the passphrase.
         ScreenId::OwnerPage => {
             let mut state = OwnerPageState::new("pingers", "Setup");
-            state.held = Some(crate::secret::Secret::new(crate::mock::MOCK_PASSPHRASE));
-            state.view = Some(crate::mock::sample_owner_page());
+            state.held = Some(nodo_ui_core::secret::Secret::new(nodo_ui_core::mock::MOCK_PASSPHRASE));
+            state.view = Some(nodo_ui_core::mock::sample_owner_page());
             Screen::OwnerPage(Box::new(state))
         }
         ScreenId::Network => {
             // The scan has run, and the speaker the Bluetooth scan found waits to be paired.
             let mut bluetooth = mock.bluetooth.clone();
             bluetooth.devices.extend(mock.nearby.iter().cloned());
-            Screen::Network(NetworkState {
-                wifi: Some(mock.wifi.clone()),
-                networks: mock.wifi_networks(),
-                bluetooth: Some(bluetooth),
-                wifi_read: crate::app::RadioRead::Read,
-                bluetooth_read: crate::app::RadioRead::Read,
-                busy: None,
-                ..NetworkState::new()
-            })
+            let mut state = NetworkState::new();
+            state.wifi = Some(mock.wifi.clone());
+            state.networks = mock.wifi_networks();
+            state.bluetooth = Some(bluetooth);
+            state.wifi_read = nodo_ui_core::flows::network::RadioRead::Read;
+            state.bluetooth_read = nodo_ui_core::flows::network::RadioRead::Read;
+            state.busy = None;
+            Screen::Network(state)
         }
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
+        ScreenId::WebGui => Screen::WebGui(WebGuiState::default()),
         ScreenId::Onion => Screen::Onion(OnionState {
-            status: Some(mock.onion_status()),
+            flow: Onion { status: Some(mock.onion_status()), error: None, busy: false },
             selected: 0,
-            error: None,
-            busy: false,
         }),
         ScreenId::Restore => {
             // A good stick and one that cannot be used, with the focus on the good one.
@@ -115,18 +125,23 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 read_only: false,
                 problem: Some("it has no filesystem".to_owned()),
             });
-            Screen::Restore(RestoreState { drives, busy: false, ..RestoreState::new() })
+            let mut state = RestoreState::new();
+            state.drives = drives;
+            state.busy = false;
+            Screen::Restore(state)
         }
         ScreenId::Rollbacks => Screen::Rollbacks(RollbacksState {
-            view: Some(RollbackView {
-                options: mock.rollbacks.clone(),
-                events: mock.update_history.clone(),
-                boot_fallback: None,
-            }),
+            flow: Rollbacks {
+                view: Some(RollbackView {
+                    options: mock.rollbacks.clone(),
+                    events: mock.update_history.clone(),
+                    boot_fallback: None,
+                }),
+                error: None,
+                busy: false,
+                result: None,
+            },
             selected: 0,
-            error: None,
-            busy: false,
-            result: None,
         }),
         ScreenId::Backup => {
             let mut state = BackupState::new(true);
@@ -159,13 +174,11 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::Unlock => {
             let mut input = Input::secret();
             "twelve chars".chars().for_each(|c| input.push(c));
-            Screen::Unlock(UnlockState {
-                input,
-                error: Some("That passphrase did not unlock this device. Try again.".to_owned()),
-                failures: 1,
-                retry_at_tick: 0,
-                resume: None,
-            })
+            let mut state = UnlockState::default();
+            state.input = input;
+            state.error = Some("That passphrase did not unlock this device. Try again.".to_owned());
+            state.failures = 1;
+            Screen::Unlock(state)
         }
         ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false },
         ScreenId::AddFeed => Screen::AddFeed(AddFeedState::Confirm {
@@ -180,21 +193,23 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         }),
         ScreenId::Settings => Screen::Settings(settings_design_state(mock)),
         ScreenId::Reference => Screen::Reference(ReferenceState {
-            package: "moneropay".to_owned(),
-            field_index: 0,
-            field_label: "Daemon RPC".to_owned(),
-            field_kind: FieldKind::Url,
-            mode: crate::app::PickMode::Insert,
-            assembled: false,
-            list: sample_references(),
+            flow: Picker {
+                package: "moneropay".to_owned(),
+                field_index: 0,
+                field_label: "Daemon RPC".to_owned(),
+                field_kind: FieldKind::Url,
+                mode: PickMode::Insert,
+                assembled: false,
+                list: sample_references(),
+                granting: None,
+            },
             query: typed("rpc"),
             list_focused: true,
             selected: 0,
-            granting: None,
         }),
         ScreenId::ApplyFailed => {
             let reason = "listen tcp :18081: bind: address already in use";
-            Screen::ApplyFailed(ApplyFailedState {
+            Screen::ApplyFailed(ApplyFailed {
                 package: "moneropay".to_owned(),
                 explanation: mock.explain_rollback("moneropay", reason),
                 rows: vec![
@@ -220,15 +235,12 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let report = scratch.apply_updates(&["moneropay".to_owned(), "system base".to_owned()], &[]);
             Screen::UpdateResults(UpdateResultsState { report, choice: 0 })
         }
-        ScreenId::Logs => Screen::Logs(LogsState {
-            selected: 1,
-            view: mock.logs("bell"),
-            errors_only: false,
-            follow: true,
-            find: Input::plain(""),
-            finding: false,
-            app: None,
-        }),
+        ScreenId::Logs => {
+            let mut state = LogsState::new(nodo_ui_core::flows::logs::Logs::device(), 1);
+            state.errors_only = false;
+            state.view = mock.logs("bell");
+            Screen::Logs(state)
+        }
         ScreenId::Rejected => {
             let InstallGate::Rejected(data) = gate(mock, "community", "fast-sync-helper") else {
                 unreachable!("fast-sync-helper is always rejected");
@@ -264,24 +276,19 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let Reachability::Checked { checks, router, plan, manual } = reachability_checks("shop.example.com", false) else {
                 unreachable!("this helper only builds checked results");
             };
-            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true, manual, details: false })
+            let flow = PublicCheck { site: "shop".to_owned(), checks, router, plan, going_public: true, manual };
+            Screen::WebCheck(WebCheckState { flow, details: false })
         }
         ScreenId::WebConfirm => {
             let Reachability::Checked { plan: Some(plan), .. } = reachability_checks("shop.example.com", true) else {
                 unreachable!("open ports always produce a plan");
             };
-            Screen::WebConfirm(WebConfirmState {
-                site: "shop".to_owned(),
-                plan,
-                access: PublicAccess { require_password: false },
-                focus: ConfirmFocus::Cancel,
-                details: false,
-            })
+            Screen::WebConfirm(WebConfirmState::new(PublicConfirm::new("shop", plan)))
         }
         ScreenId::WebDomain => {
             let mut state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
             state.under_domain = true;
-            state.focus = DomainFocus::UnderDomain;
+            state.focus = nodo_ui_core::flows::web::domain::Field::UnderDomain;
             state.checks = Some(Ok(vec![nodo_api::LocalNameCheck {
                 host: "shop.home.example.com".to_owned(),
                 address: "192.168.1.60".to_owned(),
@@ -293,18 +300,20 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::WebDomain(state)
         }
         ScreenId::WebTrust => Screen::WebTrust,
-        ScreenId::WebCertificate => Screen::WebCertificate(CertificateState {
+        ScreenId::WebCertificate => Screen::WebCertificate(Certificate {
             site: "shop".to_owned(),
             host: "shop.example.com".to_owned(),
         }),
         ScreenId::WebCgnat => Screen::WebCgnat(CgnatState {
-            site: "shop".to_owned(),
-            wan_address: "100.72.14.9".to_owned(),
-            wan_range: "100.64.0.0/10".to_owned(),
-            internet_address: "203.0.113.42".to_owned(),
+            flow: Cgnat {
+                site: "shop".to_owned(),
+                wan_address: "100.72.14.9".to_owned(),
+                wan_range: "100.64.0.0/10".to_owned(),
+                internet_address: "203.0.113.42".to_owned(),
+                going_public: true,
+            },
             choice: 0,
             details: false,
-            going_public: true,
         }),
     }
 }

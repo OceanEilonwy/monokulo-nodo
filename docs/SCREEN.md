@@ -324,18 +324,33 @@ the black never change.
 
 The tile grid is always the resting screen. Its top bar has a gear (**Manage**), **Arrange** and
 **Shut down**. Manage opens the same four tabs as the TUI, Home, Apps, Web and System, laid out for
-touch (`ui/manage.slint`, built from page models in `src/manage.rs`). Every screen reads and
-changes the Nodo through nodo-tui's helper backend and data model, so the screen and the TUI show
-and do the same things. Calls run on a worker thread; the screen returns to the tiles after the idle
-time set in System › Screen.
+touch (`ui/manage.slint`, built from page models in `src/manage.rs`). The screen is a thin
+frontend over `crates/nodo-ui-core`: what an action does, what is asked first, what a result means
+and the wording of consequences are the core's flows, the same ones the TUI uses, so the screen and
+the TUI follow the same rules. `manage.rs` keeps the pages, the keyboard, the pickers and the
+dialog. Calls run on the core's worker thread; the screen returns to the tiles after the idle time
+set in System › Screen.
+
+System also has a row for the web GUI that says whether it is on and where it answers. It is
+shown only: the web GUI is turned on and off over SSH, and the helper refuses the switch from the
+screen's socket.
+
+What the touchscreen has no page for is done in the terminal, and the screen says so: bundles, an
+app's setup page, an update that asks for a new permission or grows encrypted storage (neither is
+ever applied from the screen), a site's other names, restoring a backup and Bluetooth.
 
 - **Settings and references.** Any text, number or address field can hold text, one
   `$(app.setting)` reference or text mixed with references. References are chips showing what
   they resolve to now (the helper's `PreviewSetting`); a broken one is red and its reason is in the
   field's menu. Tapping a field offers Insert a reference (one generic picker over everything
   `ListReferences` offers that fits the field), Replace…, Type a value instead and an undo. A secret
-  or non-public setting asks to allow it first (`SetGrant`). Saving lists new dependencies and
+  or non-public setting asks to allow it first (`SetGrant`). A value that does not fit its field
+  says why under the field, and Save refuses until it does. Saving lists new dependencies and
   access first.
+- **Putting a site on the internet.** Save applies the home network and Tor choices, saves the
+  address and runs the reachability check. Only when the check passes does the confirmation come,
+  in a dialog that starts on Cancel, and going on means typing the address on the keyboard. A
+  failed check lists what failed and offers to check again.
 - **The on-screen keyboard** types values; `$(` in a field opens the reference picker. Paste is not
   offered: the screen has no clipboard.
 - **System › Screen** sets the brightness, how far idle dims it, when management goes back to the
@@ -356,7 +371,9 @@ checked with SO_PEERCRED):
 
 - Requests that only read are always answered. Everything else is refused with `Locked` until the
   screen is unlocked with the 6-digit **screen PIN**; an unlock lasts until the screen has been
-  idle five minutes, and the lock pill (Locked / Unlocked) locks it again at once.
+  idle five minutes, and the lock pill (Locked / Unlocked) locks it again at once. A change that
+  is refused opens the PIN pad, and runs again once the PIN is given, with whatever was typed for
+  it.
 - The PIN is set or cleared over SSH with the device passphrase: `nodo-tui --ctl screen-pin` (or
   `screen-pin-clear`). Without a PIN the screen can only look, and says how to set one.
 - It is stored as a salted Argon2id hash in `/var/lib/nodo/screen-pin` (root only).

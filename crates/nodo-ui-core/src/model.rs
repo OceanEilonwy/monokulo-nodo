@@ -57,12 +57,40 @@ pub struct PackageSummary {
     pub bundle: Option<u32>,
 }
 
+/// What the owner can do about what a notice, an error or a description says.
+///
+/// The core's words never name a key or a button, since each interface has its own. Where a
+/// message points at something to do, it carries one of these beside its text, and an interface
+/// says how in its own words (the terminal names the key), offers it its own way, or shows the
+/// text alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// Unlock the device with its passphrase.
+    Unlock,
+    /// Turn on the radio the message is about.
+    TurnOn,
+    /// Look for Wi-Fi networks in range.
+    ScanWifi,
+    /// Look for Bluetooth devices in their pairing mode.
+    ScanBluetooth,
+    /// Look for USB drives again.
+    LookForDrives,
+    /// Start the install: the package is downloaded and checked, and what it asks for is shown
+    /// before anything is installed.
+    Install,
+    /// Open the details of the domain provider the message is about, which say why some of its
+    /// domains cannot be used yet.
+    ProviderDetails,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageDetail {
     pub id: PackageId,
     pub installed: bool,
     pub signature_verified: bool,
     pub about: String,
+    /// What `about` points at, when it says what to do next.
+    pub about_hint: Option<Hint>,
     pub version: String,
     pub size: String,
     pub license: String,
@@ -640,6 +668,8 @@ pub struct LogLine {
 pub struct LogView {
     pub lines: Vec<LogLine>,
     pub suggestion: Vec<String>,
+    /// What the last line of `suggestion` points at, when it says what to do.
+    pub suggestion_hint: Option<Hint>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -970,6 +1000,9 @@ pub struct Snapshot {
     pub system_note: Option<String>,
     /// Installed apps with a setup page for the owner, and its title, such as ("pingers", "Setup").
     pub owner_pages: Vec<(String, String)>,
+    /// The web GUI: whether the owner turned it on and where it answers. `None` when the helper
+    /// did not say.
+    pub web_gui: Option<nodo_api::WebGuiStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1100,6 +1133,16 @@ pub trait ScreenData {
     fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String>;
     /// See [`Snapshot::unavailable`]. Read after the other snapshot calls.
     fn unavailable(&self) -> Vec<(Area, String)> {
+        Vec::new()
+    }
+
+    /// Each different `ApiError::Locked` the helper answered since this was last asked, in the
+    /// order they first came, and forgets them. Results reach an interface as text, so this is
+    /// how one that can do something about a refusal for want of an unlock (the built-in screen
+    /// asks for its PIN and runs the change again) learns that there was one. One call can meet
+    /// several: a change the screen's lock refuses, and then a read the locked device refuses.
+    /// Empty from a backend that keeps no such record.
+    fn take_refusals(&mut self) -> Vec<nodo_api::ApiError> {
         Vec::new()
     }
 

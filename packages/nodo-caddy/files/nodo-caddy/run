@@ -6,6 +6,12 @@ exec </dev/null
 config=/var/lib/nodo-web/caddy.json
 [ -r "$config" ] || config=/usr/share/nodo-caddy/empty.json
 install -d -o _caddy -g _caddy -m 750 /run/nodo-web
+# The web GUI (nodo-tools) listens on a Unix socket in this directory, which is its account's and
+# lets only Caddy's group in. nodo-web-gui's run script makes it the same way; it is made here as
+# well so that the bind below is there even when Caddy starts first.
+if id -u _nodo_webgui >/dev/null 2>&1; then
+	install -d -m 2750 -o _nodo_webgui -g _caddy /run/nodo-web-gui
+fi
 # Each proxied request holds two sockets. dash, Void's /bin/sh, supports -n.
 # shellcheck disable=SC3045
 ulimit -n 8192
@@ -22,6 +28,7 @@ exec chpst -u _caddy:_caddy bwrap \
 	--ro-bind-try /etc/ssl /etc/ssl \
 	--ro-bind /var/lib/nodo-web /var/lib/nodo-web \
 	--ro-bind-try /run/apps /run/apps \
+	--ro-bind-try /run/nodo-web-gui /run/nodo-web-gui \
 	--bind /run/nodo-web /run/nodo-web \
 	--bind /var/lib/caddy /var/lib/caddy \
 	--proc /proc \

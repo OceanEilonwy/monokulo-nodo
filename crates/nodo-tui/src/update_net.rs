@@ -1,15 +1,16 @@
-//! Keys and results for the Network screen: Wi-Fi and Bluetooth.
+//! Keys, the clock and results for the Network screen: Wi-Fi and Bluetooth.
 //!
-//! Both radios stay off until the owner turns them on here. Joining an open network, forgetting
-//! one, removing a device, and turning Wi-Fi off while it may carry this very session all ask
-//! first, with the focus on Cancel. The helper checks every rule again.
+//! What each key's action checks, asks first and does is the core's `Network`. This file maps
+//! keys to those actions by the chosen row, keeps the selection inside the lists and turns the
+//! tick into the seconds the core counts in.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nodo_api::{PairingStage, WifiLink, WifiSecurity};
 
-use super::{notice, pop, push, step};
+use super::{follow, push, step};
 use crate::app::*;
-use crate::secret::Input;
+use nodo_ui_core::flows::Step;
+use nodo_ui_core::secret::Input;
+use nodo_ui_core::{Effect, Outcome};
 
 pub(super) fn open_network(app: &mut App) -> Vec<Effect> {
     let mut state = NetworkState::new();
@@ -19,11 +20,7 @@ pub(super) fn open_network(app: &mut App) -> Vec<Effect> {
 }
 
 pub(super) fn network_input(state: &mut NetworkState) -> Option<&mut Input> {
-    state.prompt.as_mut().map(|p| &mut p.passphrase)
-}
-
-fn ask(app: &mut App, title: String, body: Vec<String>, confirm: &str, action: ModalAction) {
-    app.modal = Some(Modal { title, body, confirm_label: confirm.to_owned(), confirm_focused: false, action });
+    state.flow.prompt.is_some().then_some(&mut state.passphrase)
 }
 
 pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -31,419 +28,96 @@ pub(super) fn network_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     if key.code == KeyCode::Esc {
-        if state.prompt.take().is_some() {
-            state.error = None;
+        if state.flow.cancel_prompt() {
+            state.passphrase.clear();
             return Vec::new();
         }
-        pop(app);
-        return vec![Effect::Refresh];
+        let next = state.flow.leave();
+        return follow(app, next);
     }
     // Works even while the first answer is still awaited, since that may never come.
     if key.code == KeyCode::Char('r') && state.can_ask_again() {
         return state.ask_again(app.ticks);
     }
-    if state.busy.is_some() {
+    if state.flow.busy.is_some() {
         return Vec::new();
     }
-    if let Some(prompt) = state.prompt.as_mut() {
+    if state.flow.prompt.is_some() {
         if key.code == KeyCode::Enter {
-            if prompt.passphrase.is_empty() {
-                state.error = Some(format!("Type the passphrase of {}.", prompt.ssid));
-                return Vec::new();
-            }
-            let prompt = state.prompt.take().expect("checked above");
-            let mut passphrase = prompt.passphrase;
-            state.error = None;
-            state.busy = Some(format!("Joining {}…", prompt.ssid));
-            return vec![Effect::JoinWifi {
-                ssid: prompt.ssid,
-                security: prompt.security,
-                passphrase: Some(passphrase.take_secret()),
-                accept_open: false,
-            }];
+            return state.flow.submit_passphrase(&mut state.passphrase);
         }
-        super::edit_input(&mut prompt.passphrase, key);
+        super::edit_input(&mut state.passphrase, key);
         return Vec::new();
     }
-    match key.code {
+    let wifi = state.focus == NetworkFocus::Wifi;
+    // The chosen row by name. With nothing listed there is no name, and the core says so.
+    let ssid = state.wifi_rows().get(state.wifi_selected).and_then(|row| state.wifi_row(*row)).map(|(ssid, ..)| ssid);
+    let device = state.flow.bluetooth.as_ref().and_then(|b| b.devices.get(state.bt_selected)).map(|d| d.address.clone());
+    let next = match key.code {
         KeyCode::Left | KeyCode::Right => {
-            state.focus = if state.focus == NetworkFocus::Wifi { NetworkFocus::Bluetooth } else { NetworkFocus::Wifi };
-            state.error = None;
+            state.focus = if wifi { NetworkFocus::Bluetooth } else { NetworkFocus::Wifi };
+            state.flow.error = None;
+            Step::Stay
         }
         KeyCode::Down | KeyCode::Up => {
             let down = key.code == KeyCode::Down;
-            match state.focus {
-                NetworkFocus::Wifi => {
-                    let len = state.wifi_rows().len();
-                    step(&mut state.wifi_selected, len, down)
-                }
-                NetworkFocus::Bluetooth => {
-                    let len = state.bluetooth.as_ref().map_or(0, |b| b.devices.len());
-                    step(&mut state.bt_selected, len, down)
-                }
+            if wifi {
+                let len = state.wifi_rows().len();
+                step(&mut state.wifi_selected, len, down);
+            } else {
+                let len = state.flow.bluetooth.as_ref().map_or(0, |b| b.devices.len());
+                step(&mut state.bt_selected, len, down);
             }
+            Step::Stay
         }
         KeyCode::Char('g') => return state.ask_again(app.ticks),
-        KeyCode::Char('o') => return toggle_radio(app),
-        KeyCode::Char('s') => {
-            state.error = None;
-            return match state.focus {
-                NetworkFocus::Wifi if state.wifi.as_ref().is_some_and(|w| w.enabled) => {
-                    state.busy = Some("Looking for Wi-Fi networks…".to_owned());
-                    vec![Effect::ScanWifi]
-                }
-                NetworkFocus::Bluetooth if state.bluetooth.as_ref().is_some_and(|b| b.enabled) => {
-                    state.busy = Some("Looking for Bluetooth devices for 8 seconds…".to_owned());
-                    vec![Effect::ScanBluetooth]
-                }
-                _ => {
-                    state.error = Some("Turn it on first: press o.".to_owned());
-                    Vec::new()
-                }
-            };
-        }
-        KeyCode::Enter => {
-            return match state.focus {
-                NetworkFocus::Wifi => join_selected(app),
-                NetworkFocus::Bluetooth => pair_or_connect(app),
-            }
-        }
-        KeyCode::Char('f') if state.focus == NetworkFocus::Wifi => {
-            let Some((ssid, _, saved)) = state.wifi_rows().get(state.wifi_selected).and_then(|r| state.wifi_row(*r))
-            else {
-                return Vec::new();
-            };
-            if !saved {
-                state.error = Some(format!("{ssid} is not saved."));
-                return Vec::new();
-            }
-            let mut body = vec![format!("The device will not join {ssid} again, and its saved key is deleted.")];
-            if state.joined() == Some(ssid.as_str()) && !state.wifi.as_ref().is_some_and(|w| w.wired_up) {
-                body.push("The wired link is down, so this may cut the connection you are using.".to_owned());
-            }
-            ask(app, format!("Forget {ssid}?"), body, "Forget", ModalAction::ForgetWifi(ssid));
-        }
-        KeyCode::Char('x') if state.focus == NetworkFocus::Bluetooth => {
-            let Some(device) = state.bluetooth.as_ref().and_then(|b| b.devices.get(state.bt_selected)).cloned() else {
-                return Vec::new();
-            };
-            ask(
-                app,
-                format!("Remove {}?", device.name),
-                vec![
-                    format!("{} is unpaired and forgotten.", device.name),
-                    "Pairing it again needs the device in its pairing mode.".to_owned(),
-                ],
-                "Remove",
-                ModalAction::RemoveBluetooth(device.address),
-            );
-        }
-        _ => {}
-    }
-    Vec::new()
-}
-
-fn toggle_radio(app: &mut App) -> Vec<Effect> {
-    let Screen::Network(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    state.error = None;
-    match state.focus {
-        NetworkFocus::Wifi => {
-            let Some(wifi) = &state.wifi else { return Vec::new() };
-            if let Some(why) = &wifi.unavailable {
-                state.error = Some(why.clone());
-                return Vec::new();
-            }
-            if wifi.enabled && wifi.link == WifiLink::Connected && !wifi.wired_up {
-                ask(
-                    app,
-                    "Turn Wi-Fi off?".to_owned(),
-                    vec!["The wired link is down, so this may cut the connection you are using.".to_owned()],
-                    "Turn off",
-                    ModalAction::WifiOff,
-                );
-                return Vec::new();
-            }
-            let on = !wifi.enabled;
-            state.busy = Some(if on { "Turning Wi-Fi on…" } else { "Turning Wi-Fi off…" }.to_owned());
-            if !on {
-                state.networks.clear();
+        KeyCode::Char('o') if wifi => {
+            let next = state.flow.toggle_wifi();
+            // The scan goes with the radio, and the cursor with the scan.
+            if next.effects().contains(&Effect::SetWifi(false)) {
                 state.wifi_selected = 0;
             }
-            vec![Effect::SetWifi(on)]
+            next
         }
-        NetworkFocus::Bluetooth => {
-            let Some(bt) = &state.bluetooth else { return Vec::new() };
-            if let Some(why) = &bt.unavailable {
-                state.error = Some(why.clone());
-                return Vec::new();
+        KeyCode::Char('o') => Step::run(state.flow.toggle_bluetooth()),
+        KeyCode::Char('s') if wifi => Step::run(state.flow.scan_wifi()),
+        KeyCode::Char('s') => Step::run(state.flow.scan_bluetooth()),
+        KeyCode::Enter if wifi => {
+            let next = state.flow.join(&ssid.unwrap_or_default());
+            if state.flow.prompt.is_some() {
+                state.passphrase = Input::secret();
             }
-            let on = !bt.enabled;
-            state.busy = Some(if on { "Turning Bluetooth on…" } else { "Turning Bluetooth off…" }.to_owned());
-            vec![Effect::SetBluetooth(on)]
+            next
         }
-    }
+        KeyCode::Enter => Step::run(state.flow.pair_or_connect(&device.unwrap_or_default())),
+        KeyCode::Char('f') if wifi => state.flow.ask_forget(&ssid.unwrap_or_default()),
+        KeyCode::Char('x') if !wifi => state.flow.ask_remove_bluetooth(&device.unwrap_or_default()),
+        _ => Step::Stay,
+    };
+    follow(app, next)
 }
 
-fn join_selected(app: &mut App) -> Vec<Effect> {
-    let Screen::Network(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    if !state.wifi.as_ref().is_some_and(|w| w.enabled) {
-        state.error = Some("Wi-Fi is off. Press o to turn it on.".to_owned());
-        return Vec::new();
-    }
-    let Some((ssid, security, _)) = state.wifi_rows().get(state.wifi_selected).and_then(|r| state.wifi_row(*r)) else {
-        state.error = Some("Press s to look for networks.".to_owned());
-        return Vec::new();
-    };
-    if state.joined() == Some(ssid.as_str()) {
-        state.error = Some(format!("The device is already joined to {ssid}."));
-        return Vec::new();
-    }
-    match security {
-        WifiSecurity::Enterprise => {
-            state.error = Some(format!("{ssid} needs a per-user login (WPA Enterprise), which this device does not support."));
-            Vec::new()
-        }
-        WifiSecurity::Legacy => {
-            state.error = Some(format!("{ssid} uses WEP or WPA, which are broken. Change the router to WPA2 or WPA3."));
-            Vec::new()
-        }
-        WifiSecurity::Open => {
-            ask(
-                app,
-                format!("Join {ssid}, an open network?"),
-                vec![
-                    format!("{ssid} is not encrypted: anyone nearby can read what the device sends over it."),
-                    "SSH and HTTPS stay encrypted, but names it looks up and other plain traffic do not.".to_owned(),
-                ],
-                "Join anyway",
-                ModalAction::JoinOpenWifi(ssid),
-            );
-            Vec::new()
-        }
-        _ => {
-            state.error = None;
-            state.prompt = Some(WifiPrompt { ssid, security, passphrase: Input::secret() });
-            Vec::new()
-        }
-    }
-}
-
-fn pair_or_connect(app: &mut App) -> Vec<Effect> {
-    let Screen::Network(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    let Some(bt) = &state.bluetooth else { return Vec::new() };
-    if !bt.enabled {
-        state.error = Some("Bluetooth is off. Press o to turn it on.".to_owned());
-        return Vec::new();
-    }
-    let Some(device) = bt.devices.get(state.bt_selected).cloned() else {
-        state.error = Some("Press s to look for devices. Put the device in its pairing mode first.".to_owned());
-        return Vec::new();
-    };
-    state.error = None;
-    if !device.paired {
-        state.busy = Some(format!("Pairing with {}…", device.name));
-        return vec![Effect::PairBluetooth(device.address)];
-    }
-    let connect = !device.connected;
-    state.busy = Some(format!("{} {}…", if connect { "Connecting" } else { "Disconnecting" }, device.name));
-    vec![Effect::ConnectBluetooth { address: device.address, connect }]
-}
-
-pub(super) fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
-    let Screen::Network(state) = &mut app.screen else {
-        return Vec::new();
-    };
-    state.error = None;
-    match action {
-        ModalAction::JoinOpenWifi(ssid) => {
-            state.busy = Some(format!("Joining {ssid}…"));
-            vec![Effect::JoinWifi { ssid, security: WifiSecurity::Open, passphrase: None, accept_open: true }]
-        }
-        ModalAction::ForgetWifi(ssid) => {
-            state.busy = Some(format!("Forgetting {ssid}…"));
-            vec![Effect::ForgetWifi(ssid)]
-        }
-        ModalAction::WifiOff => {
-            state.busy = Some("Turning Wi-Fi off…".to_owned());
-            state.networks.clear();
-            state.wifi_selected = 0;
-            vec![Effect::SetWifi(false)]
-        }
-        ModalAction::RemoveBluetooth(address) => {
-            state.busy = Some("Removing the device…".to_owned());
-            vec![Effect::RemoveBluetooth(address)]
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Polls while something happens in the background: a pairing waiting for the owner, or a
-/// network that has not given an address yet. A radio still unanswered after
-/// [`NO_ANSWER_TICKS`] says so instead of asking forever.
+/// Polls while something happens in the background, by the core's cadence, and tells the core
+/// how long the radios have been asked for.
 pub(super) fn on_tick(app: &mut App) -> Vec<Effect> {
     let Screen::Network(state) = &mut app.screen else {
         return Vec::new();
     };
-    if app.ticks.saturating_sub(state.asked_at) >= NO_ANSWER_TICKS {
-        for read in [&mut state.wifi_read, &mut state.bluetooth_read] {
-            if *read == RadioRead::Asking {
-                *read = RadioRead::NoAnswer;
-            }
-        }
-    }
-    if state.busy.is_some() || app.ticks % TICKS_PER_SECOND != 0 {
+    state.flow.no_answer_after(app.ticks.saturating_sub(state.asked_at) / TICKS_PER_SECOND);
+    if app.ticks % TICKS_PER_SECOND != 0 {
         return Vec::new();
     }
-    if state.pairing_running() {
-        return vec![Effect::PollBluetooth];
-    }
-    let waiting = state.wifi.as_ref().is_some_and(|w| {
-        w.link == WifiLink::Connecting || (w.link == WifiLink::Connected && w.address.is_none())
-    });
-    if waiting && app.ticks % (2 * TICKS_PER_SECOND) == 0 {
-        return vec![Effect::PollWifi];
-    }
-    Vec::new()
+    state.flow.poll(app.ticks / TICKS_PER_SECOND)
 }
 
-fn clamp(state: &mut NetworkState) {
-    let rows = state.wifi_rows().len();
-    if state.wifi_selected >= rows {
-        state.wifi_selected = rows.saturating_sub(1);
-    }
-    let devices = state.bluetooth.as_ref().map_or(0, |b| b.devices.len());
-    if state.bt_selected >= devices {
-        state.bt_selected = devices.saturating_sub(1);
-    }
-}
-
-pub(super) fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
+pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     let Screen::Network(state) = &mut app.screen else {
         return Vec::new();
     };
-    let mut message: Option<(NoticeKind, String)> = None;
-    match event {
-        Event::NetworkLoaded { wifi, bluetooth } => {
-            state.busy = None;
-            // A radio with nothing shown yet says why in its panel; one already shown keeps its
-            // last status, with the error under it.
-            match wifi {
-                Ok(status) => {
-                    state.wifi = Some(status);
-                    state.wifi_read = RadioRead::Read;
-                }
-                Err(e) => {
-                    if state.wifi.is_some() {
-                        state.error = Some(e.clone());
-                    }
-                    state.wifi_read = RadioRead::Failed(e);
-                }
-            }
-            match bluetooth {
-                Ok(status) => {
-                    state.bluetooth = Some(status);
-                    state.bluetooth_read = RadioRead::Read;
-                }
-                Err(e) => {
-                    if state.bluetooth.is_some() {
-                        state.error = Some(e.clone());
-                    }
-                    state.bluetooth_read = RadioRead::Failed(e);
-                }
-            }
-        }
-        Event::WifiChanged { result, quiet } => {
-            if !quiet {
-                state.busy = None;
-            }
-            match result {
-                Ok(status) => {
-                    let joining = !quiet && state.wifi.as_ref().map(|w| (w.link, w.ssid.clone()))
-                        != Some((status.link, status.ssid.clone()));
-                    let gone: Vec<String> = state
-                        .wifi
-                        .iter()
-                        .flat_map(|w| w.saved.iter())
-                        .filter(|old| !status.saved.iter().any(|s| s.ssid == old.ssid))
-                        .map(|old| old.ssid.clone())
-                        .collect();
-                    if !quiet && !gone.is_empty() {
-                        message = Some((NoticeKind::Ok, format!("Forgot {}.", gone.join(", "))));
-                    }
-                    if joining && status.link == WifiLink::Connected {
-                        let ssid = status.ssid.clone().unwrap_or_default();
-                        let text = match &status.address {
-                            Some(address) => format!("Joined {ssid}. Its address is {address}."),
-                            None => format!("Joined {ssid}. Waiting for an address."),
-                        };
-                        message = Some((NoticeKind::Ok, text));
-                    }
-                    for network in &mut state.networks {
-                        network.saved = status.saved.iter().any(|s| s.ssid == network.ssid);
-                        network.connected =
-                            status.link == WifiLink::Connected && status.ssid.as_deref() == Some(network.ssid.as_str());
-                    }
-                    state.wifi = Some(status);
-                }
-                Err(e) if !quiet => state.error = Some(e),
-                Err(_) => {}
-            }
-        }
-        Event::WifiScanned(result) => {
-            state.busy = None;
-            match result {
-                Ok(list) => {
-                    if list.is_empty() {
-                        state.error = Some("No Wi-Fi networks are in range.".to_owned());
-                    }
-                    state.networks = list;
-                    state.wifi_selected = 0;
-                }
-                Err(e) => state.error = Some(e),
-            }
-        }
-        Event::BluetoothChanged { result, quiet } => {
-            if !quiet {
-                state.busy = None;
-            }
-            match result {
-                Ok(status) => {
-                    let before = state.bluetooth.as_ref().and_then(|b| b.pairing.clone());
-                    if let Some(pairing) = &status.pairing {
-                        if before.as_ref().map(|p| &p.stage) != Some(&pairing.stage) {
-                            let name = status
-                                .devices
-                                .iter()
-                                .find(|d| d.address == pairing.address)
-                                .map_or(pairing.address.clone(), |d| d.name.clone());
-                            match &pairing.stage {
-                                PairingStage::Done => {
-                                    message = Some((NoticeKind::Ok, format!("Paired with {name}. It is trusted and connected.")))
-                                }
-                                PairingStage::Failed(why) => {
-                                    message = Some((NoticeKind::Error, format!("Pairing with {name} failed: {why}")))
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    state.bluetooth = Some(status);
-                }
-                Err(e) if !quiet => state.error = Some(e),
-                Err(_) => {}
-            }
-        }
-        _ => {}
+    let next = state.flow.apply(&event);
+    if matches!(event, Outcome::WifiScanned(Ok(_))) {
+        state.wifi_selected = 0;
     }
-    clamp(state);
-    if let Some((kind, text)) = message {
-        notice(app, kind, text);
-    }
-    Vec::new()
+    state.clamp();
+    follow(app, next)
 }

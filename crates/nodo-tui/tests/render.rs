@@ -8,10 +8,11 @@ mod common;
 use std::path::PathBuf;
 
 use common::{draw, screen_text, text};
-use nodo_tui::app::ScreenId;
 use nodo_tui::fixtures::fixture;
 use nodo_tui::theme::Theme;
 use ratatui::style::Color;
+use nodo_ui_core::Outcome;
+use nodo_ui_core::screen::ScreenId;
 
 fn snapshot_path(id: ScreenId) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots").join(format!("{}.txt", id.slug()))
@@ -40,7 +41,7 @@ fn every_screen_matches_its_snapshot() {
 
 #[test]
 fn the_fixtures_cover_the_whole_design_on_the_right_screen() {
-    assert_eq!(ScreenId::ALL.len(), 39, "every screen in the four tabs");
+    assert_eq!(ScreenId::ALL.len(), 40, "every screen in the four tabs");
     for id in ScreenId::ALL {
         assert_eq!(fixture(id).0.screen.id(), id);
     }
@@ -63,7 +64,8 @@ fn required(id: ScreenId) -> &'static [&'static str] {
         ScreenId::Apps => &["Installed", "Get apps ›", "cuprated", "Update ready", "Keeps stopping"],
         ScreenId::AppPage => &["Apps  ›  moneropay", "Restart", "Remove…", "is ready", "Update", "Hosting", "Settings", "Logs"],
         ScreenId::AppRemove => &["Remove moneropay?", "Its data stays on the drive", "Cancel", "Remove moneropay"],
-        ScreenId::System => &["This Nodo", "A Nodo update is ready", "Review", "Updates", "Backups", "Network", "Device logs"],
+        ScreenId::System => &["This Nodo", "A Nodo update is ready", "Review", "Updates", "Backups", "Network", "Web GUI", "Device logs"],
+        ScreenId::WebGui => &["System  ›  Web GUI", "[x] On", "https://nodo.local", "Local CA", "can try the device passphrase", "Turn it off"],
         ScreenId::Search => &["Apps  ›  Get apps", "Search", "Sources ›", "moneropay", "apps match"],
         ScreenId::Detail => &["Apps  ›  Get apps  ›  moneropay", "It will:", "Install"],
         ScreenId::Review => &["Install wallet-relay?", "a source you added", "It will be able to:", "Cancel", "Install"],
@@ -225,7 +227,7 @@ fn a_long_log_shows_its_newest_lines() {
     let (mut app, _) = fixture(ScreenId::Logs);
     if let nodo_tui::app::Screen::Logs(state) = &mut app.screen {
         state.view.lines = (1..=200)
-            .map(|n| nodo_tui::model::LogLine { kind: nodo_tui::model::LogKind::Info, text: format!("line number {n}") })
+            .map(|n| nodo_ui_core::model::LogLine { kind: nodo_ui_core::model::LogKind::Info, text: format!("line number {n}") })
             .collect();
         state.view.suggestion.clear();
     }
@@ -377,7 +379,7 @@ fn settings_at(width: u16, relabel: &[(usize, &str)], port: Option<&str>) -> Str
             state.form.fields[*index].label = (*label).to_owned();
         }
         if let Some(port) = port {
-            state.draft[1] = nodo_tui::model::FieldValue::Text(port.to_owned());
+            state.draft[1] = nodo_ui_core::model::FieldValue::Text(port.to_owned());
         }
     }
     app.size = (width, 60);
@@ -586,7 +588,8 @@ fn app_rows_cut_the_tagline_before_the_status_at_80() {
 #[test]
 fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_once_its_work_is_done() {
     use crossterm::event::KeyCode;
-    use nodo_tui::app::{Effect, Event, MouseKind};
+    use nodo_tui::app::{Event, MouseKind};
+    use nodo_ui_core::Effect;
     use nodo_tui::fixtures::press;
     use nodo_tui::hit::Click;
     use nodo_tui::update::update;
@@ -612,7 +615,7 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_once_its_work
 
     // A result alone may be only the first step of the work, so it leaves the mark; once nothing
     // is left to run, it goes.
-    let result = Event::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned())));
+    let result = Event::Done(Outcome::UnlockResult(Err(nodo_api::ApiError::Failed("wrong passphrase".to_owned()))));
     let mut after = app.clone();
     assert!(update(&mut after, result.clone()).is_empty());
     assert!(after.pending.is_some(), "the result alone leaves it to the runtime");
@@ -639,7 +642,8 @@ fn a_pending_button_shows_the_hourglass_takes_no_clicks_and_clears_once_its_work
 /// forever; one with no answer yet says so without guessing why.
 #[test]
 fn unread_radios_show_why_instead_of_asking_forever() {
-    use nodo_tui::app::{RadioRead, Screen};
+    use nodo_tui::app::Screen;
+    use nodo_ui_core::flows::network::RadioRead;
     let (mut app, _) = fixture(ScreenId::Network);
     let Screen::Network(state) = &mut app.screen else { panic!("expected network") };
     state.wifi = None;

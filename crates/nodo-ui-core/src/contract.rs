@@ -1,5 +1,5 @@
 //! Scenarios every backend must pass the same way, so the mock the tests use cannot drift from the
-//! device. nodo-tui runs them against `MockBackend`, and nodo-helper runs them against
+//! device. nodo-tui's tests run them against `MockBackend`, and nodo-helper runs them against
 //! `HelperBackend` talking to its real request handler over a socket (see
 //! `nodo-helper/src/tui_contract_tests.rs`). Each one panics with what differed.
 //!

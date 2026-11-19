@@ -9,7 +9,8 @@ use ratatui::text::{Line, Span};
 use super::layout::{Item, Page, Panel};
 use super::more::{bullet, crumbs, error_items, row};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{NetworkFocus, NetworkState, RadioRead, WifiRow};
+use crate::app::{NetworkFocus, NetworkState};
+use nodo_ui_core::flows::network::{RadioRead, WifiRow};
 use crate::hit::{Click, Target};
 use crate::theme::Theme;
 
@@ -103,7 +104,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
     let Some(wifi) = &state.wifi else {
         let again = not_read(t, &state.wifi_read, &mut items);
         if focused {
-            items.extend(error_items(t, &state.error));
+            items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         }
         return (if focused { Panel::accent("Wi-Fi", items) } else { Panel::new("Wi-Fi", items) }, again);
     };
@@ -115,7 +116,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
             t.d(format!("  {}, the passphrase is stored on this device only", prompt.security.label())),
         ])));
         items.push(Item::Row(
-            Line::from(vec![t.n(" Passphrase  "), t.n(prompt.passphrase.display()), t.s(" ")]),
+            Line::from(vec![t.n(" Passphrase  "), t.n(state.passphrase.display()), t.s(" ")]),
             Line::from(vec![t.a("↵"), t.d(" join  "), t.a("Esc"), t.d(" cancel ")]),
         ));
     } else if wifi.enabled && wifi.unavailable.is_none() {
@@ -165,7 +166,7 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
         }
     }
     if focused {
-        items.extend(error_items(t, &state.error));
+        items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         (Panel::accent("Wi-Fi", items), false)
     } else {
         (Panel::new("Wi-Fi", items), false)
@@ -173,24 +174,11 @@ fn wifi_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
 }
 
 fn pairing_line(t: &Theme, bt: &BluetoothStatus) -> Option<Item> {
-    let pairing = bt.pairing.as_ref()?;
-    let name = bt.devices.iter().find(|d| d.address == pairing.address).map_or(pairing.address.as_str(), |d| d.name.as_str());
-    let line = match &pairing.stage {
-        PairingStage::Pairing => Line::from(vec![t.a(" ◌ "), t.n(format!("Pairing with {name}…"))]),
-        PairingStage::TypePasskey(key) => Line::from(vec![
-            t.a(" ◆ "),
-            t.n("Type "),
-            t.b(key.clone()),
-            t.n(format!(" on {name}, then press its Enter key.")),
-        ]),
-        PairingStage::ComparePasskey(key) => Line::from(vec![
-            t.a(" ◆ "),
-            t.n(format!("{name} should show ")),
-            t.b(key.clone()),
-            t.n(". If it does not, remove it: someone else may be pairing."),
-        ]),
-        PairingStage::Done => return None,
-        PairingStage::Failed(why) => Line::from(t.e(format!(" ✕ Pairing with {name} failed: {why}"))),
+    let words = nodo_ui_core::flows::network::pairing_words(bt)?;
+    let line = match (&bt.pairing.as_ref()?.stage, words.code) {
+        (PairingStage::Failed(_), _) => Line::from(t.e(format!(" ✕ {}", words.before))),
+        (_, Some(code)) => Line::from(vec![t.a(" ◆ "), t.n(words.before), t.b(code), t.n(words.after)]),
+        (_, None) => Line::from(vec![t.a(" ◌ "), t.n(words.before)]),
     };
     Some(Item::Text(line))
 }
@@ -246,7 +234,7 @@ fn bluetooth_panel(t: &Theme, state: &NetworkState) -> (Panel, bool) {
         }
     }
     if focused {
-        items.extend(error_items(t, &state.error));
+        items.extend(error_items(t, &crate::keys::error(&state.error, state.error_hint())));
         (Panel::accent("Bluetooth", items), again)
     } else {
         (Panel::new("Bluetooth", items), again)
@@ -260,11 +248,7 @@ pub fn network(t: &Theme, state: &NetworkState) -> Page {
         Some(_) => Line::from(t.a("▲ Wired link down")),
         None => Line::from(t.d("")),
     };
-    let about = vec![
-        bullet(t, "Wired stays the main connection. Wi-Fi carries traffic only while the wired link is down."),
-        bullet(t, "Wi-Fi keys are stored root-only on this device. For WPA2 only a derived key is kept."),
-        bullet(t, "Bluetooth is never discoverable. Only pairings you start here can happen."),
-    ];
+    let about: Vec<Item> = nodo_ui_core::flows::network::ABOUT_WIRELESS.iter().map(|line| bullet(t, line)).collect();
     let (wifi, wifi_again) = wifi_panel(t, state);
     let (bluetooth, bluetooth_again) = bluetooth_panel(t, state);
     let mut page = Page::new(header, right)

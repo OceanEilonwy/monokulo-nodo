@@ -6,19 +6,18 @@ use ratatui::text::{Line, Span};
 use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
 use crate::app::*;
-use crate::model::*;
+use nodo_ui_core::flows::web::certs::Trust;
+use nodo_ui_core::flows::web::domain::{self, Field};
+use nodo_ui_core::model::*;
+use nodo_ui_core::words::Tone;
 use crate::theme::Theme;
 
 /// One certificate in a few words, coloured by how it stands.
 pub fn cert_status(t: &Theme, row: &CertRow) -> Span<'static> {
-    match row.state {
-        CertState::Valid => match row.days_left {
-            Some(days) => t.o(format!("✓ Valid, {days} days left")),
-            None => t.o("✓ Valid"),
-        },
-        CertState::Obtaining | CertState::Waiting => t.a("◆ Getting a certificate"),
-        CertState::Failed => t.e("✕ Not issued"),
-        CertState::Expired => t.e("✕ Expired"),
+    match nodo_ui_core::words::cert_status(row) {
+        (Tone::Good, words) => t.o(format!("✓ {words}")),
+        (Tone::Working, words) => t.a(format!("◆ {words}")),
+        (Tone::Bad, words) => t.e(format!("✕ {words}")),
     }
 }
 
@@ -55,17 +54,14 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
         n => t.e(format!("✕ {n} certificates need attention")),
     };
 
-    let method = if acme.dns01 { t.o(acme.challenge.clone()) } else { t.a("HTTP-01 or TLS-ALPN-01") };
+    let validation = domain::validation(acme);
+    let method = if validation.dns01 { t.o(validation.method.clone()) } else { t.a(validation.method.clone()) };
     let mut domain_rows = vec![
         pair("Domain", t.n(web.domain.clone())),
         pair("Provider", t.n(if web.provider.is_empty() { "None".to_owned() } else { web.provider.clone() })),
         pair("Validation", method),
     ];
-    domain_rows.push(Item::Text(Line::from(if acme.dns01 {
-        t.d("No open ports needed.")
-    } else {
-        t.d(format!("Needs ports 80 and 443 forwarded. {}", acme.challenge))
-    })));
+    domain_rows.push(Item::Text(Line::from(t.d(validation.note))));
     if let Some(server) = &acme.test_server {
         domain_rows.push(Item::Text(Line::from(t.a(format!("▲ Test ACME server: {server}")))));
     }
@@ -85,8 +81,8 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
         cert_rows.push(Item::Text(Line::from(t.d("No site is served yet."))));
     }
 
-    let focus = |f: DomainFocus| state.focus == f;
-    let field = |f: DomainFocus, label: &str, input: &crate::secret::Input, empty: &str| {
+    let focus = |f: Field| state.focus == f;
+    let field = |f: Field, label: &str, input: &nodo_ui_core::secret::Input, empty: &str| {
         let mut value = vec![if input.is_empty() { t.d(empty.to_owned()) } else { t.n(input.display()) }];
         if focus(f) {
             value.push(t.s(" "));
@@ -98,7 +94,7 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
             Item::Row(left, Line::from(value))
         }
     };
-    let toggle = |f: DomainFocus, on: bool, label: &str, note: &str| {
+    let toggle = |f: Field, on: bool, label: &str, note: &str| {
         let left = Line::from(t.n(mark(focus(f), &format!(" {} {label}", checkbox(on)))));
         if focus(f) {
             Item::Selected(left, Line::from(note.to_owned()))
@@ -109,24 +105,24 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
     // A refused save is said just above the fields that were saved, where it is seen: at the foot
     // of the page it was below the fold on a 32-row terminal, and a refused email looked taken.
     let mut lets_encrypt: Vec<Item> = state.error.iter().map(|error| Item::Text(Line::from(t.e(format!(" ✕ {error}"))))).collect();
-    lets_encrypt.push(field(DomainFocus::Email, "Email for expiry notices", &state.email, "none, recommended"));
-    lets_encrypt.push(toggle(DomainFocus::Staging, state.staging, "Use the staging server", "Untrusted certificates, for testing"));
+    lets_encrypt.push(field(Field::Email, "Email for expiry notices", &state.email, "none, recommended"));
+    lets_encrypt.push(toggle(Field::Staging, state.staging, "Use the staging server", "Untrusted certificates, for testing"));
 
     let radio = |on: bool| if on { "(•)" } else { "( )" };
     let address = acme.local_address.clone().unwrap_or_else(|| "the local address".to_owned());
-    let dot_local = Line::from(t.n(mark(focus(DomainFocus::DotLocal), &format!(" {} site.local, with this device's own CA", radio(!state.under_domain)))));
-    let mut local_rows = vec![if focus(DomainFocus::DotLocal) {
+    let dot_local = Line::from(t.n(mark(focus(Field::DotLocal), &format!(" {} site.local, with this device's own CA", radio(!state.under_domain)))));
+    let mut local_rows = vec![if focus(Field::DotLocal) {
         Item::Selected(dot_local, Line::from("Browsers warn until you trust it"))
     } else {
         Item::Row(dot_local, Line::from(t.d("Browsers warn until you trust it")))
     }];
-    let mut under = vec![t.n(mark(focus(DomainFocus::UnderDomain), &format!(" {} Under your domain: site.", radio(state.under_domain))))];
+    let mut under = vec![t.n(mark(focus(Field::UnderDomain), &format!(" {} Under your domain: site.", radio(state.under_domain))))];
     under.push(t.n(state.local_domain.display()));
-    if focus(DomainFocus::UnderDomain) {
+    if focus(Field::UnderDomain) {
         under.push(t.s(" "));
     }
     let note = if acme.dns01 { "Real certificates through DNS-01" } else { "Needs DNS-01 from your provider" };
-    local_rows.push(if focus(DomainFocus::UnderDomain) {
+    local_rows.push(if focus(Field::UnderDomain) {
         Item::Selected(Line::from(under), Line::from(note))
     } else {
         Item::Row(Line::from(under), Line::from(t.d(note)))
@@ -164,13 +160,14 @@ pub fn domain(app: &App, t: &Theme, state: &DomainState) -> Page {
     .panel(Panel::new("Let's Encrypt", lets_encrypt))
     .panel(Panel::new("Local site names", local_rows).grow());
     if !acme.dns01_fields.is_empty() {
-        let label = |i: usize| acme.dns01_fields.get(i).map_or_else(String::new, |f| f.replace('_', " "));
+        let labels = domain::dns01_labels(acme);
+        let label = |i: usize| labels.get(i).cloned().unwrap_or_default();
         let stored = if acme.dns01_stored { "stored, type to replace" } else { "needed for DNS-01" };
         page = page.panel(Panel::new(
             format!("{} certificate credentials", web.provider),
             vec![
-                field(DomainFocus::Dns01First, &label(0), &state.dns01_first, stored),
-                field(DomainFocus::Dns01Second, &label(1), &state.dns01_second, stored),
+                field(Field::Dns01First, &label(0), &state.dns01_first, stored),
+                field(Field::Dns01Second, &label(1), &state.dns01_second, stored),
             ],
         ));
     }
@@ -205,9 +202,10 @@ pub fn trust(app: &App, t: &Theme) -> Page {
             "The page is served while a local site uses a .local name and the local address is up.",
         )))],
     };
-    let fingerprint_rows = match &web.acme.local_ca {
-        Some(fingerprint) => {
-            let mut rows: Vec<Item> = fingerprint_lines(fingerprint).into_iter().map(|l| Item::Text(Line::from(t.b(l)))).collect();
+    let trust = Trust::of(&app.data);
+    let fingerprint_rows = match &trust.fingerprint {
+        Some(_) => {
+            let mut rows: Vec<Item> = trust.fingerprint_lines().into_iter().map(|l| Item::Text(Line::from(t.b(l)))).collect();
             rows.push(Item::Blank);
             rows.push(Item::Text(Line::from(vec![
                 t.a("▲ "),
@@ -228,10 +226,3 @@ pub fn trust(app: &App, t: &Theme) -> Page {
         .panel(Panel::new("What trusting it does", after).grow())
         .footer(Item::Text(hints(t, &[("r", "refresh"), ("Esc", "back")])))
 }
-
-/// The fingerprint in two lines of 16 bytes, as the trust page shows it.
-fn fingerprint_lines(fingerprint: &str) -> Vec<String> {
-    let parts: Vec<&str> = fingerprint.split(':').collect();
-    parts.chunks(16).map(|chunk| chunk.join(":")).collect()
-}
-

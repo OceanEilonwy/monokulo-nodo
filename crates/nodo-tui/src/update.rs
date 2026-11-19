@@ -4,11 +4,25 @@
 //! such as safe default focus and typed confirmation, live in this file.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nodo_api::{ApiError, Exposure, Response, ServiceState};
+use nodo_api::ServiceState;
 
 use crate::app::*;
-use crate::model::*;
-use crate::secret::{Input, Secret};
+use nodo_ui_core::model::*;
+use nodo_ui_core::secret::Input;
+use nodo_ui_core::{Effect, Outcome};
+use nodo_ui_core::flows::setup::Setup;
+use nodo_ui_core::flows::backup::{self, Backups};
+use nodo_ui_core::flows::bundle::BundleStep;
+use nodo_ui_core::flows::install::{self, Search};
+use nodo_ui_core::flows::logs::{self, Logs};
+use nodo_ui_core::flows::settings::{self, PickMode, Picked};
+use nodo_ui_core::flows::updates::{self, AutoUpdate};
+use nodo_ui_core::flows::web::certs;
+use nodo_ui_core::flows::web::domain;
+use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
+use nodo_ui_core::queries::{HomeItem, Landing, APP_SECTIONS};
+use nodo_ui_core::screen::{ScreenId, Tab};
+use nodo_ui_core::words::SYSTEM_ROWS;
 
 #[path = "update_more.rs"]
 mod more;
@@ -34,7 +48,7 @@ pub fn update(app: &mut App, event: Event) -> Vec<Effect> {
             app.size = (width, height);
             Vec::new()
         }
-        other => on_result(app, other),
+        Event::Done(outcome) => on_result(app, outcome),
     };
     // A button on another screen is not the one that was pressed. A result alone does not end the
     // work, though: it may be only the first step, as with Check and save, which saves the names
@@ -55,17 +69,10 @@ fn follow_step(app: &mut App, effects: &[Effect]) {
     }
 }
 
-/// What a batch of effects is doing, in a word for a busy button. Only the steps of a chain that
-/// takes long enough for the owner to wonder have one; any other button keeps its own label.
+/// What a batch of effects is doing, in a word for a busy button. Which work has such a word is
+/// the core's to say; any other button keeps its own label.
 fn step_of(effects: &[Effect]) -> Option<&'static str> {
-    // A batch that saves and then checks spends nearly all its time checking.
-    if effects.iter().any(|effect| matches!(effect, Effect::CheckReachability { .. })) {
-        return Some("Checking…");
-    }
-    effects
-        .iter()
-        .any(|effect| matches!(effect, Effect::SetPublicHost { .. } | Effect::SetExposure { .. }))
-        .then_some("Saving…")
+    nodo_ui_core::words::busy_step(effects)
 }
 
 /// The pending button on the current screen, while no modal covers it.
@@ -118,7 +125,7 @@ fn pressed(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn notice(app: &mut App, kind: NoticeKind, text: impl Into<String>) {
-    app.notice = Some(Notice { kind, text: text.into() });
+    app.notice = Some(Notice { kind, text: text.into(), hint: None });
 }
 
 fn fail(app: &mut App, text: impl Into<String>) {
@@ -145,64 +152,20 @@ fn step(selected: &mut usize, len: usize, down: bool) {
 }
 
 fn home_screen(app: &App) -> Screen {
-    if app.data.overview.drive.is_some() {
-        Screen::NoDrive { choice: 0 }
-    } else {
-        Screen::Home { selected: 0 }
+    // First setup, when it is due, is put on top of this by `on_refreshed`.
+    match app.data.landing_once_set_up() {
+        Landing::NoDrive => Screen::NoDrive { choice: 0 },
+        Landing::Home | Landing::Setup => Screen::Home { selected: 0 },
     }
 }
 
-fn updates_screen(app: &App) -> Screen {
-    Screen::Updates(UpdatesState {
-        selected: 0,
-        checked: app
-            .update_rows()
-            .iter()
-            .filter(|item| item.preselected && !item.held)
-            .map(|item| item.name.clone())
-            .collect(),
-        passphrase: None,
-    })
-}
-
-/// Applies a batch of updates. When one of them grows encrypted storage, the Updates screen
-/// first asks for the device passphrase, which LUKS needs to resize the volume.
-fn apply_batch(app: &mut App, names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)>) -> Vec<Effect> {
-    let growing: Vec<String> = app
-        .data
-        .updates
-        .iter()
-        .filter(|item| names.contains(&item.name))
-        .filter_map(|item| item.grows.as_ref().map(|grows| format!("{}: {grows}", item.name)))
-        .collect();
-    if growing.is_empty() {
-        return vec![Effect::ApplyUpdates { names, approvals }];
-    }
-    if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
-        pop(app);
-    }
-    let Screen::Updates(state) = &mut app.screen else {
-        // The helper refuses a growing update without the passphrase, and says why.
-        return vec![Effect::ApplyUpdates { names, approvals }];
-    };
-    state.passphrase = Some(UpdatePassphrase { names, approvals, growing, input: Input::secret() });
-    Vec::new()
-}
-
-fn logs_state(selected: usize) -> LogsState {
-    LogsState {
-        selected,
-        view: LogView::default(),
-        errors_only: false,
-        follow: true,
-        find: Input::plain(""),
-        finding: false,
-        app: None,
-    }
+/// The Updates page as it opens. `only` names the one app whose update the owner came for.
+fn updates_screen(app: &App, only: Option<&str>) -> Screen {
+    Screen::Updates(UpdatesState { selected: 0, checked: updates::ticked_at_open(&app.data, only), passphrase: None })
 }
 
 pub fn search_state(focus_query: bool) -> SearchState {
-    SearchState { query: Input::plain(""), list_focused: !focus_query, selected: 0, feed_filter: None }
+    SearchState { flow: Search::default(), query: Input::plain(""), list_focused: !focus_query, selected: 0 }
 }
 
 fn switch_tab(app: &mut App, tab: Tab) -> Vec<Effect> {
@@ -219,19 +182,15 @@ fn switch_tab(app: &mut App, tab: Tab) -> Vec<Effect> {
 /// One source's log: an app's from its page (under Apps), or a device part's (under System).
 fn open_logs(app: &mut App, source: &str) -> Vec<Effect> {
     let selected = app.data.log_sources.iter().position(|name| name == source).unwrap_or(0);
-    let is_app = app.data.services.iter().any(|svc| svc.id == source);
-    let mut state = logs_state(selected);
-    state.app = is_app.then(|| source.to_owned());
+    let state = LogsState::new(Logs::of(&app.data, source), selected);
     push(app, Screen::Logs(state));
-    app.data.log_sources.get(selected).map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+    app.data.log_sources.get(selected).map(|name| Logs::load(name)).unwrap_or_default()
 }
 
 /// The device logs under System: every source, problems first.
 fn open_device_logs(app: &mut App) -> Vec<Effect> {
-    let mut state = logs_state(0);
-    state.errors_only = true;
-    push(app, Screen::Logs(state));
-    app.data.log_sources.first().map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+    push(app, Screen::Logs(LogsState::new(Logs::device(), 0)));
+    app.data.log_sources.first().map(|name| Logs::load(name)).unwrap_or_default()
 }
 
 /// Apps › Get apps: searching what the sources offer.
@@ -258,7 +217,7 @@ fn open_updates(app: &mut App) -> Vec<Effect> {
     if !matches!(app.screen, Screen::System { .. }) {
         switch_tab(app, Tab::System);
     }
-    let screen = updates_screen(app);
+    let screen = updates_screen(app, None);
     push(app, screen);
     Vec::new()
 }
@@ -376,6 +335,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ScreenId::Setup => setup_key(app, key),
         ScreenId::Backup => backup_key(app, key),
         ScreenId::Onion => more::onion_key(app, key),
+        ScreenId::WebGui => web_gui_key(app, key),
         ScreenId::Restore => more::restore_key(app, key),
         ScreenId::Rollbacks => more::rollbacks_key(app, key),
         ScreenId::Network => net::network_key(app, key),
@@ -388,16 +348,11 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
 }
 
-/// The installed apps: every service except the device's own parts.
-pub fn installed_apps(app: &App) -> Vec<String> {
-    app.data.services.iter().map(|svc| svc.id.clone()).collect()
-}
-
 fn apps_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let names = installed_apps(app);
+    let names = services::installed_apps(&app.data);
     let Screen::Apps { selected } = &mut app.screen else {
         return Vec::new();
     };
@@ -419,26 +374,23 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::AppPage(state) = &mut app.screen else {
         return Vec::new();
     };
-    let name = state.name.clone();
+    let page = state.page.clone();
+    let name = page.name.clone();
     if state.more_open {
         // The folded page actions, opened from "⋯ More" at 80 columns.
         state.more_open = false;
         return match key.code {
-            KeyCode::Char('r') => vec![Effect::Restart(name)],
-            KeyCode::Char('s') => vec![Effect::Stop(name)],
+            KeyCode::Char('r') => page.restart(),
+            KeyCode::Char('s') => page.stop(),
             KeyCode::Char('x') => {
-                push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false }));
+                push(app, Screen::AppRemove(AppRemoveState::new(&name)));
                 Vec::new()
             }
             _ => Vec::new(),
         };
     }
-    let has_update = app.data.updates.iter().any(|item| item.name == name && !item.held);
-    let sections = app_sections(app, &name);
+    let sections = app.data.app_sections(&name);
     let owner_row = sections.len() > APP_SECTIONS.len();
-    let Screen::AppPage(state) = &mut app.screen else {
-        return Vec::new();
-    };
     match key.code {
         KeyCode::Char('?') => app.overlay = Some(Overlay { doc: help_document(), scroll: 0 }),
         KeyCode::Esc => pop(app),
@@ -448,40 +400,23 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => match sections[state.selected.min(sections.len() - 1)].as_str() {
             // An app without a web page shows Hosting as a dimmed row that says so; Enter on
             // it stays put rather than flash a notice as if it had gone somewhere.
-            "Hosting" if !app.data.web.sites.iter().any(|site| site.package == name) => {}
+            "Hosting" if !page.has_site(&app.data) => {}
             "Hosting" => return web::hosting_from_detail(app, &name),
             "Settings" => return vec![Effect::OpenSettings(name)],
             _ => return open_logs(app, &name),
         },
         KeyCode::Char('h') => return web::hosting_from_detail(app, &name),
         KeyCode::Char('l') => return open_logs(app, &name),
-        KeyCode::Char('u') if has_update => {
-            let screen = updates_screen(app);
-            push(app, screen);
-            if let Screen::Updates(updates) = &mut app.screen {
-                updates.checked = vec![name];
-            }
+        KeyCode::Char('u') => {
+            let step = page.update(&app.data);
+            return follow(app, step);
         }
-        KeyCode::Char('u') if app.is_locked() => return open_unlock(app),
-        KeyCode::Char('u') => notice(app, NoticeKind::Info, format!("{name} is up to date.")),
-        KeyCode::Char('r') => return vec![Effect::Restart(name)],
+        KeyCode::Char('r') => return page.restart(),
         KeyCode::Char('s') => {
-            let state = app.data.services.iter().find(|svc| svc.id == name).map(|svc| svc.state);
-            return match state {
-                Some(ServiceState::Running) => vec![Effect::Stop(name)],
-                Some(ServiceState::Locked) => {
-                    fail(app, format!("{name} is locked. Press u to unlock this device."));
-                    Vec::new()
-                }
-                Some(ServiceState::Waiting) => {
-                    fail(app, format!("{name} is waiting for another app it depends on."));
-                    Vec::new()
-                }
-                _ => vec![Effect::Start(name)],
-            };
+            let step = page.start_or_stop(&app.data);
+            return follow(app, step);
         }
-
-        KeyCode::Char('x') => push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false })),
+        KeyCode::Char('x') => push(app, Screen::AppRemove(AppRemoveState::new(&name))),
         _ => {}
     }
     Vec::new()
@@ -496,10 +431,8 @@ fn app_remove_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => state.confirm_focused = !state.confirm_focused,
         // Enter only removes once the user moved to the Remove button (or clicked it).
         KeyCode::Enter if state.confirm_focused => {
-            let name = state.name.clone();
-            pop(app);
-            pop(app);
-            return vec![Effect::RemovePackage(name)];
+            let step = state.question.confirm.step(&app.data);
+            return follow(app, step);
         }
         KeyCode::Enter => pop(app),
         _ => {}
@@ -511,7 +444,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let nodo_update = app.data.updates.iter().any(|item| item.name == crate::model::SYSTEM_BASE && !item.held);
+    let nodo_update = nodo_ui_core::words::nodo_update(&app.data).is_some();
     let Screen::System { selected } = &mut app.screen else {
         return Vec::new();
     };
@@ -522,16 +455,33 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             "Updates" => return open_updates(app),
             "Backups" => return open_backups(app),
             "Network" => return net::open_network(app),
+            "Web GUI" => push(app, Screen::WebGui(WebGuiState::default())),
             "Device logs" => return open_device_logs(app),
             _ => {
-                app.overlay = Some(Overlay { doc: about_document(app), scroll: 0 });
+                app.overlay = Some(Overlay { doc: documents::about(&app.data), scroll: 0 });
             }
         },
         KeyCode::Char('u') => return open_unlock(app),
         KeyCode::Char('k') => {
-            push(app, Screen::Setup(SetupState::keys()));
-            return vec![Effect::LoadSshKeys];
+            return open_ssh_keys(app);
         }
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// System › Web GUI: its switch, reading the device again, and the way back.
+fn web_gui_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let Screen::WebGui(state) = &mut app.screen else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => pop(app),
+        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('o') => {
+            let step = state.flow.toggle(&app.data);
+            return follow(app, step);
+        }
+        KeyCode::Char('r') => return vec![Effect::Refresh],
         _ => {}
     }
     Vec::new()
@@ -539,19 +489,8 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 /// System › Backups.
 fn open_backups(app: &mut App) -> Vec<Effect> {
-    let device_set_up = !app.data.overview.setup_needed;
-    push(app, Screen::Backup(BackupState::new(device_set_up)));
-    vec![Effect::LoadBackups]
-}
-
-/// System › About this Nodo: what the device reports about itself.
-fn about_document(app: &App) -> Document {
-    let mut lines: Vec<String> = app.data.overview.device.iter().map(|(k, v)| format!("{k:<16} {v}")).collect();
-    if let Some(note) = &app.data.system_note {
-        lines.push(String::new());
-        lines.push(note.clone());
-    }
-    Document { title: "About this Nodo".to_owned(), lines }
+    push(app, Screen::Backup(BackupState::of(Backups::of(&app.data))));
+    Backups::load()
 }
 
 /// The input that currently has keyboard focus. Pasted text only ever goes here, because pasted
@@ -573,7 +512,7 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             HostingFocus::AliasAddress => Some(&mut state.alias_sub),
             _ => None,
         },
-        Screen::WebProviders(state) if state.stage != ProviderStage::Key => None,
+        Screen::WebProviders(state) if state.stage != flows::web::providers::ProviderStage::Key => None,
         Screen::WebProviders(state) => match state.focus {
             ProviderFocus::List => None,
             ProviderFocus::Domain => Some(&mut state.domain),
@@ -581,11 +520,11 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             ProviderFocus::SecretKey => Some(&mut state.secret_key),
         },
         Screen::WebDomain(state) => match state.focus {
-            DomainFocus::Email => Some(&mut state.email),
-            DomainFocus::UnderDomain => Some(&mut state.local_domain),
-            DomainFocus::Dns01First => Some(&mut state.dns01_first),
-            DomainFocus::Dns01Second => Some(&mut state.dns01_second),
-            DomainFocus::Staging | DomainFocus::DotLocal => None,
+            domain::Field::Email => Some(&mut state.email),
+            domain::Field::UnderDomain => Some(&mut state.local_domain),
+            domain::Field::Dns01First => Some(&mut state.dns01_first),
+            domain::Field::Dns01Second => Some(&mut state.dns01_second),
+            domain::Field::Staging | domain::Field::DotLocal => None,
         },
         Screen::Setup(SetupState { step: SetupStep::Passphrase { first, second, confirming }, .. }) => {
             Some(if *confirming { second } else { first })
@@ -595,12 +534,12 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Backup(state) => backup_input(&mut state.step),
         Screen::Restore(state) => more::restore_input(&mut state.step),
         Screen::Network(state) => net::network_input(state),
-        Screen::Bundle(state) => match state.step {
-            BundleStep::Answers => state.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
+        Screen::Bundle(state) => match state.flow.step {
+            BundleStep::Answers => state.flow.open_asks().get(state.focus).copied().map(|i| &mut state.answers[i]),
             BundleStep::Passphrase => Some(&mut state.passphrase),
             _ => None,
         },
-        Screen::OwnerPage(state) if state.view.is_none() => Some(&mut state.passphrase),
+        Screen::OwnerPage(state) if state.flow.view.is_none() => Some(&mut state.passphrase),
         _ => None,
     }
 }
@@ -636,7 +575,7 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => {
             let modal = app.modal.take().expect("modal checked above");
             if modal.confirm_focused {
-                return modal_action(app, modal.action);
+                return modal_action(app, modal.question.confirm);
             }
         }
         _ => {}
@@ -644,45 +583,120 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
-    match action {
-        ModalAction::RemoveFeed(name) => {
-            if matches!(app.screen, Screen::FeedKey(_)) {
-                pop(app);
-            }
-            vec![Effect::RemoveFeed(name)]
-        }
-        ModalAction::AllSitesOffline => app
-            .data
-            .web
-            .sites
-            .iter()
-            .filter(|site| site.exposure != Exposure::default())
-            .map(|site| Effect::SetExposure {
-                site: site.package.clone(),
-                exposure: Exposure::default(),
-                after: ExposureAfter::Stay, confirmation: None
-            })
-            .collect(),
-        ModalAction::RepairDrive => vec![Effect::Drive(DriveAction::Repair)],
-        ModalAction::RollBack { package, to } => more::roll_back(app, package, to),
-        action @ (ModalAction::JoinOpenWifi(_)
-        | ModalAction::ForgetWifi(_)
-        | ModalAction::WifiOff
-        | ModalAction::RemoveBluetooth(_)) => net::modal_action(app, action),
-        ModalAction::RemoveProvider(id) => vec![Effect::RemoveProvider(id)],
-        ModalAction::AddPublicNames(names) => web::add_public_names(app, &names),
-        ModalAction::RemoveSshKey(fingerprint) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.busy = true;
-            }
-            vec![Effect::RemoveSshKey(fingerprint)]
-        }
-        ModalAction::DiscardSettings | ModalAction::DiscardAutoUpdate => {
-            pop(app);
+/// The owner confirmed a question. The flow of the page that asked is told first, so it shows
+/// the work as running; what confirming does comes from the core.
+fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
+    match &mut app.screen {
+        Screen::Rollbacks(state) => state.flow.confirmed(&confirm),
+        Screen::Network(state) => state.confirmed(&confirm),
+        Screen::Setup(state) => state.flow.confirmed(&confirm),
+        Screen::WebGui(state) => state.flow.confirmed(&confirm),
+        _ => {}
+    }
+    let step = confirm.step(&app.data);
+    follow(app, step)
+}
+
+/// Does what a step from the core says: shows its notice or its question, goes where it sends,
+/// and returns the effects it carries, whose outcomes come back through `on_result`.
+fn follow(app: &mut App, step: Step) -> Vec<Effect> {
+    match step {
+        Step::Stay => Vec::new(),
+        // What the notice points at is said with its key.
+        Step::Done(notice) | Step::Failed(notice) => {
+            app.notice = Some(crate::keys::notice(notice));
             Vec::new()
         }
+        Step::Ask(question) => {
+            app.modal = Some(Modal::ask(question));
+            Vec::new()
+        }
+        Step::Go(dest) => go(app, dest),
+        Step::Run(effects) => effects,
+        Step::All(steps) => steps.into_iter().flat_map(|step| follow(app, step)).collect(),
     }
+}
+
+/// Maps a destination of the core to this interface's screens.
+fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
+    match dest {
+        Dest::Back => pop(app),
+        // Only removing an app sends here, from the question under the app's page.
+        Dest::Apps => {
+            if matches!(app.screen, Screen::AppRemove(_)) {
+                pop(app);
+                pop(app);
+            }
+        }
+        Dest::Updates { only } => {
+            let screen = updates_screen(app, only.as_deref());
+            push(app, screen);
+        }
+        Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState::new(resume))),
+        // The screen below asked for the unlock on Enter, so it gets its Enter again.
+        Dest::GetApps { source } => return open_get_apps(app, source),
+        Dest::ConfirmSource(probe) => {
+            if let Screen::AddFeed(state) = &mut app.screen {
+                *state = AddFeedState::Confirm { probe, trust_focused: false };
+            }
+        }
+        Dest::KeyChange(change) => push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None })),
+        Dest::Sources { select } => {
+            let selected = select.and_then(|name| app.data.feeds.iter().position(|feed| feed.name == name)).unwrap_or(0);
+            return open_sources(app, selected);
+        }
+        Dest::AppPage(name) => {
+            switch_tab(app, Tab::Apps);
+            push(app, Screen::AppPage(AppPageState::new(&name)));
+        }
+        Dest::Detail(detail) => push(app, Screen::Detail(detail)),
+        Dest::Review(review) => push(app, Screen::Review(ReviewState::of(review))),
+        Dest::Bundle(review) => owner::open_bundle(app, *review),
+        Dest::OwnerPage(page) => owner::show_owner_page(app, page),
+        Dest::Rejected(data) => push(app, Screen::Rejected(data)),
+        Dest::MissingCapability(data) => push(app, Screen::Capability(CapabilityState { data, choice: 0 })),
+        // The install's page takes the place of the review that started it.
+        Dest::Installing(report) => app.screen = Screen::Installing(report),
+        Dest::UpdatePassphrase(batch) => {
+            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
+                pop(app);
+            }
+            let Screen::Updates(state) = &mut app.screen else {
+                // There is no Updates page under this one to ask on.
+                return batch.without_passphrase();
+            };
+            state.passphrase = Some(UpdatePassphrase { batch, input: Input::secret() });
+        }
+        Dest::UpdateResults(report) => {
+            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
+                pop(app);
+            }
+            push(app, Screen::UpdateResults(UpdateResultsState { report, choice: 0 }));
+        }
+        Dest::Settings(form) => push(app, Screen::Settings(SettingsState::new(form))),
+        Dest::ApplyFailed(failed) => push(app, Screen::ApplyFailed(failed)),
+        Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
+        Dest::LeaveHosting { site: _ } => {
+            if matches!(app.screen, Screen::WebExposure(_)) {
+                pop(app);
+            }
+        }
+        Dest::Reachability(found) => web::show_found(app, found),
+        Dest::PublicConfirm(confirm) => push(app, Screen::WebConfirm(WebConfirmState::new(confirm))),
+        Dest::WentPublic { site: _ } => web::went_public(app),
+        Dest::HostingWithProvider { domains } => web::hosting_with_provider(app, &domains),
+        Dest::SetUpFromBackup => {
+            pop(app);
+            if let Screen::Setup(setup) = &mut app.screen {
+                *setup = SetupState::keys();
+            }
+        }
+        Dest::Resume => {
+            pop(app);
+            return on_key(app, KeyEvent::from(KeyCode::Enter));
+        }
+    }
+    Vec::new()
 }
 
 fn overlay_key(app: &mut App, key: KeyEvent) {
@@ -705,21 +719,13 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
     match &app.screen {
         // Only a backend that reports progress is polled. The helper's install answers once it
         // is over, and polling it would only queue behind that answer.
-        Screen::Installing(snapshot)
-            if snapshot.outcome == InstallOutcome::InProgress && app.data.capabilities.install_progress =>
-        {
-            vec![Effect::PollInstall]
+        Screen::Installing(snapshot) => install::poll(snapshot, &app.data.capabilities),
+        Screen::Logs(state) if app.ticks % (logs::FOLLOW_SECONDS * TICKS_PER_SECOND) == 0 => {
+            state.follow_up(app.data.log_sources.get(state.selected).map(String::as_str))
         }
-        Screen::Logs(state) if state.follow && app.ticks % (2 * TICKS_PER_SECOND) == 0 => app
-            .data
-            .log_sources
-            .get(state.selected)
-            .map(|source| Effect::LoadLogs(source.clone()))
-            .into_iter()
-            .collect(),
         Screen::Home { .. } if app.ticks % (10 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
         // Caddy works on the certificate in the background, so its progress is read again.
-        Screen::WebCertificate(_) if app.ticks % (2 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
+        Screen::WebCertificate(page) if app.ticks % (certs::POLL_SECONDS * TICKS_PER_SECOND) == 0 => page.poll(),
         Screen::Network(_) => net::on_tick(app),
         _ => Vec::new(),
     }
@@ -755,8 +761,7 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Char('k') => {
-            push(app, Screen::Setup(SetupState::keys()));
-            return vec![Effect::LoadSshKeys];
+            return open_ssh_keys(app);
         }
         KeyCode::Char('b') => return open_backups(app),
         KeyCode::Char('r') => return more::open_rollbacks(app),
@@ -767,15 +772,12 @@ fn home_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let Screen::Setup(SetupState { step: stage, error, busy }) = &mut app.screen else {
+    let Screen::Setup(SetupState { flow, step: stage }) = &mut app.screen else {
         return Vec::new();
     };
-    if *busy {
+    if flow.busy {
         return Vec::new();
     }
-    let mut leave = false;
-    let mut restore = false;
-    let mut effects = Vec::new();
     match stage {
         SetupStep::Passphrase { first, second, confirming } => match key.code {
             // A new device can instead be rebuilt from a backup on a USB drive.
@@ -783,29 +785,15 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 first.clear();
                 second.clear();
                 *confirming = false;
-                *error = None;
-                restore = true;
+                flow.error = None;
+                return more::open_restore(app);
             }
-            KeyCode::Enter if !*confirming => {
-                if first.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
-                    *error = Some(format!("Use at least {MIN_PASSPHRASE_CHARS} characters."));
-                } else {
-                    *error = None;
-                    *confirming = true;
-                }
-            }
+            KeyCode::Enter if !*confirming => *confirming = flow.first_entered(&first.secret_value()),
             KeyCode::Enter => {
-                if first.secret_value() != second.secret_value() {
-                    *error = Some("The two passphrases differ. Type them again.".to_owned());
-                    first.clear();
-                    second.clear();
-                    *confirming = false;
-                } else {
-                    *error = None;
-                    *busy = true;
-                    second.clear();
-                    effects.push(Effect::InitEncryption(first.take_secret()));
-                }
+                let effects = flow.choose_passphrase(first, second);
+                // Two that differ are typed again from the first.
+                *confirming = !effects.is_empty();
+                return effects;
             }
             KeyCode::Esc if *confirming => {
                 second.clear();
@@ -815,65 +803,48 @@ fn setup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(if *confirming { second } else { first }, key);
             }
         },
-        SetupStep::Keys { keys, selected, adding } => {
+        SetupStep::Keys { selected, adding } => {
             if let Some(input) = adding {
                 match key.code {
                     KeyCode::Enter => {
-                        let line = input.text().trim().to_owned();
+                        let effects = flow.add_key(input.text());
                         *adding = None;
-                        if !line.is_empty() {
-                            *busy = true;
-                            effects.push(Effect::AddSshKey(line));
-                        }
+                        return effects;
                     }
                     KeyCode::Esc => *adding = None,
                     _ => {
                         edit_input(input, key);
                     }
                 }
-                return effects;
+                return Vec::new();
             }
             match key.code {
-                KeyCode::Down | KeyCode::Up => step(selected, keys.len(), key.code == KeyCode::Down),
+                KeyCode::Down | KeyCode::Up => step(selected, flow.keys.len(), key.code == KeyCode::Down),
                 KeyCode::Char('a') => *adding = Some(Input::plain("")),
                 KeyCode::Char('d') => {
-                    if let Some(chosen) = keys.get(*selected) {
-                        let fingerprint = chosen.fingerprint.clone();
-                        app.modal = Some(Modal {
-                            title: "Remove this SSH key?".to_owned(),
-                            body: vec![
-                                format!("{} {}", chosen.algorithm, chosen.comment),
-                                fingerprint.clone(),
-                                "It will no longer be able to log in.".to_owned(),
-                            ],
-                            confirm_label: "Remove".to_owned(),
-                            confirm_focused: false,
-                            action: ModalAction::RemoveSshKey(fingerprint),
-                        });
-                    }
+                    let question = flow.keys.get(*selected).and_then(|chosen| flow.ask_remove_key(&chosen.fingerprint));
+                    app.modal = question.map(Modal::ask);
                 }
-                KeyCode::Esc | KeyCode::Enter => leave = true,
+                KeyCode::Esc | KeyCode::Enter => {
+                    let step = flow.finish();
+                    return follow(app, step);
+                }
                 _ => {}
             }
         }
     }
-    if restore {
-        return more::open_restore(app);
-    }
-    if leave {
-        pop(app);
-        effects.push(Effect::Refresh);
-    }
-    effects
+    Vec::new()
 }
 
 fn open_unlock(app: &mut App) -> Vec<Effect> {
-    if app.is_locked() {
-        push(app, Screen::Unlock(UnlockState::default()));
-    } else {
-        notice(app, NoticeKind::Info, "This device is already unlocked.");
-    }
-    Vec::new()
+    let step = unlock::open(&app.data);
+    follow(app, step)
+}
+
+/// The SSH keys page, from Home or System.
+fn open_ssh_keys(app: &mut App) -> Vec<Effect> {
+    push(app, Screen::Setup(SetupState::keys()));
+    Setup::load_keys()
 }
 
 fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -886,25 +857,13 @@ fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Up => step(choice, 4, key.code == KeyCode::Down),
         KeyCode::Enter => match *choice {
-            0 => return vec![Effect::Drive(DriveAction::Retry)],
-            1 => return vec![Effect::Drive(DriveAction::ReadOnlyCheck)],
-            2 => {
-                app.modal = Some(Modal {
-                    title: "Repair the filesystem?".to_owned(),
-                    body: vec![
-                        "Repairing rewrites damaged parts of the filesystem and can lose data.".to_owned(),
-                        "Run the read-only check first if you have not. Chain data can be synced again."
-                            .to_owned(),
-                    ],
-                    confirm_label: "Repair".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::RepairDrive,
-                });
-            }
-            _ => return vec![Effect::Drive(DriveAction::Diagnostics)],
+            0 => return drive::retry(),
+            1 => return drive::check(),
+            2 => app.modal = Some(Modal::ask(drive::ask_repair())),
+            _ => return drive::diagnostics(),
         },
         KeyCode::Char('l') => return open_logs(app, "System"),
-        KeyCode::Char('!') => return vec![Effect::Shell],
+        KeyCode::Char('!') => return drive::shell(),
         _ => {}
     }
     Vec::new()
@@ -917,7 +876,6 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let state_snapshot = state.clone();
     let results: Vec<PackageId> =
         app.search_results(&state_snapshot).iter().map(|pkg| pkg.id.clone()).collect();
-    let feeds: Vec<String> = app.data.feeds.iter().map(|feed| feed.name.clone()).collect();
     let Screen::Search(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -926,7 +884,7 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Esc if state.query.is_empty() && state.feed_filter.is_none() => pop(app),
         KeyCode::Esc => {
             state.query.clear();
-            state.feed_filter = None;
+            state.flow.clear();
             state.list_focused = false;
             state.selected = 0;
         }
@@ -934,7 +892,7 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('s') if state.list_focused || key.modifiers.contains(KeyModifiers::CONTROL) => return open_sources(app, 0),
         KeyCode::Enter => {
             if let Some(id) = results.get(state.selected) {
-                return vec![Effect::LoadDetail(id.clone())];
+                return install::detail(id);
             }
         }
         KeyCode::Down | KeyCode::Up => {
@@ -962,18 +920,11 @@ fn search_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('i') => {
             if let Some(id) = results.get(state.selected) {
-                return vec![Effect::CheckInstall(id.clone())];
+                return install::check(id);
             }
         }
         KeyCode::Char('f') => {
-            let position = state
-                .feed_filter
-                .as_ref()
-                .and_then(|current| feeds.iter().position(|feed| feed == current));
-            state.feed_filter = match position {
-                None => feeds.first().cloned(),
-                Some(index) => feeds.get(index + 1).cloned(),
-            };
+            state.flow.next_source(&app.data);
             state.selected = 0;
         }
         KeyCode::Char('q') => app.should_quit = true,
@@ -990,16 +941,14 @@ fn detail_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     match key.code {
-        KeyCode::Char('i') if !detail.installed => vec![Effect::CheckInstall(detail.id.clone())],
-        KeyCode::Char('o') if detail.installed => {
-            let name = detail.id.name.clone();
-            switch_tab(app, Tab::Apps);
-            push(app, Screen::AppPage(AppPageState::new(&name)));
-            Vec::new()
+        KeyCode::Char('i') => install::install(detail),
+        KeyCode::Char('o') => {
+            let step = install::open_installed(detail);
+            follow(app, step)
         }
-        KeyCode::Char('s') if detail.installed => vec![Effect::OpenSettings(detail.id.name.clone())],
-        KeyCode::Char('v') => vec![Effect::ShowDocument(DocKind::Versions(detail.id.name.clone()))],
-        KeyCode::Char('c') => vec![Effect::ShowDocument(DocKind::Changelog(detail.id.name.clone()))],
+        KeyCode::Char('s') => install::settings(detail),
+        KeyCode::Char('v') => install::versions(detail),
+        KeyCode::Char('c') => install::changelog(detail),
         KeyCode::Char('h') if detail.installed => {
             let package = detail.id.name.clone();
             web::hosting_from_detail(app, &package)
@@ -1019,13 +968,10 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(input) = state.passphrase.as_mut() {
         match key.code {
             KeyCode::Esc => state.passphrase = None,
-            KeyCode::Enter if input.is_empty() => {
-                notice(app, NoticeKind::Info, "Enter the device passphrase to create its encrypted storage.");
-            }
             KeyCode::Enter => {
-                let passphrase = Some(input.take_secret());
-                state.passphrase = None;
-                return start_install(app, passphrase);
+                // An empty box is refused with a remark and stays open.
+                let step = state.flow.approve(Some(input), &app.data);
+                return follow(app, step);
             }
             _ => {
                 edit_input(input, key);
@@ -1035,70 +981,36 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     match key.code {
         KeyCode::Left | KeyCode::Right => state.confirm_focused = !state.confirm_focused,
-        KeyCode::Char('d') => {
-            return vec![Effect::ShowDocument(DocKind::FileList(state.data.id.name.clone()))];
-        }
+        KeyCode::Char('d') => return state.flow.files(),
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
             if !state.confirm_focused {
                 pop(app);
                 return Vec::new();
             }
-            match state.purpose.clone() {
-                ReviewPurpose::Install if state.data.needs_passphrase => {
-                    state.passphrase = Some(Input::secret());
-                }
-                ReviewPurpose::Install => return start_install(app, None),
-                ReviewPurpose::Update { batch, mut pending_reviews, mut approvals } => {
-                    if let Some(approval) = state.data.approval.clone() {
-                        approvals.push((state.data.id.name.clone(), approval));
-                    }
-                    if pending_reviews.is_empty() {
-                        return apply_batch(app, batch, approvals);
-                    }
-                    let name = pending_reviews.remove(0);
-                    pop(app);
-                    return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals }];
-                }
+            if state.flow.needs_passphrase() {
+                state.passphrase = Some(Input::secret());
+                return Vec::new();
             }
+            let step = state.flow.approve(None, &app.data);
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
 }
 
-/// Leaves the review for the install page right away. With the helper the install is one request
-/// that answers when it is over, so without this the review sat there for minutes looking stuck.
-fn start_install(app: &mut App, passphrase: Option<Secret>) -> Vec<Effect> {
-    let Screen::Review(state) = &app.screen else {
-        return Vec::new();
-    };
-    let (id, approval) = (state.data.id.clone(), state.data.approval.clone());
-    app.screen = Screen::Installing(InstallSnapshot::starting(&id, &state.data.version));
-    vec![Effect::StartInstall { id, approval, passphrase }]
-}
-
 fn installing_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Installing(snapshot) = &app.screen else {
         return Vec::new();
     };
-    let name = snapshot.id.name.clone();
-    match (&snapshot.outcome, key.code) {
-        (_, KeyCode::Char('v')) => vec![Effect::ShowDocument(DocKind::InstallLog(name))],
-        (InstallOutcome::InProgress, KeyCode::Esc) if snapshot.can_cancel => vec![Effect::CancelInstall],
-        // It cannot be stopped, so Esc only leaves the page; the result comes as a notice.
-        (InstallOutcome::InProgress, KeyCode::Esc) => {
-            pop(app);
-            Vec::new()
-        }
-        (InstallOutcome::Succeeded, KeyCode::Enter) => vec![Effect::OpenSettings(name)],
-        (InstallOutcome::InProgress, _) => Vec::new(),
-        (_, KeyCode::Esc | KeyCode::Enter) => {
-            pop(app);
-            vec![Effect::Refresh]
-        }
-        _ => Vec::new(),
-    }
+    let step = match key.code {
+        KeyCode::Char('v') => return install::log(snapshot),
+        KeyCode::Esc => install::leave(snapshot),
+        KeyCode::Enter => install::carry_on(snapshot),
+        _ => return Vec::new(),
+    };
+    follow(app, step)
 }
 
 fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1109,14 +1021,8 @@ fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
-            if ticks < state.retry_at_tick {
-                let seconds = (state.retry_at_tick - ticks).div_ceil(TICKS_PER_SECOND);
-                state.error = Some(format!("Please wait {} before trying again.", counted(seconds, "second")));
-            } else if state.input.is_empty() {
-                state.error = Some("Enter the device passphrase.".to_owned());
-            } else {
-                return vec![Effect::Unlock(state.input.take_secret())];
-            }
+            let wait = state.retry_at_tick.saturating_sub(ticks).div_ceil(TICKS_PER_SECOND);
+            return state.flow.submit(&mut state.input, wait);
         }
         _ => {
             edit_input(&mut state.input, key);
@@ -1143,42 +1049,27 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('a') => {
             push(app, Screen::AddFeed(AddFeedState::Address { input: Input::plain(""), error: None }));
         }
-        KeyCode::Char('r') => return vec![Effect::RefreshFeeds],
+        KeyCode::Char('r') => return sources::refresh(),
         KeyCode::Char('d') => *keys = !*keys,
         KeyCode::Char('e' | ' ') => {
             if let Some(feed) = current {
-                return vec![Effect::ToggleFeed(feed.name.clone())];
+                return sources::toggle(&feed.name);
             }
         }
         KeyCode::Char('x') => {
             if let Some(feed) = current {
-                app.modal = Some(remove_feed_modal(&feed.name));
+                app.modal = Some(Modal::ask(sources::ask_remove(&feed.name, false)));
             }
         }
         KeyCode::Enter => {
             if let Some(feed) = current {
-                if feed.status == FeedStatus::Blocked {
-                    return vec![Effect::LoadKeyChange(feed.name.clone())];
-                }
-                let filter = feed.name.clone();
-                return open_get_apps(app, Some(filter));
+                let step = sources::open(feed);
+                return follow(app, step);
             }
         }
         _ => {}
     }
     Vec::new()
-}
-
-fn remove_feed_modal(name: &str) -> Modal {
-    Modal {
-        title: format!("Remove {name}?"),
-        body: vec![
-            "Apps you installed from it keep running; they just won't get updates until you add it back.".to_owned(),
-        ],
-        confirm_label: "Remove".to_owned(),
-        confirm_focused: false,
-        action: ModalAction::RemoveFeed(name.to_owned()),
-    }
 }
 
 fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1188,26 +1079,21 @@ fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match state {
         AddFeedState::Address { input, error } => match key.code {
             KeyCode::Esc => pop(app),
-            KeyCode::Enter => {
-                if input.is_empty() {
-                    *error = Some("Enter the feed's address.".to_owned());
-                } else {
-                    return vec![Effect::ProbeFeed(input.text().trim().to_owned())];
-                }
-            }
+            KeyCode::Enter => match sources::probe(input.text()) {
+                Ok(effects) => return effects,
+                Err(text) => *error = Some(text),
+            },
             _ => {
                 edit_input(input, key);
             }
         },
         AddFeedState::Confirm { probe, trust_focused } => match key.code {
             KeyCode::Left | KeyCode::Right => *trust_focused = !*trust_focused,
-            KeyCode::Char('p') => {
-                return vec![Effect::ShowDocument(DocKind::FeedPackages(probe.name.clone()))];
-            }
+            KeyCode::Char('p') => return sources::packages(probe),
             KeyCode::Esc => pop(app),
             KeyCode::Enter => {
                 if *trust_focused {
-                    return vec![Effect::TrustFeed(probe.clone())];
+                    return sources::trust(probe);
                 }
                 pop(app);
             }
@@ -1227,13 +1113,10 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 state.typing = None;
                 state.error = None;
             }
-            KeyCode::Enter => {
-                if input.text() == state.change.feed {
-                    let typed = input.text().to_owned();
-                    return vec![Effect::TrustNewKey { change: state.change.clone(), typed }];
-                }
-                state.error = Some(format!("That isn't the source's name. Type {} exactly.", state.change.feed));
-            }
+            KeyCode::Enter => match sources::trust_new_key(&state.change, input.text()) {
+                Ok(effects) => return effects,
+                Err(text) => state.error = Some(text),
+            },
             _ => {
                 edit_input(input, key);
             }
@@ -1247,8 +1130,8 @@ fn feed_key_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             0 => pop(app),
             1 => state.typing = Some(Input::plain("")),
             _ => {
-                let modal = remove_feed_modal(&state.change.feed);
-                app.modal = Some(modal);
+                let question = sources::ask_remove(&state.change.feed, true);
+                app.modal = Some(Modal::ask(question));
             }
         },
         _ => {}
@@ -1266,12 +1149,9 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     if state.confirm.is_some() {
         return match key.code {
-            KeyCode::Enter => {
-                state.confirm = None;
-                apply_draft(state)
-            }
+            KeyCode::Enter => state.flow.confirm_save(),
             KeyCode::Esc => {
-                state.confirm = None;
+                state.flow.cancel_save();
                 Vec::new()
             }
             _ => Vec::new(),
@@ -1288,11 +1168,7 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => state.editing = None,
             KeyCode::Enter => {
-                let index = state.selected;
-                // Leaving a secret empty keeps the stored one instead of erasing it.
-                if !input.is_empty() {
-                    state.draft[index] = FieldValue::NewSecret(input.take_secret());
-                }
+                state.flow.set_secret(state.selected, input);
                 state.editing = None;
             }
             _ => {
@@ -1312,51 +1188,31 @@ fn settings_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     let index = state.selected;
     let count = state.form.fields.len();
+    let is_choice = matches!(state.form.fields[index].kind, FieldKind::Choice(_));
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, count, key.code == KeyCode::Down),
         KeyCode::Tab | KeyCode::BackTab => step(&mut state.selected, count, key.code == KeyCode::Tab),
         // A field with a broken reference opens what is wrong with it; anything else edits.
-        KeyCode::Enter if first_broken_chip(state, index).is_some() => {
-            let chip = first_broken_chip(state, index).unwrap_or(0);
+        KeyCode::Enter if state.first_broken(index).is_some() => {
+            let chip = state.first_broken(index).unwrap_or(0);
             state.chip_menu = Some(ChipMenu { chip, choice: 0 });
         }
-        KeyCode::Enter | KeyCode::Char(' ') => start_field_edit(state, index, 1),
+        KeyCode::Enter | KeyCode::Char(' ') => start_field_edit(state, index, true),
         KeyCode::Char('c') if matches!(state.draft[index], FieldValue::Pieces(_)) => {
             state.chip_menu = Some(ChipMenu { chip: 0, choice: 0 });
         }
-        KeyCode::Left if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
-            start_field_edit(state, index, -1);
-        }
-        KeyCode::Right if matches!(state.form.fields[index].kind, FieldKind::Choice(_)) => {
-            start_field_edit(state, index, 1);
-        }
+        KeyCode::Left if is_choice => start_field_edit(state, index, false),
+        KeyCode::Right if is_choice => start_field_edit(state, index, true),
         KeyCode::Char('$') => return open_reference_picker(app, PickMode::Insert),
         KeyCode::Char('u') => return undo_step(app),
-        KeyCode::Char('z') => {
-            state.draft[index] = state.form.fields[index].value.clone();
-            return preview_field(state, index);
-        }
+        KeyCode::Char('z') => return state.flow.reset(index),
         KeyCode::Esc => {
-            if state.changed_indices().is_empty() {
-                pop(app);
-            } else {
-                app.modal = Some(Modal {
-                    title: "Discard your changes?".to_owned(),
-                    body: vec!["Your unsaved settings will be lost.".to_owned()],
-                    confirm_label: "Discard".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::DiscardSettings,
-                });
-            }
+            let step = state.flow.leave();
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
-}
-
-/// The first reference of a field that does not resolve, as far as its preview knows.
-fn first_broken_chip(state: &SettingsState, index: usize) -> Option<usize> {
-    state.preview(index)?.chips.iter().position(Result::is_err)
 }
 
 /// Typing in a field: text, reference chips, and the suggestions after `$(`.
@@ -1397,12 +1253,9 @@ fn editor_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             state.editor = None;
         }
         KeyCode::Enter => {
-            let value = FieldValue::from_pieces(editor.pieces());
+            let pieces = editor.pieces();
             state.editor = None;
-            if value != state.draft[index] {
-                state.draft[index] = value;
-                return preview_field(state, index);
-            }
+            return state.flow.set_pieces(index, pieces);
         }
         KeyCode::Left => editor.left(),
         KeyCode::Right => editor.right(),
@@ -1422,32 +1275,19 @@ fn editor_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// What `$(…` before the cursor suggests: up to five references that fit, by app and name.
+/// What `$(…` before the cursor suggests in the field being typed in. The rule is the core's.
 pub fn suggestions(state: &SettingsState) -> Vec<(String, String)> {
-    let (Some(editor), Some(catalog)) = (&state.editor, &state.catalog) else {
-        return Vec::new();
-    };
-    let Some((_, query)) = editor.completing() else {
-        return Vec::new();
-    };
-    let kind = &state.form.fields[state.selected].kind;
-    let assembled = editor.units.len() > query.chars().count() + 2;
-    crate::refs::ordered(kind, crate::refs::search(&catalog.options, &query), assembled)
-        .into_iter()
-        .filter(|(option, verdict)| verdict.is_ok() && option.locked.is_none_or(|l| l.granted))
-        .take(5)
-        .map(|(option, _)| (option.app.clone(), option.setting.clone()))
-        .collect()
+    state.editor.as_ref().map(|editor| state.flow.suggestions(state.selected, editor)).unwrap_or_default()
 }
 
 fn chip_menu_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
+    let chips = state.flow.references(state.selected).len();
     let Some(menu) = state.chip_menu.as_mut() else {
         return Vec::new();
     };
-    let chips = state.draft[state.selected].pieces().map_or(0, |p| crate::model::refs(&p).len());
     match key.code {
         KeyCode::Esc => state.chip_menu = None,
         KeyCode::Left | KeyCode::BackTab => menu.choice = menu.choice.saturating_sub(1),
@@ -1481,43 +1321,19 @@ fn chip_action(app: &mut App, chip: usize, choice: usize) -> Vec<Effect> {
         return open_reference_picker(app, PickMode::Replace(chip));
     }
     let index = state.selected;
-    let Some(pieces) = state.draft[index].pieces() else {
+    if chip >= state.references(index).len() {
         return Vec::new();
-    };
-    let Some((position, app_id, setting)) = nth_ref(&pieces, chip) else {
-        return Vec::new();
-    };
-    let before = state.draft[index].clone();
-    let mut pieces = pieces;
+    }
     if choice == 1 {
         // The chip becomes what it resolves to now, ready to edit.
-        let value = state.preview(index).and_then(|p| p.chips.get(chip).cloned()).and_then(Result::ok).flatten();
-        pieces[position] = Piece::Text(value.unwrap_or_default());
-        let after = FieldValue::from_pieces(pieces.clone());
-        state.draft[index] = after.clone();
-        state.undo = Some(Undo { field: index, before, after, label: format!("Use {app_id}.{setting} again") });
-        let mut editor = crate::refs::PieceEditor::new(&crate::model::tidy(pieces));
+        let effects = state.flow.type_instead(index, chip);
+        let mut editor = nodo_ui_core::refs::PieceEditor::new(&state.draft[index].pieces().unwrap_or_default());
         editor.end();
         state.editor = Some(editor);
+        effects
     } else {
-        pieces.remove(position);
-        let after = FieldValue::from_pieces(pieces);
-        state.draft[index] = after.clone();
-        state.undo = Some(Undo { field: index, before, after, label: format!("Put {app_id}.{setting} back") });
+        state.flow.remove_reference(index, chip)
     }
-    preview_field(state, index)
-}
-
-/// Where the `n`th reference is among the pieces, with its app and setting.
-fn nth_ref(pieces: &[Piece], n: usize) -> Option<(usize, String, String)> {
-    pieces
-        .iter()
-        .enumerate()
-        .filter_map(|(at, piece)| match piece {
-            Piece::Ref { app, setting } => Some((at, app.clone(), setting.clone())),
-            Piece::Text(_) => None,
-        })
-        .nth(n)
 }
 
 /// Takes the last step back: the link under the field.
@@ -1525,27 +1341,17 @@ fn undo_step(app: &mut App) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
-    let Some(undo) = state.undo.take().filter(|u| state.draft[u.field] == u.after) else {
+    let Some(field) = state.undo.as_ref().map(|undo| undo.field) else {
         return Vec::new();
     };
-    state.editor = None;
-    state.editing = None;
-    state.draft[undo.field] = undo.before;
-    state.selected = undo.field;
-    preview_field(state, undo.field)
-}
-
-/// Asks the helper what a field's draft resolves to, when it has references.
-fn preview_field(state: &SettingsState, index: usize) -> Vec<Effect> {
-    if !matches!(state.draft[index], FieldValue::Pieces(_)) {
-        return Vec::new();
+    let applies = state.undo_for(field).is_some();
+    let effects = state.flow.undo(field);
+    if applies {
+        state.editor = None;
+        state.editing = None;
+        state.selected = field;
     }
-    vec![Effect::PreviewSetting {
-        package: state.form.package.clone(),
-        field_index: index,
-        key: state.form.fields[index].key.clone(),
-        value: state.draft[index].clone(),
-    }]
+    effects
 }
 
 /// The keys that open the picker from the Settings form. F4 opens a drop-down in many programs
@@ -1562,59 +1368,32 @@ fn open_reference_picker(app: &mut App, mode: PickMode) -> Vec<Effect> {
         return Vec::new();
     };
     state.chip_menu = None;
-    let index = state.selected;
-    let field = &state.form.fields[index];
-    if !field.kind.takes_reference() {
-        fail(app, "This setting cannot take a value from another app.");
-        return Vec::new();
-    }
-    let assembled = match (&state.editor, mode) {
-        (Some(editor), PickMode::Insert) => !editor.is_empty(),
-        (None, PickMode::Insert) => false,
-        (_, PickMode::Replace(_)) => state.draft[index].pieces().is_some_and(|p| p.len() > 1),
-    };
-    let picker = ReferenceState {
-        package: state.form.package.clone(),
-        field_index: index,
-        field_label: field.label.clone(),
-        field_kind: field.kind.clone(),
-        mode,
-        assembled,
-        list: state.catalog.clone().unwrap_or_default(),
-        query: Input::plain(""),
-        list_focused: false,
-        selected: 0,
-        granting: None,
-    };
-    let load = state.catalog.is_none();
-    let package = state.form.package.clone();
-    push(app, Screen::Reference(picker));
-    if load {
-        vec![Effect::LoadReferences { package }]
-    } else {
-        Vec::new()
+    let beside_typed = state.editor.as_ref().is_some_and(|editor| !editor.is_empty());
+    match state.flow.pick(state.selected, mode, beside_typed) {
+        Ok((picker, load)) => {
+            let picker = ReferenceState { flow: picker, query: Input::plain(""), list_focused: false, selected: 0 };
+            push(app, Screen::Reference(picker));
+            load
+        }
+        Err(why) => {
+            fail(app, why);
+            Vec::new()
+        }
     }
 }
 
-fn start_field_edit(state: &mut SettingsState, index: usize, direction: isize) {
-    match (&state.form.fields[index].kind, &state.draft[index]) {
-        (FieldKind::Toggle, FieldValue::Bool(value)) => state.draft[index] = FieldValue::Bool(!*value),
-        (FieldKind::Choice(options), FieldValue::Text(current)) => {
-            let len = options.len() as isize;
-            // An optional choice with no default has no value yet: the first step lands on the
-            // first choice (or, backwards, the last), not one past it.
-            let next = match options.iter().position(|option| option == current) {
-                Some(position) => (position as isize + direction).rem_euclid(len) as usize,
-                None if direction < 0 => options.len() - 1,
-                None => 0,
-            };
-            state.draft[index] = FieldValue::Text(options[next].clone());
-        }
+/// Enter, Space or an arrow on a field: a switch flips, a choice steps, and anything else opens
+/// its box to type in.
+fn start_field_edit(state: &mut SettingsState, index: usize, forward: bool) {
+    let kind = state.form.fields[index].kind.clone();
+    match (&kind, &state.flow.draft[index]) {
+        (FieldKind::Toggle, FieldValue::Bool(_)) => state.flow.toggle(index),
+        (FieldKind::Choice(_), FieldValue::Text(_)) => state.flow.step_choice(index, forward),
         // A secret with a reference is replaced by typing a new secret.
         (FieldKind::Secret, _) => state.editing = Some(Input::secret()),
         (_, value) => {
             if let Some(pieces) = value.pieces() {
-                state.editor = Some(crate::refs::PieceEditor::new(&pieces));
+                state.editor = Some(nodo_ui_core::refs::PieceEditor::new(&pieces));
             }
         }
     }
@@ -1624,91 +1403,24 @@ fn save_settings(app: &mut App) -> Vec<Effect> {
     let Screen::Settings(state) = &mut app.screen else {
         return Vec::new();
     };
-    let changed = state.changed_indices();
-    if changed.is_empty() {
-        notice(app, NoticeKind::Info, "There are no changes to save.");
-        return Vec::new();
-    }
-    if let Some(invalid) = (0..state.draft.len()).find(|&index| state.error_for(index).is_some()) {
-        state.selected = invalid;
-        fail(app, "Fix the marked field before saving. Nothing was changed.");
-        return Vec::new();
-    }
-    let broken = state.broken();
-    if broken > 0 {
-        if let Some(index) = (0..state.draft.len()).find(|&i| first_broken_chip(state, i).is_some()) {
+    let step = state.flow.save();
+    // A refused save puts the focus on the field it stopped at.
+    if matches!(step, Step::Failed(_)) {
+        if let Some(index) = state.blocking_field() {
             state.selected = index;
         }
-        let plural = if broken == 1 { "reference" } else { "references" };
-        fail(app, format!("Fix {broken} broken {plural} to save. Nothing was changed."));
-        return Vec::new();
     }
-    let bullets = save_consequences(state);
-    if bullets.is_empty() {
-        return apply_draft(state);
-    }
-    state.confirm = Some(bullets);
-    Vec::new()
-}
-
-/// What the changed references allow, in plain words, for the save confirmation.
-pub fn save_consequences(state: &SettingsState) -> Vec<String> {
-    let package = &state.form.package;
-    let mut access = Vec::new();
-    let mut dependencies = Vec::new();
-    let mut follows = Vec::new();
-    for index in state.changed_indices() {
-        let Some(pieces) = state.draft[index].pieces() else { continue };
-        let was = state.form.fields[index].value.pieces().unwrap_or_default();
-        for (app_id, setting) in crate::model::refs(&pieces) {
-            if !crate::model::refs(&was).contains(&(app_id, setting)) {
-                let line = format!("{package} follows {app_id}'s {setting} when it changes.");
-                if !follows.contains(&line) {
-                    follows.push(line);
-                }
-            }
-        }
-        if let Some(preview) = state.preview(index) {
-            for (app_id, what) in &preview.new_access {
-                let line = format!("{package} will be able to reach {app_id} ({what}).");
-                if !access.contains(&line) {
-                    access.push(line);
-                }
-            }
-            for app_id in &preview.new_dependencies {
-                let line = format!("{app_id} becomes a dependency: it can't be removed while {package} uses it.");
-                if !dependencies.contains(&line) {
-                    dependencies.push(line);
-                }
-            }
-        }
-    }
-    access.into_iter().chain(dependencies).chain(follows).collect()
-}
-
-fn apply_draft(state: &SettingsState) -> Vec<Effect> {
-    let values = state
-        .changed_indices()
-        .into_iter()
-        .map(|index| {
-            let (field, value) = (&state.form.fields[index], &state.draft[index]);
-            let reset = field.input_for(value) == Some(nodo_api::SettingInput::Reset);
-            (field.key.clone(), (!reset).then(|| value.clone()))
-        })
-        .collect();
-    vec![Effect::ApplySettings { package: state.form.package.clone(), values }]
+    follow(app, step)
 }
 
 fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Reference(state) = &mut app.screen else {
         return Vec::new();
     };
-    if let Some(option) = state.granting.clone() {
+    if state.granting.is_some() {
         match key.code {
-            KeyCode::Esc => state.granting = None,
-            KeyCode::Enter => {
-                return vec![Effect::Grant { consumer: state.package.clone(), provider: option.app, setting: option.setting }];
-            }
+            KeyCode::Esc => state.flow.decline(),
+            KeyCode::Enter => return state.flow.approve(),
             _ => {}
         }
         return Vec::new();
@@ -1717,18 +1429,12 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc => pop(app),
         KeyCode::Enter => {
-            let Some((option, verdict)) = state.visible().get(state.selected).map(|(o, v)| ((*o).clone(), v.clone())) else {
+            let chosen = state.visible().get(state.selected).map(|(option, _)| (option.app.clone(), option.setting.clone()));
+            let Some((app_id, setting)) = chosen else {
                 return Vec::new();
             };
-            if let Err(why) = verdict {
-                fail(app, why);
-                return Vec::new();
-            }
-            if option.locked.is_some_and(|l| !l.granted) {
-                state.granting = Some(option);
-                return Vec::new();
-            }
-            return place_reference(app, &option.app, &option.setting);
+            let picked = state.flow.choose(&app_id, &setting);
+            return on_picked(app, picked);
         }
         KeyCode::Down | KeyCode::Up => {
             if state.list_focused {
@@ -1752,7 +1458,20 @@ fn reference_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Puts a picked reference where the picker was opened for, and closes the picker.
+/// What a choice in the picker, or a result there, came to: a reference to place, or only a step.
+fn on_picked(app: &mut App, picked: Picked) -> Vec<Effect> {
+    match picked {
+        Picked::Nothing(step) => follow(app, step),
+        Picked::Reference { app: app_id, setting, then } => {
+            let mut effects = place_reference(app, &app_id, &setting);
+            effects.extend(follow(app, then));
+            effects
+        }
+    }
+}
+
+/// Puts a picked reference where the picker was opened for, and closes the picker: at the cursor
+/// of what is being typed, or through the core into the field's value.
 fn place_reference(app: &mut App, app_id: &str, setting: &str) -> Vec<Effect> {
     let Screen::Reference(picker) = &app.screen else {
         return Vec::new();
@@ -1763,50 +1482,34 @@ fn place_reference(app: &mut App, app_id: &str, setting: &str) -> Vec<Effect> {
         return Vec::new();
     };
     state.selected = field_index;
-    let before = state.draft[field_index].clone();
     match (mode, state.editor.as_mut()) {
         (PickMode::Insert, Some(editor)) => {
             editor.insert_ref(app_id, setting);
-            return Vec::new();
+            Vec::new()
         }
-        (PickMode::Insert, None) => state.draft[field_index] = FieldValue::reference(app_id, setting),
-        (PickMode::Replace(chip), _) => {
-            let mut pieces = before.pieces().unwrap_or_default();
-            if let Some((position, ..)) = nth_ref(&pieces, chip) {
-                pieces[position] = Piece::Ref { app: app_id.to_owned(), setting: setting.to_owned() };
-            }
+        (PickMode::Insert, None) => state.flow.place(field_index, mode, app_id, setting),
+        (PickMode::Replace(_) | PickMode::Append, _) => {
             state.editor = None;
-            state.draft[field_index] = FieldValue::from_pieces(pieces);
+            state.flow.place(field_index, mode, app_id, setting)
         }
     }
-    let label = match &before {
-        FieldValue::Text(text) if !text.is_empty() => format!("Undo: back to {text}"),
-        FieldValue::Pieces(_) => "Undo".to_owned(),
-        _ => String::new(),
-    };
-    if !label.is_empty() && before != state.draft[field_index] {
-        let after = state.draft[field_index].clone();
-        state.undo = Some(Undo { field: field_index, before, after, label });
-    }
-    preview_field(state, field_index)
 }
 
 fn apply_failed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::ApplyFailed(state) = &app.screen else {
         return Vec::new();
     };
-    let package = state.package.clone();
-    let blamed = state.explanation.blamed_field.clone();
+    let failed = state.clone();
     match key.code {
         KeyCode::Enter => {
             pop(app);
-            if let (Screen::Settings(settings), Some(blamed)) = (&mut app.screen, blamed) {
-                if let Some(index) = settings.form.fields.iter().position(|field| field.key == blamed) {
+            if let Screen::Settings(settings) = &mut app.screen {
+                if let Some(index) = failed.blamed_index(&settings.form) {
                     settings.selected = index;
                 }
             }
         }
-        KeyCode::Char('l') => return open_logs(app, &package),
+        KeyCode::Char('l') => return open_logs(app, &failed.package),
         KeyCode::Char('x') => {
             pop(app);
             if let Screen::Settings(settings) = &mut app.screen {
@@ -1830,13 +1533,13 @@ fn update_passphrase_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     match key.code {
         KeyCode::Esc => state.passphrase = None,
-        KeyCode::Enter if prompt.input.is_empty() => {
-            notice(app, NoticeKind::Info, "Enter the device passphrase to grow the encrypted storage.");
-        }
         KeyCode::Enter => {
-            let passphrase = prompt.input.take_secret();
-            let prompt = state.passphrase.take().expect("prompt checked above");
-            return vec![Effect::ApplyUpdatesWithPassphrase { names: prompt.names, approvals: prompt.approvals, passphrase }];
+            // An empty box is refused with a remark and stays open.
+            let step = prompt.batch.submit(&mut prompt.input);
+            if matches!(step, Step::Run(_)) {
+                state.passphrase = None;
+            }
+            return follow(app, step);
         }
         _ => {
             edit_input(&mut prompt.input, key);
@@ -1856,7 +1559,7 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let rows: Vec<UpdateItem> = app.update_rows().into_iter().cloned().collect();
+    let rows: Vec<(String, bool)> = app.update_rows().into_iter().map(|item| (item.name.clone(), item.held)).collect();
     let auto_update = app.data.auto_update.clone();
     let Screen::Updates(state) = &mut app.screen else {
         return Vec::new();
@@ -1865,69 +1568,35 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows.len(), key.code == KeyCode::Down),
         KeyCode::Char(' ') => {
-            if let Some(item) = current {
-                if let Some(position) = state.checked.iter().position(|name| name == &item.name) {
-                    state.checked.remove(position);
-                } else {
-                    state.checked.push(item.name.clone());
-                    if item.held {
-                        return vec![Effect::SetHeld { name: item.name.clone(), held: false }];
-                    }
-                }
+            if let Some((name, _)) = current {
+                return updates::tick(&mut state.checked, &app.data, name);
             }
         }
         // The Nodo's own update has its own button, apart from the apps.
         KeyCode::Char('n') => {
-            if rows.iter().any(|item| item.name == SYSTEM_BASE && !item.held) {
-                return apply_batch(app, vec![SYSTEM_BASE.to_owned()], Vec::new());
-            }
-            notice(app, NoticeKind::Info, "The Nodo is up to date.");
+            let step = updates::update_system(&app.data);
+            return follow(app, step);
         }
         KeyCode::Char('z') => return more::open_rollbacks(app),
         KeyCode::Enter => {
-            // Keep the on-screen order, not the order the boxes were ticked in. The Nodo's own
-            // update is never part of the apps' batch: it has its own button.
-            let batch: Vec<String> = rows
-                .iter()
-                .filter(|item| item.name != SYSTEM_BASE && state.checked.contains(&item.name))
-                .map(|item| item.name.clone())
-                .collect();
-            if batch.is_empty() {
-                notice(app, NoticeKind::Info, "Tick at least one app first.");
-                return Vec::new();
-            }
-            // A new permission is always approved first, even when the box is ticked.
-            let mut pending_reviews: Vec<String> = rows
-                .iter()
-                .filter(|item| {
-                    batch.contains(&item.name) && matches!(item.note, UpdateNote::NewPermission(_))
-                })
-                .map(|item| item.name.clone())
-                .collect();
-            if pending_reviews.is_empty() {
-                return apply_batch(app, batch, Vec::new());
-            }
-            let name = pending_reviews.remove(0);
-            return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals: Vec::new() }];
+            let step = updates::update_apps(&app.data, &state.checked);
+            return follow(app, step);
         }
         KeyCode::Char('c') => {
-            if let Some(item) = current {
-                return vec![Effect::ShowDocument(DocKind::Changelog(item.name.clone()))];
+            if let Some((name, _)) = current {
+                return updates::changelog(name);
             }
         }
         KeyCode::Char('r') => {
             // Check now is a link, not a button, so it is marked as running here: it shows the
             // hourglass and a second press waits for the first instead of queueing another check.
             app.pending = Some(Pending { click: crate::hit::Click::Key(KeyCode::Char('r')), screen: ScreenId::Updates, step: None });
-            return vec![Effect::CheckUpdates];
+            return updates::check_now();
         }
         KeyCode::Char('h') => {
-            if let Some(item) = current {
-                let name = item.name.clone();
-                let held = !item.held;
-                state.checked.retain(|checked| checked != &name);
+            if let Some((name, held)) = current {
                 state.selected = 0;
-                return vec![Effect::SetHeld { name, held }];
+                return updates::set_held(&mut state.checked, name, !held);
             }
         }
         KeyCode::Char('a') => {
@@ -1946,20 +1615,14 @@ fn auto_update_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => {
                 state.editing_window = None;
-                state.error = None;
+                state.flow.error = None;
             }
-            KeyCode::Enter => match parse_window(input.text()) {
-                Some((start, end)) => {
-                    state.draft.window_start = start;
-                    state.draft.window_end = end;
+            // A window that is refused stays in the box, with the reason beside it.
+            KeyCode::Enter => {
+                if state.flow.set_window(input.text()) {
                     state.editing_window = None;
-                    state.error = None;
                 }
-                None => {
-                    state.error =
-                        Some("Use two different device times, like 03:00 to 05:00.".to_owned());
-                }
-            },
+            }
             _ => {
                 edit_input(input, key);
             }
@@ -1969,40 +1632,21 @@ fn auto_update_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let rows = state.draft.packages.len() + 1;
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows, key.code == KeyCode::Down),
-        KeyCode::Char(' ') => match state.focused_package() {
-            Some(index) => state.draft.packages[index].enabled ^= true,
-            None => cycle_frequency(&mut state.draft),
+        KeyCode::Char(' ') => match state.focused_package().map(|index| state.draft.packages[index].name.clone()) {
+            Some(name) => state.flow.toggle(&name),
+            None => state.flow.next_frequency(),
         },
-        KeyCode::Left | KeyCode::Right if state.selected == 0 => cycle_frequency(&mut state.draft),
-        KeyCode::Char('w') => {
-            let current = format!("{} to {}", state.draft.window_start, state.draft.window_end);
-            state.editing_window = Some(Input::plain(current));
-        }
-        KeyCode::Char('h') => return vec![Effect::ShowDocument(DocKind::AutoUpdateHistory)],
-        KeyCode::Enter => return vec![Effect::SaveAutoUpdate(state.draft.clone())],
+        KeyCode::Left | KeyCode::Right if state.selected == 0 => state.flow.next_frequency(),
+        KeyCode::Char('w') => state.editing_window = Some(Input::plain(state.window())),
+        KeyCode::Char('h') => return AutoUpdate::history(),
+        KeyCode::Enter => return state.save(),
         KeyCode::Esc => {
-            if state.draft == state.saved {
-                pop(app);
-            } else {
-                app.modal = Some(Modal {
-                    title: "Discard your changes?".to_owned(),
-                    body: vec!["Your auto-update choices will not be saved.".to_owned()],
-                    confirm_label: "Discard".to_owned(),
-                    confirm_focused: false,
-                    action: ModalAction::DiscardAutoUpdate,
-                });
-            }
+            let step = state.leave();
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
-}
-
-fn cycle_frequency(prefs: &mut AutoUpdatePrefs) {
-    let position = prefs.frequencies.iter().position(|option| option == &prefs.frequency).unwrap_or(0);
-    if let Some(next) = prefs.frequencies.get((position + 1) % prefs.frequencies.len().max(1)) {
-        prefs.frequency = next.clone();
-    }
 }
 
 fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -2016,29 +1660,18 @@ fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 step(&mut state.choice, 4, key.code == KeyCode::Down);
             }
         }
-        KeyCode::Esc => {
-            pop(app);
-            return vec![Effect::Refresh];
-        }
+        KeyCode::Esc => return follow(app, updates::leave_results()),
         KeyCode::Enter => {
             let Some(name) = failed else {
-                pop(app);
-                return vec![Effect::Refresh];
+                return follow(app, updates::leave_results());
             };
-            match state.choice {
-                0 => {
-                    pop(app);
-                    return vec![Effect::SetHeld { name, held: true }];
-                }
-                // A failed version is held, and the helper only retries it once released.
-                1 => {
-                    let mut effects = vec![Effect::SetHeld { name: name.clone(), held: false }];
-                    effects.extend(apply_batch(app, vec![name], Vec::new()));
-                    return effects;
-                }
-                2 => return vec![Effect::CopyReport(format!("{name} update"))],
+            let step = match state.choice {
+                0 => updates::hold_failed(&state.report),
+                1 => updates::retry_failed(&state.report, &app.data),
+                2 => return updates::report_failed(&state.report),
                 _ => return open_logs(app, &name),
-            }
+            };
+            return follow(app, step);
         }
         _ => {}
     }
@@ -2079,20 +1712,20 @@ fn logs_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Up => {
             step(&mut state.selected, sources.len(), key.code == KeyCode::Down);
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::LoadLogs(source.clone())];
+                return Logs::load(source);
             }
         }
         KeyCode::F(5) => {
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::LoadLogs(source.clone())];
+                return Logs::load(source);
             }
         }
         KeyCode::Char('/') => state.finding = true,
-        KeyCode::Char('e') => state.errors_only ^= true,
-        KeyCode::Char('f') => state.follow ^= true,
+        KeyCode::Char('e') => state.flow.toggle_errors_only(),
+        KeyCode::Char('f') => state.flow.toggle_follow(),
         KeyCode::Char('y') => {
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::CopyReport(format!("{source} log"))];
+                return documents::log_report(source);
             }
         }
         KeyCode::Char('u') => return open_unlock(app),
@@ -2107,11 +1740,10 @@ fn rejected_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     // There is deliberately no key here that installs anything.
     match key.code {
-        KeyCode::Char('y') => vec![Effect::CopyReport(format!("{} rejection", data.id.name))],
+        KeyCode::Char('y') => install::report_rejection(data),
         KeyCode::Char('f') => {
-            let feed = data.id.feed.clone();
-            let selected = app.data.feeds.iter().position(|entry| entry.name == feed).unwrap_or(0);
-            open_sources(app, selected)
+            let step = install::rejected_source(data);
+            follow(app, step)
         }
         KeyCode::Esc => {
             pop(app);
@@ -2131,26 +1763,19 @@ fn capability_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => match state.choice {
             0 => pop(app),
             1 => {
-                let note = state.data.compatible_note.clone();
-                notice(app, NoticeKind::Info, format!("No compatible version: {note}."));
+                let step = install::compatible_version(&state.data);
+                return follow(app, step);
             }
-            _ => {
-                let node = state.data.alternative_node.clone();
-                return vec![Effect::CheckInstall(PackageId::new("official", &node))];
-            }
+            _ => return install::install_alternative(&state.data),
         },
         _ => {}
     }
     Vec::new()
 }
 
-
-
-
 fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let acme = app.data.web.acme.clone();
     let domain = app.data.web.domain.clone();
-    let order = DomainState::order(&acme);
+    let order = domain::fields(&app.data.web.acme);
     let Screen::WebDomain(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -2162,31 +1787,27 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Tab | KeyCode::Down => state.focus = order[(at + 1) % order.len()],
         KeyCode::BackTab | KeyCode::Up => state.focus = order[(at + order.len() - 1) % order.len()],
-        KeyCode::Char(' ') if !state.focus.is_text() || state.focus == DomainFocus::UnderDomain => match state.focus {
-            DomainFocus::Staging => state.staging = !state.staging,
-            DomainFocus::DotLocal => state.under_domain = false,
-            _ => state.under_domain = true,
+        KeyCode::Char(' ') if !state.focus.is_text() || state.focus == domain::Field::UnderDomain => match state.focus {
+            domain::Field::Staging => {
+                let on = !state.staging;
+                state.flow.set_staging(on);
+            }
+            domain::Field::DotLocal => state.flow.set_under_domain(false),
+            _ => state.flow.set_under_domain(true),
         },
         KeyCode::Char('p') if !state.focus.is_text() => {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
-            return vec![Effect::LoadProviders];
+            return flows::web::providers::load();
         }
-        KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
+        KeyCode::Char('t') if !state.focus.is_text() => return domain::check_local_names(),
         KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
         KeyCode::Enter => {
-            let text = |input: &Input| Some(input.text().trim().to_owned()).filter(|t| !t.is_empty());
-            let settings = nodo_api::AcmeSettingsInput {
-                email: text(&state.email),
-                staging: state.staging,
-                local_domain: if state.under_domain { text(&state.local_domain) } else { None },
-            };
-            let dns01 = (!state.dns01_first.is_empty() && !state.dns01_second.is_empty())
-                .then(|| (state.dns01_first.take_secret(), state.dns01_second.take_secret()));
-            return vec![Effect::SaveAcme { settings, dns01 }];
+            let (email, local_domain) = (state.email.text().to_owned(), state.local_domain.text().to_owned());
+            return state.flow.save(&email, &local_domain, &mut state.dns01_first, &mut state.dns01_second);
         }
         _ => {
-            if state.focus == DomainFocus::UnderDomain {
-                state.under_domain = true;
+            if state.focus == domain::Field::UnderDomain {
+                state.flow.set_under_domain(true);
             }
             if let Some(input) = focused_input(&mut app.screen) {
                 edit_input(input, key);
@@ -2199,7 +1820,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn trust_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc | KeyCode::Enter => pop(app),
-        KeyCode::Char('r') => return vec![Effect::Refresh],
+        KeyCode::Char('r') => return certs::refresh(),
         _ => {}
     }
     Vec::new()
@@ -2208,7 +1829,7 @@ fn trust_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn certificate_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc | KeyCode::Enter => pop(app),
-        KeyCode::Char('r') => return vec![Effect::Refresh],
+        KeyCode::Char('r') => return certs::refresh(),
         KeyCode::Char('l') => return open_logs(app, "System"),
         KeyCode::Char('d') => {
             let state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
@@ -2233,7 +1854,7 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         _ => None,
     };
     app.data = snapshot;
-    if app.data.overview.setup_needed && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
+    if app.data.landing() == Landing::Setup && matches!(app.screen, Screen::Home { .. } | Screen::NoDrive { .. }) {
         push(app, Screen::Setup(SetupState::passphrase()));
         return;
     }
@@ -2241,10 +1862,9 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     let services = app.data.services.len();
     let feeds = app.data.feeds.len();
     let sites = app.data.web.sites.len();
-    let update_rows: Vec<(String, bool)> =
-        app.update_rows().iter().map(|item| (item.name.clone(), item.preselected && !item.held)).collect();
+    let update_rows: Vec<String> = app.update_rows().iter().map(|item| item.name.clone()).collect();
     let rows = update_rows.len();
-    let drive_missing = app.data.overview.drive.is_some();
+    let drive_missing = app.data.landing_once_set_up() == Landing::NoDrive;
     let clamp = |index: &mut usize, len: usize| *index = (*index).min(len.saturating_sub(1));
     match &mut app.screen {
         Screen::Home { .. } if drive_missing => app.screen = Screen::NoDrive { choice: 0 },
@@ -2252,17 +1872,12 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         Screen::Home { selected } => clamp(selected, services),
         Screen::Feeds { selected, .. } => clamp(selected, feeds),
         Screen::Web { selected } => clamp(selected, sites),
-        // A check can add and remove updates. New ones are ticked as the list ticks them when it
-        // opens, gone ones are unticked, and the selection stays on the same app rather than
-        // the same row number, which would now be another app.
+        // A check can add and remove updates. The ticks follow them by the core's rule, and the
+        // selection stays on the same app rather than the same row number, which would now be
+        // another app.
         Screen::Updates(state) => {
-            state.checked.retain(|name| update_rows.iter().any(|(row, _)| row == name));
-            for (name, preselected) in &update_rows {
-                if *preselected && !shown.contains(name) && !state.checked.contains(name) {
-                    state.checked.push(name.clone());
-                }
-            }
-            match was_selected.and_then(|name| update_rows.iter().position(|(row, _)| *row == name)) {
+            updates::carry_ticks(&mut state.checked, &shown, &app.data);
+            match was_selected.and_then(|name| update_rows.iter().position(|row| *row == name)) {
                 Some(position) => state.selected = position,
                 None => clamp(&mut state.selected, rows),
             }
@@ -2272,395 +1887,192 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     }
 }
 
-fn on_result(app: &mut App, event: Event) -> Vec<Effect> {
+fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
-        Event::Refreshed(snapshot) => on_refreshed(app, *snapshot),
-        Event::Failed(text) => fail(app, text),
-        Event::Info(text) => notice(app, NoticeKind::Info, text),
-        Event::UnlockResult(result) => return on_unlock_result(app, result),
-        Event::SetupDone(result) => {
+        Outcome::Refreshed(snapshot) => on_refreshed(app, *snapshot),
+        Outcome::Failed(_) | Outcome::Info(_) => {
+            let step = flows::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::UnlockResult(_) => return on_unlock_result(app, &event),
+        Outcome::SetupDone(_) | Outcome::SshKeysLoaded(_) | Outcome::SshKeyChanged(_) => {
             if let Screen::Setup(state) = &mut app.screen {
-                match result {
-                    Ok(()) => {
-                        *state = SetupState::keys();
-                        notice(app, NoticeKind::Ok, "Device passphrase set. Keep it somewhere safe.");
-                        return vec![Effect::LoadSshKeys];
+                let step = state.flow.apply(&event);
+                // The boxes and the selection follow the page the flow is on now.
+                match (&event, &mut state.step) {
+                    (Outcome::SetupDone(Ok(())), _) => state.step = SetupState::keys().step,
+                    (Outcome::SetupDone(Err(_)), _) => state.step = SetupState::passphrase().step,
+                    (Outcome::SshKeysLoaded(_), SetupStep::Keys { selected, .. }) => {
+                        *selected = (*selected).min(state.flow.keys.len().saturating_sub(1));
                     }
-                    Err(error) => {
-                        *state = SetupState::passphrase();
-                        state.error = Some(error.to_string());
-                    }
+                    _ => {}
                 }
+                return follow(app, step);
             }
         }
-        Event::SshKeysLoaded(result) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(list) => {
-                        if let SetupStep::Keys { keys, selected, .. } = &mut state.step {
-                            *selected = (*selected).min(list.len().saturating_sub(1));
-                            *keys = list;
-                        }
-                    }
-                    Err(error) => state.error = Some(error),
-                }
-            }
-        }
-        Event::SshKeyChanged(result) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.error = result.err();
-            }
-        }
-        Event::BackupsLoaded(_)
-        | Event::BackupCreated(_)
-        | Event::BackupInspected(_)
-        | Event::BackupRestored(_)
-        | Event::UsbLoaded(_) => return on_backup_result(app, event),
-        Event::OnionLoaded(_)
-        | Event::OnionChanged(_)
-        | Event::RestoreDrives(_)
-        | Event::RestoreBackups(_)
-        | Event::RestoreInspected(_)
-        | Event::RestoreFinished(_)
-        | Event::RollbacksLoaded(_)
-        | Event::RolledBack(_) => return more::on_result(app, event),
-        Event::NetworkLoaded { .. }
-        | Event::WifiChanged { .. }
-        | Event::WifiScanned(_)
-        | Event::BluetoothChanged { .. } => return net::on_result(app, event),
-        Event::DetailLoaded(Some(detail)) => push(app, Screen::Detail(detail)),
-        Event::DetailLoaded(None) => fail(app, "No details are available for that package."),
-        Event::GateLoaded(gate) => match gate {
-            InstallGate::Review(data) => push(app, Screen::Review(ReviewState::new(data, ReviewPurpose::Install))),
-            InstallGate::Bundle(review) => owner::open_bundle(app, review),
-            InstallGate::Rejected(data) => push(app, Screen::Rejected(data)),
-            InstallGate::MissingCapability(data) => {
-                push(app, Screen::Capability(CapabilityState { data, choice: 0 }));
-            }
-        },
-        Event::InstallProgress(snapshot) => on_install_progress(app, snapshot),
-        Event::UpdatesChecked(report) => {
-            let summary = report.summary(app.update_rows().len(), &app.data.feeds);
-            let kind = match (summary.trouble, summary.found) {
-                (true, _) => NoticeKind::Error,
-                (false, 0) => NoticeKind::Ok,
-                (false, _) => NoticeKind::Info,
+        Outcome::BackupsLoaded(_)
+        | Outcome::BackupCreated(_)
+        | Outcome::BackupInspected(_)
+        | Outcome::BackupRestored(_)
+        | Outcome::UsbLoaded(_) => return on_backup_result(app, event),
+        Outcome::OnionLoaded(_)
+        | Outcome::OnionChanged(_)
+        | Outcome::RestoreDrives(_)
+        | Outcome::RestoreBackups(_)
+        | Outcome::RestoreInspected(_)
+        | Outcome::RestoreFinished(_) => return more::on_result(app, event),
+        Outcome::WebGuiSet { .. } => {
+            // Said wherever the owner is by now; the page, if it is still shown, stops waiting.
+            let step = match &mut app.screen {
+                Screen::WebGui(state) => state.flow.apply(&event),
+                _ => nodo_ui_core::flows::web_gui::WebGui::new().apply(&event),
             };
-            notice(app, kind, summary.text);
+            return follow(app, step);
         }
-        Event::FeedProbed(result) => {
+        Outcome::RollbacksLoaded(_) | Outcome::RolledBack(_) => {
+            if let Screen::Rollbacks(state) = &mut app.screen {
+                let step = state.flow.apply(&event);
+                state.selected = state.selected.min(state.options().len().saturating_sub(1));
+                return follow(app, step);
+            }
+        }
+        Outcome::NetworkLoaded { .. }
+        | Outcome::WifiChanged { .. }
+        | Outcome::WifiScanned(_)
+        | Outcome::BluetoothChanged { .. } => return net::on_result(app, event),
+        Outcome::DetailLoaded(_) | Outcome::GateLoaded(_) | Outcome::UpdateReviewLoaded { .. } => {
+            let step = install::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::InstallProgress(Some(report)) => {
+            // A review still on screen when a report that is not a cancel arrives becomes the
+            // install's page, as the install's own page does.
+            let on_install_page = match &app.screen {
+                Screen::Installing(_) => true,
+                Screen::Review(_) => report.outcome != InstallOutcome::Cancelled,
+                _ => false,
+            };
+            let step = install::progress(&report, &app.data.capabilities, on_install_page);
+            return follow(app, step);
+        }
+        Outcome::InstallProgress(None) => {}
+        Outcome::UpdatesChecked(_) | Outcome::UpdatesApplied(_) => {
+            let step = updates::apply(&event, &app.data);
+            return follow(app, step);
+        }
+        Outcome::AutoUpdateSaved(_) => {
+            let step = match &mut app.screen {
+                Screen::AutoUpdate(state) => state.flow.apply(&event),
+                _ => updates::apply(&event, &app.data),
+            };
+            return follow(app, step);
+        }
+        Outcome::FeedProbed(_) => {
             if let Screen::AddFeed(state) = &mut app.screen {
-                match result {
-                    Ok(probe) => *state = AddFeedState::Confirm { probe, trust_focused: false },
-                    Err(text) => {
+                match sources::apply(&event) {
+                    // Why the address gave no feed is said beside the box it was typed in.
+                    Step::Failed(refusal) => {
                         if let AddFeedState::Address { error, .. } = state {
-                            *error = Some(text);
+                            *error = Some(refusal.text);
                         }
                     }
+                    step => return follow(app, step),
                 }
             }
         }
-        Event::FeedTrusted(result) => match result {
-            Ok(name) => {
-                pop(app);
-                notice(app, NoticeKind::Ok, format!("Added {name} and pinned its key."));
-            }
-            Err(text) => fail(app, text),
-        },
-        Event::KeyChangeLoaded(Some(change)) => {
-            push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None }));
+        Outcome::FeedTrusted(_) | Outcome::KeyChangeLoaded(_) | Outcome::NewKeyTrusted(_) => {
+            let step = sources::apply(&event);
+            return follow(app, step);
         }
-        Event::KeyChangeLoaded(None) => fail(app, "That feed has no pending key change."),
-        Event::NewKeyTrusted(result) => match result {
-            Ok(name) => {
+        Outcome::SettingsLoaded { .. } => {
+            // A finished install is replaced so that Esc does not return to its progress list.
+            if matches!(app.screen, Screen::Installing(_)) {
                 pop(app);
-                notice(app, NoticeKind::Ok, format!("{name} now uses the new key."));
             }
-            Err(text) => fail(app, text),
-        },
-        Event::SettingsLoaded { package, form } => match form {
-            Some(form) => {
-                // A finished install is replaced so that Esc does not return to its progress list.
-                if matches!(app.screen, Screen::Installing(_)) {
-                    pop(app);
+            let step = settings::apply(&event);
+            return follow(app, step);
+        }
+        // The catalog for suggestions and the picker, and what each reference resolves to. The
+        // form may be under the picker, or under a failed save's page.
+        Outcome::ReferencesLoaded { .. } | Outcome::SettingPreviewed { .. } => {
+            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
+                if let Screen::Settings(state) = screen {
+                    state.flow.apply(&event);
                 }
-                let state = SettingsState::new(form);
-                // The catalog for suggestions and the picker, and what each reference resolves to.
-                let mut effects = vec![Effect::LoadReferences { package: state.form.package.clone() }];
-                for index in 0..state.draft.len() {
-                    effects.extend(preview_field(&state, index));
-                }
-                push(app, Screen::Settings(state));
-                return effects;
             }
-            None => {
-                if matches!(app.screen, Screen::Installing(_)) {
-                    pop(app);
-                }
-                notice(app, NoticeKind::Info, format!("{package} has no settings to configure."));
-            }
-        },
-        Event::ReferencesLoaded { package, list } => {
             if let Screen::Reference(picker) = &mut app.screen {
-                if picker.package == package {
-                    picker.list = list.clone();
-                }
+                let picked = picker.flow.apply(&event);
+                return on_picked(app, picked);
             }
-            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
-                if let Screen::Settings(state) = screen {
-                    if state.form.package == package {
-                        state.catalog = Some(list.clone());
+        }
+        Outcome::Granted { .. } => {
+            if let Screen::Reference(picker) = &mut app.screen {
+                let picked = picker.flow.apply(&event);
+                return on_picked(app, picked);
+            }
+            let step = settings::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::SettingsApplied(_) | Outcome::SettingsRolledBack { .. } => {
+            if let Screen::Settings(state) = &mut app.screen {
+                let step = state.flow.apply(&event);
+                return follow(app, step);
+            }
+        }
+        Outcome::LogsLoaded { .. } => {
+            if let Screen::Logs(state) = &mut app.screen {
+                let shown = app.data.log_sources.get(state.selected).map(String::as_str);
+                let step = state.flow.apply(&event, shown);
+                return follow(app, step);
+            }
+        }
+        Outcome::DriveResult(_) => {
+            let step = drive::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::ExposureSet { .. } | Outcome::PublicHostSet { .. } | Outcome::Reachability { .. } => {
+            let step = flows::web::apply(&event);
+            return follow(app, step);
+        }
+        Outcome::ProviderAdded(_) => return web::on_provider_added(app, &event),
+        Outcome::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
+        Outcome::ProviderRemoved(_) | Outcome::ProviderRefreshed(_) => return web::on_provider_changed(app, &event),
+        Outcome::AcmeSaved(_) | Outcome::LocalNamesChecked(_) => {
+            let step = match &mut app.screen {
+                Screen::WebDomain(state) => {
+                    // The credentials were stored, so nothing typed is kept.
+                    if matches!(event, Outcome::AcmeSaved(Ok(()))) {
+                        state.dns01_first.clear();
+                        state.dns01_second.clear();
                     }
+                    state.flow.apply(&event)
                 }
-            }
-        }
-        Event::SettingPreviewed { package, field_index, preview } => {
-            for screen in std::iter::once(&mut app.screen).chain(app.stack.iter_mut()) {
-                if let Screen::Settings(state) = screen {
-                    if state.form.package == package && field_index < state.previews.len() {
-                        state.previews[field_index] = Some(preview.clone());
-                    }
-                }
-            }
-        }
-        Event::Granted { provider, setting, result } => match result {
-            Ok(()) => {
-                let package = match &mut app.screen {
-                    Screen::Reference(picker) => {
-                        picker.granting = None;
-                        picker.package.clone()
-                    }
-                    _ => String::new(),
-                };
-                let mut effects = place_reference(app, &provider, &setting);
-                notice(app, NoticeKind::Ok, format!("Approved: {package} can use {provider}.{setting}."));
-                effects.push(Effect::LoadReferences { package });
-                return effects;
-            }
-            Err(error) => {
-                if let Screen::Reference(picker) = &mut app.screen {
-                    picker.granting = None;
-                }
-                fail(app, format!("Not approved: {error}"));
-            }
-        },
-        Event::SettingsApplied(result) => on_settings_applied(app, result),
-        Event::SettingsRolledBack { package, explanation } => {
-            on_settings_rolled_back(app, package, explanation);
-        }
-        Event::UpdateReviewLoaded { review, batch, pending_reviews, approvals } => match review {
-            Some(data) => push(
-                app,
-                Screen::Review(ReviewState::new(data, ReviewPurpose::Update { batch, pending_reviews, approvals })),
-            ),
-            None => fail(app, "That update could not be reviewed, so nothing was applied."),
-        },
-        Event::UpdatesApplied(report) => {
-            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
-                pop(app);
-            }
-            push(app, Screen::UpdateResults(UpdateResultsState { report, choice: 0 }));
-        }
-        Event::AutoUpdateSaved(result) => match result {
-            Ok(()) => {
-                if matches!(app.screen, Screen::AutoUpdate(_)) {
-                    pop(app);
-                }
-                notice(app, NoticeKind::Ok, "Auto-update choices saved.");
-            }
-            Err(text) => fail(app, text),
-        },
-        Event::LogsLoaded { source, view } => {
-            let current = if let Screen::Logs(state) = &app.screen {
-                app.data.log_sources.get(state.selected).cloned()
-            } else {
-                None
+                _ => domain::apply(&event),
             };
-            if let (Screen::Logs(state), Some(current)) = (&mut app.screen, current) {
-                // A slow reply for a service the user has already left must not replace the view.
-                if current == source {
-                    state.view = view;
-                }
-            }
+            return follow(app, step);
         }
-        Event::DriveResult(result) => match result {
-            Ok(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-            Err(text) => fail(app, text),
-        },
-        Event::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
-        Event::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
-        Event::Reachability { site, going_public, result } => {
-            web::on_reachability(app, site, going_public, result);
+        Outcome::DocumentLoaded(_) => {
+            let step = documents::apply(&event);
+            return follow(app, step);
         }
-        Event::ProviderAdded(result) => return web::on_provider_added(app, result),
-        Event::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
-        Event::ProviderRemoved(result) => return web::on_provider_removed(app, result),
-        Event::ProviderRefreshed(result) => return web::on_provider_refreshed(app, result),
-        Event::AcmeSaved(result) => match result {
-            Ok(()) => {
-                if let Screen::WebDomain(state) = &mut app.screen {
-                    state.error = None;
-                    state.dns01_first.clear();
-                    state.dns01_second.clear();
-                }
-                notice(app, NoticeKind::Ok, "Certificate settings saved and applied.");
-            }
-            Err(text) => {
-                if let Screen::WebDomain(state) = &mut app.screen {
-                    state.error = Some(text);
-                } else {
-                    fail(app, text);
-                }
-            }
-        },
-        Event::LocalNamesChecked(result) => {
-            if let Screen::WebDomain(state) = &mut app.screen {
-                state.checks = Some(result);
-            }
-        }
-        Event::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-        Event::BundleInstalled(result) => owner::on_bundle_installed(app, result),
-        Event::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
-        Event::Key(_) | Event::Mouse { .. } | Event::Paste(_) | Event::Tick | Event::Resize(..) => {}
+        Outcome::BundleInstalled(_) => return owner::on_bundle_installed(app, &event),
+        Outcome::OwnerPageLoaded { .. } => return owner::on_owner_page(app, &event),
     }
     Vec::new()
 }
 
-fn on_unlock_result(app: &mut App, result: Result<Response, ApiError>) -> Vec<Effect> {
+fn on_unlock_result(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
     let ticks = app.ticks;
     let Screen::Unlock(state) = &mut app.screen else {
         return Vec::new();
     };
-    match result {
-        Ok(_) => {
-            let resume = state.resume.is_some();
-            pop(app);
-            // Until the refresh arrives, the snapshot still says locked; the helper has the key now.
-            app.data.overview.locked = false;
-            app.data.overview.unlock_targets.clear();
-            for svc in app.data.services.iter_mut().filter(|svc| svc.state == nodo_api::ServiceState::Locked) {
-                svc.state = nodo_api::ServiceState::Waiting;
-            }
-            if resume {
-                notice(app, NoticeKind::Ok, "Unlocked.");
-                let mut effects = on_key(app, KeyEvent::from(KeyCode::Enter));
-                effects.push(Effect::Refresh);
-                return effects;
-            }
-            notice(app, NoticeKind::Ok, "Unlocked. Services are starting in dependency order.");
-            vec![Effect::Refresh]
-        }
-        Err(error) => {
-            state.failures += 1;
-            let seconds = (1u64 << state.failures.min(16)).min(MAX_UNLOCK_DELAY_SECONDS);
-            state.retry_at_tick = ticks + seconds * TICKS_PER_SECOND;
-            state.error = Some(match error {
-                ApiError::BadPassphrase => "That passphrase did not unlock this device. Try again.".to_owned(),
-                other => format!("Could not unlock: {other}"),
-            });
-            Vec::new()
-        }
+    let failures = state.failures;
+    let step = state.flow.apply(outcome, &mut app.data);
+    if state.failures > failures {
+        state.retry_at_tick = ticks + state.retry_delay_seconds() * TICKS_PER_SECOND;
     }
+    follow(app, step)
 }
-
-fn on_install_progress(app: &mut App, snapshot: Option<InstallSnapshot>) {
-    let Some(mut snapshot) = snapshot else {
-        return;
-    };
-    // The page offers a cancel only where the backend says it can cancel at all, whatever one
-    // snapshot claims.
-    snapshot.can_cancel &= app.data.capabilities.cancel_install;
-    match snapshot.outcome {
-        InstallOutcome::Cancelled => {
-            if matches!(app.screen, Screen::Installing(_)) {
-                pop(app);
-            }
-            notice(app, NoticeKind::Info, "Install cancelled. What it added was removed.");
-        }
-        _ => match &mut app.screen {
-            Screen::Installing(current) => *current = snapshot,
-            Screen::Review(_) => app.screen = Screen::Installing(snapshot),
-            // The owner left the install page while it ran, so say how it ended wherever they are.
-            _ => match &snapshot.outcome {
-                InstallOutcome::Succeeded => notice(
-                    app,
-                    NoticeKind::Ok,
-                    format!("{} is installed. Open it from Apps to set it up.", snapshot.id.name),
-                ),
-                InstallOutcome::Failed(reason) => fail(app, format!("{} wasn't installed: {reason}", snapshot.id.name)),
-                InstallOutcome::InProgress | InstallOutcome::Cancelled => {}
-            },
-        },
-    }
-}
-
-fn masked_field(value: &FieldValue) -> String {
-    match value {
-        FieldValue::Text(text) => {
-            let count = text.chars().count();
-            if count > 18 {
-                format!("{}…", text.chars().take(14).collect::<String>())
-            } else {
-                text.clone()
-            }
-        }
-        FieldValue::Pieces(pieces) => pieces
-            .iter()
-            .map(|piece| match piece {
-                Piece::Text(text) => text.clone(),
-                Piece::Ref { app, setting } => format!("{app}·{setting}"),
-            })
-            .collect(),
-        FieldValue::Bool(true) => "on".to_owned(),
-        FieldValue::Bool(false) => "off".to_owned(),
-        FieldValue::SecretUnset => "not set".to_owned(),
-        FieldValue::SecretSet => crate::secret::STORED_MASK.to_owned(),
-        FieldValue::NewSecret(_) => "new secret".to_owned(),
-    }
-}
-
-fn on_settings_applied(app: &mut App, result: Result<(), ApiError>) {
-    let Screen::Settings(state) = &mut app.screen else {
-        return;
-    };
-    match result {
-        Ok(()) => {
-            let package = state.form.package.clone();
-            for (field, value) in state.form.fields.iter_mut().zip(state.draft.iter_mut()) {
-                // The typed secret is dropped here. From now on it is only known to be set.
-                if matches!(value, FieldValue::NewSecret(_)) {
-                    *value = FieldValue::SecretSet;
-                }
-                field.value = value.clone();
-            }
-            notice(app, NoticeKind::Ok, format!("Saved. {package} restarted and passed its health check."));
-        }
-        Err(error) => fail(app, format!("Not saved: {error}")),
-    }
-}
-
-fn on_settings_rolled_back(app: &mut App, package: String, explanation: RollbackExplanation) {
-    let Screen::Settings(state) = &app.screen else {
-        return;
-    };
-    let rows = state
-        .changed_indices()
-        .into_iter()
-        .map(|index| {
-            let field = &state.form.fields[index];
-            DraftRow {
-                label: field.label.clone(),
-                from: masked_field(&field.value),
-                to: masked_field(&state.draft[index]),
-                blamed: explanation.blamed_field.as_deref() == Some(field.key.as_str()),
-            }
-        })
-        .collect();
-    push(app, Screen::ApplyFailed(ApplyFailedState { package, explanation, rows }));
-}
-
-
 
 fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
     match step {
@@ -2675,96 +2087,57 @@ fn backup_input(step: &mut BackupStep) -> Option<&mut Input> {
     }
 }
 
-/// Backups and restore. A restore asks for the backup passphrase, shows what the verified backup
-/// holds and which services stop, then needs the typed word. The helper checks the word again.
-/// Tab moves between the device's backups and a USB drive's. On first boot only the USB drive is
-/// offered, and the restore sets the whole device up.
+/// Backups and restore: the keys of each step. Tab moves between the device's backups and a USB
+/// drive's. What each step asks, checks and does is the core's `Backups`.
 fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    use backup::Field;
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
-    if state.busy {
+    if state.flow.busy {
         return Vec::new();
     }
-    let device_set_up = state.device_set_up;
-    let fresh = state.fresh;
-    let mut effects = Vec::new();
-    let mut leave = false;
-    let mut finished_fresh = false;
-    let mut next = None;
-    let usb_device = state.usb.as_ref().filter(|u| u.list.is_some()).map(|u| u.drive.device.clone());
+    let fresh = state.flow.fresh;
+    let mut next = Step::Stay;
     match &mut state.step {
         BackupStep::List => match key.code {
-            KeyCode::Tab if !fresh && usb_device.is_some() => state.usb_focused = !state.usb_focused,
+            KeyCode::Tab if !fresh && state.flow.usb_device().is_some() => state.usb_focused = !state.usb_focused,
             KeyCode::Down | KeyCode::Up => {
                 let down = key.code == KeyCode::Down;
                 if state.usb_focused {
-                    let len = state.usb_list().len();
+                    let len = state.flow.usb_list().len();
                     step(&mut state.usb_selected, len, down);
                 } else {
-                    step(&mut state.selected, state.list.len(), down);
+                    step(&mut state.selected, state.flow.list.len(), down);
                 }
             }
-            KeyCode::Char(c @ ('n' | 'u')) if !fresh => {
-                if c == 'u' && usb_device.is_none() {
-                    state.error = Some("Plug in a USB drive formatted as FAT32, exFAT or ext4 first.".to_owned());
-                } else {
-                    state.target = if c == 'u' { usb_device.clone() } else { None };
-                    let field = if device_set_up { 0 } else { 1 };
-                    next = Some(BackupStep::Create {
-                        device: Input::secret(),
-                        first: Input::secret(),
-                        second: Input::secret(),
-                        field,
-                    });
-                }
-            }
+            KeyCode::Char(c @ ('n' | 'u')) if !fresh => state.flow.start_create(c == 'u'),
             KeyCode::Char('r') | KeyCode::Enter => {
                 let chosen = if state.usb_focused {
-                    state.usb_list().get(state.usb_selected).map(|b| b.name.clone())
+                    state.flow.usb_list().get(state.usb_selected).map(|b| b.name.clone())
                 } else {
-                    state.list.get(state.selected).map(|b| b.name.clone())
+                    state.flow.list.get(state.selected).map(|b| b.name.clone())
                 };
                 if let Some(name) = chosen {
-                    state.target = if state.usb_focused { usb_device.clone() } else { None };
-                    next = Some(BackupStep::Unlock { name, passphrase: Input::secret() });
+                    state.flow.open(&name, state.usb_focused);
                 }
             }
-            KeyCode::Char('g') => {
-                state.busy = true;
-                effects.push(Effect::LoadBackups);
-            }
-            KeyCode::Esc => leave = true,
+            KeyCode::Char('g') => next = Step::run(state.flow.reload()),
+            KeyCode::Esc => next = state.flow.leave(),
             _ => {}
         },
         BackupStep::Create { device, first, second, field } => match key.code {
-            KeyCode::Esc => next = Some(BackupStep::List),
-            KeyCode::Tab | KeyCode::Down => *field = if *field >= 2 { if device_set_up { 0 } else { 1 } } else { *field + 1 },
-            KeyCode::Enter if *field < 2 => *field += 1,
-            KeyCode::Enter => {
-                let backup = first.secret_value();
-                if backup.expose().chars().count() < MIN_BACKUP_PASSPHRASE_CHARS {
-                    state.error = Some(format!("A backup passphrase needs at least {MIN_BACKUP_PASSPHRASE_CHARS} characters."));
-                } else if backup != second.secret_value() {
-                    state.error = Some("The two backup passphrases differ. Type them again.".to_owned());
-                    first.clear();
-                    second.clear();
-                    *field = 1;
-                } else if device_set_up && device.is_empty() {
-                    state.error = Some("Enter the device passphrase, so the backup includes the device key.".to_owned());
-                    *field = 0;
-                } else {
-                    state.error = None;
-                    state.busy = true;
-                    let device_passphrase = device_set_up.then(|| device.take_secret());
-                    second.clear();
-                    effects.push(Effect::CreateBackup {
-                        device_passphrase,
-                        backup_passphrase: first.take_secret(),
-                        usb: state.target.clone(),
-                    });
-                }
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Tab | KeyCode::Down => {
+                *field = if *field >= 2 { if state.flow.asks_device_passphrase() { 0 } else { 1 } } else { *field + 1 }
             }
+            KeyCode::Enter if *field < 2 => *field += 1,
+            KeyCode::Enter => match state.flow.create(device, first, second) {
+                Ok(effects) => next = Step::run(effects),
+                Err(Some(Field::DevicePassphrase)) => *field = 0,
+                Err(Some(_)) => *field = 1,
+                Err(None) => {}
+            },
             _ => {
                 let input = match field {
                     0 => device,
@@ -2774,150 +2147,57 @@ fn backup_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(input, key);
             }
         },
-        BackupStep::Unlock { name, passphrase } => match key.code {
-            KeyCode::Esc => next = Some(BackupStep::List),
-            KeyCode::Enter if !passphrase.is_empty() => {
-                state.busy = true;
-                state.error = None;
-                effects.push(Effect::InspectBackup {
-                    name: name.clone(),
-                    passphrase: passphrase.secret_value(),
-                    usb: state.target.clone(),
-                });
-            }
+        BackupStep::Unlock { passphrase, .. } => match key.code {
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Enter => next = Step::run(state.flow.inspect(passphrase)),
             _ => {
                 edit_input(passphrase, key);
             }
         },
-        BackupStep::Confirm { name, passphrase, contents, typed, device, field } => {
-            // A device that is not set up always needs a passphrase of its own.
-            let asks_device = contents.has_device_key || fresh;
-            match key.code {
-                KeyCode::Esc => next = Some(BackupStep::List),
-                KeyCode::Tab if asks_device => *field = 1 - *field,
-                KeyCode::Enter => {
-                    if typed.text() != RESTORE_WORD {
-                        state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
-                        *field = 0;
-                    } else if asks_device && device.secret_value().expose().chars().count() < MIN_PASSPHRASE_CHARS {
-                        state.error = Some(format!(
-                            "Choose a new device passphrase of at least {MIN_PASSPHRASE_CHARS} characters for the backup's key."
-                        ));
-                        *field = 1;
-                    } else {
-                        state.error = None;
-                        state.busy = true;
-                        let new_device_passphrase = asks_device.then(|| device.take_secret());
-                        effects.push(Effect::RestoreBackup {
-                            name: name.clone(),
-                            passphrase: passphrase.clone(),
-                            new_device_passphrase,
-                            typed: typed.text().to_owned(),
-                            usb: state.target.clone(),
-                        });
-                    }
-                }
-                _ => {
-                    edit_input(if *field == 0 { typed } else { device }, key);
-                }
+        BackupStep::Confirm { typed, device, field, .. } => match key.code {
+            KeyCode::Esc => state.flow.cancel(),
+            KeyCode::Tab if state.flow.asks_new_device_passphrase() => *field = 1 - *field,
+            KeyCode::Enter => match state.flow.restore(typed.text(), device) {
+                Ok(effects) => next = Step::run(effects),
+                Err(Some(Field::Word)) => *field = 0,
+                Err(Some(_)) => *field = 1,
+                Err(None) => {}
+            },
+            _ => {
+                edit_input(if *field == 0 { typed } else { device }, key);
             }
-        }
+        },
         BackupStep::Restored(_) => {
             if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
-                if fresh {
-                    finished_fresh = true;
-                } else {
-                    next = Some(BackupStep::List);
-                    state.busy = true;
-                    effects.push(Effect::LoadBackups);
-                }
+                next = state.flow.finish();
             }
         }
     }
-    if let Some(step) = next {
-        state.error = None;
-        state.step = step;
-    }
-    if finished_fresh {
-        // Set up from the backup. SSH keys are offered next, as after a first-boot setup.
-        pop(app);
-        if let Screen::Setup(setup) = &mut app.screen {
-            *setup = SetupState::keys();
-        }
-        return vec![Effect::LoadSshKeys, Effect::Refresh];
-    }
-    if leave {
-        pop(app);
-        effects.push(Effect::Refresh);
-    }
-    effects
+    state.sync();
+    follow(app, next)
 }
 
-/// The helper enforces the same minimum. Checking here saves a round trip and a KDF run.
-const MIN_BACKUP_PASSPHRASE_CHARS: usize = 12;
-
-fn on_backup_result(app: &mut App, event: Event) -> Vec<Effect> {
+fn on_backup_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     let Screen::Backup(state) = &mut app.screen else {
         return Vec::new();
     };
+    let next = state.flow.apply(&event);
+    state.sync();
     match event {
-        Event::BackupsLoaded(Ok(list)) => {
-            state.selected = state.selected.min(list.len().saturating_sub(1));
-            state.list = list;
-        }
-        Event::UsbLoaded(result) => {
-            state.busy = false;
-            state.usb = result.ok();
-            let len = state.usb_list().len();
+        Outcome::BackupsLoaded(Ok(_)) => state.selected = state.selected.min(state.flow.list.len().saturating_sub(1)),
+        Outcome::UsbLoaded(_) => {
+            let len = state.flow.usb_list().len();
             state.usb_selected = state.usb_selected.min(len.saturating_sub(1));
-            if len == 0 && !state.fresh {
+            if len == 0 && !state.flow.fresh {
                 state.usb_focused = false;
             }
         }
-        Event::BackupCreated(Ok(created)) => {
-            state.step = BackupStep::List;
-            state.busy = true;
-            let place = if state.target.take().is_some() { " to the USB drive" } else { "" };
-            let mut text = format!("Backup {} written{place}.", created.info.name);
-            if !created.locked.is_empty() {
-                text.push_str(&format!(" Locked storage was left out: {}.", created.locked.join(", ")));
-            }
-            notice(app, NoticeKind::Ok, text);
-            return vec![Effect::LoadBackups];
-        }
-        Event::BackupInspected(Ok(contents)) => {
-            state.busy = false;
-            if let BackupStep::Unlock { name, passphrase } = &mut state.step {
-                state.step = BackupStep::Confirm {
-                    name: name.clone(),
-                    passphrase: passphrase.take_secret(),
-                    contents,
-                    typed: Input::plain(""),
-                    device: Input::secret(),
-                    field: 0,
-                };
-            }
-        }
-        Event::BackupRestored(Ok(report)) => {
-            state.busy = false;
-            state.step = BackupStep::Restored(report);
-        }
-        Event::BackupsLoaded(Err(e)) => {
-            // On first boot the device has no backups of its own, which is no error.
-            if !state.fresh {
-                state.error = Some(e);
-            }
-        }
-        Event::BackupCreated(Err(e)) | Event::BackupInspected(Err(e)) | Event::BackupRestored(Err(e)) => {
-            state.busy = false;
-            state.error = Some(e);
-        }
         _ => {}
     }
-    Vec::new()
+    follow(app, next)
 }
 
-/// A mouse event. A click does what its target says; a move updates the hover; the wheel scrolls
+/// A mouse event. A click does what its target says;/// A mouse event. A click does what its target says; a move updates the hover; the wheel scrolls
 /// like the arrow keys. While the terminal is too small nothing is clickable.
 fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect> {
     if app.too_small() {
@@ -2959,12 +2239,12 @@ fn on_mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) -> Vec<Effect
 /// would, so whatever key the click then presses acts on what was clicked.
 fn pick(app: &mut App, index: usize) {
     let sections = match &app.screen {
-        Screen::AppPage(state) => app_sections(app, &state.name).len(),
+        Screen::AppPage(state) => app.data.app_sections(&state.name).len(),
         _ => APP_SECTIONS.len(),
     };
     let counts = (
         app.home_items().len(),
-        installed_apps(app).len(),
+        services::installed_apps(&app.data).len(),
         app.data.feeds.len(),
         app.update_rows().len(),
         app.data.log_sources.len(),
@@ -3055,26 +2335,6 @@ fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn window_parsing_accepts_only_two_different_valid_times() {
-        assert_eq!(parse_window("03:00 to 05:00"), Some(("03:00".to_owned(), "05:00".to_owned())));
-        assert_eq!(parse_window("23:00 to 01:00"), Some(("23:00".to_owned(), "01:00".to_owned())));
-        assert_eq!(parse_window("03:00 to 03:00"), None);
-        assert_eq!(parse_window("25:00 to 05:00"), None);
-        assert_eq!(parse_window("3am to 5am"), None);
-    }
-
-    #[test]
-    fn address_validation_matches_the_design_copy() {
-        let short = FieldValue::Text("48edf".to_owned());
-        assert_eq!(
-            validate(&FieldKind::MoneroAddress, &short).as_deref(),
-            Some("Address is too short. A Monero address has 95 characters.")
-        );
-        let good = FieldValue::Text(crate::mock::sample_address());
-        assert_eq!(validate(&FieldKind::MoneroAddress, &good), None);
-    }
 
     fn mail_form() -> SettingsForm {
         let field = |key: &str, kind: FieldKind, required: bool, value: &str| Field {
