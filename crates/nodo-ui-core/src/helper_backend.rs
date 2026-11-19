@@ -27,6 +27,8 @@ pub struct HelperBackend {
     /// The most recent read-only drive check, which a repair must quote.
     drive_check: Cell<Option<u64>>,
     pub(crate) manage: RefCell<crate::helper_manage::Cache>,
+    /// The last refusal for want of an unlock, until `take_refusal` asks for it.
+    refused: RefCell<Option<ApiError>>,
 }
 
 fn origin_label(origin: &Origin) -> String {
@@ -303,11 +305,18 @@ impl HelperBackend {
             unavailable: RefCell::new(Vec::new()),
             drive_check: Cell::new(None),
             manage: RefCell::new(crate::helper_manage::Cache::default()),
+            refused: RefCell::new(None),
         })
     }
 
+    /// Every request to the helper goes through here, so a refusal for want of an unlock is
+    /// noted whichever call met it.
     pub(crate) fn ask(&self, request: Request) -> Result<Response, ApiError> {
-        self.client.borrow_mut().call(request)
+        let result = self.client.borrow_mut().call(request);
+        if let Err(refusal @ ApiError::Locked(_)) = &result {
+            *self.refused.borrow_mut() = Some(refusal.clone());
+        }
+        result
     }
 
     /// Records an area as unavailable when the helper says it is, and passes other errors on.
@@ -361,6 +370,10 @@ impl Backend for HelperBackend {
 impl ScreenData for HelperBackend {
     fn capabilities(&self) -> Capabilities {
         Self::CAPABILITIES
+    }
+
+    fn take_refusal(&mut self) -> Option<ApiError> {
+        self.refused.borrow_mut().take()
     }
 
     fn overview(&self) -> Overview {

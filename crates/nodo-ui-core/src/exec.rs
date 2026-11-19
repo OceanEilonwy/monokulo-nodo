@@ -485,37 +485,71 @@ fn moves_towards_public(effect: &Effect) -> bool {
     )
 }
 
+enum ToWorker {
+    Batch(Vec<Effect>),
+    Call(Request),
+}
+
 enum FromWorker {
     Outcomes(Vec<Outcome>),
-    BatchDone,
+    /// The batch is over, with the refusal for want of an unlock that the helper gave during it.
+    BatchDone(Option<ApiError>),
+    Called(Result<Response, ApiError>),
+}
+
+/// One thing the worker finished, for an interface that takes a batch's outcomes together
+/// ([`EffectWorker::finished`]). They come in the order the work was handed in.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Finished {
+    /// A batch of effects: every outcome, in order, and the last `ApiError::Locked` the helper
+    /// answered while it ran (`ScreenData::take_refusal`). An interface that can lift what was
+    /// locked keeps the effects, and submits them again once it has.
+    Batch { outcomes: Vec<Outcome>, refusal: Option<ApiError> },
+    /// The answer to a request made with [`EffectWorker::call`].
+    Reply(Result<Response, ApiError>),
 }
 
 /// Owns the backend on its own thread, so a helper call that takes minutes never stops the
 /// screen from drawing or keys from being read.
+///
+/// Results are read one of two ways, and an interface keeps to one: [`EffectWorker::ready`] and
+/// [`EffectWorker::wait_idle`] give outcomes as each effect ends, and
+/// [`EffectWorker::finished`] and [`EffectWorker::wait_finished`] give each batch whole, with
+/// the refusal it met.
 pub struct EffectWorker {
-    batches: Sender<Vec<Effect>>,
+    work: Sender<ToWorker>,
     results: Receiver<FromWorker>,
     in_flight: usize,
+    /// Outcomes of the batch under way, until it is over, for `finished`.
+    partial: Vec<Outcome>,
 }
 
 impl EffectWorker {
     /// Takes the backend boxed, so one behind `dyn Data` works as well as a named type.
     pub fn spawn<T: Backend + ScreenData + Send + ?Sized + 'static>(mut backend: Box<T>) -> Self {
-        let (batches, inbox) = mpsc::channel::<Vec<Effect>>();
+        let (work, inbox) = mpsc::channel::<ToWorker>();
         let (outbox, results) = mpsc::channel();
         thread::spawn(move || {
-            for batch in inbox {
-                run_batch(&mut *backend, batch, |events| {
-                    // Fails only once the screen has gone, and the send below then ends the thread.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = outbox.send(FromWorker::Outcomes(events));
-                });
-                if outbox.send(FromWorker::BatchDone).is_err() {
+            for job in inbox {
+                let done = match job {
+                    ToWorker::Batch(batch) => {
+                        // A refusal from before this batch is not this batch's.
+                        drop(backend.take_refusal());
+                        run_batch(&mut *backend, batch, |events| {
+                            // Fails only once the screen has gone, and the send below then ends the thread.
+                            #[allow(clippy::let_underscore_must_use)]
+                            let _ = outbox.send(FromWorker::Outcomes(events));
+                        });
+                        FromWorker::BatchDone(backend.take_refusal())
+                    }
+                    ToWorker::Call(request) => FromWorker::Called(backend.call(request)),
+                };
+                if outbox.send(done).is_err() {
                     return;
                 }
             }
         });
-        Self { batches, results, in_flight: 0 }
+        Self { work, results, in_flight: 0, partial: Vec::new() }
     }
 
     pub fn busy(&self) -> bool {
@@ -523,7 +557,16 @@ impl EffectWorker {
     }
 
     pub fn submit(&mut self, effects: Vec<Effect>) {
-        if !effects.is_empty() && self.batches.send(effects).is_ok() {
+        if !effects.is_empty() && self.work.send(ToWorker::Batch(effects)).is_ok() {
+            self.in_flight += 1;
+        }
+    }
+
+    /// Makes one request that is no effect, in its turn after the work already handed in: an
+    /// interface's own, such as the built-in screen's status, unlock and lock. Its answer comes
+    /// through [`EffectWorker::finished`].
+    pub fn call(&mut self, request: Request) {
+        if self.work.send(ToWorker::Call(request)).is_ok() {
             self.in_flight += 1;
         }
     }
@@ -531,7 +574,7 @@ impl EffectWorker {
     fn take(&mut self, message: FromWorker, events: &mut Vec<Outcome>) {
         match message {
             FromWorker::Outcomes(more) => events.extend(more),
-            FromWorker::BatchDone => self.in_flight = self.in_flight.saturating_sub(1),
+            FromWorker::BatchDone(_) | FromWorker::Called(_) => self.in_flight = self.in_flight.saturating_sub(1),
         }
     }
 
@@ -556,12 +599,95 @@ impl EffectWorker {
         }
         events
     }
+
+    fn take_whole(&mut self, message: FromWorker, done: &mut Vec<Finished>) {
+        match message {
+            FromWorker::Outcomes(more) => self.partial.extend(more),
+            FromWorker::BatchDone(refusal) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                done.push(Finished::Batch { outcomes: std::mem::take(&mut self.partial), refusal });
+            }
+            FromWorker::Called(reply) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                done.push(Finished::Reply(reply));
+            }
+        }
+    }
+
+    /// The batches and requests that are over now, without waiting.
+    pub fn finished(&mut self) -> Vec<Finished> {
+        let mut done = Vec::new();
+        while let Ok(message) = self.results.try_recv() {
+            self.take_whole(message, &mut done);
+        }
+        done
+    }
+
+    /// Waits up to `timeout` for the next batch or request to be over, and returns it with
+    /// whatever else is over by then. Empty when nothing is under way or the time ran out.
+    pub fn wait_finished(&mut self, timeout: Duration) -> Vec<Finished> {
+        let deadline = Instant::now() + timeout;
+        let mut done = Vec::new();
+        while self.busy() && done.is_empty() {
+            match self.results.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(message) => self.take_whole(message, &mut done),
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        done.extend(self.finished());
+        done
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mock::MockBackend;
+
+    #[test]
+    fn a_whole_batch_comes_with_the_refusal_it_met_and_a_request_with_its_answer() {
+        let mut mock = MockBackend::new();
+        mock.knobs.screen_pin = Some("123456".to_owned());
+        let mut worker = EffectWorker::spawn(Box::new(mock));
+        let stop = vec![Effect::Stop("moneropay".to_owned())];
+
+        // A change on the locked screen: its failure in words, and the refusal as it was typed.
+        worker.submit(stop.clone());
+        let done = worker.wait_finished(Duration::from_secs(5));
+        let [Finished::Batch { outcomes, refusal }] = done.as_slice() else { panic!("one batch: {done:?}") };
+        assert!(matches!(outcomes.as_slice(), [Outcome::Failed(text), Outcome::Refreshed(_)] if text.contains("screen PIN")));
+        assert!(matches!(refusal, Some(ApiError::Locked(_))));
+
+        // Something that only reads meets none, and an earlier refusal is not carried over.
+        worker.submit(vec![Effect::Refresh]);
+        let done = worker.wait_finished(Duration::from_secs(5));
+        assert!(matches!(done.as_slice(), [Finished::Batch { refusal: None, .. }]));
+
+        // The screen's own request, then the same change again.
+        worker.call(Request::ScreenUnlock { pin: nodo_api::Secret::new("123456") });
+        worker.submit(stop);
+        let mut done = Vec::new();
+        while worker.busy() {
+            done.extend(worker.wait_finished(Duration::from_secs(5)));
+        }
+        let [Finished::Reply(Ok(Response::Screen(status))), Finished::Batch { outcomes, refusal: None }] = done.as_slice() else {
+            panic!("the answer, then the batch: {done:?}")
+        };
+        assert!(status.unlocked);
+        assert!(matches!(outcomes.as_slice(), [Outcome::Refreshed(_)]));
+    }
+
+    #[test]
+    fn outcomes_as_they_come_are_unchanged_by_requests_and_refusals() {
+        let mut mock = MockBackend::new();
+        mock.knobs.screen_pin = Some("123456".to_owned());
+        let mut worker = EffectWorker::spawn(Box::new(mock));
+        worker.call(Request::ScreenStatus);
+        worker.submit(vec![Effect::Stop("moneropay".to_owned())]);
+        let outcomes = worker.wait_idle(Duration::from_secs(5));
+        assert!(!worker.busy());
+        assert!(matches!(outcomes.as_slice(), [Outcome::Failed(_), Outcome::Refreshed(_)]));
+    }
 
     #[test]
     fn a_backend_behind_dyn_reads_the_same_snapshot_and_runs_on_the_worker() {

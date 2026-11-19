@@ -82,6 +82,9 @@ pub struct TestKnobs {
     pub system_check_failure: Option<String>,
     /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
     pub radios_failure: Option<String>,
+    /// Plays the touchscreen's socket, with this as the screen PIN: the screen requests are
+    /// answered, and every change is refused with `ApiError::Locked` until the PIN unlocked it.
+    pub screen_pin: Option<String>,
 }
 
 impl Default for TestKnobs {
@@ -96,6 +99,7 @@ impl Default for TestKnobs {
             unreadable_feeds: Vec::new(),
             system_check_failure: None,
             radios_failure: None,
+            screen_pin: None,
         }
     }
 }
@@ -144,6 +148,10 @@ pub struct MockBackend {
     pub bundle_installs: Vec<(Vec<nodo_api::BundleAnswer>, Vec<String>)>,
     reach_attempts: HashMap<String, u32>,
     job: Option<InstallJob>,
+    /// The screen PIN was given, while `knobs.screen_pin` plays the touchscreen's socket.
+    screen_unlocked: bool,
+    /// The last refusal for want of an unlock, as `HelperBackend` notes it.
+    refused: Option<ApiError>,
 }
 
 impl Default for MockBackend {
@@ -255,7 +263,54 @@ impl MockBackend {
             owner_views: BTreeMap::new(),
             bundle_installs: Vec::new(),
             job: None,
+            screen_unlocked: false,
+            refused: None,
         }
+    }
+
+    /// Refuses for want of an unlock, and notes it for `take_refusal`.
+    fn refuse(&mut self, reason: &str) -> ApiError {
+        let refusal = ApiError::Locked(reason.to_owned());
+        self.refused = Some(refusal.clone());
+        refusal
+    }
+
+    /// What the touchscreen's socket does before any change: refuses it until the screen PIN was
+    /// given. Nothing unless `knobs.screen_pin` is set.
+    fn screen_gate(&mut self) -> Result<(), ApiError> {
+        if self.knobs.screen_pin.is_some() && !self.screen_unlocked {
+            return Err(self.refuse("enter the screen PIN to make changes"));
+        }
+        Ok(())
+    }
+
+    fn screen_status(&self) -> nodo_api::ScreenStatus {
+        nodo_api::ScreenStatus { pin_set: self.knobs.screen_pin.is_some(), unlocked: self.screen_unlocked }
+    }
+
+    /// Whether the touchscreen's socket would ask for the PIN before this request. Unlocking the
+    /// device is let through, since the passphrase is the proof.
+    fn changes(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::StartService { .. }
+                | Request::RestartService { .. }
+                | Request::StopService { .. }
+                | Request::RemovePackage { .. }
+                | Request::SetGrant { .. }
+                | Request::ApplySettings { .. }
+                | Request::SetExposure { .. }
+                | Request::InitEncryption { .. }
+                | Request::SetNodeOnion { .. }
+                | Request::SetWifiEnabled { .. }
+                | Request::JoinWifi(_)
+                | Request::ForgetWifi { .. }
+                | Request::SetBluetoothEnabled { .. }
+                | Request::PairBluetooth { .. }
+                | Request::ConnectBluetooth { .. }
+                | Request::RemoveBluetooth { .. }
+                | Request::RollbackPackage { .. }
+        )
     }
 
     /// Onion exposure as the helper would report it, from the sites' saved exposure.
@@ -456,6 +511,24 @@ impl Backend for MockBackend {
             std::thread::sleep(delay);
         }
         self.calls.push(request.clone());
+        if self.knobs.screen_pin.is_some() {
+            match &request {
+                Request::ScreenStatus => return Ok(Response::Screen(self.screen_status())),
+                Request::ScreenUnlock { pin } => {
+                    if self.knobs.screen_pin.as_deref() != Some(pin.expose()) {
+                        return Err(ApiError::BadPassphrase);
+                    }
+                    self.screen_unlocked = true;
+                    return Ok(Response::Screen(self.screen_status()));
+                }
+                Request::ScreenLock => {
+                    self.screen_unlocked = false;
+                    return Ok(Response::Ok);
+                }
+                request if Self::changes(request) => self.screen_gate()?,
+                _ => {}
+            }
+        }
         match request {
             Request::ListServices => Ok(Response::Services(self.services.clone())),
             Request::StartService { id } | Request::RestartService { id } => {
@@ -710,6 +783,10 @@ impl ScreenData for MockBackend {
         self.knobs.capabilities
     }
 
+    fn take_refusal(&mut self) -> Option<ApiError> {
+        self.refused.take()
+    }
+
     fn backups(&self) -> Result<Vec<nodo_api::BackupInfo>, String> {
         Ok(vec![
             nodo_api::BackupInfo { name: s("nodo-1762560000.nodobak"), size_bytes: 4_812_300, created: 1_762_560_000 },
@@ -722,6 +799,7 @@ impl ScreenData for MockBackend {
         _device_passphrase: Option<&Secret>,
         backup_passphrase: &Secret,
     ) -> Result<nodo_api::BackupCreated, String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if backup_passphrase.expose().chars().count() < 12 {
             return Err(s("a backup passphrase needs at least 12 characters"));
         }
@@ -989,6 +1067,7 @@ impl ScreenData for MockBackend {
         approval: Option<&nodo_api::PermissionApproval>,
         _passphrase: Option<&Secret>,
     ) -> Result<InstallSnapshot, String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         let version = self
             .catalog
             .iter()
@@ -1072,6 +1151,7 @@ impl ScreenData for MockBackend {
     }
 
     fn trust_feed(&mut self, probe: &FeedProbe) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if self.feeds.iter().any(|feed| feed.name == probe.name) {
             return Err(format!("A feed named {} already exists.", probe.name));
         }
@@ -1096,6 +1176,7 @@ impl ScreenData for MockBackend {
     }
 
     fn toggle_feed(&mut self, name: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
         // The helper's words, from helper_manage::toggle_feed.
         let feed = self
@@ -1111,6 +1192,7 @@ impl ScreenData for MockBackend {
     }
 
     fn remove_feed(&mut self, name: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
         if !self.feeds.iter().any(|feed| feed.name == name) {
             // What the helper answers for a feed it does not have.
@@ -1134,6 +1216,7 @@ impl ScreenData for MockBackend {
     }
 
     fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         let feed = change.feed.as_str();
         if typed != feed {
             return Err(format!("Type {feed} exactly to trust its new key."));
@@ -1262,6 +1345,7 @@ impl ScreenData for MockBackend {
     }
 
     fn set_held(&mut self, name: &str, held: bool) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         // As with the helper, an app with no update waiting has nothing to hold.
         if let Some(item) = self.updates.iter_mut().find(|item| item.name == name) {
             item.held = held;
@@ -1280,6 +1364,7 @@ impl ScreenData for MockBackend {
     }
 
     fn save_auto_update(&mut self, prefs: &AutoUpdatePrefs) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         let mut saved = prefs.clone();
         saved.next_run = next_run(&saved.frequency, &saved.window_start);
         self.auto_update = saved;
@@ -1347,6 +1432,7 @@ impl ScreenData for MockBackend {
     }
 
     fn drive_action(&mut self, action: DriveAction) -> Result<Document, String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         match action {
             DriveAction::Retry => {
                 if self.drive.is_some() {
@@ -1423,8 +1509,9 @@ impl ScreenData for MockBackend {
         api_key: &Secret,
         secret_key: &Secret,
     ) -> Result<ConnectedProvider, String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if self.key_locked {
-            return Err(ApiError::Locked("unlock the device to store DNS credentials".to_owned()).to_string());
+            return Err(self.refuse("unlock the device to store DNS credentials").to_string());
         }
         let entry = sample_providers().into_iter().find(|p| p.name == provider).ok_or_else(|| format!("{provider} is not a known provider"))?;
         if api_key.is_empty() || (entry.fields.len() > 1 && secret_key.is_empty()) {
@@ -1446,6 +1533,7 @@ impl ScreenData for MockBackend {
     }
 
     fn remove_provider(&mut self, id: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         let provider = self.connected_providers().into_iter().find(|p| p.id == id).ok_or_else(|| format!("no connected provider is called {id}"))?;
         let used: Vec<String> = provider.domains.iter().flat_map(|d| d.used_by.clone()).collect();
         if !used.is_empty() {
@@ -1538,6 +1626,7 @@ impl ScreenData for MockBackend {
     }
 
     fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias]) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if !self.under_a_domain(host) {
             return Err(s("The address must be under one of your domains."));
         }
@@ -1570,6 +1659,7 @@ impl ScreenData for MockBackend {
     }
 
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if access.require_password && !self.knobs.capabilities.site_password {
             // The helper's answer, from HelperBackend::set_public_access.
             return Err(s("A password in front of a site is not available yet. Turn it off to go public."));
@@ -1586,6 +1676,7 @@ impl ScreenData for MockBackend {
     }
 
     fn add_ssh_key(&mut self, line: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         let mut fields = line.split_whitespace();
         let (Some(algorithm), Some(data)) = (fields.next(), fields.next()) else {
             return Err(s("that is not a single public key line"));
@@ -1602,6 +1693,7 @@ impl ScreenData for MockBackend {
     }
 
     fn remove_ssh_key(&mut self, fingerprint: &str) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if self.ssh_keys.len() <= 1 {
             return Err(s("this is the only key that can log in. Add another before removing it"));
         }
