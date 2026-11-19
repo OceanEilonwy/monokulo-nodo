@@ -31,16 +31,39 @@ pub struct Page {
     pub status: StatusCode,
     /// The page waits for something and, without scripts, loads itself again.
     pub waiting: bool,
+    /// The page's title and what it is for, drawn above its tab strip. A page without one has
+    /// its title at the top of `body`.
+    pub head: Option<Markup>,
+    /// The tab strip under the title: the pages of a tab (`Page::sub`) or of an app.
+    pub strip: Option<Markup>,
 }
 
 impl Page {
     pub fn new(tab: Tab, title: impl Into<String>, body: Markup) -> Self {
-        Self { title: title.into(), tab: Some(tab), trail: Vec::new(), body, status: StatusCode::OK, waiting: false }
+        Self { title: title.into(), tab: Some(tab), trail: Vec::new(), body, status: StatusCode::OK, waiting: false, head: None, strip: None }
     }
 
     /// A page under no tab.
     pub fn plain(title: impl Into<String>, body: Markup) -> Self {
-        Self { title: title.into(), tab: None, trail: Vec::new(), body, status: StatusCode::OK, waiting: false }
+        Self { title: title.into(), tab: None, trail: Vec::new(), body, status: StatusCode::OK, waiting: false, head: None, strip: None }
+    }
+
+    /// The title and what the page is for, above the tab strip.
+    pub fn head(mut self, head: Markup) -> Self {
+        self.head = Some(head);
+        self
+    }
+
+    /// One of its tab's own pages: the tab strip of its tab is shown, with this one current.
+    pub fn sub(mut self, sub: Sub) -> Self {
+        self.strip = self.tab.map(|tab| section_strip(tab, sub));
+        self
+    }
+
+    /// A tab strip of the page's own, such as an app's.
+    pub fn strip(mut self, strip: Markup) -> Self {
+        self.strip = Some(strip);
+        self
     }
 
     /// The breadcrumbs: names and URLs from the tab down to this page.
@@ -76,6 +99,115 @@ impl Chrome {
     }
 }
 
+/// A page of a tab's own: an entry of the strip under the title of every page of that tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sub {
+    Installed,
+    GetApps,
+    Sources,
+    Sites,
+    Providers,
+    Domain,
+    Certificates,
+    Trust,
+    Onion,
+    ThisNodo,
+    Updates,
+    Backups,
+    Network,
+    Keys,
+    Drive,
+    Logs,
+    About,
+}
+
+impl Sub {
+    pub fn label(self) -> &'static str {
+        match self {
+            Sub::Installed => "Installed",
+            Sub::GetApps => "Get apps",
+            Sub::Sources => "Sources",
+            Sub::Sites => "Sites online",
+            Sub::Providers => "Domain providers",
+            Sub::Domain => "Certificates and home names",
+            Sub::Certificates => "Certificates",
+            Sub::Trust => "Local CA",
+            Sub::Onion => "Onion addresses",
+            Sub::ThisNodo => "This Nodo",
+            Sub::Updates => "Updates",
+            Sub::Backups => "Backups",
+            Sub::Network => "Network",
+            Sub::Keys => "SSH keys",
+            Sub::Drive => "Data drive",
+            Sub::Logs => "Device logs",
+            Sub::About => "About",
+        }
+    }
+
+    pub fn url(self) -> &'static str {
+        match self {
+            Sub::Installed => dest::APPS,
+            Sub::GetApps => dest::GET_APPS,
+            Sub::Sources => dest::SOURCES,
+            Sub::Sites => dest::WEB,
+            Sub::Providers => dest::PROVIDERS,
+            Sub::Domain => dest::DOMAIN,
+            Sub::Certificates => dest::CERTIFICATES,
+            Sub::Trust => dest::TRUST,
+            Sub::Onion => dest::ONION,
+            Sub::ThisNodo => dest::SYSTEM,
+            Sub::Updates => dest::UPDATES,
+            Sub::Backups => dest::BACKUPS,
+            Sub::Network => dest::NETWORK,
+            Sub::Keys => dest::KEYS,
+            Sub::Drive => dest::DRIVE,
+            Sub::Logs => dest::LOGS,
+            Sub::About => dest::ABOUT,
+        }
+    }
+}
+
+/// The pages of each tab, in the order of its strip. Onion addresses are the Web tab's page,
+/// and System lists them too, as the terminal does.
+fn subs_of(tab: Tab) -> &'static [Sub] {
+    match tab {
+        Tab::Home => &[],
+        Tab::Apps => &[Sub::Installed, Sub::GetApps, Sub::Sources],
+        Tab::Web => &[Sub::Sites, Sub::Providers, Sub::Domain, Sub::Certificates, Sub::Trust, Sub::Onion],
+        Tab::System => &[Sub::ThisNodo, Sub::Updates, Sub::Backups, Sub::Network, Sub::Keys, Sub::Drive, Sub::Onion, Sub::Logs, Sub::About],
+    }
+}
+
+/// A strip of tabs under a page's title: each a name, its URL and whether it is this page.
+pub fn strip(label: &str, entries: &[(String, String, bool)]) -> Markup {
+    html! {
+        nav.tabs aria-label=(label) {
+            @for (name, url, on) in entries {
+                a href=(url) aria-current=[on.then_some("page")] { (name) }
+            }
+        }
+    }
+}
+
+/// The strip of a tab's own pages, with `on` current.
+fn section_strip(tab: Tab, on: Sub) -> Markup {
+    let entries: Vec<(String, String, bool)> = subs_of(tab).iter().map(|sub| (sub.label().to_owned(), sub.url().to_owned(), *sub == on)).collect();
+    strip(tab.label(), &entries)
+}
+
+/// The title of a page and the line that says what it is for.
+pub fn heading(title: &str, desc: Option<&str>) -> Markup {
+    html! {
+        h1 { (title) }
+        @if let Some(desc) = desc { p.desc { (desc) } }
+    }
+}
+
+/// A coloured label for a state: `kind` is `ok`, `warn`, `bad`, `off` or `info`.
+pub fn label(kind: &str, text: &str) -> Markup {
+    html! { span class=(format!("lbl {kind}")) { (text) } }
+}
+
 fn tab_url(tab: Tab) -> &'static str {
     match tab {
         Tab::Home => dest::HOME,
@@ -90,13 +222,13 @@ fn head(title: &str, waiting: bool) -> Markup {
         head {
             meta charset="utf-8";
             meta name="viewport" content="width=device-width, initial-scale=1";
-            meta name="color-scheme" content="dark";
+            meta name="color-scheme" content="light dark";
             // htmx would add its indicator styles through a stylesheet of its own making. The
             // classes are in app.css instead, so nothing about the look comes from a script.
             meta name="htmx-config" content=r#"{"includeIndicatorCSS":false}"#;
             title { (title) " · Nodo" }
-            // An empty icon, so browsers do not ask for /favicon.ico on every page.
-            link rel="icon" href="data:,";
+            // The logo, so browsers do not ask for /favicon.ico on every page.
+            link rel="icon" href=(assets::logo_path()) type="image/svg+xml";
             link rel="stylesheet" href=(assets::css_path());
             script src=(assets::htmx_path()) defer {}
             script src=(assets::script_path()) defer {}
@@ -115,39 +247,41 @@ pub fn document(page: &Page, chrome: &Chrome) -> Markup {
         html lang="en" {
             (head(&page.title, page.waiting))
             body {
-                @if chrome.signed_in {
-                    a.skip href="#main" { "Skip to the page" }
-                    header.top {
-                        div.bar {
-                            a.brand href=(dest::HOME) { span.mark {} "Nodo" }
-                            nav.tabs aria-label="Sections" {
-                                @for tab in Tab::ALL {
-                                    @let count = match tab { Tab::Apps => chrome.badges.0, Tab::System => chrome.badges.1, _ => 0 };
-                                    a href=(tab_url(tab)) aria-current=[(page.tab == Some(tab)).then_some("page")] {
-                                        (tab.label())
-                                        @if count > 0 { span.badge title="Updates ready" { (count) } }
-                                    }
+                @if chrome.signed_in { a.skip href="#main" { "Skip to the page" } }
+                header.hdr {
+                    a.brand href=(dest::HOME) { img src=(assets::logo_path()) alt="" width="24" height="24"; "Nodo" }
+                    @if chrome.signed_in {
+                        nav.nav aria-label="Sections" {
+                            @for tab in Tab::ALL {
+                                @let count = match tab { Tab::Apps => chrome.badges.0, Tab::System => chrome.badges.1, _ => 0 };
+                                a href=(tab_url(tab)) aria-current=[(page.tab == Some(tab)).then_some("page")] {
+                                    (tab.label())
+                                    @if count > 0 { span.cnt title="Updates ready" { (count) } }
                                 }
                             }
-                            form.out method="post" action=(dest::LOGOUT) {
-                                button.btn.quiet type="submit" { "Log out" }
-                            }
+                        }
+                        form.out method="post" action=(dest::LOGOUT) {
+                            button type="submit" { "Log out" }
                         }
                     }
                 }
-                main #main {
+                main #main class=[(!chrome.signed_in).then_some("narrow")] {
                     @if !page.trail.is_empty() {
-                        nav.trail aria-label="Where this page is" {
+                        nav.crumb aria-label="Where this page is" {
                             @for (index, (name, url)) in page.trail.iter().enumerate() {
                                 @if index > 0 { span.sep aria-hidden="true" { "›" } }
-                                @if index + 1 == page.trail.len() {
-                                    span aria-current="page" { (name) }
+                                @if index + 1 == page.trail.len() || url.is_empty() {
+                                    span aria-current=[(index + 1 == page.trail.len()).then_some("page")] { (name) }
                                 } @else {
                                     a href=(url) { (name) }
                                 }
                             }
                         }
+                    } @else if let (true, Some(tab), Some(_)) = (chrome.signed_in, page.tab, &page.head) {
+                        div.crumb { (tab.label()) }
                     }
+                    @if let Some(head) = &page.head { div.pagehead { (head) } }
+                    @if let Some(strip) = &page.strip { (strip) }
                     @if !chrome.notices.is_empty() {
                         div.notices role="status" {
                             @for each in &chrome.notices { (notice(each)) }
@@ -155,6 +289,7 @@ pub fn document(page: &Page, chrome: &Chrome) -> Markup {
                     }
                     (page.body)
                 }
+                @if chrome.signed_in { footer.ftr { "Nodo web GUI" } }
                 // Where a question is put by htmx, over the page.
                 div #dialog {}
             }

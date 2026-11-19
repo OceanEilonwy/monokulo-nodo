@@ -202,7 +202,7 @@ async fn every_destination_leads_to_a_page_that_is_served() {
                     answer.assert_has("1 update is installed").assert_has("tor 0.5.0");
                 }
                 "Settings" => {
-                    answer.assert_has("<h1>Settings</h1>").assert_has("Daemon RPC");
+                    answer.assert_has("<h2>Settings</h2>").assert_has("Daemon RPC");
                 }
                 "ApplyFailed" => {
                     answer.assert_has("didn't start with the new settings").assert_has("API port").assert_has("address already in use");

@@ -24,7 +24,7 @@ async fn the_login_page_is_open_and_every_other_page_asks_for_a_login() {
     let mut visitor = app.visitor();
     let page = visitor.get("/login").await;
     assert_eq!(page.status, StatusCode::OK);
-    page.assert_has("Device passphrase").assert_has(r#"autocomplete="current-password""#).assert_has(r#"<form class="stack" method="post" action="/login">"#);
+    page.assert_has("Device passphrase").assert_has(r#"autocomplete="current-password""#).assert_has(r#"<form class="sec" method="post" action="/login">"#);
     // Nothing about the device is on it, and no tabs.
     page.assert_lacks("Log out").assert_lacks("Apps");
 
@@ -368,11 +368,12 @@ async fn every_answer_carries_the_security_headers_and_pages_load_only_their_own
     // The files a page loads are the only answers that may be kept, and for long: their
     // names change with their contents.
     assets.sort();
-    assert_eq!(assets.len(), 3, "{assets:?}");
+    assert_eq!(assets.len(), 4, "{assets:?}");
     assert!(assets[0].starts_with("/static/app-") && assets[0].ends_with(".css"));
     assert!(assets[1].starts_with("/static/app-") && assets[1].ends_with(".js"));
     assert!(assets[2].starts_with("/static/htmx-4.0.2-") && assets[2].ends_with(".js"));
-    let kinds = ["text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8"];
+    assert!(assets[3].starts_with("/static/logo-") && assets[3].ends_with(".svg"));
+    let kinds = ["text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "image/svg+xml"];
     for (asset, kind) in assets.iter().zip(kinds) {
         let answer = visitor.get(asset).await;
         assert_eq!(answer.status, StatusCode::OK, "served without a login: the login page needs it");

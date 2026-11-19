@@ -1,5 +1,5 @@
-//! The three files a page loads, compiled into the binary: htmx, the stylesheet, and a few
-//! lines of script for the dialog's focus.
+//! The files a page loads, compiled into the binary: htmx, the stylesheet, a few lines of
+//! script for the dialog's focus, and the Nodo's logo.
 //!
 //! Each is served under a name that holds a hash of its bytes, so it can be cached for a year:
 //! a new build with a changed file has a new name. Nothing is loaded from the Internet, as the
@@ -17,6 +17,8 @@ use axum::response::{IntoResponse, Response};
 const HTMX: &[u8] = include_bytes!("../assets/htmx-4.0.2.min.js");
 const CSS: &[u8] = include_bytes!("../assets/app.css");
 const SCRIPT: &[u8] = include_bytes!("../assets/app.js");
+/// The Nodo's logo, a copy of the built-in screen's (`crates/nodo-gui/ui/logo.svg`).
+const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
 
 /// FNV-1a over the file. It names a file for caches; it protects nothing.
 fn hash(bytes: &[u8]) -> u64 {
@@ -27,6 +29,7 @@ struct Names {
     htmx: String,
     css: String,
     script: String,
+    logo: String,
 }
 
 fn names() -> &'static Names {
@@ -35,6 +38,7 @@ fn names() -> &'static Names {
         htmx: format!("htmx-4.0.2-{:016x}.js", hash(HTMX)),
         css: format!("app-{:016x}.css", hash(CSS)),
         script: format!("app-{:016x}.js", hash(SCRIPT)),
+        logo: format!("logo-{:016x}.svg", hash(LOGO)),
     })
 }
 
@@ -53,6 +57,11 @@ pub fn script_path() -> String {
     format!("/static/{}", names().script)
 }
 
+/// The path of the logo, for the brand in the header and the browser's tab.
+pub fn logo_path() -> String {
+    format!("/static/{}", names().logo)
+}
+
 /// `GET /static/{name}`. Open to everyone: the login page needs these files.
 pub async fn serve(Path(name): Path<String>) -> Response {
     let names = names();
@@ -62,6 +71,8 @@ pub async fn serve(Path(name): Path<String>) -> Response {
         (CSS, "text/css; charset=utf-8")
     } else if name == names.script {
         (SCRIPT, "text/javascript; charset=utf-8")
+    } else if name == names.logo {
+        (LOGO, "image/svg+xml")
     } else {
         return StatusCode::NOT_FOUND.into_response();
     };

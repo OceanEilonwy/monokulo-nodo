@@ -22,7 +22,7 @@ use axum::Form;
 use maud::{html, Markup};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked, Settings};
 use nodo_ui_core::flows::{Dest, Notice, Step};
-use nodo_ui_core::model::{FieldKind, FieldValue, Piece};
+use nodo_ui_core::model::{FieldKind, FieldValue, Piece, Snapshot};
 use nodo_ui_core::refs::kind_name;
 use nodo_ui_core::screen::Tab;
 use nodo_ui_core::secret::STORED_MASK;
@@ -241,11 +241,10 @@ fn field_row(flow: &Settings, index: usize, package: &str) -> Markup {
     let changed = flow.draft[index] != field.value;
     let problem = flow.error_for(index);
     let preview = flow.preview(index);
-    let has_text = !matches!(&flow.draft[index], FieldValue::Text(text) if text.is_empty());
     html! {
-        div.setting id=(format!("field-{key}")) {
-            div.field {
-                label for=(format!("f-{key}")) { (field.label) @if changed { " " span.tag.warn { "changed" } } }
+        div class=(if changed { "frow changed" } else { "frow" }) id=(format!("field-{key}")) {
+            label for=(format!("f-{key}")) { (field.label) @if changed { " " span.tag.warn { "changed" } } }
+            div.fld {
                 (control(flow, index, package))
                 @if let Some(problem) = &problem { p.problem id=(format!("f-{key}-problem")) { "✕ " (problem) } }
                 @if let Some(preview) = preview {
@@ -253,7 +252,21 @@ fn field_row(flow: &Settings, index: usize, package: &str) -> Markup {
                     @if let Some(resolved) = &preview.resolved { p.hint { "Now: " span.mono { (resolved) } } }
                 }
                 p.hint { (field.help) @if !field.requirement.is_empty() { " " (field.requirement) } }
+                (field_actions(flow, index))
             }
+        }
+    }
+}
+
+/// The ways to change one field other than typing: references, and taking a change back.
+fn field_actions(flow: &Settings, index: usize) -> Markup {
+    let field = &flow.form.fields[index];
+    let key = field.key.as_str();
+    let changed = flow.draft[index] != field.value;
+    let has_text = !matches!(&flow.draft[index], FieldValue::Text(text) if text.is_empty());
+    let any = field.kind.takes_reference() || flow.undo_for(index).is_some() || changed;
+    html! {
+        @if any {
             div.actions {
                 @if field.kind.takes_reference() {
                     @if mixes(&field.kind) && has_text {
@@ -274,13 +287,21 @@ fn field_row(flow: &Settings, index: usize, package: &str) -> Markup {
     }
 }
 
-fn page(flow: &Settings) -> Page {
+/// The count of changes inside the Save button. With htmx it is replaced beside every field's
+/// row, as the summary is; the summary says it in words, so the count is not read out twice.
+fn save_count(flow: &Settings, out_of_band: bool) -> Markup {
+    let changes = flow.changed_indices().len();
+    html! {
+        span #save-count .bcnt aria-hidden="true" hidden[changes == 0] hx-swap-oob=[out_of_band.then_some("true")] { (changes) }
+    }
+}
+
+fn page(snapshot: &Snapshot, flow: &Settings) -> Page {
     let package = flow.form.package.as_str();
     let here = dest::settings(package);
     let broken = flow.broken();
     let body = html! {
-        div.head { h1 { "Settings" } (summary(flow, false)) }
-        p.lead { (package) " restarts with the new settings. If it doesn't start, they're undone by themselves." }
+        div.head { h2 { "Settings" } (summary(flow, false)) }
         form.stack method="post" action=(here) {
             @if let Some(lines) = &flow.confirm {
                 // Save stopped to say what the changed references allow.
@@ -294,27 +315,31 @@ fn page(flow: &Settings) -> Page {
                     }
                 }
             }
-            section.card {
-                @if flow.form.fields.is_empty() { p.dim { "This app has nothing to set." } }
-                @for index in 0..flow.form.fields.len() { (field_row(flow, index, package)) }
+            section.sec {
+                h2 { (package) }
+                div.body {
+                    @if flow.form.fields.is_empty() { p.dim.frow { "This app has nothing to set." } }
+                    @for index in 0..flow.form.fields.len() { (field_row(flow, index, package)) }
+                }
             }
             @if broken > 0 {
                 p.err { "Fix " (broken) " broken " @if broken == 1 { "reference" } @else { "references" } " to save" }
             }
-            div.actions.end {
+            div.applybar {
                 // Without scripts this is how a typed value is checked before saving.
                 noscript { button.btn.quiet type="submit" name="do" value="apply" { "Check what I typed" } }
                 // With htmx the question about unsaved changes comes over the form, which keeps
                 // what is typed if the answer is to stay.
                 button.btn type="submit" name="do" value="leave" hx-post=(here) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }
-                button.btn.primary type="submit" name="do" value="save" { "Save" }
+                button.btn.primary type="submit" name="do" value="save" { "Save" (save_count(flow, false)) }
             }
         }
         @if !flow.form.public_settings.is_empty() {
             p.dim.small { "Other apps can refer to: " (flow.form.public_settings.join(", ")) }
         }
     };
-    Page::new(Tab::Apps, format!("{package} settings"), body).trail(&[("Apps", dest::APPS), (package, &dest::app(package)), ("Settings", &here)])
+    let desc = format!("{package} restarts with the new settings. If it doesn't start, they're undone by themselves.");
+    super::apps::app_frame(snapshot, package, "Settings", Some(&desc), format!("{package} settings"), body).trail(&[("Apps", dest::APPS), (package, &dest::app(package)), ("Settings", &here)])
 }
 
 /// `GET /apps/{name}/settings`.
@@ -322,7 +347,7 @@ pub async fn show(ctx: Ctx, Path(name): Path<String>) -> Response {
     ctx.with(dest::app(&name), move |work| match open_flow(work, &name) {
         Ok(flow) => {
             keep(work, &flow);
-            Out::Page(page(&flow))
+            Out::Page(page(&work.snapshot, &flow))
         }
         Err(reply) => Out::Reply(reply),
     })
@@ -409,7 +434,7 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form): Form<Posted>) -
                 Step::Failed(notice) => {
                     // Refused: the form again, with what is wrong beside its field.
                     work.session.inner().notices.push(notice);
-                    Out::Page(page(&flow).status(StatusCode::UNPROCESSABLE_ENTITY))
+                    Out::Page(page(&work.snapshot, &flow).status(StatusCode::UNPROCESSABLE_ENTITY))
                 }
                 other => to_form(follow_plain(other), &flow),
             },
@@ -465,7 +490,7 @@ pub async fn change(ctx: Ctx, Path((name, key)): Path<(String, String)>, Form(fo
         }
         keep(work, &flow);
         match flow.index_of(&key) {
-            Some(index) => Out::Fragment(html! { (field_row(&flow, index, &name)) (summary(&flow, true)) }),
+            Some(index) => Out::Fragment(html! { (field_row(&flow, index, &name)) (summary(&flow, true)) (save_count(&flow, true)) }),
             None => Out::Go(dest::settings(&name)),
         }
     })

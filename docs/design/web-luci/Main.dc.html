@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nodo — Overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.root{min-height:100vh;background:#eef0f3;color:#1d2125;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#0a5fc2;text-decoration:none}a:hover{color:#08498f;text-decoration:underline}
+.hdr{background:#1f2328;color:#e6e8eb;display:flex;flex-wrap:wrap;align-items:center;gap:0 8px;padding:0 20px;min-height:48px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;color:#fff;margin-right:16px}
+.brand:hover{color:#fff;text-decoration:none}
+.brand i{width:12px;height:12px;background:#f2a33a;display:inline-block;border-radius:2px}
+.nav{display:flex;flex-wrap:wrap;flex:1 1 auto}
+.nav a{color:#c4c9cf;padding:13px 12px;font-weight:500;display:inline-flex;gap:6px;align-items:center;border-bottom:3px solid transparent}
+.nav a:hover{color:#fff;text-decoration:none;background:#2b3036}
+.nav a.on{color:#fff;border-bottom-color:#f2a33a}
+.cnt{background:#f2a33a;color:#1f2328;border-radius:9px;font-size:11px;font-weight:700;padding:0 6px;line-height:16px}
+.hright{display:flex;gap:12px;align-items:center;padding:8px 0}
+.pend{background:#f2a33a;color:#1f2328;font-weight:600;font-size:12px;padding:4px 10px;border-radius:3px}
+.pend:hover{color:#1f2328}
+.out{color:#c4c9cf;font-weight:500}.out:hover{color:#fff}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 20px 8px}
+.crumb{font-size:12px;color:#5b6570;margin-bottom:2px}
+h2{font-size:22px;margin:0 0 4px;font-weight:600}
+.desc{color:#5b6570;margin:0 0 16px}
+.tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid #c9ced4;margin-bottom:16px}
+.tabs a{padding:9px 14px;color:#3b444d;border:1px solid transparent;border-bottom:none;margin-bottom:-1px;border-radius:3px 3px 0 0}
+.tabs a:hover{text-decoration:none;background:#e3e6ea}
+.tabs a.on{background:#fff;border-color:#c9ced4;color:#1d2125;font-weight:600}
+.sec{background:#fff;border:1px solid #d5d9de;border-radius:3px;margin-bottom:16px}
+.sec h3{font-size:15px;margin:0;padding:10px 14px;border-bottom:1px solid #e3e6ea;background:#f7f8fa;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.sec .body{padding:6px 14px}
+.tbox{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:600;font-size:12px;color:#3b444d;background:#f7f8fa;padding:8px 14px;border-bottom:1px solid #d5d9de;white-space:nowrap}
+td{padding:8px 14px;border-bottom:1px solid #eceef1;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even) td{background:#fafbfc}
+.kv td:first-child{width:28%;color:#3b444d;font-weight:500}
+.sub{color:#5b6570;font-size:12px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px}
+.btns{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.btn{font:inherit;font-size:13px;font-weight:500;padding:5px 12px;min-height:32px;border-radius:3px;border:1px solid #b8bfc7;background:#fff;color:#1d2125;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{background:#f2f4f6;text-decoration:none;color:#1d2125}
+.btn.apply{background:#0a5fc2;border-color:#0a5fc2;color:#fff}
+.btn.apply:hover{background:#08498f;color:#fff}
+.btn.pos{border-color:#0a5fc2;color:#0a5fc2}
+.btn.neg{border-color:#c62828;color:#b3261e}
+.lbl{font-size:12px;font-weight:600;padding:2px 8px;border-radius:3px;display:inline-block;white-space:nowrap}
+.ok{background:#e3f4e8;color:#17692e}
+.warn{background:#fdf0d9;color:#8a5200}
+.bad{background:#fbe4e2;color:#b3261e}
+.off{background:#eceef1;color:#4a535c}
+.info{background:#e5effb;color:#0a4f9e}
+.meter{display:flex;align-items:center;gap:12px}
+.bar{flex:1 1 auto;height:14px;background:#e3e6ea;border-radius:2px;overflow:hidden;max-width:520px}
+.bar span{display:block;height:100%;background:#4f8fd6}
+.alert{border:1px solid;border-radius:3px;padding:10px 14px;margin-bottom:10px;display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap}
+.alert p{margin:0;flex:1 1 320px}
+.alert.warn{border-color:#e7b866}
+.alert.bad{border-color:#e39a94}
+.alert.info{border-color:#9fc2ec}
+.alert input{font:inherit;font-size:13px;padding:5px 8px;border:1px solid #b8bfc7;border-radius:3px;min-height:32px;box-sizing:border-box;width:220px;background:#fff;color:#1d2125}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
+.ftr{text-align:center;color:#5b6570;font-size:12px;padding:16px}
+@media (max-width:760px){.grid2{grid-template-columns:repeat(1,minmax(0,1fr))}.hdr{padding:0 12px}}
+.dark{background:#16191d;color:#dfe2e6}
+.dark a{color:#6aa8ff}
+.dark .sec{background:#1e2227;border-color:#343a41}
+.dark .sec h3,.dark th{background:#252a30;border-color:#343a41;color:#cfd4da}
+.dark td{border-color:#2c3137}
+.dark tbody tr:nth-child(even) td{background:#22262b}
+.dark .desc,.dark .crumb,.dark .sub,.dark .ftr{color:#9aa3ad}
+.dark .tabs{border-color:#3a4047}.dark .tabs a{color:#b5bcc4}.dark .tabs a.on{background:#1e2227;border-color:#3a4047;color:#fff}
+.dark .btn{background:#262b31;border-color:#454c54;color:#dfe2e6}
+.dark .btn.apply{background:#3d8bfd;border-color:#3d8bfd;color:#0d1117}
+.dark .btn.pos{color:#6aa8ff;border-color:#3d8bfd}
+.dark .btn.neg{color:#ff9b90;border-color:#a94a42}
+.dark input{background:#14171a;border-color:#454c54;color:#dfe2e6}
+.dark .kv td:first-child{color:#c4cad1}
+.dark .ok{background:#183a24;color:#7ee2a0}.dark .warn{background:#3d2d0f;color:#f5c26b}.dark .bad{background:#43201d;color:#ff9b90}.dark .off{background:#2c3137;color:#b5bcc4}.dark .info{background:#16304f;color:#8cc0ff}
+.dark .bar{background:#2c3137}
+.hl .hdr{background:#fff;color:#1d2125;border-bottom:1px solid #d5d9de}
+.hl .brand,.hl .brand:hover{color:#1d2125}
+.hl .nav a,.hl .out{color:#3b444d}
+.hl .nav a:hover{background:#f2f4f6;color:#1d2125}
+.hl .nav a.on{color:#1d2125;border-bottom-color:#0a5fc2}
+.hl .out:hover{color:#1d2125}
+.hn .hdr{background:#0f2d4f}
+.hn .nav a:hover{background:#17406d}
+.dark.hl .hdr{background:#1e2227;color:#dfe2e6;border-color:#343a41}
+.dark.hl .brand,.dark.hl .nav a.on,.dark.hl .out:hover{color:#fff}
+.dark.hl .nav a,.dark.hl .out{color:#b5bcc4}
+.dark.hl .nav a:hover{background:#262b31;color:#fff}
+.dark.hl .nav a.on{border-bottom-color:#6aa8ff}
+</style>
+</helmet>
+<div class="{{theme}}">
+<header class="hdr">
+<a class="brand" href="Main.dc.html"><img src="logo.svg" alt="" width="24" height="24">Nodo</a>
+<nav class="nav" aria-label="Main">
+<a class="on" href="Main.dc.html">Home</a>
+<a href="Apps.dc.html">Apps <span class="cnt" title="Updates ready">2</span></a>
+<a href="Web.dc.html">Web</a>
+<a href="Updates.dc.html">System <span class="cnt" title="Updates ready">1</span></a>
+</nav>
+<div class="hright"><a class="out" href="Login.dc.html">Log out</a></div>
+</header>
+<main class="wrap">
+<div class="crumb">Home</div>
+<h2>Overview</h2>
+<p class="desc">What needs you first, then everything else. This page refreshes by itself.</p>
+
+<div class="alert warn">
+<span class="lbl warn">Locked</span>
+<p><strong>Your Nodo is locked.</strong> wallet-relay waits until you unlock it.</p>
+<label for="pp" class="sub">Device passphrase</label>
+<input id="pp" type="password" placeholder="Device passphrase">
+<button class="btn apply" type="button">Unlock</button>
+</div>
+<div class="alert bad">
+<span class="lbl bad">Failing</span>
+<p><strong>bell keeps stopping.</strong> It was restarted 3 times.</p>
+<a class="btn" href="AppHosting.dc.html">Show log</a>
+</div>
+<div class="alert info">
+<span class="lbl info">Updates</span>
+<p><strong>3 updates are ready</strong> — the Nodo and 2 apps.</p>
+<a class="btn pos" href="Updates.dc.html">Review</a>
+</div>
+
+<div class="grid2" style="margin-top: 16px">
+<section class="sec">
+<h3>System</h3>
+<table class="kv"><tbody>
+<tr><td>Name</td><td>nodo.local</td></tr>
+<tr><td>Nodo version</td><td>[VERSION]</td></tr>
+<tr><td>Running for</td><td>3d</td></tr>
+<tr><td>Web GUI</td><td><span class="lbl ok">On</span> <span class="mono">https://nodo.local</span></td></tr>
+<tr><td>Data drive</td><td><span class="lbl ok">Connected</span></td></tr>
+</tbody></table>
+</section>
+<section class="sec">
+<h3>CPU, memory and storage</h3>
+<table class="kv"><tbody>
+<tr><td>CPU</td><td><div class="meter"><div class="bar"><span style="width: 14%"></span></div><span class="sub">[LOAD]% · [N] cores · [TEMP] °C</span></div></td></tr>
+<tr><td>Data drive</td><td><div class="meter"><div class="bar"><span style="width: 21%"></span></div><span class="sub">412 GB of 1.9 TB</span></div></td></tr>
+<tr><td>System</td><td><div class="meter"><div class="bar"><span style="width: 5%"></span></div><span class="sub">0.4 GB of 7.6 GB</span></div></td></tr>
+<tr><td>Memory</td><td><div class="meter"><div class="bar"><span style="width: 20%"></span></div><span class="sub">6.1 GB of 31 GB</span></div></td></tr>
+</tbody></table>
+</section>
+</div>
+
+<section class="sec">
+<h3>Apps <a href="Apps.dc.html" style="font-size: 13px; font-weight: 500">All apps</a></h3>
+<div class="tbox"><table>
+<thead><tr><th>App</th><th>State</th><th>Detail</th><th style="text-align: right">Actions</th></tr></thead>
+<tbody>
+<tr><td><strong>bell</strong></td><td><span class="lbl bad">Keeps stopping</span></td><td class="sub">restarted 3 times</td><td><div class="btns"><a class="btn" href="AppHosting.dc.html">Show log</a><button class="btn" type="button">Restart</button></div></td></tr>
+<tr><td><strong>wallet-relay</strong></td><td><span class="lbl warn">Locked until you unlock</span></td><td class="sub">needs the passphrase</td><td><div class="btns"><button class="btn" type="button">Open</button></div></td></tr>
+<tr><td><strong>monerod</strong></td><td><span class="lbl off">Stopped</span></td><td class="sub"></td><td><div class="btns"><button class="btn pos" type="button">Start</button></div></td></tr>
+<tr><td><strong>cuprated</strong></td><td><span class="lbl ok">Running</span></td><td class="sub">up 3d</td><td><div class="btns"><button class="btn" type="button">Open</button><button class="btn" type="button">Restart</button></div></td></tr>
+<tr><td><strong>tor</strong></td><td><span class="lbl ok">Running</span></td><td class="sub">up 3d</td><td><div class="btns"><button class="btn" type="button">Open</button><button class="btn" type="button">Restart</button></div></td></tr>
+<tr><td><strong>moneropay</strong></td><td><span class="lbl ok">Running</span></td><td class="sub">up 3d</td><td><div class="btns"><button class="btn" type="button">Open</button><button class="btn" type="button">Restart</button></div></td></tr>
+</tbody></table></div>
+</section>
+
+<section class="sec">
+<h3>Sites online <a href="Web.dc.html" style="font-size: 13px; font-weight: 500">Web settings</a></h3>
+<div class="tbox"><table>
+<thead><tr><th>Address</th><th>App</th><th>Reach</th><th>Certificate</th></tr></thead>
+<tbody>
+<tr><td class="mono">pay.example.com</td><td>moneropay</td><td><span class="lbl ok">Public</span></td><td class="sub">Let's Encrypt</td></tr>
+<tr><td class="mono">cuprated.local</td><td>cuprated</td><td><span class="lbl info">Home only</span></td><td class="sub">Local CA</td></tr>
+</tbody></table></div>
+</section>
+</main>
+<footer class="ftr">nodo.local · Nodo web GUI</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"header":{"editor":"enum","options":["Light","Charcoal","Navy"],"default":"Light"},"$preview":{"width":1280,"height":1250}}'>
+class Component extends DCLogic {
+renderVals() {
+const h = { Light: ' hl', Navy: ' hn', Charcoal: '' }[this.props.header ?? 'Light'] ?? ' hl';
+return { theme: 'root' + (this.props.dark ? ' dark' : '') + h };
+}
+}
+</script>
+</body>
+</html>

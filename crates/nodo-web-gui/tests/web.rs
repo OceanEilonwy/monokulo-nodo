@@ -19,9 +19,11 @@ const HOSTING: &str = "/apps/moneropay/hosting";
 /// A row of the list of sites, from its link to the next one.
 fn site_row<'a>(page: &'a Answer, site: &str) -> &'a str {
     let marker = format!(r#"href="/apps/{site}/hosting""#);
-    let start = page.body.find(&marker).unwrap_or_else(|| panic!("{site} is not listed in:\n{}", page.body));
-    let rest = &page.body[start..];
-    rest[1..].find("<a class=\"row\"").map_or(rest, |end| &rest[..end])
+    let at = page.body.find(&marker).unwrap_or_else(|| panic!("{site} is not listed in:\n{}", page.body));
+    // The table row the link is in.
+    let start = page.body[..at].rfind("<tr").unwrap_or(at);
+    let end = page.body[at..].find("</tr>").map_or(page.body.len(), |end| at + end);
+    &page.body[start..end]
 }
 
 async fn confirm(browser: &mut Browser<'_>, title: &str) -> Answer {
@@ -104,7 +106,7 @@ async fn the_internet_comes_on_only_after_the_check_and_the_address_typed() {
     let form = htmx.post(HOSTING, &[("ticks", "1"), ("local", "on"), ("public", "on")]).await;
     assert!(form.body.starts_with("<form"), "{}", form.body);
     form.assert_has(r#"name="sub" value="moneropay""#).assert_has(r#"<option value="example.com" selected>"#).assert_has("Check and save");
-    form.assert_has("Visitors will be able to see your home's internet address.").assert_has("Provider   Porkbun");
+    form.assert_has("Visitors will be able to see your home's internet address.").assert_has("<p>Porkbun</p>");
     // The address in its two parts.
     let renamed = browser.post_then(HOSTING, &[("ticks", "1"), ("local", "on"), ("public", "on"), ("sub", "donate"), ("domain", "example.com")]).await;
     renamed.assert_has(r#"name="sub" value="donate""#).assert_has("https://donate.example.com");

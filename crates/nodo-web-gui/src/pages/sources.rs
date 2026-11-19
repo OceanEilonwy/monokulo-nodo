@@ -15,7 +15,7 @@ use super::document_page;
 use nodo_ui_core::words::is_plain_http;
 use crate::ctx::{go_to, Ctx, Out};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{no_flow, Reply};
 
 const TRAIL: [(&str, &str); 3] = [("Apps", dest::APPS), ("Get apps", dest::GET_APPS), ("Sources", dest::SOURCES)];
@@ -25,15 +25,15 @@ fn trail(last: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 fn list_page(snapshot: &Snapshot) -> Page {
+    let head = layout::heading("Sources", Some("Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed."));
     let body = html! {
-        div.head {
-            h1 { "Sources" }
-            div.actions {
+        div.tools {
+            div.grow {}
+            div.btns {
                 (layout::post(&format!("{}/refresh", dest::SOURCES), "Read them again", "btn"))
                 a.btn.primary href=(dest::ADD_SOURCE) { "Add a source" }
             }
         }
-        p.lead { "Where the Nodo finds apps. Each source signs its apps; the Nodo only installs what its key signed." }
         @if snapshot.feeds.is_empty() {
             section.card { p.dim { "No sources yet. Add the address a publisher gave you." } }
         }
@@ -75,7 +75,7 @@ fn list_page(snapshot: &Snapshot) -> Page {
             }
         }
     };
-    Page { trail: trail(&[]), ..Page::new(Tab::Apps, "Sources", body) }
+    Page { trail: trail(&[]), ..Page::new(Tab::Apps, "Sources", body) }.head(head).sub(Sub::Sources)
 }
 
 /// `GET /sources`.
