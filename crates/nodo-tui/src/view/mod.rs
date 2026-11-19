@@ -15,8 +15,6 @@ mod system;
 pub mod v3;
 mod web;
 
-pub use apps::empty_catalog_line;
-
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::Frame;

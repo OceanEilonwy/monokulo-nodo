@@ -9,6 +9,7 @@ use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
 use crate::app::{App, OnionState, RestoreState, RestoreStep, RollbacksState, TICKS_PER_SECOND};
 use nodo_ui_core::flows::backup::RESTORE_WORD;
+use nodo_ui_core::words::{day, drive_name};
 use crate::theme::Theme;
 use nodo_ui_core::flows::web::onion::Row;
 
@@ -145,14 +146,6 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
 }
 
 // Restore
-
-fn drive_name(drive: &nodo_api::UsbDrive) -> String {
-    let mut name = if drive.model.is_empty() { "USB drive".to_owned() } else { drive.model.clone() };
-    if let Some(label) = &drive.label {
-        name.push_str(&format!(", {label}"));
-    }
-    name
-}
 
 fn field(t: &Theme, label: &str, value: String, focused: bool) -> Item {
     let left = Line::from(if focused { t.b(label.to_owned()) } else { t.d(label.to_owned()) });
@@ -359,21 +352,6 @@ pub fn restore(app: &App, t: &Theme, state: &RestoreState) -> Page {
 
 // Rollbacks
 
-/// The UTC date, which unlike a relative time reads the same in every snapshot.
-fn when(at: u64) -> String {
-    // Howard Hinnant's days-to-civil conversion.
-    let z = (at / 86_400) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year}-{month:02}-{day:02}")
-}
-
 pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
     let header = crumbs(t, &["System", "Updates", "Undo an update"]);
     let right = Line::from(t.d(if state.busy { "Working…" } else { "" }));
@@ -425,7 +403,7 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
         };
         happened.push(Item::Row(
             Line::from(vec![symbol, t.n(format!(" {} {} → {} ", event.package, event.from, event.to)), t.d(text)]),
-            Line::from(t.d(format!("{} ", when(event.at)))),
+            Line::from(t.d(format!("{} ", day(event.at)))),
         ));
     }
     if happened.is_empty() {

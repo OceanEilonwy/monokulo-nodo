@@ -9,18 +9,15 @@ use crate::app::*;
 use nodo_ui_core::flows::web::certs::Trust;
 use nodo_ui_core::flows::web::domain::{self, Field};
 use nodo_ui_core::model::*;
+use nodo_ui_core::words::Tone;
 use crate::theme::Theme;
 
 /// One certificate in a few words, coloured by how it stands.
 pub fn cert_status(t: &Theme, row: &CertRow) -> Span<'static> {
-    match row.state {
-        CertState::Valid => match row.days_left {
-            Some(days) => t.o(format!("✓ Valid, {days} days left")),
-            None => t.o("✓ Valid"),
-        },
-        CertState::Obtaining | CertState::Waiting => t.a("◆ Getting a certificate"),
-        CertState::Failed => t.e("✕ Not issued"),
-        CertState::Expired => t.e("✕ Expired"),
+    match nodo_ui_core::words::cert_status(row) {
+        (Tone::Good, words) => t.o(format!("✓ {words}")),
+        (Tone::Working, words) => t.a(format!("◆ {words}")),
+        (Tone::Bad, words) => t.e(format!("✕ {words}")),
     }
 }
 

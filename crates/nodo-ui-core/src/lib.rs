@@ -8,6 +8,7 @@
 //!
 //! An interface asks for work as an `Effect`; `exec` performs it against the backend and answers
 //! with `Outcome`s. What the screens work out from the device's state alone is in `queries`.
+//! Short wordings every interface shows alike are in `words`.
 //! The rules of each feature, and what its results mean, are in `flows`; start with that module's
 //! documentation before writing a frontend or a new flow.
 
@@ -27,5 +28,6 @@ pub mod queries;
 pub mod refs;
 pub mod screen;
 pub mod secret;
+pub mod words;
 
 pub use effect::{Effect, Outcome};

@@ -22,6 +22,7 @@ use nodo_ui_core::flows::web::domain;
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
+use nodo_ui_core::words::SYSTEM_ROWS;
 
 #[path = "update_more.rs"]
 mod more;
@@ -425,7 +426,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let nodo_update = app.data.updates.iter().any(|item| item.name == nodo_ui_core::model::SYSTEM_BASE && !item.held);
+    let nodo_update = nodo_ui_core::words::nodo_update(&app.data).is_some();
     let Screen::System { selected } = &mut app.screen else {
         return Vec::new();
     };

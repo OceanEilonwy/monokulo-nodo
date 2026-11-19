@@ -1187,9 +1187,6 @@ impl AppRemoveState {
     }
 }
 
-/// The rows of the System page, in order.
-pub const SYSTEM_ROWS: [&str; 5] = ["Updates", "Backups", "Network", "Device logs", "About this Nodo"];
-
 impl Screen {
     pub fn id(&self) -> ScreenId {
         match self {

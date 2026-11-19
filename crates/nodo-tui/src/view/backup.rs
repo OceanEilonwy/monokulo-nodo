@@ -9,17 +9,8 @@ use super::hints;
 use super::layout::{Item, Page, Panel};
 use crate::app::{BackupState, BackupStep};
 use nodo_ui_core::flows::backup::RESTORE_WORD;
+use nodo_ui_core::words::{drive_name, size};
 use crate::theme::Theme;
-
-fn size(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.1} GB", bytes as f64 / 1e9)
-    } else if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1e6)
-    } else {
-        format!("{:.0} KB", (bytes as f64 / 1e3).max(1.0))
-    }
-}
 
 fn field(t: &Theme, label: &str, value: String, focused: bool) -> Item {
     let left = Line::from(if focused { t.b(label.to_owned()) } else { t.d(label.to_owned()) });
@@ -200,14 +191,6 @@ pub fn backup(t: &Theme, state: &BackupState) -> Page {
                 .footer(Item::Text(hints(t, &[("↵", next)])))
         }
     }
-}
-
-fn drive_name(drive: &nodo_api::UsbDrive) -> String {
-    let mut name = if drive.model.is_empty() { "USB drive".to_owned() } else { drive.model.clone() };
-    if let Some(label) = &drive.label {
-        name.push_str(&format!(", {label}"));
-    }
-    name
 }
 
 fn usb_title(state: &BackupState) -> String {

@@ -17,6 +17,8 @@ use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::flows::web::providers::ProviderStage;
+use nodo_ui_core::flows::web::public::CgnatWay;
+use nodo_ui_core::words::{provider_field_name, provider_labels, reach_words, site_address};
 use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 use nodo_api::AliasMode;
@@ -42,34 +44,6 @@ fn label(t: &Theme, text: &str, focused: bool) -> Span<'static> {
     } else {
         t.b(text.to_owned())
     }
-}
-
-/// Who can open a site, in words.
-pub fn reach_words(site: &Site) -> &'static str {
-    let e = site.exposure;
-    match (e.local, e.onion, e.public) {
-        (_, _, true) if e.local || e.onion => "Home and internet",
-        (_, _, true) => "Internet",
-        (true, true, false) => "Home network and Tor",
-        (true, false, false) => "Home network",
-        (false, true, false) => "Tor",
-        (false, false, false) => "Not online",
-    }
-}
-
-fn site_address(site: &Site) -> String {
-    if site.exposure.public {
-        if let Some(host) = &site.public_host {
-            return format!("https://{host}");
-        }
-    }
-    if site.exposure.local && !site.local_url.is_empty() {
-        return site.local_url.clone();
-    }
-    if site.exposure.onion && !site.onion_url.is_empty() {
-        return site.onion_url.clone();
-    }
-    String::new()
 }
 
 fn short(text: &str, width: usize) -> String {
@@ -393,31 +367,6 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
     }
 }
 
-/// Each connected provider's name, numbered when the owner connected two accounts at one company.
-fn provider_labels(connected: &[ConnectedProvider]) -> Vec<String> {
-    connected
-        .iter()
-        .enumerate()
-        .map(|(index, provider)| {
-            let earlier = connected[..index].iter().filter(|p| p.name == provider.name).count();
-            if earlier == 0 { provider.name.clone() } else { format!("{} {}", provider.name, earlier + 1) }
-        })
-        .collect()
-}
-
-fn field_name(field: &str) -> String {
-    match field {
-        "api_key" => "API key".to_owned(),
-        "secret_key" => "Secret key".to_owned(),
-        "api_token" => "API token".to_owned(),
-        "personal_access_token" => "Access token".to_owned(),
-        "username" => "Username".to_owned(),
-        "access_key_id" => "AccessKey ID".to_owned(),
-        "access_key_secret" => "AccessKey secret".to_owned(),
-        other => other.replace('_', " "),
-    }
-}
-
 /// Domain providers: the list, choosing a company, its key, and done.
 pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
     let (w, h) = size(app);
@@ -539,7 +488,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
         ProviderStage::Key => {
             let provider = app.data.providers.get(state.selected);
             let name = provider.map_or("the provider", |p| p.name.as_str());
-            let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| field_name(f)).collect()).unwrap_or_default();
+            let names: Vec<String> = provider.map(|p| p.fields.iter().map(|f| provider_field_name(f)).collect()).unwrap_or_default();
             let lists = provider.is_some_and(|p| p.lists_domains);
             // Targets follow the boxes in order, the same order the keys move through.
             let mut index = 0;
@@ -746,15 +695,13 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
         card.row(t, vec![t.d(format!("  Your router's outside address  {} (in {}, the shared range)", state.wan_address, state.wan_range))]);
         card.row(t, vec![t.d(format!("  What the internet sees         {}", state.internet_address))]);
         card.blank(t);
-        for (index, option) in ["Ask your provider for a public address", "Use IPv6, if your provider has it", "Use a relay that forwards visitors"]
-            .into_iter()
-            .enumerate()
-        {
+        // Tor, the first way, is the button below.
+        for (index, option) in CgnatWay::ALL[1..].iter().map(|way| way.label()).enumerate() {
             card.row_with(t, vec![marker(t, state.choice == index + 1), t.n(format!("{option} ›"))], [Target::row(option, Click::Pick { index: index + 1, then: Some(KeyCode::Enter) })]);
         }
     }
     card.blank(t);
-    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), ("Use Tor instead", true, Click::Key(KeyCode::Char('o')))]);
+    card.buttons(t, &[("Check again", false, Click::Key(KeyCode::Char('r'))), (CgnatWay::Tor.label(), true, Click::Key(KeyCode::Char('o')))]);
     screen.before = vec![
         Item::Blank,
         trail(t, &["Apps", state.site.as_str(), "Hosting"], &mut screen.targets),
