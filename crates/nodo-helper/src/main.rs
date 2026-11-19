@@ -173,6 +173,13 @@ fn refresh_feeds_at_start<S: nodo_helper::System + 'static>(helper: Arc<Helper<S
     });
 }
 
+/// Writes installed apps' service files again with this program's generator, when a system update
+/// installed it, in the background so the socket answers at once. Apps restart only if their files
+/// changed. Locked apps are done at the next unlock.
+fn rerender_at_start<S: nodo_helper::System + 'static>(helper: Arc<Helper<S>>) {
+    std::thread::spawn(move || helper.rerender_pending());
+}
+
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--settings-worker") {
         return match worker::serve_stdio() {
@@ -227,6 +234,7 @@ fn main() -> ExitCode {
     // A system update that replaced the helper restarted it; its record says so from now on.
     helper.note_helper_started();
     let helper = Arc::new(helper);
+    rerender_at_start(helper.clone());
     watch_local_address(helper.clone());
     refresh_feeds_at_start(helper.clone());
     sync_web_gui_at_start(helper.clone());

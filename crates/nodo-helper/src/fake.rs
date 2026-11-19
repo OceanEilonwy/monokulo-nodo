@@ -606,6 +606,7 @@ pub const TEST_PATHS: fn() -> Paths = || Paths {
     }),
     bindings: "/s/bindings.toml".into(),
     screen_pin: "/s/screen-pin".into(),
+    rerender_pending: "/s/rerender-pending".into(),
 };
 
 /// Stores plain text values and writes them as a flat file, refusing any value containing

@@ -29,6 +29,7 @@ mod node;
 mod onion;
 mod owner;
 mod policy;
+mod rerender;
 pub mod radio;
 #[cfg(test)]
 mod radio_tests;
