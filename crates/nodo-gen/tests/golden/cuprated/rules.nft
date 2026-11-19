@@ -10,7 +10,9 @@ table inet monokulo {
 		meta skuid "_cuprated" oifname != "lo" meta l4proto { tcp, udp } th dport 53 accept
 		meta skuid "_cuprated" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop
 		meta skuid "_cuprated" ip6 daddr { fc00::/7, fe80::/10 } drop
-		meta skuid "_cuprated" meta l4proto tcp accept
+		meta skuid "_cuprated" ip daddr { 224.0.0.0/4, 255.255.255.255 } drop
+		meta skuid "_cuprated" ip6 daddr ff00::/8 drop
+		meta skuid "_cuprated" meta l4proto { tcp, udp } accept
 		meta skuid "_cuprated" drop
 	}
 }

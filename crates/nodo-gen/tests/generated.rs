@@ -456,7 +456,7 @@ fn private_ranges_are_blocked_after_local_grants_and_in_both_families() {
         .expect(&nft);
     let v4 = nft.find("ip daddr { 10.0.0.0/8").expect(&nft);
     let v6 = nft.find("ip6 daddr { fc00::/7").expect(&nft);
-    let tcp = nft.find("meta l4proto tcp accept").expect(&nft);
+    let tcp = nft.find("meta l4proto { tcp, udp } accept").expect(&nft);
     assert!(granted < v4 && v4 < tcp && v6 < tcp, "{nft}");
 }
 
@@ -1023,7 +1023,7 @@ fn internet_access_does_not_open_loopback() {
         .expect("loopback drop rule");
     let accept = lines
         .iter()
-        .position(|l| *l == "meta skuid \"_shop\" meta l4proto tcp accept")
+        .position(|l| *l == "meta skuid \"_shop\" meta l4proto { tcp, udp } accept")
         .expect("internet accept rule");
     assert!(
         drop < accept,
@@ -1048,7 +1048,7 @@ fn internet_access_allows_name_lookups_but_not_on_loopback() {
     assert!(dns < private, "DNS must be accepted before private ranges are dropped\n{nft}");
 }
 
-/// An app with no internet access gets no DNS hole either.
+/// An app with no internet access gets no DNS hole and no UDP either.
 #[test]
 fn no_internet_means_no_name_lookups() {
     let m = Manifest::parse_system(
@@ -1059,6 +1059,7 @@ fn no_internet_means_no_name_lookups() {
         .unwrap()
         .nft;
     assert!(!nft.contains("dport 53"), "{nft}");
+    assert!(!nft.contains("udp } accept"), "{nft}");
 }
 
 fn with_gpu(id: &str) -> Manifest {
@@ -1205,4 +1206,17 @@ fn a_gpu_grant_is_only_the_gpu() {
     assert_eq!(gpu.control_t, plain.control_t);
     assert!(gpu.run.contains("/usr/bin/nodo-confine -- /opt/nodo/apps/a/bin/a"), "{}", gpu.run);
     assert!(gpu.run.contains("\t--unshare-user --disable-userns \\\n"), "{}", gpu.run);
+}
+
+/// UDP to a multicast group or the broadcast address reaches devices on the LAN, which the
+/// private range block otherwise keeps an internet app away from.
+#[test]
+fn internet_udp_cannot_reach_the_lan_by_multicast_or_broadcast() {
+    let nft = golden_artifacts("shop").nft;
+    let accept = nft.find("meta l4proto { tcp, udp } accept").expect(&nft);
+    let v4 = nft
+        .find("ip daddr { 224.0.0.0/4, 255.255.255.255 } drop")
+        .expect(&nft);
+    let v6 = nft.find("ip6 daddr ff00::/8 drop").expect(&nft);
+    assert!(v4 < accept && v6 < accept, "{nft}");
 }

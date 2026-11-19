@@ -8,6 +8,8 @@ use crate::spec::ServiceSpec;
 
 const PRIVATE_V4: &str = "{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }";
 const PRIVATE_V6: &str = "{ fc00::/7, fe80::/10 }";
+const MULTICAST_V4: &str = "224.0.0.0/4";
+const MULTICAST_V6: &str = "ff00::/8";
 
 fn proto(protocol: Protocol) -> &'static str {
     match protocol {
@@ -76,20 +78,25 @@ pub fn nft_fragment(spec: &ServiceSpec) -> String {
     if spec.internet {
         // Name lookups. The resolver in /etc/resolv.conf comes from the DHCP lease and is usually
         // the router, a private address, and lookups go over UDP, so this must come before the
-        // private range block and the TCP-only accept. Without it every lookup is dropped and the
-        // app sees EPERM. Loopback stays closed: no resolver listens there.
+        // private range block. Without it every lookup is dropped and the app sees EPERM.
+        // Loopback stays closed: no resolver listens there.
         output.push(format!(
             "{who} oifname != \"lo\" meta l4proto {{ tcp, udp }} th dport 53 accept"
         ));
         output.push(format!("{who} ip daddr {PRIVATE_V4} drop"));
-        // `meta l4proto tcp accept` below also matches IPv6, so the block must cover it too.
+        // The internet accept below also matches IPv6, so the block must cover it too.
         output.push(format!("{who} ip6 daddr {PRIVATE_V6} drop"));
+        // UDP can be sent to a group or the whole segment, which would reach LAN devices the
+        // private range block keeps the app away from (SSDP, mDNS, broadcast discovery).
+        output.push(format!("{who} ip daddr {{ {MULTICAST_V4}, 255.255.255.255 }} drop"));
+        output.push(format!("{who} ip6 daddr {MULTICAST_V6} drop"));
         // The internet accept below would otherwise also match loopback, letting the service reach
         // every local port, such as SSH and other packages. Granted loopback ports were accepted above.
         if !spec.unrestricted_loopback {
             output.push(format!("{who} oifname \"lo\" drop"));
         }
-        output.push(format!("{who} meta l4proto tcp accept"));
+        // TCP and UDP, so QUIC (HTTP/3), NTP, STUN and other UDP protocols work too.
+        output.push(format!("{who} meta l4proto {{ tcp, udp }} accept"));
     }
     output.push(format!("{who} drop"));
 
