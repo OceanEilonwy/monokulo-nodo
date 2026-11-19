@@ -5,10 +5,10 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{edit_input, follow, notice, open_logs, pop, push, step};
+use super::{edit_input, follow, open_logs, pop, push, step};
 use crate::app::*;
 use nodo_ui_core::flows::updates::Rollbacks;
-use nodo_ui_core::flows::NoticeKind;
+use nodo_ui_core::flows::web::onion::{Onion, Row};
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -16,7 +16,7 @@ use nodo_ui_core::{Effect, Outcome};
 
 pub(super) fn open_onion(app: &mut App) -> Vec<Effect> {
     push(app, Screen::Onion(OnionState::new()));
-    vec![Effect::LoadOnion]
+    Onion::load()
 }
 
 pub(super) fn open_restore(app: &mut App) -> Vec<Effect> {
@@ -31,75 +31,33 @@ pub(super) fn open_rollbacks(app: &mut App) -> Vec<Effect> {
 
 // Onion
 
-/// The node's onion address only ever serves the restricted RPC, which cuprated always has. A site
-/// that works from a single address cannot add an onion one beside another.
 pub(super) fn onion_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Onion(state) = &mut app.screen else {
         return Vec::new();
     };
     if key.code == KeyCode::Esc {
-        pop(app);
-        return vec![Effect::Refresh];
+        let step = state.leave();
+        return follow(app, step);
     }
     if state.busy {
         return Vec::new();
     }
     let rows = state.rows();
+    let chosen = rows.get(state.selected).copied();
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows.len(), key.code == KeyCode::Down),
-        KeyCode::Char('g') => {
-            state.busy = true;
-            state.error = None;
-            return vec![Effect::LoadOnion];
-        }
-        KeyCode::Char('s') => {
-            if let (Some(OnionRow::Node), Some(node)) =
-                (rows.get(state.selected), state.status.as_ref().and_then(|s| s.node.as_ref()))
-            {
-                return vec![Effect::OpenSettings(node.provider.clone())];
-            }
-        }
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            let Some(status) = state.status.clone() else { return Vec::new() };
-            match rows.get(state.selected) {
-                Some(OnionRow::Node) => {
-                    let Some(node) = &status.node else { return Vec::new() };
-                    // cuprated always serves restricted RPC. Another node that does not say which
-                    // port is restricted cannot go on Tor, and no setting changes that.
-                    if !node.enabled && !node.restricted_rpc {
-                        state.error = Some(format!(
-                            "{} does not say which port serves its restricted RPC, so it cannot have \
-                             an onion address. The onion address only ever serves the restricted RPC.",
-                            node.provider
-                        ));
-                        return Vec::new();
-                    }
-                    state.busy = true;
-                    state.error = None;
-                    return vec![Effect::SetNodeOnion(!node.enabled)];
+        KeyCode::Char('g') => return state.flow.reload(),
+        KeyCode::Char('s') if chosen == Some(Row::Node) => return state.node_settings(),
+        KeyCode::Enter | KeyCode::Char(' ') => match chosen {
+            Some(Row::Node) => return state.flow.toggle_node(),
+            Some(Row::Site(index)) => {
+                let id = state.status.as_ref().and_then(|status| status.sites.get(index)).map(|site| site.id.clone());
+                if let Some(id) = id {
+                    return state.flow.toggle_site(&id);
                 }
-                Some(OnionRow::Site(index)) => {
-                    let Some(site) = status.sites.get(*index) else { return Vec::new() };
-                    if site.locked && !site.exposure.onion {
-                        state.error = Some(format!("{} is locked. Unlock the device first.", site.id.package));
-                        return Vec::new();
-                    }
-                    let mut exposure = site.exposure;
-                    exposure.onion = !exposure.onion;
-                    if exposure.onion && !site.multi_address && (exposure.local || exposure.public) {
-                        state.error = Some(format!(
-                            "{} works from a single address. Turn its other address off under Web first.",
-                            site.id.package
-                        ));
-                        return Vec::new();
-                    }
-                    state.busy = true;
-                    state.error = None;
-                    return vec![Effect::SetSiteExposure { site: site.id.clone(), exposure }];
-                }
-                None => {}
             }
-        }
+            None => {}
+        },
         _ => {}
     }
     Vec::new()
@@ -343,25 +301,12 @@ pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
-        Outcome::OnionLoaded(result) => {
+        Outcome::OnionLoaded(_) | Outcome::OnionChanged(_) => {
             if let Screen::Onion(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(status) => {
-                        state.status = Some(status);
-                        let len = state.rows().len();
-                        state.selected = state.selected.min(len.saturating_sub(1));
-                    }
-                    Err(e) => state.error = Some(e),
-                }
-            }
-        }
-        Outcome::OnionChanged(result) => {
-            if let Screen::Onion(state) = &mut app.screen {
-                match result {
-                    Ok(()) => notice(app, NoticeKind::Ok, "Onion exposure changed."),
-                    Err(e) => state.error = Some(e),
-                }
+                let step = state.flow.apply(&event);
+                let len = state.rows().len();
+                state.selected = state.selected.min(len.saturating_sub(1));
+                return follow(app, step);
             }
         }
         Outcome::RestoreDrives(result) => {

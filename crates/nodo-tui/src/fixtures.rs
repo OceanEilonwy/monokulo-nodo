@@ -16,6 +16,7 @@ use nodo_ui_core::flows::install::ReviewPurpose;
 use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow, PickMode, Picker};
 use nodo_ui_core::flows::updates::Rollbacks;
 use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::onion::Onion;
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
@@ -105,10 +106,8 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         }
         ScreenId::Setup => Screen::Setup(SetupState::passphrase()),
         ScreenId::Onion => Screen::Onion(OnionState {
-            status: Some(mock.onion_status()),
+            flow: Onion { status: Some(mock.onion_status()), error: None, busy: false },
             selected: 0,
-            error: None,
-            busy: false,
         }),
         ScreenId::Restore => {
             // A good stick and one that cannot be used, with the focus on the good one.

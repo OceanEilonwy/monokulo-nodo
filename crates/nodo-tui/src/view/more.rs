@@ -7,8 +7,9 @@ use ratatui::text::Line;
 
 use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{App, OnionRow, OnionState, RestoreState, RestoreStep, RollbacksState, RESTORE_WORD, TICKS_PER_SECOND};
+use crate::app::{App, OnionState, RestoreState, RestoreStep, RollbacksState, RESTORE_WORD, TICKS_PER_SECOND};
 use crate::theme::Theme;
+use nodo_ui_core::flows::web::onion::Row;
 
 pub(super) fn crumbs(t: &Theme, parts: &[&str]) -> Line<'static> {
     let mut spans = Vec::new();
@@ -71,7 +72,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
     for (index, which) in rows.iter().enumerate() {
         let selected = index == state.selected;
         match which {
-            OnionRow::Node => {
+            Row::Node => {
                 let Some(node) = &status.node else { continue };
                 let left = format!(" {} {}", checkbox(node.enabled), pad(&node.provider, 14));
                 let address = match (&node.address, node.enabled, node.restricted_rpc) {
@@ -86,7 +87,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
                     Line::from(vec![address, t.n(" ")]),
                 ));
             }
-            OnionRow::Site(i) => {
+            Row::Site(i) => {
                 let Some(site) = status.sites.get(*i) else { continue };
                 let name = if site.id.site == "web" {
                     site.id.package.clone()

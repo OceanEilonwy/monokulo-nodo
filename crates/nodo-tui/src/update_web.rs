@@ -1,10 +1,10 @@
-//! Keys and results for web flow v3: the Web tab (sites that are online), an app's Hosting, the
-//! internet checks and confirm, and domain providers.
+//! Keys for web flow v3: the Web tab (sites that are online), an app's Hosting, the internet
+//! checks and confirm, and domain providers.
 //!
-//! Safety rules kept from the earlier flow: exposures are independent flags; turning anything off
-//! never needs a confirmation; the internet is only turned on after the checks pass and the owner
-//! presses "Put … online" on a screen showing the address, with the focus starting on Cancel; and
-//! provider keys are only ever sent to the provider they were typed for, and never shown again.
+//! Only the keys, the cursors and the boxes being typed in are here. What each action does, the
+//! safety rules (the internet only after the checks and a confirm that starts on Cancel; a
+//! provider's keys only ever sent to that provider) and what every result means are the core's
+//! `flows::web`.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use nodo_api::{AliasMode, Exposure};

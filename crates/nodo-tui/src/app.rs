@@ -19,6 +19,7 @@ use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
 use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::flows::web::domain::{self, Domain};
 use nodo_ui_core::flows::web::hosting::{self, Hosting};
+use nodo_ui_core::flows::web::onion::Onion;
 use nodo_ui_core::flows::web::providers::{KeyField, Providers};
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::flows::{Notice, Question};
@@ -230,25 +231,18 @@ impl BackupState {
     }
 }
 
-/// Onion exposure: the node's restricted RPC first, then every site.
+/// The onion page: the chosen row. What Tor reports and what each switch does are the core's
+/// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnionState {
-    pub status: Option<nodo_api::OnionStatus>,
+    pub flow: Onion,
+    /// An index into the flow's `rows`.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl OnionState {
     pub fn new() -> Self {
-        Self { status: None, selected: 0, error: None, busy: true }
-    }
-
-    /// The rows in order: the node, when one is installed, then the sites.
-    pub fn rows(&self) -> Vec<OnionRow> {
-        let Some(status) = &self.status else { return Vec::new() };
-        let node = status.node.iter().map(|_| OnionRow::Node);
-        node.chain((0..status.sites.len()).map(OnionRow::Site)).collect()
+        Self { flow: Onion::new(), selected: 0 }
     }
 }
 
@@ -258,11 +252,12 @@ impl Default for OnionState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnionRow {
-    Node,
-    /// An index into `OnionStatus::sites`.
-    Site(usize),
+impl std::ops::Deref for OnionState {
+    type Target = Onion;
+
+    fn deref(&self) -> &Onion {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

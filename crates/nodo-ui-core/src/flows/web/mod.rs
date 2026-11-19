@@ -7,6 +7,7 @@
 //! - [`providers`]: connecting the companies web addresses were bought from.
 //! - [`domain`]: the certificate settings and how local sites are named.
 //! - [`certs`]: following a certificate, and the local CA.
+//! - [`onion`]: the node's onion address and each site's Tor switch.
 //!
 //! Safety rules: exposures are independent flags; turning anything off never needs a
 //! confirmation; the internet is only turned on after the checks and after the owner confirmed on
@@ -15,6 +16,7 @@
 pub mod certs;
 pub mod domain;
 pub mod hosting;
+pub mod onion;
 pub mod providers;
 pub mod public;
 
