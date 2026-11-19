@@ -218,6 +218,13 @@ pub trait DnsProvider: Send + Sync {
         Ok(None)
     }
 
+    /// [`Self::list_domains`], together with the account's domains these credentials may not change
+    /// and why, for a provider that can tell. An owner who misses a domain then reads the reason
+    /// instead of an unexplained shorter list.
+    fn domain_listing(&self) -> Result<Option<DomainListing>, DnsError> {
+        Ok(self.list_domains()?.map(DomainListing::from))
+    }
+
     /// Writes, reads back and removes a temporary record, proving the credentials can do real work.
     fn test(&self) -> Result<TestReport, DnsError> {
         let mut nonce = [0u8; 4];
@@ -268,6 +275,10 @@ pub trait IdRecords: Send + Sync {
     fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
         Ok(None)
     }
+    /// See [`DnsProvider::domain_listing`].
+    fn domain_listing(&self) -> Result<Option<DomainListing>, DnsError> {
+        Ok(self.list_domains()?.map(DomainListing::from))
+    }
 }
 
 #[derive(Debug)]
@@ -314,6 +325,34 @@ impl<S: IdRecords> DnsProvider for IdBacked<S> {
 
     fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
         self.0.list_domains()
+    }
+
+    fn domain_listing(&self) -> Result<Option<DomainListing>, DnsError> {
+        self.0.domain_listing()
+    }
+}
+
+/// What a provider says about the domains of an account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DomainListing {
+    /// The domains the credentials may change: valid names, sorted, without repeats.
+    pub usable: Vec<String>,
+    /// Domains in the account the credentials may not change, sorted by name.
+    pub blocked: Vec<BlockedDomain>,
+}
+
+/// A domain the account holds that the credentials cannot change yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockedDomain {
+    pub name: String,
+    /// What the owner changes at the provider to make the domain usable. Fixed text, never the
+    /// provider's own words.
+    pub reason: String,
+}
+
+impl From<Vec<String>> for DomainListing {
+    fn from(usable: Vec<String>) -> Self {
+        Self { usable, blocked: Vec::new() }
     }
 }
 

@@ -207,6 +207,9 @@ impl MockBackend {
                 domains: vec![ConnectedDomain { name: s("example.com"), used_by: Vec::new(), held_by: None }],
                 lists_domains: true,
                 problem: None,
+                key: Some((s("api_key"), s("pk1_3f9a…c2d1"))),
+                checked: Some(s("Just now")),
+                blocked: Vec::new(),
             }],
             auto_update: sample_auto_update(),
             knobs: TestKnobs::default(),
@@ -1439,7 +1442,26 @@ impl ScreenData for MockBackend {
         let domains = names.iter().map(|name| ConnectedDomain { name: name.clone(), used_by: Vec::new(), held_by: held(name) }).collect();
         let kind = provider.to_lowercase().replace([' ', '.'], "");
         let id = (1..).map(|n| if n == 1 { kind.clone() } else { format!("{kind}-{n}") }).find(|id| !self.connected.iter().any(|p| &p.id == id)).unwrap_or(kind);
-        let added = ConnectedProvider { id, name: s(provider), domains, lists_domains: entry.lists_domains, problem: None };
+        // The hint as the helper makes it: the ends of an identifier, the last four of a lone token.
+        let shown: Vec<char> = api_key.expose().trim().chars().collect();
+        let tail: String = shown[shown.len().saturating_sub(4)..].iter().collect();
+        let hint = if entry.fields.len() > 1 && shown.len() >= 24 {
+            format!("{}…{tail}", shown[..8].iter().collect::<String>())
+        } else if shown.len() >= 16 {
+            format!("…{tail}")
+        } else {
+            s("…")
+        };
+        let added = ConnectedProvider {
+            id,
+            name: s(provider),
+            domains,
+            lists_domains: entry.lists_domains,
+            problem: None,
+            key: entry.fields.first().map(|field| (field.clone(), hint)),
+            checked: Some(s("Just now")),
+            blocked: Vec::new(),
+        };
         self.connected.push(added.clone());
         self.sync_web_domain();
         Ok(added)
@@ -1457,6 +1479,10 @@ impl ScreenData for MockBackend {
     }
 
     fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String> {
+        // The helper cannot open a sealed key while the device is locked.
+        if self.key_locked {
+            return Err(ApiError::Locked("unlock the device to use the DNS provider".to_owned()).to_string());
+        }
         self.connected_providers().into_iter().find(|p| p.id == id).ok_or_else(|| format!("no connected provider is called {id}"))
     }
 

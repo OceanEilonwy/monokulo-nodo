@@ -1131,6 +1131,9 @@ fn connected(provider: nodo_api::DomainProvider) -> ConnectedProvider {
             .collect(),
         lists_domains: provider.lists_domains,
         problem: provider.problem,
+        key: provider.key.map(|key| (key.field, key.hint)),
+        checked: provider.checked_at.map(ago),
+        blocked: provider.blocked.into_iter().map(|d| (d.name, d.reason)).collect(),
     }
 }
 
