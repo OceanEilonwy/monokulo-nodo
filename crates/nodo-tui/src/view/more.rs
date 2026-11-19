@@ -7,7 +7,8 @@ use ratatui::text::Line;
 
 use super::layout::{Item, Page, Panel};
 use super::{checkbox, hints, mark, pad};
-use crate::app::{App, OnionState, RestoreState, RestoreStep, RollbacksState, RESTORE_WORD, TICKS_PER_SECOND};
+use crate::app::{App, OnionState, RestoreState, RestoreStep, RollbacksState, TICKS_PER_SECOND};
+use nodo_ui_core::flows::backup::RESTORE_WORD;
 use crate::theme::Theme;
 use nodo_ui_core::flows::web::onion::Row;
 

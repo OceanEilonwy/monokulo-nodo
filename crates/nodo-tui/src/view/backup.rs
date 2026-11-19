@@ -7,7 +7,8 @@ use ratatui::text::Line;
 
 use super::hints;
 use super::layout::{Item, Page, Panel};
-use crate::app::{BackupState, BackupStep, RESTORE_WORD};
+use crate::app::{BackupState, BackupStep};
+use nodo_ui_core::flows::backup::RESTORE_WORD;
 use crate::theme::Theme;
 
 fn size(bytes: u64) -> String {

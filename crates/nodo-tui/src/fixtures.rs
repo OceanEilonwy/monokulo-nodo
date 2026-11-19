@@ -121,7 +121,10 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
                 read_only: false,
                 problem: Some("it has no filesystem".to_owned()),
             });
-            Screen::Restore(RestoreState { drives, busy: false, ..RestoreState::new() })
+            let mut state = RestoreState::new();
+            state.drives = drives;
+            state.busy = false;
+            Screen::Restore(state)
         }
         ScreenId::Rollbacks => Screen::Rollbacks(RollbacksState {
             flow: Rollbacks {

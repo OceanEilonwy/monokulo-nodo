@@ -62,6 +62,7 @@
 //! **Tests.** Each flow has unit tests here against `MockBackend`: actions are run with
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
+pub mod backup;
 pub mod documents;
 pub mod drive;
 pub mod install;
@@ -216,6 +217,9 @@ pub enum Dest {
     /// Back to the Hosting page that sent the owner to add a provider, which now has one: its
     /// draft takes the domains the new key controls (`Hosting::provider_connected`).
     HostingWithProvider { domains: Vec<String> },
+    /// The device was set up from a backup, on first boot. The restore's page is left, and the
+    /// first-setup page under it now offers the SSH keys, as it does after a passphrase is chosen.
+    SetUpFromBackup,
     /// The site is on the internet. Every page that led there is left for the list of sites
     /// that are online; a frontend that was showing the confirmation shows, on top of that list,
     /// the page following the secure connection (`PublicConfirm::certificate`).

@@ -5,11 +5,13 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{edit_input, follow, open_logs, pop, push, step};
-use crate::app::*;
-use nodo_ui_core::flows::updates::Rollbacks;
-use nodo_ui_core::flows::web::onion::{Onion, Row};
+use super::{edit_input, follow, open_logs, push, step};
 use nodo_ui_core::secret::Input;
+use crate::app::*;
+use nodo_ui_core::flows::backup::{self, Restore};
+use nodo_ui_core::flows::updates::Rollbacks;
+use nodo_ui_core::flows::Step;
+use nodo_ui_core::flows::web::onion::{Onion, Row};
 use nodo_ui_core::{Effect, Outcome};
 
 // Entry points
@@ -21,7 +23,7 @@ pub(super) fn open_onion(app: &mut App) -> Vec<Effect> {
 
 pub(super) fn open_restore(app: &mut App) -> Vec<Effect> {
     push(app, Screen::Restore(RestoreState::new()));
-    vec![Effect::LoadRestoreDrives]
+    Restore::load()
 }
 
 pub(super) fn open_rollbacks(app: &mut App) -> Vec<Effect> {
@@ -77,145 +79,64 @@ pub(super) fn restore_input(step: &mut RestoreStep) -> Option<&mut Input> {
     }
 }
 
-/// Rebuilds a device that is not set up from a USB backup: choose the drive, then the backup,
-/// open it with its passphrase, see what comes back, type the word and a new device passphrase
-/// twice. Nothing changes until then, and a failure leaves the device not set up.
+/// The first-boot restore: the keys of each step. What each step asks, checks and does is the
+/// core's `Restore`.
 pub(super) fn restore_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    use backup::Field;
     let ticks = app.ticks;
     let Screen::Restore(state) = &mut app.screen else {
         return Vec::new();
     };
-    // Leaving the drive list is always safe, even while it is being read again. A late answer
-    // then finds another screen and is dropped.
-    if state.busy && key.code == KeyCode::Esc && state.step == RestoreStep::Drives {
-        pop(app);
+    // Leaving the drive list is always safe, even while it is being read again.
+    if state.flow.busy && !(key.code == KeyCode::Esc && state.step == RestoreStep::Drives) {
         return Vec::new();
     }
-    if state.busy {
-        return Vec::new();
-    }
-    let mut effects = Vec::new();
-    let mut next = None;
-    let mut leave = false;
-    let mut finished = false;
+    let mut next = Step::Stay;
     match &mut state.step {
         RestoreStep::Drives => match key.code {
-            KeyCode::Down | KeyCode::Up => step(&mut state.selected, state.drives.len(), key.code == KeyCode::Down),
-            KeyCode::Char('g') => {
-                state.busy = true;
-                effects.push(Effect::LoadRestoreDrives);
+            KeyCode::Down | KeyCode::Up => step(&mut state.selected, state.flow.drives.len(), key.code == KeyCode::Down),
+            KeyCode::Char('g') => next = Step::run(state.flow.reload()),
+            KeyCode::Enter => {
+                // With no drive listed there is no name, and the core says so.
+                let device = state.flow.drives.get(state.selected).map(|drive| drive.device.clone()).unwrap_or_default();
+                next = Step::run(state.flow.choose_drive(&device));
             }
-            KeyCode::Enter => match state.drives.get(state.selected) {
-                Some(drive) if drive.problem.is_some() => {
-                    let problem = drive.problem.clone().unwrap_or_default();
-                    state.error = Some(format!("{} cannot be used: {problem}", drive.device));
-                    return effects;
-                }
-                Some(drive) => {
-                    let device = drive.device.clone();
-                    state.busy = true;
-                    state.backups = None;
-                    effects.push(Effect::LoadRestoreBackups(device.clone()));
-                    next = Some(RestoreStep::Backups { device });
-                }
-                None => {
-                    state.error = Some("No USB drive is plugged in. Plug one in and press g.".to_owned());
-                    return effects;
-                }
-            },
-            KeyCode::Esc => leave = true,
+            KeyCode::Esc => next = state.flow.back(),
             _ => {}
         },
-        RestoreStep::Backups { device } => {
-            let len = state.backups.as_ref().map_or(0, |b| b.backups.len());
+        RestoreStep::Backups { .. } => {
+            let len = state.flow.backups.as_ref().map_or(0, |b| b.backups.len());
             match key.code {
                 KeyCode::Down | KeyCode::Up => step(&mut state.selected, len, key.code == KeyCode::Down),
-                KeyCode::Char('g') => {
-                    state.busy = true;
-                    effects.push(Effect::LoadRestoreBackups(device.clone()));
-                }
+                KeyCode::Char('g') => next = Step::run(state.flow.reload()),
                 KeyCode::Enter => {
-                    match state.backups.as_ref().and_then(|b| b.backups.get(state.selected)) {
-                        Some(backup) => {
-                            next = Some(RestoreStep::Passphrase {
-                                device: device.clone(),
-                                name: backup.name.clone(),
-                                passphrase: Input::secret(),
-                            })
-                        }
-                        None => {
-                            state.error = Some("This drive holds no monokulo-nodo backups.".to_owned());
-                            return effects;
-                        }
-                    }
+                    let name = state.flow.backups.as_ref().and_then(|b| b.backups.get(state.selected)).map(|b| b.name.clone());
+                    state.flow.choose_backup(&name.unwrap_or_default());
                 }
                 KeyCode::Esc => {
                     state.selected = 0;
-                    next = Some(RestoreStep::Drives);
+                    next = state.flow.back();
                 }
                 _ => {}
             }
         }
-        RestoreStep::Passphrase { device, name, passphrase } => match key.code {
-            KeyCode::Esc => {
-                let device = device.clone();
-                next = Some(RestoreStep::Backups { device });
-            }
-            KeyCode::Enter if passphrase.is_empty() => {
-                state.error = Some("Type the backup passphrase.".to_owned());
-                return effects;
-            }
-            KeyCode::Enter => {
-                state.busy = true;
-                state.error = None;
-                effects.push(Effect::InspectRestore {
-                    device: device.clone(),
-                    name: name.clone(),
-                    passphrase: passphrase.take_secret(),
-                });
-            }
+        RestoreStep::Passphrase { passphrase, .. } => match key.code {
+            KeyCode::Esc => next = state.flow.back(),
+            KeyCode::Enter => next = Step::run(state.flow.inspect(passphrase)),
             _ => {
                 edit_input(passphrase, key);
             }
         },
-        RestoreStep::Confirm { device, name, passphrase, typed, first, second, field, .. } => match key.code {
-            KeyCode::Esc => {
-                let device = device.clone();
-                next = Some(RestoreStep::Backups { device });
-            }
+        RestoreStep::Confirm { typed, first, second, field, .. } => match key.code {
+            KeyCode::Esc => next = state.flow.back(),
             KeyCode::Tab | KeyCode::Down => *field = (*field + 1) % 3,
             KeyCode::BackTab | KeyCode::Up => *field = (*field + 2) % 3,
-            KeyCode::Enter => {
-                if typed.text().trim() != RESTORE_WORD {
-                    state.error = Some(format!("Type {RESTORE_WORD} to confirm."));
-                    *field = 0;
-                } else if first.secret_value().expose().chars().count() < nodo_ui_core::flows::setup::MIN_PASSPHRASE_CHARS {
-                    state.error = Some(format!(
-                        "Choose a new device passphrase of at least {} characters.",
-                        nodo_ui_core::flows::setup::MIN_PASSPHRASE_CHARS
-                    ));
-                    *field = 1;
-                } else if first.secret_value() != second.secret_value() {
-                    state.error = Some("The two device passphrases differ. Type them again.".to_owned());
-                    first.clear();
-                    second.clear();
-                    *field = 1;
-                } else {
-                    state.busy = true;
-                    second.clear();
-                    effects.push(Effect::RunRestore {
-                        device: device.clone(),
-                        name: name.clone(),
-                        passphrase: passphrase.clone(),
-                        new_device_passphrase: first.take_secret(),
-                        typed: RESTORE_WORD.to_owned(),
-                    });
-                    next = Some(RestoreStep::Restoring { device: device.clone(), name: name.clone(), started: ticks });
-                }
-                if next.is_none() {
-                    return effects;
-                }
-            }
+            KeyCode::Enter => match state.flow.restore(typed.text(), first, second) {
+                Ok(effects) => next = Step::run(effects),
+                Err(Some(Field::Word)) => *field = 0,
+                Err(Some(_)) => *field = 1,
+                Err(None) => {}
+            },
             _ => {
                 let input = match field {
                     0 => typed,
@@ -226,46 +147,25 @@ pub(super) fn restore_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         },
         RestoreStep::Restoring { .. } => {}
-        RestoreStep::Failed { device, name, .. } => match key.code {
-            KeyCode::Enter => {
-                next = Some(RestoreStep::Passphrase {
-                    device: device.clone(),
-                    name: name.clone(),
-                    passphrase: Input::secret(),
-                })
-            }
+        RestoreStep::Failed { .. } => match key.code {
+            KeyCode::Enter => state.flow.retry(),
             KeyCode::Esc => {
                 state.selected = 0;
-                state.busy = true;
-                effects.push(Effect::LoadRestoreDrives);
-                next = Some(RestoreStep::Drives);
+                next = state.flow.back();
             }
             _ => {}
         },
         RestoreStep::Done(_) => {
             if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
-                finished = true;
+                next = state.flow.finish();
             }
         }
     }
-    if let Some(step) = next {
-        state.error = None;
-        state.step = step;
-    }
-    if finished {
-        // Set up from the backup. SSH keys are offered next, as after a first-boot setup.
-        pop(app);
-        if let Screen::Setup(setup) = &mut app.screen {
-            *setup = SetupState::keys();
-        }
-        return vec![Effect::LoadSshKeys, Effect::Refresh];
-    }
-    if leave {
-        pop(app);
-    }
-    effects
+    state.sync(ticks);
+    follow(app, next)
 }
 
+// Rollbacks
 // Rollbacks
 
 pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -309,70 +209,17 @@ pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                 return follow(app, step);
             }
         }
-        Outcome::RestoreDrives(result) => {
+        Outcome::RestoreDrives(_) | Outcome::RestoreBackups(_) | Outcome::RestoreInspected(_) | Outcome::RestoreFinished(_) => {
+            let ticks = app.ticks;
             if let Screen::Restore(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(drives) => {
-                        state.selected = state.selected.min(drives.len().saturating_sub(1));
-                        state.drives = drives;
-                        state.error = None;
-                    }
-                    Err(e) => state.error = Some(e),
+                let next = state.flow.apply(&event);
+                state.sync(ticks);
+                match event {
+                    Outcome::RestoreDrives(Ok(_)) => state.selected = state.selected.min(state.flow.drives.len().saturating_sub(1)),
+                    Outcome::RestoreBackups(Ok(_)) => state.selected = 0,
+                    _ => {}
                 }
-            }
-        }
-        Outcome::RestoreBackups(result) => {
-            if let Screen::Restore(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(list) => {
-                        state.selected = 0;
-                        state.backups = Some(list);
-                    }
-                    Err(e) => {
-                        state.step = RestoreStep::Drives;
-                        state.error = Some(e);
-                    }
-                }
-            }
-        }
-        Outcome::RestoreInspected(result) => {
-            if let Screen::Restore(state) = &mut app.screen {
-                state.busy = false;
-                if let RestoreStep::Passphrase { device, name, passphrase } = &mut state.step {
-                    match result {
-                        Ok(contents) => {
-                            state.step = RestoreStep::Confirm {
-                                device: device.clone(),
-                                name: name.clone(),
-                                passphrase: passphrase.take_secret(),
-                                contents,
-                                typed: Input::plain(""),
-                                first: Input::secret(),
-                                second: Input::secret(),
-                                field: 0,
-                            };
-                        }
-                        Err(e) => {
-                            passphrase.clear();
-                            state.error = Some(e);
-                        }
-                    }
-                }
-            }
-        }
-        Outcome::RestoreFinished(result) => {
-            if let Screen::Restore(state) = &mut app.screen {
-                state.busy = false;
-                let (device, name) = match &state.step {
-                    RestoreStep::Restoring { device, name, .. } => (device.clone(), name.clone()),
-                    _ => (String::new(), String::new()),
-                };
-                state.step = match result {
-                    Ok(report) => RestoreStep::Done(report),
-                    Err(reason) => RestoreStep::Failed { device, name, reason },
-                };
+                return follow(app, next);
             }
         }
         _ => {}

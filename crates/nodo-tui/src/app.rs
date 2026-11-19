@@ -8,7 +8,7 @@
 use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
-use nodo_ui_core::effect::UsbView;
+use nodo_ui_core::flows::backup::{self, Backups, Restore};
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::services::AppPage;
@@ -171,67 +171,95 @@ impl std::ops::DerefMut for SetupState {
     }
 }
 
+/// The boxes of the Backups page's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupStep {
     List,
     /// The device passphrase, when the device has one, then the backup passphrase twice.
     Create { device: Input, first: Input, second: Input, field: usize },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Unlock { name: String, passphrase: Input },
-    /// What a restore replaces, the typed word, and a new device passphrase when it holds a key.
-    Confirm { name: String, passphrase: Secret, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
+    /// The typed word, and a new device passphrase when the restore asks for one.
+    Confirm { name: String, contents: nodo_api::BackupContents, typed: Input, device: Input, field: usize },
     Restored(nodo_api::RestoreReport),
 }
 
+/// The Backups page: the chosen rows and the boxes. The lists, the order of the steps and what
+/// each one checks are the core's `Backups`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupState {
-    pub list: Vec<nodo_api::BackupInfo>,
+    pub flow: Backups,
     pub selected: usize,
     pub step: BackupStep,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The device key exists, so a backup asks for the device passphrase to include it.
-    pub device_set_up: bool,
-    /// The USB drive, `None` while none is plugged in.
-    pub usb: Option<UsbView>,
     /// The USB list has the focus rather than the device's own list.
     pub usb_focused: bool,
     pub usb_selected: usize,
-    /// The removable drive the step under way uses, `None` for the device's own backups.
-    pub target: Option<String>,
-    /// First boot: restoring a whole device from a USB drive instead of setting it up.
-    pub fresh: bool,
 }
 
 impl BackupState {
     pub fn new(device_set_up: bool) -> Self {
-        Self {
-            list: Vec::new(),
-            selected: 0,
-            step: BackupStep::List,
-            error: None,
-            busy: true,
-            device_set_up,
-            usb: None,
-            usb_focused: false,
-            usb_selected: 0,
-            target: None,
-            fresh: false,
-        }
+        Self::of(Backups::new(device_set_up))
     }
 
     /// The first-boot restore, which only offers USB drives.
     pub fn fresh() -> Self {
-        Self { usb_focused: true, fresh: true, ..Self::new(false) }
+        Self { usb_focused: true, ..Self::of(Backups::fresh()) }
     }
 
-    /// Backups on the USB drive, when one can be used.
-    pub fn usb_list(&self) -> &[nodo_api::BackupInfo] {
-        self.usb.as_ref().and_then(|u| u.list.as_ref()).map(|l| l.backups.as_slice()).unwrap_or(&[])
+    pub fn of(flow: Backups) -> Self {
+        Self { flow, selected: 0, step: BackupStep::List, usb_focused: false, usb_selected: 0 }
+    }
+
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    pub fn sync(&mut self) {
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (backup::Stage::List, BackupStep::List)
+                | (backup::Stage::Create, BackupStep::Create { .. })
+                | (backup::Stage::Unlock { .. }, BackupStep::Unlock { .. })
+                | (backup::Stage::Confirm { .. }, BackupStep::Confirm { .. })
+                | (backup::Stage::Restored(_), BackupStep::Restored(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            backup::Stage::List => BackupStep::List,
+            backup::Stage::Create => BackupStep::Create {
+                device: Input::secret(),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: if self.flow.asks_device_passphrase() { 0 } else { 1 },
+            },
+            backup::Stage::Unlock { name } => BackupStep::Unlock { name: name.clone(), passphrase: Input::secret() },
+            backup::Stage::Confirm { name, contents, .. } => BackupStep::Confirm {
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                device: Input::secret(),
+                field: 0,
+            },
+            backup::Stage::Restored(report) => BackupStep::Restored(report.clone()),
+        };
     }
 }
 
-/// The onion page: the chosen row. What Tor reports and what each switch does are the core's
+impl std::ops::Deref for BackupState {
+    type Target = Backups;
+
+    fn deref(&self) -> &Backups {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for BackupState {
+    fn deref_mut(&mut self) -> &mut Backups {
+        &mut self.flow
+    }
+}
+
+/// The onion page: the chosen row./// The onion page: the chosen row. What Tor reports and what each switch does are the core's
 /// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnionState {
@@ -260,19 +288,20 @@ impl std::ops::Deref for OnionState {
     }
 }
 
+/// The boxes of the first-boot restore's step and which one has the focus. Always the step of
+/// `flow.stage`, with a copy of what that stage shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreStep {
     /// Every removable drive, with why one cannot be used.
     Drives,
     /// The backups on the chosen drive.
     Backups { device: String },
-    /// The backup passphrase. The helper verifies the whole file before showing what it holds.
+    /// The backup passphrase.
     Passphrase { device: String, name: String, passphrase: Input },
     /// What comes back, the typed word and a new device passphrase, twice.
     Confirm {
         device: String,
         name: String,
-        passphrase: Secret,
         contents: nodo_api::BackupContents,
         typed: Input,
         first: Input,
@@ -286,24 +315,60 @@ pub enum RestoreStep {
     Done(nodo_api::RestoreReport),
 }
 
-/// The first-boot restore from a USB drive.
+/// The first-boot restore from a USB drive: the chosen row and the boxes. The drives, the order
+/// of the steps and what each one checks are the core's `Restore`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreState {
-    pub drives: Vec<nodo_api::UsbDrive>,
-    pub backups: Option<nodo_api::UsbBackupList>,
+    pub flow: Restore,
     pub selected: usize,
     pub step: RestoreStep,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl RestoreState {
     pub fn new() -> Self {
-        Self { drives: Vec::new(), backups: None, selected: 0, step: RestoreStep::Drives, error: None, busy: true }
+        Self { flow: Restore::new(), selected: 0, step: RestoreStep::Drives }
     }
 
-    pub fn drive(&self, device: &str) -> Option<&nodo_api::UsbDrive> {
-        self.drives.iter().find(|d| d.device == device)
+    /// Brings the boxes in line with the step the flow is on. A step that stays keeps its boxes.
+    /// `now` is the tick, for a restore that starts.
+    pub fn sync(&mut self, now: u64) {
+        use backup::RestoreStage as Stage;
+        let same = matches!(
+            (&self.flow.stage, &self.step),
+            (Stage::Drives, RestoreStep::Drives)
+                | (Stage::Backups { .. }, RestoreStep::Backups { .. })
+                | (Stage::Passphrase { .. }, RestoreStep::Passphrase { .. })
+                | (Stage::Confirm { .. }, RestoreStep::Confirm { .. })
+                | (Stage::Restoring { .. }, RestoreStep::Restoring { .. })
+                | (Stage::Failed { .. }, RestoreStep::Failed { .. })
+                | (Stage::Done(_), RestoreStep::Done(_))
+        );
+        if same {
+            return;
+        }
+        self.step = match &self.flow.stage {
+            Stage::Drives => RestoreStep::Drives,
+            Stage::Backups { device } => RestoreStep::Backups { device: device.clone() },
+            Stage::Passphrase { device, name } => {
+                RestoreStep::Passphrase { device: device.clone(), name: name.clone(), passphrase: Input::secret() }
+            }
+            Stage::Confirm { device, name, contents, .. } => RestoreStep::Confirm {
+                device: device.clone(),
+                name: name.clone(),
+                contents: contents.clone(),
+                typed: Input::plain(""),
+                first: Input::secret(),
+                second: Input::secret(),
+                field: 0,
+            },
+            Stage::Restoring { device, name } => {
+                RestoreStep::Restoring { device: device.clone(), name: name.clone(), started: now }
+            }
+            Stage::Failed { device, name, reason } => {
+                RestoreStep::Failed { device: device.clone(), name: name.clone(), reason: reason.clone() }
+            }
+            Stage::Done(report) => RestoreStep::Done(report.clone()),
+        };
     }
 }
 
@@ -313,7 +378,21 @@ impl Default for RestoreState {
     }
 }
 
-/// The page that undoes an update: the chosen row. The list, what is running and how the last
+impl std::ops::Deref for RestoreState {
+    type Target = Restore;
+
+    fn deref(&self) -> &Restore {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for RestoreState {
+    fn deref_mut(&mut self) -> &mut Restore {
+        &mut self.flow
+    }
+}
+
+/// The page that undoes an update: the chosen row./// The page that undoes an update: the chosen row. The list, what is running and how the last
 /// rollback went are the core's `Rollbacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbacksState {
@@ -489,9 +568,6 @@ impl Default for NetworkState {
         Self::new()
     }
 }
-
-/// The helper also requires this word, so the check here only saves a round trip.
-pub const RESTORE_WORD: &str = nodo_api::RESTORE_WORD;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFeedState {
