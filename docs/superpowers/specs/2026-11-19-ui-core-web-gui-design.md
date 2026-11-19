@@ -1,8 +1,10 @@
 # Shared UI core and a web GUI: design
 
-Date: 2026-11-19. Status: the owner asked for the work to proceed without further questions; the
-calls below stand as made, and "Review resolutions" at the end overrides the text above it where
-they differ.
+Date: 2026-11-19. Status: built, both parts. The owner asked for the work to proceed without
+further questions; the calls below stand as made, "Review resolutions" overrides the text above it
+where they differ, and "As built" at the end lists where what was built differs from both.
+docs/ARCHITECTURE.md ("Web GUI", and the Layout entries for `nodo-ui-core` and `nodo-web-gui`)
+describes the result.
 
 ## Intent
 
@@ -446,3 +448,85 @@ to login) and `Setup`'s passphrase steps. `Setup`'s SSH-keys step is not in `Scr
 **Step 1.** `fixtures.rs` stays in the TUI.
 
 **htmx.** htmx 4.0.2 (npm tag `next`) is the version vendored.
+
+## As built
+
+Where what was built differs from the text above. Each item names what stands now.
+
+**The process and Caddy**
+
+- **Unix socket upstream.** `nodo-web-gui` listens on `/run/nodo-web-gui/http.sock`, not on
+  `127.0.0.1:10082`, and Caddy dials that. A loopback port could be taken by any app before the web
+  GUI started; the socket's directory (2750, `_nodo_webgui:_caddy`) lets only the web GUI's account
+  and Caddy's group in. Port 10082 is not reserved, and the firewall rule that guarded it is gone:
+  `_nodo_webgui` may send nothing on the network at all.
+- **By name only.** The route answers `https://nodo.local` and not the bare local address: a
+  browser sends no server name for an address, and the local listener's TLS policies answer only
+  the names they know. The plain HTTP trust page still answers by the address.
+- **Host check.** The process refuses a request whose `Host` is not `nodo.local` (421). The design
+  only asked for the `Origin` check on requests that change something, which is there too and
+  accepts a `Referer` of the same origin when a browser sends no `Origin`.
+- **Referrer-Policy.** `same-origin`, not `no-referrer`, so that the `Referer` fallback of the
+  origin check works; every other site still gets none.
+- **`app.js`.** htmx is not the only script: a few compiled-in lines give a question's dialog the
+  keyboard focus and Escape, and make the Copy buttons work. Nothing depends on scripts; every page
+  works as plain links and forms.
+- **Caddy after an upgrade.** Caddy's sandbox has `/run/nodo-web-gui` only if the directory existed
+  when Caddy started, so a Caddy that was running before the upgrade must be restarted once.
+- **hyper** is not a direct dependency; it comes with axum.
+
+**The core**
+
+- **`Step::All`.** Beside `Stay`, `Done`, `Failed`, `Ask`, `Go` and `Run`, a step can be several of
+  them followed in order (a notice and a page to go to, a page and effects to run there).
+- **Hints.** The core's words name no key and no button. A message that points at something to do
+  carries a `Hint` (on a `Notice`, from a flow's `error_hint()`, on a description or a log's
+  advice); the terminal turns it into its key (`nodo_tui::keys`), the web GUI into a link or the
+  button (`nodo_web_gui::hints`), the touchscreen into its own words.
+- **`take_refusals`.** The touchscreen's "ask for the PIN and run again" is a `take_refusals()` on
+  the backend that gives every different typed refusal a batch met, each once, and
+  `Finished::Batch` carries them, since one batch can be refused twice for different reasons.
+- **`words`.** The short wordings every interface shows alike have a module of their own beside
+  `flows` and `queries`, which the design did not name.
+- **Long calls are the core's to name.** `Effect::is_long`, `Step::is_long` and `Confirm::is_long`
+  say which calls take minutes; the web GUI starts a job for exactly those.
+- **The landing rule** (first setup, the data drive's page, or Home) is `Snapshot::landing`.
+- **The web GUI's state is in the snapshot.** `Snapshot::web_gui` is read with everything else
+  (`WebGuiStatus`), instead of each interface asking for it.
+- **`Dest::HostingWithProvider`** does not name its site: the provider pages are opened from
+  several places and keep nothing about the one that opened them, so the interface that sent the
+  owner there knows where to return. `Dest::LeaveHosting`, `Dest::WentPublic` and
+  `Confirm::DiscardSettings` do name theirs.
+- **A rollback the helper refused** gives no notice from `Rollbacks::apply`; its line on the page
+  is `words::rollback_result`, shared by the three interfaces. A notice as well would have changed
+  the terminal's behaviour.
+- **The mock plays the web GUI's socket** (`knobs.web_socket`, `MockBackend::web_gui`), so the web
+  GUI's tests and `--mock` log in, log out and ask for the status with the helper's own requests.
+
+**The interfaces**
+
+- **Snapshots.** The terminal has 40 screens, not 39: `ScreenId::WebGui` is the page with the web
+  GUI's switch, and the System tab gained its row. Those are the only two snapshot files that
+  changed or were added. The new screen has no design file under `docs/design/tui`.
+- **The touchscreen's hosting confirmation** is a dialog over the Hosting page that starts on
+  Cancel, with the address typed into it, and not a page of its own.
+- **Turning the web GUI on or off on the web** is not offered, as the parity table says; the
+  web GUI's System page shows the state and what the terminal's page explains, and the
+  touchscreen's System page shows one row.
+- **Web sessions.** A session whose job is running is not idle; a browser that logs in again keeps
+  one place of the four; stopping the process waits five seconds for requests in flight.
+- **URLs.** Pages that belong to one app or one offer sit under it (`/apps/<id>/hosting/check`,
+  `/apps/get/<feed>/<package>/review`), sources' own pages under `/sources/of/<name>`, and the
+  shared pages are `/confirm`, `/working`, `/document` and `/unlock`. `/system/restore` does not
+  exist, as resolved.
+- **Mockups** of the four screens were not shown to the owner before the build, since the owner
+  asked for the work to proceed without questions; the look follows the touchscreen's tokens.
+
+**Tests and packaging**
+
+- **The end-to-end test** (`tests/web-gui-e2e.sh`) runs inside the dev VM like
+  `tests/helper-e2e.sh`, by hand, and speaks to the web GUI on its Unix socket as Caddy does. It
+  does not go through Caddy and mDNS; the generated route and firewall are covered by `nodo-web`'s
+  tests.
+- **Budgets.** The stripped `nodo-web-gui` is about 6.5 MiB on x86_64. No board's budget was
+  raised; none was measured again with it.

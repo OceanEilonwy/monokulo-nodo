@@ -331,6 +331,10 @@ the TUI follow the same rules. `manage.rs` keeps the pages, the keyboard, the pi
 dialog. Calls run on the core's worker thread; the screen returns to the tiles after the idle time
 set in System › Screen.
 
+System also has a row for the web GUI that says whether it is on and where it answers. It is
+shown only: the web GUI is turned on and off over SSH, and the helper refuses the switch from the
+screen's socket.
+
 What the touchscreen has no page for is done in the terminal, and the screen says so: bundles, an
 app's setup page, an update that asks for a new permission or grows encrypted storage (neither is
 ever applied from the screen), a site's other names, restoring a backup and Bluetooth.

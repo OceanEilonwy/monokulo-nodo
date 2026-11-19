@@ -178,7 +178,8 @@ codebase, and signed xbps packages from user-added feeds.
   manifest declares one (`[owner_page]`, the row named by its title, such as Setup). Get apps (`g`) searches the sources,
   and Sources (the old Feeds) sits under it, a card per source. System holds the Nodo's own update,
   then Updates (the Nodo and the apps on one page, each with its own button), Backups, Network,
-  Device logs and About; automatic updates and undoing an update are reached from Updates. Every
+  Web GUI (Off, On with its address, or waiting for the local address; its page explains it and
+  holds the switch, see Web GUI), Device logs and About; automatic updates and undoing an update are reached from Updates. Every
   screen uses the same pieces (`crates/nodo-tui/src/view/v3.rs`): surfaces instead of lines, cards
   as even rectangles, inset fields, buttons inside the card they act on with a ▸ on the one Enter
   presses, and one dim line of keys. Screens drawn as bordered panels (backups, restore, undo,
@@ -379,9 +380,13 @@ codebase, and signed xbps packages from user-added feeds.
   every service (cuprated given five minutes to save), syncs and turns the device off.
   [SCREEN.md](SCREEN.md) is the contract.
 - **Web GUI:** The TUI's screens in a browser on the home network, at `https://nodo.local`, for the
-  owner. It is off until the owner turns it on over SSH (`nodo-tui --ctl web-gui 1`, `SetWebGui`),
+  owner. It is off until the owner turns it on over SSH (System › Web GUI in the TUI, or
+  `nodo-tui --ctl web-gui 1`; both send `SetWebGui`),
   which needs the device passphrase to be set up, and only SSH turns it on or off: the main socket
-  alone takes `SetWebGui`, never the touchscreen and never the web GUI itself. The choice is
+  alone takes `SetWebGui`, never the touchscreen and never the web GUI itself. The TUI's page says
+  what it is and what turning it on means, shows the address and the local CA's fingerprint, and
+  asks before turning it on, starting on Cancel; turning it off does not ask (`flows::web_gui` in
+  the core). The web GUI's own System page and the touchscreen's show the same state, read-only. The choice is
   `/var/lib/nodo/web-gui.toml`; backups do not carry it, so a restored device starts with it off.
   `WebGuiStatus` (`--ctl web-gui-status`) says whether it is on, its address while it is served, and
   whether it waits for the local address, on every socket. `nodo-web-gui` (nodo-tools) runs as
@@ -429,6 +434,40 @@ codebase, and signed xbps packages from user-added feeds.
   try it at the login page. The delay (up to 60 s per wrong guess, about 1,400 guesses a day) and the
   8-character minimum are what stand in the way, and since the web GUI can add and remove SSH keys like
   the TUI can, the passphrase alone then leads to a shell. That is why it is off by default.
+  Inside the process (`crates/nodo-web-gui`): sessions are its own and live only in its memory, so
+  restarting it logs everyone out. A session is a random 256-bit token in the cookie `__Host-nodo`
+  (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`), ends after 15 minutes without a request by
+  the owner or 12 hours at most, and there are at most 4; a page's own polling (a job's progress, a
+  followed log, a certificate, the radios) does not count as use. One login is checked at a time,
+  and an address that guessed wrong waits before its next guess is passed to the helper. Every
+  request must name the host `nodo.local` (421 otherwise), and one that changes something must
+  carry an `Origin` or `Referer` of `https://nodo.local` (403 otherwise). Every answer has
+  `Cache-Control: no-store`, a content security policy that allows only the compiled-in stylesheet
+  and scripts (htmx and a few lines of `app.js` for the dialog's focus and the Copy buttons), and
+  `Referrer-Policy: same-origin`. Each session has one connection to the helper, behind a lock,
+  because the helper backend keeps state between calls; the helper's gate is one for the process,
+  and the process sends `WebGuiLogout` when its last session ends. Before every page it asks
+  `WebGuiStatus`; a closed gate there, or the typed refusal from any call, drops every session and
+  sends the browser to the login. A multi-step flow (a backup or restore, a bundle's questions, a
+  hosting draft on its way to the internet, the reference picker, an app's setup page) keeps its
+  core flow value in the session and never rebuilds it from what a browser sends; single-request
+  forms carry their own draft. A call that takes minutes (`Effect::is_long` in the core) runs as a
+  job on the blocking pool holding the session's connection: the browser is sent to `/working`,
+  which asks again every second, and the session's other pages show what is running instead of
+  waiting for the connection. The helper reports no progress, so the page shows what runs and for
+  how long. Logging in unlocks the device; `/unlock` is for what is still locked afterwards (its
+  storage failed to open, or a flow needs the passphrase again) and returns to the page that sent
+  the owner there. Passphrases are held in `Secret` and in zeroizing strings once the page's code
+  has them, and are never logged or sent back; what is not wiped is the request body as hyper and
+  axum read it, the form fields of the pages that take a whole form as plain strings (backups,
+  network, bundle answers, settings), and whatever the allocator keeps of them. A setup page that
+  is open keeps the device passphrase in its session, to read the page again, until it is closed or
+  the session ends. One caveat after an upgrade: Caddy's sandbox binds `/run/nodo-web-gui` only if
+  the directory existed when Caddy started, so a Caddy that was already running when nodo-tools
+  with the web GUI was installed must be restarted once (a reboot does it) before the address
+  answers. `tests/web-gui-e2e.sh` proves the path in the dev VM: refused while off, on over SSH,
+  the service on a socket only Caddy's group may open, wrong logins counted apart from unlocks, a
+  login, pages, one setting changed, and off again with the session dead and the gate closed.
 - **Logging in over SSH** opens `nodo-tui` (`/etc/profile.d/nodo-tui.sh`, from `nodo-tools`).
   Only an interactive login shell on a terminal does: `ssh nodo some-command`, scp and sftp are
   untouched, and a shell started from that login does not open it again. Quitting it (`q`) leaves
@@ -449,9 +488,18 @@ codebase, and signed xbps packages from user-added feeds.
   terminal or toolkit in it: the screens' data (`model`), the helper backend (`helper_backend`,
   `helper_manage`) and its in-memory double (`mock`), the scenarios both must pass (`contract`),
   the text and reference editing buffers (`secret`, `refs`), the screens' names (`screen`), what
-  the screens work out from the device's state (`queries`), and what an interface asks for and
-  gets back (`Effect` and `Outcome` in `effect`) with the code and the worker thread that make
-  the helper calls (`exec`). `crates/nodo-tui` (the terminal) and `crates/nodo-gui` (the built-in
+  the screens work out from the device's state (`queries`, where the owner lands among them), and
+  what an interface asks for and gets back (`Effect` and `Outcome` in `effect`, with
+  `Effect::is_long` for the calls that take minutes) with the code and the worker thread that make
+  the helper calls (`exec`). `flows` holds each feature's rules and sequences of helper calls, one
+  module per feature: what an action does, what must be asked first (`Question`), what a result
+  means (`Step`), where it leads (`Dest`), validation, and the wording of consequences and
+  refusals; its module documentation is the convention every flow and every interface follows.
+  Wording never names a key or a button: a message that points at something to do carries a `Hint`,
+  which the terminal turns into a key, the web GUI into a link or a button. `words` holds the
+  short wordings every interface shows alike (an app's state, Home's cards, the unlock page's
+  lines, the tab counts, a System row's summary, an update's row). A rule or a sentence that a
+  second interface would need belongs in the core, never in an interface. `crates/nodo-tui` (the terminal) and `crates/nodo-gui` (the built-in
   screen) are built on it, and `nodo-tui` re-exports none of it.
   `crates/nodo-web-gui` is the web GUI's process (see Web GUI): axum on a Unix socket behind
   Caddy, HTML written with maud, htmx 4, one stylesheet and a few lines of script compiled in (`assets/`), nothing on
