@@ -8,12 +8,20 @@
 use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
-use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::effect::UsbView;
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::services::AppPage;
+use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
+use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::domain::{self, Domain};
+use nodo_ui_core::flows::web::hosting::{self, Hosting};
+use nodo_ui_core::flows::web::onion::Onion;
+use nodo_ui_core::flows::web::providers::{KeyField, Providers};
+use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
@@ -223,25 +231,18 @@ impl BackupState {
     }
 }
 
-/// Onion exposure: the node's restricted RPC first, then every site.
+/// The onion page: the chosen row. What Tor reports and what each switch does are the core's
+/// `Onion`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnionState {
-    pub status: Option<nodo_api::OnionStatus>,
+    pub flow: Onion,
+    /// An index into the flow's `rows`.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
 }
 
 impl OnionState {
     pub fn new() -> Self {
-        Self { status: None, selected: 0, error: None, busy: true }
-    }
-
-    /// The rows in order: the node, when one is installed, then the sites.
-    pub fn rows(&self) -> Vec<OnionRow> {
-        let Some(status) = &self.status else { return Vec::new() };
-        let node = status.node.iter().map(|_| OnionRow::Node);
-        node.chain((0..status.sites.len()).map(OnionRow::Site)).collect()
+        Self { flow: Onion::new(), selected: 0 }
     }
 }
 
@@ -251,11 +252,12 @@ impl Default for OnionState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnionRow {
-    Node,
-    /// An index into `OnionStatus::sites`.
-    Site(usize),
+impl std::ops::Deref for OnionState {
+    type Target = Onion;
+
+    fn deref(&self) -> &Onion {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,20 +313,18 @@ impl Default for RestoreState {
     }
 }
 
+/// The page that undoes an update: the chosen row. The list, what is running and how the last
+/// rollback went are the core's `Rollbacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbacksState {
-    pub view: Option<RollbackView>,
-    /// Over `view.options`.
+    pub flow: Rollbacks,
+    /// Over the versions that can be put back.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The last rollback's outcome, shown until the next action.
-    pub result: Option<nodo_api::UpdateResult>,
 }
 
 impl RollbacksState {
     pub fn new() -> Self {
-        Self { view: None, selected: 0, error: None, busy: true, result: None }
+        Self { flow: Rollbacks::new(), selected: 0 }
     }
 }
 
@@ -334,7 +334,20 @@ impl Default for RollbacksState {
     }
 }
 
-/// Which list on the Network screen has the focus.
+impl std::ops::Deref for RollbacksState {
+    type Target = Rollbacks;
+
+    fn deref(&self) -> &Rollbacks {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for RollbacksState {
+    fn deref_mut(&mut self) -> &mut Rollbacks {
+        &mut self.flow
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkFocus {
     Wifi,
@@ -495,25 +508,18 @@ pub struct FeedKeyState {
     pub error: Option<String>,
 }
 
+/// The Settings form: which field is chosen and what is being typed in it. The form, its draft
+/// and every rule about them are the core's `Settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsState {
-    pub form: SettingsForm,
-    pub draft: Vec<FieldValue>,
+    pub flow: Settings,
     pub selected: usize,
     /// A secret being typed. Other fields are typed in `editor`.
     pub editing: Option<Input>,
     /// Text and reference chips being typed in the selected field.
     pub editor: Option<nodo_ui_core::refs::PieceEditor>,
-    /// What the other apps offer to reference, once loaded.
-    pub catalog: Option<ReferenceList>,
-    /// The latest preview of each field's draft, from the helper.
-    pub previews: Vec<Option<FieldPreview>>,
     /// The selected field's chip whose menu is open, and the highlighted action.
     pub chip_menu: Option<ChipMenu>,
-    /// One step back, offered as "↺ …" under the field while it applies.
-    pub undo: Option<Undo>,
-    /// The save confirmation, listing what the changed references allow.
-    pub confirm: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,157 +532,60 @@ pub struct ChipMenu {
 
 pub const CHIP_ACTIONS: [&str; 3] = ["Replace…", "Type a value instead", "Remove"];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Undo {
-    pub field: usize,
-    /// The value before the step, and the value right after it: the link shows only while the
-    /// field still holds what the step made, so it never undoes something else.
-    pub before: FieldValue,
-    pub after: FieldValue,
-    pub label: String,
-}
-
 impl SettingsState {
     pub fn new(form: SettingsForm) -> Self {
-        let draft: Vec<FieldValue> = form.fields.iter().map(|field| field.value.clone()).collect();
-        let previews = vec![None; draft.len()];
-        Self {
-            form,
-            draft,
-            selected: 0,
-            editing: None,
-            editor: None,
-            catalog: None,
-            previews,
-            chip_menu: None,
-            undo: None,
-            confirm: None,
-        }
-    }
-
-    pub fn changed_indices(&self) -> Vec<usize> {
-        (0..self.draft.len()).filter(|&i| self.draft[i] != self.form.fields[i].value).collect()
-    }
-
-    pub fn error_for(&self, index: usize) -> Option<String> {
-        let field = &self.form.fields[index];
-        let empty = self.draft[index] == FieldValue::Text(String::new());
-        // An optional field left empty has no value, which is always allowed; only what is typed
-        // has to fit the kind.
-        if !field.required && empty {
-            return None;
-        }
-        // A required one must have a value. Only a number's parse caught this before, so a fresh
-        // install with an empty required name or choice saved, and the app could not start. An
-        // unset secret is left to the helper: it may be one the helper makes when it saves.
-        if empty {
-            return Some("Required: give it a value.".to_owned());
-        }
-        validate(&field.kind, &self.draft[index])
-    }
-
-    /// The preview of a field, if it is for the value the field holds now.
-    pub fn preview(&self, index: usize) -> Option<&FieldPreview> {
-        self.previews.get(index)?.as_ref().filter(|p| p.for_value.as_ref() == Some(&self.draft[index]))
-    }
-
-    /// References that do not resolve, over every field, as far as the previews know.
-    pub fn broken(&self) -> usize {
-        (0..self.draft.len()).filter_map(|i| self.preview(i)).map(FieldPreview::broken).sum()
-    }
-
-    /// The undo step for a field, while the field still holds what that step made.
-    pub fn undo_for(&self, index: usize) -> Option<&Undo> {
-        self.undo.as_ref().filter(|u| u.field == index && self.draft[index] == u.after)
+        Self { flow: Settings::new(form), selected: 0, editing: None, editor: None, chip_menu: None }
     }
 }
 
-/// Field validation, kept pure so that it can be tested and so save can refuse early.
-pub fn validate(kind: &FieldKind, value: &FieldValue) -> Option<String> {
-    // A value with references is checked by the helper's preview, against what it resolves to.
-    let FieldValue::Text(text) = value else {
-        return None;
-    };
-    match kind {
-        FieldKind::Port => match text.parse::<u16>() {
-            Ok(port) if port > 0 => None,
-            _ => Some("Port must be a number from 1 to 65535.".to_owned()),
-        },
-        FieldKind::Number { min, max } => match text.parse::<i64>() {
-            Ok(n) if min.is_none_or(|min| n >= min) && max.is_none_or(|max| n <= max) => None,
-            Ok(_) => Some(format!(
-                "Must be from {} to {}.",
-                min.map_or("any".to_owned(), |n| n.to_string()),
-                max.map_or("any".to_owned(), |n| n.to_string())
-            )),
-            Err(_) => Some("Must be a whole number.".to_owned()),
-        },
-        FieldKind::Url => (!(text.starts_with("http://") || text.starts_with("https://")))
-            .then(|| "Must start with http:// or https://.".to_owned()),
-        FieldKind::MoneroAddress => {
-            const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-            match text.chars().count() {
-                n if n < 95 => Some("Address is too short. A Monero address has 95 characters.".to_owned()),
-                n if n > 95 => Some("Address is too long. A Monero address has 95 characters.".to_owned()),
-                _ if !text.chars().all(|c| BASE58.contains(c)) => {
-                    Some("Address contains characters a Monero address cannot have.".to_owned())
-                }
-                _ => None,
-            }
-        }
-        FieldKind::Choice(_) | FieldKind::Secret | FieldKind::Toggle | FieldKind::Text => None,
+impl std::ops::Deref for SettingsState {
+    type Target = Settings;
+
+    fn deref(&self) -> &Settings {
+        &self.flow
     }
 }
 
-/// Where a picked reference goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickMode {
-    /// At the cursor of the field's editor, or as the whole value when nothing is being typed.
-    Insert,
-    /// In place of this reference of the field.
-    Replace(usize),
+impl std::ops::DerefMut for SettingsState {
+    fn deref_mut(&mut self) -> &mut Settings {
+        &mut self.flow
+    }
 }
 
-/// The one reference picker, for every field: search everything the other apps offer.
+/// The reference picker: the search box, which of the box and the list has the focus, and the
+/// chosen row. What is listed, what fits and the approval of a locked setting are the core's
+/// `Picker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceState {
-    pub package: String,
-    pub field_index: usize,
-    pub field_label: String,
-    pub field_kind: FieldKind,
-    pub mode: PickMode,
-    /// Whether the reference would sit beside other text or references.
-    pub assembled: bool,
-    pub list: ReferenceList,
+    pub flow: Picker,
     pub query: Input,
     pub list_focused: bool,
     pub selected: usize,
-    /// A locked setting the user chose, waiting for their approval.
-    pub granting: Option<ReferenceOption>,
 }
 
 impl ReferenceState {
     /// The options the search shows, in the order they are listed, each with whether it fits.
     pub fn visible(&self) -> Vec<(&ReferenceOption, Result<(), String>)> {
-        nodo_ui_core::refs::ordered(&self.field_kind, nodo_ui_core::refs::search(&self.list.options, self.query.text()), self.assembled)
+        self.flow.visible(self.query.text())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DraftRow {
-    pub label: String,
-    pub from: String,
-    pub to: String,
-    pub blamed: bool,
+impl std::ops::Deref for ReferenceState {
+    type Target = Picker;
+
+    fn deref(&self) -> &Picker {
+        &self.flow
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailedState {
-    pub package: String,
-    pub explanation: RollbackExplanation,
-    pub rows: Vec<DraftRow>,
+impl std::ops::DerefMut for ReferenceState {
+    fn deref_mut(&mut self) -> &mut Picker {
+        &mut self.flow
+    }
 }
 
+/// The Updates page: the chosen row, the updates ticked, and the passphrase box when a batch
+/// waits for it. What ticking, checking and updating do are the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatesState {
     pub selected: usize,
@@ -685,29 +594,26 @@ pub struct UpdatesState {
     pub passphrase: Option<UpdatePassphrase>,
 }
 
-/// The device passphrase for a batch of updates, and the batch it is for.
+/// The device passphrase being typed for a batch of updates, and the batch it is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatePassphrase {
-    pub names: Vec<String>,
-    pub approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    /// Each growing update in words, such as "vault: 256 MB to 512 MB".
-    pub growing: Vec<String>,
+    pub batch: Batch,
     pub input: Input,
 }
 
+/// The automatic-update choices: the chosen row and the window being typed. The choices and
+/// what is checked about them are the core's `AutoUpdate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoUpdateState {
-    pub saved: AutoUpdatePrefs,
-    pub draft: AutoUpdatePrefs,
+    pub flow: AutoUpdate,
     /// 0 is the frequency selector, and the package rows follow it.
     pub selected: usize,
     pub editing_window: Option<Input>,
-    pub error: Option<String>,
 }
 
 impl AutoUpdateState {
     pub fn new(prefs: AutoUpdatePrefs) -> Self {
-        Self { saved: prefs.clone(), draft: prefs, selected: 0, editing_window: None, error: None }
+        Self { flow: AutoUpdate::new(prefs), selected: 0, editing_window: None }
     }
 
     pub fn focused_package(&self) -> Option<usize> {
@@ -715,21 +621,22 @@ impl AutoUpdateState {
     }
 }
 
-/// Parses `HH:MM to HH:MM`. A window may cross midnight, so only an empty one is refused.
-pub fn parse_window(text: &str) -> Option<(String, String)> {
-    fn time(text: &str) -> Option<String> {
-        let (hours, minutes) = text.trim().split_once(':')?;
-        if hours.len() != 2 || minutes.len() != 2 {
-            return None;
-        }
-        let (hours, minutes) = (hours.parse::<u8>().ok()?, minutes.parse::<u8>().ok()?);
-        (hours < 24 && minutes < 60).then(|| format!("{hours:02}:{minutes:02}"))
+impl std::ops::Deref for AutoUpdateState {
+    type Target = AutoUpdate;
+
+    fn deref(&self) -> &AutoUpdate {
+        &self.flow
     }
-    let (start, end) = text.split_once(" to ")?;
-    let (start, end) = (time(start)?, time(end)?);
-    (start != end).then_some((start, end))
 }
 
+impl std::ops::DerefMut for AutoUpdateState {
+    fn deref_mut(&mut self) -> &mut AutoUpdate {
+        &mut self.flow
+    }
+}
+
+/// What a batch of updates came to, and the chosen way on after a failure. What each way does
+/// is the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateResultsState {
     pub report: UpdateReport,
@@ -773,25 +680,21 @@ pub struct CapabilityState {
     pub choice: usize,
 }
 
+/// A site's Hosting page: the cursor, the boxes being typed in and the open domain list. The
+/// draft and every rule about it are the core's `Hosting`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureState {
-    pub site: String,
-    pub draft: Exposure,
+    pub flow: Hosting,
     /// An index into [`ExposureState::order`].
     pub selected: usize,
-    /// The part of the public address before the domain, such as `pay` in `pay.example.com`.
+    /// The part of the public address before the domain, as it is typed. `sync` hands it to the
+    /// draft.
     pub sub: Input,
-    /// The chosen domain, one of [`App::domain_choices`].
-    pub domain: String,
     /// The domain list is open.
     pub picking: bool,
     /// Index into the open domain list: the domains, then "Add a provider".
     pub pick: usize,
     pub details: bool,
-    /// A domain provider is connected, so the internet choice can pick a domain.
-    pub has_provider: bool,
-    /// The other names the site answers at, as they will be saved.
-    pub aliases: Vec<nodo_api::PublicAlias>,
     /// The new name being put together: the part before its domain, empty for the domain itself.
     pub alias_sub: Input,
     /// The new name's domain, one of [`App::domain_choices`].
@@ -799,11 +702,6 @@ pub struct ExposureState {
     pub alias_mode: nodo_api::AliasMode,
     /// The open domain list is for the new name, not the main address.
     pub picking_alias: bool,
-    /// Why the new name could not be added.
-    pub alias_error: Option<String>,
-    /// The site was public when the screen opened. The helper then lets names be removed but not
-    /// added, since going public confirmed the names it had.
-    pub was_public: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -814,7 +712,7 @@ pub enum HostingFocus {
     Internet,
     Domain,
     Address,
-    /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
+    /// One of the other names, by index into the draft's `aliases`: x removes it.
     Alias(usize),
     AliasDomain,
     AliasAddress,
@@ -826,57 +724,56 @@ pub enum HostingFocus {
 }
 
 impl ExposureState {
-    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`]. The domain is
-    /// the longest one the host is under, or the first.
+    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`].
     pub fn new(site: &str, draft: Exposure, host: Option<&str>, domains: &[(String, String)]) -> Self {
-        let under = |host: &str, domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-        let domain = host
-            .and_then(|host| domains.iter().filter(|(d, _)| under(host, d)).max_by_key(|(d, _)| d.len()))
-            .or(domains.first())
-            .map(|(d, _)| d.clone())
-            .unwrap_or_default();
-        let sub = host
-            .filter(|host| under(host, &domain))
-            .and_then(|host| host.strip_suffix(domain.as_str()))
-            .map(|rest| rest.trim_end_matches('.').to_owned())
-            .unwrap_or_else(|| site.split('-').next_back().unwrap_or(site).to_owned());
+        Self::of(Hosting::new(site, draft, host, domains), domains)
+    }
+
+    pub fn of(flow: Hosting, domains: &[(String, String)]) -> Self {
         Self {
-            site: site.to_owned(),
-            draft,
             selected: 0,
-            sub: Input::plain(sub),
-            domain,
+            sub: Input::plain(flow.sub.clone()),
             picking: false,
             pick: 0,
             details: false,
-            has_provider: !domains.is_empty(),
-            aliases: Vec::new(),
             alias_sub: Input::plain(String::new()),
             alias_domain: domains.first().map(|(d, _)| d.clone()).unwrap_or_default(),
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
-            alias_error: None,
-            was_public: draft.public,
+            flow,
         }
     }
 
-    /// The focus order, which depends on whether the internet is ticked and a provider exists.
+    /// Hands what is typed to the draft and brings both in line with the providers connected
+    /// now. Every key on the page starts with it.
+    pub fn sync(&mut self, data: &Snapshot) {
+        self.flow.set_sub(self.sub.text());
+        self.flow.sync(data);
+        self.alias_domain = hosting::domain_or_first(&self.alias_domain, &data.domain_choices());
+    }
+
+    /// The focus order: the rows the draft offers, with the new name's four controls and the
+    /// details toggle, which are this screen's own.
     pub fn order(&self) -> Vec<HostingFocus> {
-        let has_provider = self.has_provider;
-        let mut order = vec![HostingFocus::Home, HostingFocus::Tor, HostingFocus::Internet];
-        if self.draft.public {
-            if has_provider {
-                order.extend([HostingFocus::Domain, HostingFocus::Address]);
-                order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if !self.was_public {
-                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
+        let mut order = Vec::new();
+        let mut save = false;
+        for row in self.flow.rows() {
+            match row {
+                hosting::Row::Home => order.push(HostingFocus::Home),
+                hosting::Row::Tor => order.push(HostingFocus::Tor),
+                hosting::Row::Internet => order.push(HostingFocus::Internet),
+                hosting::Row::Domain => order.push(HostingFocus::Domain),
+                hosting::Row::Address => order.push(HostingFocus::Address),
+                hosting::Row::Alias(index) => order.push(HostingFocus::Alias(index)),
+                hosting::Row::NewAlias => {
+                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd])
                 }
-            } else {
-                order.push(HostingFocus::AddProvider);
+                hosting::Row::AddProvider => order.push(HostingFocus::AddProvider),
+                hosting::Row::Save => save = true,
             }
         }
         order.push(HostingFocus::Details);
-        if !self.draft.public || has_provider {
+        if save {
             order.push(HostingFocus::Save);
         }
         order
@@ -887,21 +784,33 @@ impl ExposureState {
         order[self.selected.min(order.len() - 1)]
     }
 
-    /// The public host the choices make: the address part and the chosen domain.
+    /// The public host the choices make, from the box as it is typed.
     pub fn host(&self) -> String {
-        let sub = self.sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.domain.clone() } else { format!("{sub}.{}", self.domain) }
+        hosting::join_host(self.sub.text(), &self.flow.domain)
     }
 
     /// The new name the choices make, the same way: an empty part is the domain itself.
     pub fn alias_host(&self) -> String {
-        let sub = self.alias_sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+        hosting::join_host(self.alias_sub.text(), &self.alias_domain)
     }
 
     /// The domain list is open, for either address.
     pub fn list_open(&self) -> bool {
         self.picking || self.picking_alias
+    }
+}
+
+impl std::ops::Deref for ExposureState {
+    type Target = Hosting;
+
+    fn deref(&self) -> &Hosting {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ExposureState {
+    fn deref_mut(&mut self) -> &mut Hosting {
+        &mut self.flow
     }
 }
 
@@ -913,65 +822,89 @@ pub enum ProviderFocus {
     SecretKey,
 }
 
-/// Where the domain provider screens are.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderStage {
-    /// The providers added, with a button to add one.
-    List,
-    /// Choosing the company.
-    Pick,
-    /// The domain and key for the chosen company.
-    Key,
-    /// Connected. Holds the provider's name, the domains its key controls that sites can use, and
-    /// the providers already holding the rest (the same account connected twice, most often).
-    Done { provider: String, domains: Vec<String>, held_by: Vec<String> },
+impl From<KeyField> for ProviderFocus {
+    fn from(field: KeyField) -> Self {
+        match field {
+            KeyField::Domain => ProviderFocus::Domain,
+            KeyField::ApiKey => ProviderFocus::ApiKey,
+            KeyField::SecretKey => ProviderFocus::SecretKey,
+        }
+    }
 }
 
+/// The provider screens: the cursor and the boxes of the key step. Where the screens are and
+/// what each step does are the core's `Providers`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvidersState {
-    pub stage: ProviderStage,
-    /// The chosen company, an index into the provider catalog.
+    pub flow: Providers,
+    /// The chosen row: a connected provider in the list, a company of the catalog while adding.
     pub selected: usize,
     pub focus: ProviderFocus,
     pub domain: Input,
     pub api_key: Input,
     pub secret_key: Input,
-    pub test: Option<Result<String, String>>,
-    /// The site whose Hosting screen opened this, to go back to once a provider is added.
-    pub return_to: Option<String>,
 }
 
 impl ProvidersState {
     /// The add flow, at choosing the company.
     pub fn new(domain: &str) -> Self {
+        Self::of(Providers::adding(None), domain)
+    }
+
+    /// The list of providers added.
+    pub fn list(domain: &str) -> Self {
+        Self::of(Providers::list(), domain)
+    }
+
+    pub fn of(flow: Providers, domain: &str) -> Self {
         Self {
-            stage: ProviderStage::Pick,
+            flow,
             selected: 0,
             focus: ProviderFocus::List,
             domain: Input::plain(domain),
             api_key: Input::secret(),
             secret_key: Input::secret(),
-            test: None,
-            return_to: None,
         }
     }
 
-    /// The list of providers added.
-    pub fn list(domain: &str) -> Self {
-        Self { stage: ProviderStage::List, ..Self::new(domain) }
+    /// Empties the boxes of the key step. Keys typed for one provider must never be sent to
+    /// another, so every way into and out of that step starts from this.
+    pub fn empty_boxes(&mut self) {
+        self.domain = Input::plain("");
+        self.api_key = Input::secret();
+        self.secret_key = Input::secret();
+        self.focus = ProviderFocus::List;
     }
 }
 
+impl std::ops::Deref for ProvidersState {
+    type Target = Providers;
+
+    fn deref(&self) -> &Providers {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ProvidersState {
+    fn deref_mut(&mut self) -> &mut Providers {
+        &mut self.flow
+    }
+}
+
+/// The checks that found a problem: whether the details are open. The checks and what can be
+/// done about them are the core's `PublicCheck`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCheckState {
-    pub site: String,
-    pub checks: Vec<Check>,
-    pub router: Option<RouterHelp>,
-    pub plan: Option<PublicPlan>,
-    /// True when this check is a step towards going public, not just a test from the overview.
-    pub going_public: bool,
-    pub manual: Vec<String>,
+    pub flow: PublicCheck,
     pub details: bool,
+}
+
+impl std::ops::Deref for WebCheckState {
+    type Target = PublicCheck;
+
+    fn deref(&self) -> &PublicCheck {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -980,87 +913,86 @@ pub enum ConfirmFocus {
     GoPublic,
 }
 
+/// The confirmation before going public: which button has the focus. What is confirmed is the
+/// core's `PublicConfirm`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebConfirmState {
-    pub site: String,
-    pub plan: PublicPlan,
-    pub access: PublicAccess,
+    pub flow: PublicConfirm,
     pub focus: ConfirmFocus,
     pub details: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DomainFocus {
-    Email,
-    Staging,
-    DotLocal,
-    UnderDomain,
-    Dns01First,
-    Dns01Second,
-}
-
-impl DomainFocus {
-    /// Fields that take typing rather than a toggle.
-    pub fn is_text(self) -> bool {
-        matches!(self, DomainFocus::Email | DomainFocus::UnderDomain | DomainFocus::Dns01First | DomainFocus::Dns01Second)
+impl WebConfirmState {
+    /// The focus starts on Cancel, as the core says the answer does.
+    pub fn new(flow: PublicConfirm) -> Self {
+        let focus = if flow.cancel_is_default() { ConfirmFocus::Cancel } else { ConfirmFocus::GoPublic };
+        Self { flow, focus, details: false }
     }
 }
 
-/// Domains and certificates: the ACME email, staging, local names and DNS-01 credentials.
+impl std::ops::Deref for WebConfirmState {
+    type Target = PublicConfirm;
+
+    fn deref(&self) -> &PublicConfirm {
+        &self.flow
+    }
+}
+
+/// Domains and certificates: the field that has the focus and what is typed. The choices, what
+/// Save sends and what comes back are the core's `Domain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainState {
-    pub focus: DomainFocus,
+    pub flow: Domain,
+    /// One of the core's `domain::fields`.
+    pub focus: domain::Field,
     pub email: Input,
-    pub staging: bool,
-    pub under_domain: bool,
     pub local_domain: Input,
     pub dns01_first: Input,
     pub dns01_second: Input,
-    pub checks: Option<Result<Vec<nodo_api::LocalNameCheck>, String>>,
-    pub error: Option<String>,
 }
 
 impl DomainState {
     pub fn new(acme: &AcmeView, domain: &str) -> Self {
-        let suggested = if domain.contains('.') { format!("home.{domain}") } else { String::new() };
         Self {
-            focus: DomainFocus::Email,
+            flow: Domain::new(acme),
+            focus: domain::Field::Email,
             email: Input::plain(acme.email.clone()),
-            staging: acme.staging,
-            under_domain: acme.local_domain.is_some(),
-            local_domain: Input::plain(acme.local_domain.clone().unwrap_or(suggested)),
+            local_domain: Input::plain(domain::suggested_local_domain(acme, domain)),
             dns01_first: Input::secret(),
             dns01_second: Input::secret(),
-            checks: None,
-            error: None,
         }
-    }
-
-    pub fn order(acme: &AcmeView) -> Vec<DomainFocus> {
-        let mut order = vec![DomainFocus::Email, DomainFocus::Staging, DomainFocus::DotLocal, DomainFocus::UnderDomain];
-        if !acme.dns01_fields.is_empty() {
-            order.extend([DomainFocus::Dns01First, DomainFocus::Dns01Second]);
-        }
-        order
     }
 }
 
-/// A public or local host while Caddy gets its certificate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CertificateState {
-    pub site: String,
-    pub host: String,
+impl std::ops::Deref for DomainState {
+    type Target = Domain;
+
+    fn deref(&self) -> &Domain {
+        &self.flow
+    }
 }
 
+impl std::ops::DerefMut for DomainState {
+    fn deref_mut(&mut self) -> &mut Domain {
+        &mut self.flow
+    }
+}
+
+/// The CGNAT guidance: the chosen way on. What each way does is the core's `Cgnat`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgnatState {
-    pub site: String,
-    pub wan_address: String,
-    pub wan_range: String,
-    pub internet_address: String,
+    pub flow: Cgnat,
+    /// An index into the core's `CgnatWay::ALL`.
     pub choice: usize,
-    pub going_public: bool,
     pub details: bool,
+}
+
+impl std::ops::Deref for CgnatState {
+    type Target = Cgnat;
+
+    fn deref(&self) -> &Cgnat {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1078,7 +1010,7 @@ pub enum Screen {
     FeedKey(FeedKeyState),
     Settings(SettingsState),
     Reference(ReferenceState),
-    ApplyFailed(ApplyFailedState),
+    ApplyFailed(ApplyFailed),
     Updates(UpdatesState),
     AutoUpdate(AutoUpdateState),
     UpdateResults(UpdateResultsState),
@@ -1092,7 +1024,8 @@ pub enum Screen {
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
     WebDomain(DomainState),
-    WebCertificate(CertificateState),
+    /// A public or local host while Caddy gets its certificate.
+    WebCertificate(Certificate),
     /// The local CA's fingerprint and the page where LAN devices get its root.
     WebTrust,
     Setup(SetupState),

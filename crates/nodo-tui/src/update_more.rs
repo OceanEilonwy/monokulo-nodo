@@ -4,11 +4,11 @@
 //! is overwritten, and the helper checks every rule again.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nodo_api::UpdateOutcome;
 
-use super::{edit_input, fail, notice, open_logs, pop, push, step};
+use super::{edit_input, follow, open_logs, pop, push, step};
 use crate::app::*;
-use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
+use nodo_ui_core::flows::updates::Rollbacks;
+use nodo_ui_core::flows::web::onion::{Onion, Row};
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -16,7 +16,7 @@ use nodo_ui_core::{Effect, Outcome};
 
 pub(super) fn open_onion(app: &mut App) -> Vec<Effect> {
     push(app, Screen::Onion(OnionState::new()));
-    vec![Effect::LoadOnion]
+    Onion::load()
 }
 
 pub(super) fn open_restore(app: &mut App) -> Vec<Effect> {
@@ -26,80 +26,38 @@ pub(super) fn open_restore(app: &mut App) -> Vec<Effect> {
 
 pub(super) fn open_rollbacks(app: &mut App) -> Vec<Effect> {
     push(app, Screen::Rollbacks(RollbacksState::new()));
-    vec![Effect::LoadRollbacks]
+    Rollbacks::load()
 }
 
 // Onion
 
-/// The node's onion address only ever serves the restricted RPC, which cuprated always has. A site
-/// that works from a single address cannot add an onion one beside another.
 pub(super) fn onion_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::Onion(state) = &mut app.screen else {
         return Vec::new();
     };
     if key.code == KeyCode::Esc {
-        pop(app);
-        return vec![Effect::Refresh];
+        let step = state.leave();
+        return follow(app, step);
     }
     if state.busy {
         return Vec::new();
     }
     let rows = state.rows();
+    let chosen = rows.get(state.selected).copied();
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows.len(), key.code == KeyCode::Down),
-        KeyCode::Char('g') => {
-            state.busy = true;
-            state.error = None;
-            return vec![Effect::LoadOnion];
-        }
-        KeyCode::Char('s') => {
-            if let (Some(OnionRow::Node), Some(node)) =
-                (rows.get(state.selected), state.status.as_ref().and_then(|s| s.node.as_ref()))
-            {
-                return vec![Effect::OpenSettings(node.provider.clone())];
-            }
-        }
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            let Some(status) = state.status.clone() else { return Vec::new() };
-            match rows.get(state.selected) {
-                Some(OnionRow::Node) => {
-                    let Some(node) = &status.node else { return Vec::new() };
-                    // cuprated always serves restricted RPC. Another node that does not say which
-                    // port is restricted cannot go on Tor, and no setting changes that.
-                    if !node.enabled && !node.restricted_rpc {
-                        state.error = Some(format!(
-                            "{} does not say which port serves its restricted RPC, so it cannot have \
-                             an onion address. The onion address only ever serves the restricted RPC.",
-                            node.provider
-                        ));
-                        return Vec::new();
-                    }
-                    state.busy = true;
-                    state.error = None;
-                    return vec![Effect::SetNodeOnion(!node.enabled)];
+        KeyCode::Char('g') => return state.flow.reload(),
+        KeyCode::Char('s') if chosen == Some(Row::Node) => return state.node_settings(),
+        KeyCode::Enter | KeyCode::Char(' ') => match chosen {
+            Some(Row::Node) => return state.flow.toggle_node(),
+            Some(Row::Site(index)) => {
+                let id = state.status.as_ref().and_then(|status| status.sites.get(index)).map(|site| site.id.clone());
+                if let Some(id) = id {
+                    return state.flow.toggle_site(&id);
                 }
-                Some(OnionRow::Site(index)) => {
-                    let Some(site) = status.sites.get(*index) else { return Vec::new() };
-                    if site.locked && !site.exposure.onion {
-                        state.error = Some(format!("{} is locked. Unlock the device first.", site.id.package));
-                        return Vec::new();
-                    }
-                    let mut exposure = site.exposure;
-                    exposure.onion = !exposure.onion;
-                    if exposure.onion && !site.multi_address && (exposure.local || exposure.public) {
-                        state.error = Some(format!(
-                            "{} works from a single address. Turn its other address off under Web first.",
-                            site.id.package
-                        ));
-                        return Vec::new();
-                    }
-                    state.busy = true;
-                    state.error = None;
-                    return vec![Effect::SetSiteExposure { site: site.id.clone(), exposure }];
-                }
-                None => {}
             }
-        }
+            None => {}
+        },
         _ => {}
     }
     Vec::new()
@@ -315,84 +273,40 @@ pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     if key.code == KeyCode::Esc {
-        pop(app);
-        return vec![Effect::Refresh];
+        let step = state.leave();
+        return follow(app, step);
     }
     if state.busy {
         return Vec::new();
     }
-    let options = state.view.as_ref().map(|v| v.options.clone()).unwrap_or_default();
-    let chosen = options.get(state.selected).cloned();
+    let count = state.options().len();
+    let chosen = state.options().get(state.selected).map(|option| option.package.clone());
     match key.code {
-        KeyCode::Down | KeyCode::Up => step(&mut state.selected, options.len(), key.code == KeyCode::Down),
-        KeyCode::Char('g') => {
-            state.busy = true;
-            state.error = None;
-            return vec![Effect::LoadRollbacks];
-        }
+        KeyCode::Down | KeyCode::Up => step(&mut state.selected, count, key.code == KeyCode::Down),
+        KeyCode::Char('g') => return state.flow.reload(),
         KeyCode::Char('l') => {
-            if let Some(option) = chosen {
-                return open_logs(app, &option.package);
+            if let Some(package) = chosen {
+                return open_logs(app, &package);
             }
         }
         KeyCode::Enter | KeyCode::Char('r') => {
-            let Some(option) = chosen else {
-                state.error = Some("Nothing can be rolled back now.".to_owned());
-                return Vec::new();
-            };
-            if let Some(reason) = &option.blocked {
-                state.error = Some(format!("{} cannot roll back now: {reason}.", option.package));
-                return Vec::new();
-            }
-            app.modal = Some(Modal::ask(Question {
-                title: format!("Roll {} back?", option.package),
-                body: vec![
-                    format!("{} goes from {} back to {}.", option.package, option.current, option.previous),
-                    "Its data is copied first and put back if the old version fails.".to_owned(),
-                    format!("{} is held, so automatic updates leave it alone.", option.current),
-                ],
-                confirm_label: "Roll back".to_owned(),
-                cancel_is_default: true,
-                confirm: Confirm::RollBack { package: option.package, to: option.previous },
-            }));
+            // With nothing listed there is no name, and the core says so.
+            let step = state.flow.roll_back(chosen.as_deref().unwrap_or_default());
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
 }
 
-/// Shows a confirmed rollback as running. The request itself is the core's `Confirm::step`.
-pub(super) fn mark_rolling_back(app: &mut App) {
-    if let Screen::Rollbacks(state) = &mut app.screen {
-        state.busy = true;
-        state.error = None;
-        state.result = None;
-    }
-}
-
-// Results
-
 pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
-        Outcome::OnionLoaded(result) => {
+        Outcome::OnionLoaded(_) | Outcome::OnionChanged(_) => {
             if let Screen::Onion(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(status) => {
-                        state.status = Some(status);
-                        let len = state.rows().len();
-                        state.selected = state.selected.min(len.saturating_sub(1));
-                    }
-                    Err(e) => state.error = Some(e),
-                }
-            }
-        }
-        Outcome::OnionChanged(result) => {
-            if let Screen::Onion(state) = &mut app.screen {
-                match result {
-                    Ok(()) => notice(app, NoticeKind::Ok, "Onion exposure changed."),
-                    Err(e) => state.error = Some(e),
-                }
+                let step = state.flow.apply(&event);
+                let len = state.rows().len();
+                state.selected = state.selected.min(len.saturating_sub(1));
+                return follow(app, step);
             }
         }
         Outcome::RestoreDrives(result) => {
@@ -459,42 +373,6 @@ pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                     Ok(report) => RestoreStep::Done(report),
                     Err(reason) => RestoreStep::Failed { device, name, reason },
                 };
-            }
-        }
-        Outcome::RollbacksLoaded(result) => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(view) => {
-                        state.selected = state.selected.min(view.options.len().saturating_sub(1));
-                        state.view = Some(view);
-                    }
-                    Err(e) => state.error = Some(e),
-                }
-            }
-        }
-        Outcome::RolledBack(result) => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                match result {
-                    Ok(outcome) => {
-                        let text = match &outcome.outcome {
-                            UpdateOutcome::Updated => {
-                                Some(format!("{} is back on {}.", outcome.package, outcome.to))
-                            }
-                            _ => None,
-                        };
-                        state.result = Some(outcome);
-                        state.busy = true;
-                        if let Some(text) = text {
-                            notice(app, NoticeKind::Ok, text);
-                        }
-                        return vec![Effect::LoadRollbacks, Effect::Refresh];
-                    }
-                    Err(e) => {
-                        state.busy = false;
-                        fail(app, e);
-                    }
-                }
             }
         }
         _ => {}

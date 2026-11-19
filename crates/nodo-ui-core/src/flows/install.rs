@@ -126,8 +126,9 @@ impl Review {
     /// out of the box.
     ///
     /// An update's approval is added to the batch's. The next update that needs a review is
-    /// loaded, or with none left the batch goes on to be applied (`Dest::ApplyUpdates`).
-    pub fn approve(&self, passphrase: Option<&mut Input>) -> Step {
+    /// loaded, or with none left the batch goes on to be applied (`updates::apply_batch`, which
+    /// reads from `snapshot` whether one of them grows encrypted storage).
+    pub fn approve(&self, passphrase: Option<&mut Input>, snapshot: &Snapshot) -> Step {
         match &self.purpose {
             ReviewPurpose::Install => {
                 let passphrase = match passphrase {
@@ -149,7 +150,7 @@ impl Review {
                     approvals.push((self.data.id.name.clone(), approval));
                 }
                 match pending_reviews.split_first() {
-                    None => Step::Go(Dest::ApplyUpdates { names: batch.clone(), approvals }),
+                    None => super::updates::apply_batch(snapshot, batch.clone(), approvals),
                     Some((name, rest)) => Step::All(vec![
                         Step::Go(Dest::Back),
                         Step::Run(vec![Effect::ReviewUpdate {
@@ -371,7 +372,7 @@ mod tests {
         let mut mock = MockBackend::new();
         let review = review_of(&mut mock, "community", "wallet-relay");
         assert!(!review.needs_passphrase());
-        let step = review.approve(None);
+        let step = review.approve(None, &Snapshot::default());
         let Step::All(steps) = &step else { panic!("{step:?}") };
         let Step::Go(Dest::Installing(starting)) = &steps[0] else { panic!("the install page opens at once") };
         assert_eq!((starting.outcome.clone(), starting.can_cancel), (InstallOutcome::InProgress, false));
@@ -407,11 +408,11 @@ mod tests {
         assert!(review.needs_passphrase());
 
         let refused = Step::Failed(Notice::info("Enter the device passphrase to create its encrypted storage."));
-        assert_eq!(review.approve(None), refused);
-        assert_eq!(review.approve(Some(&mut Input::secret())), refused);
+        assert_eq!(review.approve(None, &Snapshot::default()), refused);
+        assert_eq!(review.approve(Some(&mut Input::secret()), &Snapshot::default()), refused);
 
         let mut passphrase = typed("correct horse");
-        let effects = review.approve(Some(&mut passphrase)).effects();
+        let effects = review.approve(Some(&mut passphrase), &Snapshot::default()).effects();
         let [Effect::StartInstall { passphrase: Some(sent), .. }] = &effects[..] else { panic!("{effects:?}") };
         assert_eq!(sent.expose(), "correct horse");
         assert!(passphrase.is_empty(), "the passphrase leaves the box");
@@ -433,7 +434,7 @@ mod tests {
         assert!(!review.needs_passphrase(), "the Updates page asks for it, for the whole batch");
         let approvals = vec![earlier.clone(), ("wallet-relay".to_owned(), approval.clone())];
         assert_eq!(
-            review.approve(None),
+            review.approve(None, &Snapshot::default()),
             Step::All(vec![
                 Step::Go(Dest::Back),
                 Step::Run(vec![Effect::ReviewUpdate {
@@ -446,7 +447,10 @@ mod tests {
         );
 
         let last = Review::new(data, ReviewPurpose::Update { batch: batch.clone(), pending_reviews: Vec::new(), approvals: vec![earlier] });
-        assert_eq!(last.approve(None), Step::Go(Dest::ApplyUpdates { names: batch.clone(), approvals }));
+        assert_eq!(
+            last.approve(None, &Snapshot::default()),
+            Step::Run(vec![Effect::ApplyUpdates { names: batch.clone(), approvals }])
+        );
 
         // The review of an update arrives with the batch it belongs to, or not at all.
         let loaded = Outcome::UpdateReviewLoaded {

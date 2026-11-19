@@ -416,7 +416,8 @@ fn main() {
 /// The real web screens (web flow v3 as built), rendered through `view::render` from the mock
 /// device, for comparing with the approved proposal boards.
 pub fn real_screens(out: &std::path::Path) {
-    use nodo_tui::app::{ProviderStage, Screen};
+    use nodo_tui::app::Screen;
+    use nodo_ui_core::flows::web::providers::ProviderStage;
     use nodo_tui::fixtures::fixture;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;

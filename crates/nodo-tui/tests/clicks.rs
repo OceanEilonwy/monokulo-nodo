@@ -4,8 +4,9 @@
 mod common;
 
 use common::draw;
-use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen, Undo};
+use nodo_tui::app::{App, AppPageState, Event, MouseKind, Screen};
 use nodo_tui::fixtures::{fixture, press};
+use nodo_ui_core::flows::settings::Undo;
 use nodo_ui_core::model::FieldValue;
 use nodo_ui_core::screen::ScreenId;
 use nodo_tui::hit::{hit_at, Click, Hit};

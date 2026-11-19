@@ -111,7 +111,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         let mut card = Card::new(t, w);
         card.blank(t);
         card.row(t, vec![t.a("◆  "), t.b("Some apps need more locked storage")]);
-        for line in &prompt.growing {
+        for line in &prompt.batch.growing {
             card.row(t, vec![t.n(format!("  ·  {line}"))]);
         }
         card.blank(t);

@@ -8,7 +8,8 @@ use ratatui::text::Span;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{field_target, inset, quiet, setting_aside, toggle, trail, Card, Screen3};
-use crate::app::{App, ApplyFailedState, ReferenceState, SettingsState};
+use crate::app::{App, ReferenceState, SettingsState};
+use nodo_ui_core::flows::settings::ApplyFailed;
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::STORED_MASK;
@@ -440,7 +441,7 @@ fn grant(app: &App, t: &Theme, state: &ReferenceState, option: &ReferenceOption)
 }
 
 /// New settings did not work, so the previous ones came back.
-pub fn apply_failed(app: &App, t: &Theme, state: &ApplyFailedState) -> Page {
+pub fn apply_failed(app: &App, t: &Theme, state: &ApplyFailed) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::Apps, w);
     let package = state.package.as_str();
