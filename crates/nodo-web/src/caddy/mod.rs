@@ -1069,9 +1069,21 @@ fn tcp_port(dial: &str) -> Option<u16> {
     dial.strip_prefix("127.0.0.1:")?.parse().ok()
 }
 
+/// A manifest may name an admin path with a trailing `/*` (nodo-manifest allows it, and mk-pay
+/// writes `/admin` and `/admin/*`). Every admin path already covers what is under it, so `/admin/*`
+/// means the same as `/admin`, and a bare `/*` the whole host.
+fn admin_path_base(path: &str) -> &str {
+    match path.strip_suffix("/*") {
+        Some("") => "/",
+        Some(base) => base,
+        None => path,
+    }
+}
+
 /// Caddy's path matcher is exact unless it has a wildcard, and `/admin/*` does not match `/admin`, so
 /// both forms are needed. The `;` form covers servers that treat `/admin;x=1` as `/admin`.
 fn admin_path_patterns(path: &str) -> Option<Vec<String>> {
+    let path = admin_path_base(path);
     let allowed = path.starts_with('/')
         && !path.contains("//")
         && path.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~'))
@@ -1183,7 +1195,7 @@ fn https_server(listen: String, mut routes: Vec<Route>, hosts: &[String], redire
 fn admin_path_regexp(paths: &[String]) -> Option<String> {
     let alternatives: Vec<String> = paths
         .iter()
-        .map(|path| path.trim_end_matches('/'))
+        .map(|path| admin_path_base(path).trim_end_matches('/'))
         .filter(|path| !path.is_empty())
         .map(|path| path.replace('.', "\\."))
         .collect();
