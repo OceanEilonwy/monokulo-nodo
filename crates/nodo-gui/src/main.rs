@@ -245,7 +245,6 @@ struct Runtime {
     layout_checked: Instant,
     stop: Arc<AtomicBool>,
     manage: manage::Manage,
-    worker: Option<manage::Worker>,
     /// The management version last shown, so its models are only rebuilt on change.
     manage_shown: Option<u64>,
 }
@@ -369,7 +368,7 @@ impl Runtime {
             }
         }
         self.app.tick(now);
-        self.manage.poll(self.worker.as_ref());
+        self.manage.poll();
         self.dimmer.percent = self.manage.prefs.dim_percent();
         let prefs = &self.manage.prefs;
         self.app.logo = state::LogoLook {
@@ -446,13 +445,13 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     let layout_seen = modified(&options.layout);
     let socket = std::env::var("NODO_SCREEN_SOCKET").unwrap_or_else(|_| nodo_api::SCREEN_SOCKET.to_owned());
     let (worker, offline) = match nodo_ui_core::helper_backend::HelperBackend::connect(Path::new(&socket)) {
-        Ok(backend) => (Some(manage::Worker::start(Box::new(backend))), None),
+        Ok(backend) => (Some(nodo_ui_core::exec::EffectWorker::spawn(Box::new(backend))), None),
         Err(e) => {
             log(&format!("management: cannot reach {socket}: {e}"));
             (None, Some(format!("{socket}: {e}")))
         }
     };
-    let mut manage = manage::Manage::new(worker.as_ref());
+    let mut manage = manage::Manage::new(worker);
     if let Some(why) = offline {
         manage.set_offline(why);
     }
@@ -460,7 +459,6 @@ fn run(offered: Vec<Offered>, layout: Layout, options: Options, config: Config, 
     manage.idle_return = manage.prefs.timeout();
     let runtime = Rc::new(RefCell::new(Runtime {
         manage,
-        worker,
         manage_shown: None,
         app: App::new(offered, layout, Instant::now()),
         presenter: Presenter::new(&ui),

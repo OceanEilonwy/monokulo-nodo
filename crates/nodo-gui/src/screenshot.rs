@@ -27,20 +27,22 @@ pub const MANAGE_SCENES: &[&str] = &[
     "r-tiles", "r-home", "r-apps", "r-app", "r-settings", "r-field-menu", "r-refs", "r-chips", "r-chip-menu", "r-keyboard", "r-get-apps",
     "r-about", "r-install", "r-sources", "r-add-source", "r-web", "r-hosting", "r-providers", "r-system",
     "r-updates", "r-auto", "r-undo", "r-logs", "r-log", "r-backups", "r-network", "r-ssh", "r-screen", "r-pin", "r-no-pin",
+    "r-invalid", "r-remove", "r-public",
 ];
 
 /// Drives management to the screen a scene shows.
 fn manage_scene(name: &str) -> crate::manage::Manage {
-    use crate::manage::{Manage, Worker};
-    let worker = Worker::start(Box::new(nodo_ui_core::mock::MockBackend::new()));
-    let mut m = Manage::new(Some(&worker));
+    use crate::manage::Manage;
+    let worker = nodo_ui_core::exec::EffectWorker::spawn(Box::new(nodo_ui_core::mock::MockBackend::new()));
+    let mut m = Manage::new(Some(worker));
     m.open();
-    worker.drain_blocking(&mut m);
+    m.drain_blocking();
     let _ = m.first_app();
     let steps: Vec<String> = match name {
         "r-apps" => vec!["tab:1".into()],
-        "r-app" => vec!["tab:1".into(), "open:app:moneropay".into()],
-        "r-settings" | "r-field-menu" | "r-refs" | "r-keyboard" | "r-chips" | "r-chip-menu" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:settings:moneropay".into()],
+        "r-app" | "r-remove" => vec!["tab:1".into(), "open:app:moneropay".into()],
+        "r-settings" | "r-field-menu" | "r-refs" | "r-keyboard" | "r-chips" | "r-chip-menu" | "r-invalid" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:settings:moneropay".into()],
+        "r-public" => vec!["tab:1".into(), "open:app:moneropay".into(), "open:hosting:moneropay".into()],
         "r-get-apps" => vec!["tab:1".into(), "open:get-apps".into()],
         "r-about" | "r-install" => vec!["tab:1".into(), "open:get-apps".into(), "about-first".into()],
         "r-sources" => vec!["tab:1".into(), "open:get-apps".into(), "open:sources".into()],
@@ -72,26 +74,40 @@ fn manage_scene(name: &str) -> crate::manage::Manage {
         } else {
             m.act(&step);
         }
-        worker.drain_blocking(&mut m);
+        m.drain_blocking();
     }
     match name {
         "r-field-menu" => m.act(&format!("field:{}", m.first_field())),
         "r-refs" => {
             m.act("field-ref:daemon_rpc");
-            worker.drain_blocking(&mut m);
+            m.drain_blocking();
         }
         "r-keyboard" => m.act(&format!("field-type:{}", m.first_field())),
         "r-chips" | "r-chip-menu" => {
             m.act("field-ref:daemon_rpc");
             m.act("ref:cuprated.rpc_url");
-            worker.drain_blocking(&mut m);
+            m.drain_blocking();
             if name == "r-chip-menu" {
                 m.act("field:daemon_rpc");
             }
         }
         "r-install" => {
             m.act("install");
-            worker.drain_blocking(&mut m);
+            m.drain_blocking();
+        }
+        // A field that does not fit its kind says why beside it.
+        "r-invalid" => {
+            m.act("field-type:api_port");
+            m.key("abc");
+            m.key("done");
+        }
+        // A question of the core's, which starts on Cancel.
+        "r-remove" => m.act("remove:moneropay"),
+        // Save towards the internet: the names, the check, then the one confirmation.
+        "r-public" => {
+            m.toggled("expose:public", true);
+            m.act("hosting-save");
+            m.drain_blocking();
         }
         "r-pin" => m.show_pin_for_design(true),
         "r-no-pin" => m.show_pin_for_design(false),
