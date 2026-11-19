@@ -661,14 +661,18 @@ def site_aliases():
             tui.wait_for("Hosting", "Home network", timeout=20)
             # Home network, Tor, Internet: tick the internet.
             tui.send("down", "down", "space")
-            tui.expect("the internet shows the address and the other names", "Also answers at", "www", ".example.com",
-                       "Nothing else yet: only www.example.com.")
-            # Domain, Address, then the new name's domain and its box, left empty for example.com itself.
-            tui.send("down", "down", "down", "down")
+            tui.expect("the internet shows the address and a button for another one, its controls closed", "www",
+                       ".example.com", "Add another address", absent=("Also answers at", "New name"))
+            # Domain, Address, then the button that opens the new name's controls.
+            tui.send("down", "down", "down")
+            tui.send("enter")
+            tui.expect("the button opens the new name's controls", "Also answers at", "New name")
+            # The new name's domain, then its box, left empty for example.com itself.
+            tui.send("down")
             tui.send("enter")
             tui.expect("the bare domain is added, redirecting to www", re.compile(r"example\.com\s+→ www\.example\.com"))
-            # The new name's box, its mode, Add, Show details, then Save.
-            tui.send("down", "down", "down", "down")
+            # The controls closed, with the focus on the button. Show details, then Save.
+            tui.send("down", "down")
             tui.send("enter")
             tui.wait_for(re.compile(r"Ready to put|Some checks|can't reach"), timeout=120)
             if "Ready to put" not in tui.text():

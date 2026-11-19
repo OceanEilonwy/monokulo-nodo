@@ -264,9 +264,10 @@ codebase, and signed xbps packages from user-added feeds.
 - **Other names of a site:** A public site can also answer at more names, each either served (the
   same site, as a second host in its Caddy route) or redirected (a 308 to `https://<primary>` with
   the path and query kept, such as the bare `example.com` beside `www.example.com`). Hosting lists
-  them under "Also answers at": a new name is picked like the main address (a connected domain plus
-  an optional part, empty for the domain itself), and the going-public confirmation lists every
-  name. Each name must be under a connected provider's domain, because that provider publishes its
+  them under "Also answers at", which appears once a site has such a name: until then the screen
+  shows only an "Add another address" button, which opens the controls for a new name. It is picked
+  like the main address (a connected domain plus an optional part, empty for the domain itself),
+  and the going-public confirmation lists every name. Each name must be under a connected provider's domain, because that provider publishes its
   record (`@` for the bare domain) and answers its DNS-01 challenge; names are unique across all
   sites, and a provider is in use while any name of a public site is under its domains. While the
   site is public, names can be removed (the change is applied at once) but not added or changed,

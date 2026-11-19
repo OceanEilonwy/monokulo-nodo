@@ -104,7 +104,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     let len = state.order().len();
     let focus = state.focus();
+    let in_alias_form = matches!(focus, HostingFocus::AliasDomain | HostingFocus::AliasAddress | HostingFocus::AliasMode | HostingFocus::AliasAdd);
     match key.code {
+        // Esc in the new name's controls gives up the new name, not the whole screen.
+        KeyCode::Esc if in_alias_form => state.close_alias_form(),
         KeyCode::Esc => pop(app),
         KeyCode::Tab | KeyCode::Down => state.selected = (state.selected.min(len - 1) + 1).min(len - 1),
         KeyCode::BackTab | KeyCode::Up => state.selected = state.selected.min(len - 1).saturating_sub(1),
@@ -115,6 +118,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::Domain => {
             state.picking = true;
             state.pick = choices.iter().position(|(d, _)| *d == state.domain).unwrap_or(0);
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasOpen => {
+            state.adding_alias = true;
+            state.focus_on(HostingFocus::AliasDomain);
         }
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasDomain => {
             state.picking_alias = true;
@@ -170,10 +177,8 @@ fn add_alias(state: &mut ExposureState, choices: &[(String, String)], sites: &[S
     match nodo_api::check_aliases(&state.host(), &next, &owned, &names_of_other_sites(sites, &state.site)) {
         Ok(()) => {
             state.aliases = next;
-            state.alias_sub.clear();
-            state.alias_error = None;
-            // The new row comes before the controls, so the focus moves on one to stay where it was.
-            state.selected = (state.selected + 1).min(state.order().len() - 1);
+            // The name is on the list now; the controls close until another one is wanted.
+            state.close_alias_form();
         }
         Err(reason) => state.alias_error = Some(sentence(&reason)),
     }

@@ -901,6 +901,9 @@ pub struct ExposureState {
     pub picking_alias: bool,
     /// Why the new name could not be added.
     pub alias_error: Option<String>,
+    /// The controls that put a new name together are open. They stay closed until the owner asks
+    /// for another address, so a site with one address shows only that one.
+    pub adding_alias: bool,
     /// The site was public when the screen opened. The helper then lets names be removed but not
     /// added, since going public confirmed the names it had.
     pub was_public: bool,
@@ -916,6 +919,8 @@ pub enum HostingFocus {
     Address,
     /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
     Alias(usize),
+    /// The button that opens the controls for a new name.
+    AliasOpen,
     AliasDomain,
     AliasAddress,
     AliasMode,
@@ -956,6 +961,7 @@ impl ExposureState {
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
             alias_error: None,
+            adding_alias: false,
             was_public: draft.public,
         }
     }
@@ -968,8 +974,12 @@ impl ExposureState {
             if has_provider {
                 order.extend([HostingFocus::Domain, HostingFocus::Address]);
                 order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if !self.was_public {
+                if self.was_public {
+                    // Names can only be removed while the site is public.
+                } else if self.adding_alias {
                     order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
+                } else {
+                    order.push(HostingFocus::AliasOpen);
                 }
             } else {
                 order.push(HostingFocus::AddProvider);
@@ -997,6 +1007,23 @@ impl ExposureState {
     pub fn alias_host(&self) -> String {
         let sub = self.alias_sub.text().trim().trim_matches('.');
         if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+    }
+
+    /// Puts the focus on `focus` when it is in the order.
+    pub fn focus_on(&mut self, focus: HostingFocus) {
+        if let Some(at) = self.order().iter().position(|f| *f == focus) {
+            self.selected = at;
+        }
+    }
+
+    /// Closes the new name's controls and empties them, with the focus on the button that opens
+    /// them again.
+    pub fn close_alias_form(&mut self) {
+        self.adding_alias = false;
+        self.alias_sub.clear();
+        self.alias_mode = nodo_api::AliasMode::Redirect;
+        self.alias_error = None;
+        self.focus_on(HostingFocus::AliasOpen);
     }
 
     /// The domain list is open, for either address.
