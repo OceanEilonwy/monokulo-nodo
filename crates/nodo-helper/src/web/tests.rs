@@ -1104,12 +1104,12 @@ fn the_web_gui_alone_brings_up_the_local_listener_the_trust_page_and_its_service
     web.apply(&web_gui_input(false)).unwrap();
 
     let json = web.io.get("/web/caddy.json").unwrap();
-    assert!(json.contains("192.168.1.60:10444") && json.contains("127.0.0.1:10082"), "{json}");
+    assert!(json.contains("192.168.1.60:10444") && json.contains("unix//run/nodo-web-gui/http.sock"), "{json}");
     assert!(json.contains("\"nodo.local\"") && json.contains("192.168.1.60:10081"));
     assert!(!json.contains("shop.local"), "no site is on the local network");
     let nft = web.io.get("/nft/web.nft").unwrap();
     assert!(nft.contains("dnat ip to 192.168.1.60:10444") && nft.contains("dnat ip to 192.168.1.60:10081"), "{nft}");
-    assert!(!nft.contains("10082"));
+    assert!(!nft.contains("nodo-web-gui"));
     assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "nodo.local\n");
     assert_eq!(web.io.get("/web/local-address").unwrap(), "192.168.1.60\n");
     for service in ["nodo-localnet", "nodo-caddy", "nodo-mdns", "nodo-web-gui"] {
@@ -1142,7 +1142,7 @@ fn turning_the_web_gui_off_stops_its_service_and_leaves_nothing_of_it() {
     web.io.put(ROOT_PATH, ROOT_PEM);
     web.apply(&web_gui_input(true)).unwrap();
     assert!(web.io.up("nodo-web-gui"));
-    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("unix//run/nodo-web-gui/http.sock"));
     assert!(web.io.get("/web/trust/index.html").unwrap().contains("https://nodo.local"));
     web.io.calls.lock().unwrap().clear();
 
@@ -1153,7 +1153,7 @@ fn turning_the_web_gui_off_stops_its_service_and_leaves_nothing_of_it() {
     for path in ["/web/caddy.json", "/nft/web.nft", "/localnet/mdns-names", "/web/trust/index.html"] {
         assert_eq!(web.io.get(path), never.io.get(path), "{path} is as if the web GUI had never been on");
     }
-    assert!(!web.io.get("/web/caddy.json").unwrap().contains("10082"));
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("nodo-web-gui"));
     assert_eq!(web.web_gui_url(&input(true, false)), None);
 
     // With no local site either, the local listener, the trust page and the address all go.
@@ -1173,7 +1173,7 @@ fn the_web_gui_waits_for_the_local_address_with_its_service_running() {
     web.apply(&waiting).unwrap();
     assert!(web.io.up("nodo-localnet"), "asked for the address");
     assert!(web.io.up("nodo-web-gui"), "ready for when the address comes");
-    assert!(!web.io.get("/web/caddy.json").unwrap().contains("10082"), "served nowhere until then");
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("nodo-web-gui"), "served nowhere until then");
     assert_eq!(web.web_gui_url(&waiting), None);
     let status = web.status(&waiting).unwrap();
     assert!(status.local_unavailable.is_some() && status.local_remedy.is_some(), "{status:?}");
@@ -1181,7 +1181,7 @@ fn the_web_gui_waits_for_the_local_address_with_its_service_running() {
     // The address arrives: the periodic check applies it, and the web GUI is served.
     web.io.put("/run/localnet/state", "status=ready\naddress=192.168.1.60\n");
     assert_eq!(web.local_address_changed(&waiting), Ok(true));
-    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("unix//run/nodo-web-gui/http.sock"));
     assert_eq!(web.io.get("/localnet/mdns-names").unwrap(), "nodo.local\n");
     assert_eq!(web.web_gui_url(&waiting).as_deref(), Some("https://nodo.local"));
 }
@@ -1246,7 +1246,7 @@ fn the_helpers_switch_drives_the_service_the_route_and_the_gate_together() {
     let served = WebGuiStatus { enabled: true, url: Some("https://nodo.local".into()), waiting: false, open: false };
     assert_eq!(on, Response::WebGui(served.clone()));
     assert!(web.io.up("nodo-web-gui") && web.io.up("nodo-localnet") && web.io.up("nodo-caddy"));
-    assert!(web.io.get("/web/caddy.json").unwrap().contains("127.0.0.1:10082"));
+    assert!(web.io.get("/web/caddy.json").unwrap().contains("unix//run/nodo-web-gui/http.sock"));
     assert!(matches!(h.handle_web(4243, Request::WebGuiLogin { passphrase: pass() }), Ok(Response::WebGui(s)) if s.open));
     assert!(h.handle_web(4243, Request::ListServices).is_ok());
 
@@ -1263,7 +1263,7 @@ fn the_helpers_switch_drives_the_service_the_route_and_the_gate_together() {
         assert!(!web.io.up(service), "{service}");
     }
     let json = web.io.get("/web/caddy.json").unwrap();
-    assert!(!json.contains("10082") && !json.contains("nodo.local"), "{json}");
+    assert!(!json.contains("nodo-web-gui") && !json.contains("nodo.local"), "{json}");
     assert!(!web.io.get("/nft/web.nft").unwrap().contains("dnat"));
     assert!(h.handle_web(4243, Request::ListServices).unwrap_err().is_web_login_required());
 }

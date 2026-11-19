@@ -17,8 +17,8 @@
 //!   [`CADDY_TRUST_PORT`], which Caddy binds on the local address alone, and only for LAN sources.
 //!   See [`crate::trust`]. No other listener has a route to it.
 //! - The **web GUI** (`nodo-web-gui`, the TUI's screens in a browser) is one more host on the local
-//!   listener while the owner has it on ([`DomainSettings::web_gui`]): `https://nodo.local`, also by
-//!   the bare local address, with the internal CA, proxied to [`WEB_GUI_PORT`] on loopback for LAN
+//!   listener while the owner has it on ([`DomainSettings::web_gui`]): `https://nodo.local`, by that
+//!   name only, with the internal CA, proxied to its Unix socket ([`WEB_GUI_SOCKET`]) for LAN
 //!   sources only. It turns the local listener, the internal CA and the trust page on by itself, so
 //!   it needs no `.local` site. Off, nothing of it is generated.
 //! - Every **onion** address has its own plain-HTTP server on its own loopback port, reachable only
@@ -60,8 +60,8 @@ pub const CADDY_LOCAL_PORT: u16 = 10444;
 /// Caddy binds this on the local address only, for the trust page. nftables sends the local
 /// address's port 80 here.
 pub const CADDY_TRUST_PORT: u16 = 10081;
-/// The web GUI's process listens here on loopback. The firewall lets only Caddy and root connect.
-pub const WEB_GUI_PORT: u16 = nodo_api::WEBGUI_UPSTREAM_PORT;
+/// The web GUI's process listens on this Unix socket, in a directory only it and Caddy may enter.
+pub const WEB_GUI_SOCKET: &str = nodo_api::WEBGUI_HTTP_SOCKET;
 /// The web GUI's name on the local listener: the trust page's name, over HTTPS.
 pub const WEB_GUI_HOST: &str = crate::trust::TRUST_HOST;
 const ONION_VIRTUAL_PORT: u16 = 80;
@@ -560,17 +560,17 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     let mut names_problem = None;
 
     // The web GUI is not a package's site. It goes first on the local listener, under the trust
-    // page's name and the bare address, and always with the internal CA.
-    let web_gui_ip = local_ip.filter(|_| settings.web_gui);
+    // page's name and no other, and always with the internal CA. A browser sends no server name
+    // for a bare address, which this listener's TLS policies refuse, so there is no route for one.
+    let web_gui_served = settings.web_gui && local_ip.is_some();
     if settings.web_gui {
         if let Some(taken) = resolved.iter().find(|r| r.local.as_deref() == Some(WEB_GUI_HOST)) {
             return Err(WebConfigError::DuplicateHost { host: taken.local.clone().unwrap_or_default() });
         }
     }
-    if let Some(ip) = web_gui_ip {
-        local_routes.push(web_gui_route(ip, settings));
+    if web_gui_served {
+        local_routes.push(web_gui_route(settings));
         local_subjects.push(WEB_GUI_HOST.to_owned());
-        local_subjects.push(ip.to_string());
     }
 
     for item in &resolved {
@@ -678,13 +678,10 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
     }
 
     let mut policies = Vec::new();
-    let web_gui_address = web_gui_ip.map(|ip| ip.to_string());
-    let internal_subjects: Vec<String> = local_subjects
-        .iter()
-        .filter(|host| names::is_local_name(host) || web_gui_address.as_ref() == Some(*host))
-        .cloned()
-        .collect();
-    // Only `.local` names and the web GUI use the internal CA, so only then is there a root to offer.
+    let internal_subjects: Vec<String> =
+        local_subjects.iter().filter(|host| names::is_local_name(host)).cloned().collect();
+    // Only `.local` names use the internal CA, the web GUI's among them, so only then is there a
+    // root to offer.
     let trust_ip = local_ip.filter(|_| !internal_subjects.is_empty());
     if let Some(ip) = trust_ip {
         servers.insert("local-trust".to_owned(), trust_server(ip, settings));
@@ -805,23 +802,14 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             dns_names: local_dns_names,
             names_problem,
             trust_url: trust_ip.map(|_| format!("http://{}", crate::trust::TRUST_HOST)),
-            web_gui_url: web_gui_ip.map(|_| format!("https://{WEB_GUI_HOST}")),
-            web_gui_waiting: settings.web_gui && web_gui_ip.is_none(),
+            web_gui_url: web_gui_served.then(|| format!("https://{WEB_GUI_HOST}")),
+            web_gui_waiting: settings.web_gui && !web_gui_served,
         },
     })
 }
 
-/// No site may name one of these as its upstream. The web GUI's port is among them whether or not
-/// the web GUI is on, so no package's site can ever be proxied to in its place.
-const LISTENER_PORTS: [u16; 7] = [
-    PUBLIC_HTTP_PORT,
-    PUBLIC_HTTPS_PORT,
-    CADDY_HTTP_PORT,
-    CADDY_HTTPS_PORT,
-    CADDY_LOCAL_PORT,
-    CADDY_TRUST_PORT,
-    WEB_GUI_PORT,
-];
+const LISTENER_PORTS: [u16; 6] =
+    [PUBLIC_HTTP_PORT, PUBLIC_HTTPS_PORT, CADDY_HTTP_PORT, CADDY_HTTPS_PORT, CADDY_LOCAL_PORT, CADDY_TRUST_PORT];
 const MDNS_GROUP: &str = "224.0.0.251";
 const MDNS_PORT: u16 = 5353;
 
@@ -1396,18 +1384,19 @@ fn trust_server(ip: Ipv4Addr, settings: &DomainSettings) -> Server {
     }
 }
 
-/// The web GUI on the local listener: its name and the bare local address, for LAN sources only,
-/// straight to its process on loopback. It has no admin paths to hide and no unavailable page: a
+/// The web GUI on the local listener: its name, for LAN sources only, straight to its process's
+/// Unix socket. A site's socket upstream must be its own under `/run/apps` (see [`upstream_dial`]),
+/// so no package can name this one. It has no admin paths to hide and no unavailable page: a
 /// stopped web GUI gets the listener's error page.
-fn web_gui_route(ip: Ipv4Addr, settings: &DomainSettings) -> Route {
+fn web_gui_route(settings: &DomainSettings) -> Route {
     host_route(
         Matcher {
-            host: vec![WEB_GUI_HOST.to_owned(), ip.to_string()],
+            host: vec![WEB_GUI_HOST.to_owned()],
             remote_ip: Some(RemoteIp { ranges: settings.lan_ranges.clone() }),
             ..Matcher::default()
         },
         vec![Route {
-            handle: vec![reverse_proxy(&format!("127.0.0.1:{WEB_GUI_PORT}"), UpstreamProtocol::H1)],
+            handle: vec![reverse_proxy(&format!("unix/{WEB_GUI_SOCKET}"), UpstreamProtocol::H1)],
             terminal: true,
             ..Route::default()
         }],

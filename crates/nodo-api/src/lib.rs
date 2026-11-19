@@ -42,8 +42,10 @@ pub const SCREEN_SOCKET: &str = "/run/nodo/screen.sock";
 /// The web GUI's own socket. Only its account may connect, and the helper answers nothing but
 /// [`Request::WebGuiLogin`] and [`Request::WebGuiStatus`] on it until someone has logged in.
 pub const WEBGUI_SOCKET: &str = "/run/nodo/webgui.sock";
-/// The loopback port the web GUI's process listens on. Only Caddy reaches it.
-pub const WEBGUI_UPSTREAM_PORT: u16 = 10082;
+/// The Unix socket the web GUI's process listens on for Caddy. Its directory belongs to the web
+/// GUI's account and lets only Caddy's group in, so no other account can connect to it or take
+/// its place.
+pub const WEBGUI_HTTP_SOCKET: &str = "/run/nodo-web-gui/http.sock";
 /// Where the web GUI answers on the home network while it is on and the local address exists.
 pub const WEBGUI_URL: &str = "https://nodo.local";
 /// What [`ApiError::Locked`] carries when the web GUI's socket refuses a request because nobody is
