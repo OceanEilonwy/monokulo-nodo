@@ -712,6 +712,134 @@ fn the_confirm_buttons_and_breadcrumbs_take_clicks() {
     assert_eq!(app.screen.id(), ScreenId::Apps, "the first crumb opens its tab");
 }
 
+/// The mouse event for a click on `needle` where it is drawn now.
+fn click_at(app: &App, needle: &str) -> Event {
+    let (column, row) = find(app, needle);
+    Event::Mouse { kind: MouseKind::Down, column, row }
+}
+
+/// The step the pending button on this screen says it is on, if any.
+fn pending_step(app: &App) -> Option<&'static str> {
+    app.pending.as_ref().filter(|p| p.screen == app.screen.id()).and_then(|p| p.step)
+}
+
+/// Hosting for shop, off the internet, with the internet ticked under a new address, so Check and
+/// save first saves the names and only then checks.
+fn hosting_with_new_address() -> (App, MockBackend) {
+    let (mut app, mut mock) = exposure_with_public_off();
+    keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE]);
+    let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
+    state.sub = nodo_tui::secret::Input::plain("store");
+    (app, mock)
+}
+
+/// Check and save saves the names, then runs the checks. The button used to look idle again as
+/// soon as the names were saved, while the checks still ran and the header still said Working, so
+/// the owner could not tell anything was happening. It now stays busy, says which step it is on
+/// and takes no second click until the checks' result is on screen. This runs on the real worker,
+/// as the terminal does.
+#[test]
+fn check_and_save_stays_busy_until_the_checks_are_done() {
+    use nodo_tui::runtime::{dispatch_async, EffectWorker};
+    use std::time::Duration;
+
+    let (mut app, mock) = hosting_with_new_address();
+    let click = click_at(&app, "Check and save");
+    let mut worker = EffectWorker::spawn(mock);
+    dispatch_async(&mut app, &mut worker, click.clone());
+    assert!(app.working && app.pending.is_some(), "the click marks the button");
+    assert_eq!(pending_step(&app), Some("Saving…"));
+    assert!(screen_text(&app).contains("⧗ Saving…"), "{}", screen_text(&app));
+
+    // The names are saved: the checks are the next step of the same work.
+    let events = worker.wait_idle(Duration::from_secs(5));
+    assert!(matches!(events.first(), Some(Event::PublicHostSet { result: Ok(()), then }) if !then.is_empty()), "{events:?}");
+    for event in events {
+        dispatch_async(&mut app, &mut worker, event);
+        assert_eq!(app.screen.id(), ScreenId::WebExposure);
+        assert!(worker.busy() && app.working, "the checks are running");
+        assert_eq!(pending_step(&app), Some("Checking…"), "the button stays busy while the checks run");
+    }
+    let screen = screen_text(&app);
+    assert!(screen.contains("⧗ Checking…") && screen.contains("Working…"), "{screen}");
+    assert!(!screen.contains("Check and save"), "the button does not look idle:\n{screen}");
+    assert!(update(&mut app, click.clone()).is_empty(), "a second click waits for the first");
+    assert!(update(&mut app, press(ENTER)).is_empty(), "so does Enter");
+    assert_eq!(pending_step(&app), Some("Checking…"));
+
+    // The checks' result ends it.
+    let events = worker.wait_idle(Duration::from_secs(5));
+    assert!(matches!(events.as_slice(), [Event::Reachability { going_public: true, .. }]), "{events:?}");
+    for event in events {
+        dispatch_async(&mut app, &mut worker, event);
+    }
+    assert!(!worker.busy() && !app.working);
+    assert_eq!(app.screen.id(), ScreenId::WebCheck, "the checks are on screen");
+    assert_eq!(app.pending, None);
+}
+
+/// A refused name ends Check and save at once, and the button can be pressed again.
+#[test]
+fn a_refused_address_ends_check_and_save() {
+    use nodo_tui::runtime::{dispatch_async, EffectWorker};
+    use std::time::Duration;
+
+    let (mut app, mock) = hosting_with_new_address();
+    let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
+    state.sub = nodo_tui::secret::Input::plain("Not_A_Name");
+    let click = click_at(&app, "Check and save");
+    let mut worker = EffectWorker::spawn(mock);
+    dispatch_async(&mut app, &mut worker, click);
+    assert_eq!(pending_step(&app), Some("Saving…"));
+    for event in worker.wait_idle(Duration::from_secs(5)) {
+        dispatch_async(&mut app, &mut worker, event);
+    }
+    assert!(!worker.busy());
+    assert_eq!(app.pending, None, "the refusal ends it");
+    assert_eq!(app.screen.id(), ScreenId::WebExposure);
+    let notice = app.notice.clone().expect("told");
+    assert!(notice.text.starts_with("Not saved:"), "{}", notice.text);
+    assert!(screen_text(&app).contains("Check and save"), "{}", screen_text(&app));
+}
+
+/// Saving Home network or Tor while turning the internet on is one batch: the change, then the
+/// checks. Its first result used to end the button's busy mark, with the checks still to come.
+#[test]
+fn saving_and_checking_in_one_batch_stays_busy_until_the_checks_are_done() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    // With no other names and the address as saved, there are no names to save first.
+    mock.web.sites[0].exposure = Exposure { local: true, onion: true, public: false };
+    mock.web.sites[0].public_aliases.clear();
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, ENTER);
+    mock.calls.clear();
+    keys(&mut app, &mut mock, &[SPACE, DOWN, DOWN, SPACE]);
+    let click = click_at(&app, "Check and save");
+    let effects = update(&mut app, click.clone());
+    assert!(
+        matches!(effects.as_slice(), [Effect::SetExposure { .. }, Effect::CheckReachability { going_public: true, .. }]),
+        "{effects:?}"
+    );
+    assert_eq!(pending_step(&app), Some("Checking…"));
+    // The batch runs one effect at a time, as the worker does, and hands over each one's events.
+    let mut effects = std::collections::VecDeque::from(effects);
+    let first = effects.pop_front().expect("the change");
+    for event in execute_effect(&mut mock, first) {
+        assert!(update(&mut app, event).is_empty());
+    }
+    assert_eq!(exposure_calls(&mock), [Exposure { local: false, onion: true, public: false }]);
+    assert_eq!(pending_step(&app), Some("Checking…"), "the checks are still to come");
+    assert!(screen_text(&app).contains("⧗ Checking…"), "{}", screen_text(&app));
+    assert!(update(&mut app, click).is_empty(), "a second click waits for the first");
+
+    let checks = effects.pop_front().expect("the checks");
+    for event in execute_effect(&mut mock, checks) {
+        dispatch(&mut app, &mut mock, event);
+    }
+    assert_eq!(app.screen.id(), ScreenId::WebCheck);
+    assert_eq!(app.pending, None);
+}
+
 #[test]
 fn the_wheel_scrolls_like_the_arrow_keys() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);

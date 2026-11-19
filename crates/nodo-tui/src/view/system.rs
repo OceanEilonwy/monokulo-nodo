@@ -192,7 +192,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         n => format!("automatic for {n}"),
     };
     // While a check runs, the link says so in place, and is not a target until it is done.
-    let checking = super::pending().filter(|(click, _)| *click == key('r')).map(|(_, ticks)| ticks);
+    let checking = super::pending().filter(|(click, ..)| *click == key('r')).map(|(_, ticks, _)| ticks);
     let check = match checking {
         Some(ticks) => t.d(format!("{} Checking…", super::v3::hourglass(ticks))),
         None => t.a("Check now ›"),
