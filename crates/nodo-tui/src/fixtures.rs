@@ -73,7 +73,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::Main => Screen::Home { selected: 0 },
         ScreenId::Apps => Screen::Apps { selected: 0 },
         ScreenId::AppPage => Screen::AppPage(crate::app::AppPageState::new(&sample_app(app))),
-        ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState { name: sample_app(app), confirm_focused: false }),
+        ScreenId::AppRemove => Screen::AppRemove(crate::app::AppRemoveState::new(&sample_app(app))),
         ScreenId::System => Screen::System { selected: 0 },
         // A suite like Pingers, at its review, with Cancel focused.
         ScreenId::Bundle => Screen::Bundle(Box::new(BundleState::new(nodo_ui_core::mock::sample_bundle_review()))),

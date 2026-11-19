@@ -10,7 +10,7 @@ use crate::app::*;
 use nodo_ui_core::model::*;
 use nodo_ui_core::secret::{Input, Secret};
 use nodo_ui_core::{Effect, Outcome};
-use nodo_ui_core::flows::{Confirm, Dest, Notice, NoticeKind, Question, Step};
+use nodo_ui_core::flows::{self, services, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -368,16 +368,11 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
 }
 
-/// The installed apps: every service except the device's own parts.
-pub fn installed_apps(app: &App) -> Vec<String> {
-    app.data.services.iter().map(|svc| svc.id.clone()).collect()
-}
-
 fn apps_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let names = installed_apps(app);
+    let names = services::installed_apps(&app.data);
     let Screen::Apps { selected } = &mut app.screen else {
         return Vec::new();
     };
@@ -399,26 +394,23 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::AppPage(state) = &mut app.screen else {
         return Vec::new();
     };
-    let name = state.name.clone();
+    let page = state.page.clone();
+    let name = page.name.clone();
     if state.more_open {
         // The folded page actions, opened from "⋯ More" at 80 columns.
         state.more_open = false;
         return match key.code {
-            KeyCode::Char('r') => vec![Effect::Restart(name)],
-            KeyCode::Char('s') => vec![Effect::Stop(name)],
+            KeyCode::Char('r') => page.restart(),
+            KeyCode::Char('s') => page.stop(),
             KeyCode::Char('x') => {
-                push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false }));
+                push(app, Screen::AppRemove(AppRemoveState::new(&name)));
                 Vec::new()
             }
             _ => Vec::new(),
         };
     }
-    let has_update = app.data.updates.iter().any(|item| item.name == name && !item.held);
     let sections = app.data.app_sections(&name);
     let owner_row = sections.len() > APP_SECTIONS.len();
-    let Screen::AppPage(state) = &mut app.screen else {
-        return Vec::new();
-    };
     match key.code {
         KeyCode::Char('?') => app.overlay = Some(Overlay { doc: help_document(), scroll: 0 }),
         KeyCode::Esc => pop(app),
@@ -428,40 +420,23 @@ fn app_page_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Enter => match sections[state.selected.min(sections.len() - 1)].as_str() {
             // An app without a web page shows Hosting as a dimmed row that says so; Enter on
             // it stays put rather than flash a notice as if it had gone somewhere.
-            "Hosting" if !app.data.web.sites.iter().any(|site| site.package == name) => {}
+            "Hosting" if !page.has_site(&app.data) => {}
             "Hosting" => return web::hosting_from_detail(app, &name),
             "Settings" => return vec![Effect::OpenSettings(name)],
             _ => return open_logs(app, &name),
         },
         KeyCode::Char('h') => return web::hosting_from_detail(app, &name),
         KeyCode::Char('l') => return open_logs(app, &name),
-        KeyCode::Char('u') if has_update => {
-            let screen = updates_screen(app);
-            push(app, screen);
-            if let Screen::Updates(updates) = &mut app.screen {
-                updates.checked = vec![name];
-            }
+        KeyCode::Char('u') => {
+            let step = page.update(&app.data);
+            return follow(app, step);
         }
-        KeyCode::Char('u') if app.is_locked() => return open_unlock(app),
-        KeyCode::Char('u') => notice(app, NoticeKind::Info, format!("{name} is up to date.")),
-        KeyCode::Char('r') => return vec![Effect::Restart(name)],
+        KeyCode::Char('r') => return page.restart(),
         KeyCode::Char('s') => {
-            let state = app.data.services.iter().find(|svc| svc.id == name).map(|svc| svc.state);
-            return match state {
-                Some(ServiceState::Running) => vec![Effect::Stop(name)],
-                Some(ServiceState::Locked) => {
-                    fail(app, format!("{name} is locked. Press u to unlock this device."));
-                    Vec::new()
-                }
-                Some(ServiceState::Waiting) => {
-                    fail(app, format!("{name} is waiting for another app it depends on."));
-                    Vec::new()
-                }
-                _ => vec![Effect::Start(name)],
-            };
+            let step = page.start_or_stop(&app.data);
+            return follow(app, step);
         }
-
-        KeyCode::Char('x') => push(app, Screen::AppRemove(AppRemoveState { name, confirm_focused: false })),
+        KeyCode::Char('x') => push(app, Screen::AppRemove(AppRemoveState::new(&name))),
         _ => {}
     }
     Vec::new()
@@ -476,10 +451,8 @@ fn app_remove_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => state.confirm_focused = !state.confirm_focused,
         // Enter only removes once the user moved to the Remove button (or clicked it).
         KeyCode::Enter if state.confirm_focused => {
-            let name = state.name.clone();
-            pop(app);
-            pop(app);
-            return vec![Effect::RemovePackage(name)];
+            let step = state.question.confirm.step(&app.data);
+            return follow(app, step);
         }
         KeyCode::Enter => pop(app),
         _ => {}
@@ -668,6 +641,21 @@ fn follow(app: &mut App, step: Step) -> Vec<Effect> {
 fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
     match dest {
         Dest::Back => pop(app),
+        // Only removing an app sends here, from the question under the app's page.
+        Dest::Apps => {
+            if matches!(app.screen, Screen::AppRemove(_)) {
+                pop(app);
+                pop(app);
+            }
+        }
+        Dest::Updates { only } => {
+            let screen = updates_screen(app);
+            push(app, screen);
+            if let (Screen::Updates(updates), Some(name)) = (&mut app.screen, only) {
+                updates.checked = vec![name];
+            }
+        }
+        Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState { resume, ..UnlockState::default() })),
     }
     Vec::new()
 }
@@ -2262,8 +2250,10 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
 fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
         Outcome::Refreshed(snapshot) => on_refreshed(app, *snapshot),
-        Outcome::Failed(text) => fail(app, text),
-        Outcome::Info(text) => notice(app, NoticeKind::Info, text),
+        Outcome::Failed(_) | Outcome::Info(_) => {
+            let step = flows::apply(&event);
+            return follow(app, step);
+        }
         Outcome::UnlockResult(result) => return on_unlock_result(app, result),
         Outcome::SetupDone(result) => {
             if let Screen::Setup(state) = &mut app.screen {
@@ -2950,7 +2940,7 @@ fn pick(app: &mut App, index: usize) {
     };
     let counts = (
         app.home_items().len(),
-        installed_apps(app).len(),
+        services::installed_apps(&app.data).len(),
         app.data.feeds.len(),
         app.update_rows().len(),
         app.data.log_sources.len(),

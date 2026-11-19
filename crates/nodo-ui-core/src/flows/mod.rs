@@ -62,11 +62,13 @@
 //! **Tests.** Each flow has unit tests here against `MockBackend`: actions are run with
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
+pub mod services;
+
 use nodo_api::Exposure;
 
 use crate::effect::ExposureAfter;
 use crate::model::{DriveAction, Snapshot};
-use crate::Effect;
+use crate::{Effect, Outcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
@@ -142,6 +144,14 @@ pub enum Dest {
     /// The page that opened this one: the flow here is over. A frontend without a stack of pages
     /// knows each page's parent.
     Back,
+    /// The list of installed apps.
+    Apps,
+    /// The Updates page. `only` names the one app whose update is chosen there, when the owner
+    /// came from that app's page.
+    Updates { only: Option<String> },
+    /// The page that asks for the device passphrase. `resume` says, in words for the owner, what
+    /// sent them there; once unlocked that carries on (`Dest::Resume`).
+    Unlock { resume: Option<String> },
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or
@@ -206,7 +216,7 @@ impl Confirm {
     /// state as the frontend last read it.
     pub fn step(&self, snapshot: &Snapshot) -> Step {
         match self {
-            Confirm::RemoveApp(name) => Step::Run(vec![Effect::RemovePackage(name.clone())]),
+            Confirm::RemoveApp(name) => Step::All(vec![Step::Go(Dest::Apps), Step::Run(vec![Effect::RemovePackage(name.clone())])]),
             Confirm::RemoveSource { name, from_key_change } => {
                 let remove = Step::Run(vec![Effect::RemoveFeed(name.clone())]);
                 if *from_key_change { Step::All(vec![Step::Go(Dest::Back), remove]) } else { remove }
@@ -240,6 +250,17 @@ impl Confirm {
             Confirm::RemoveBluetooth(address) => Step::Run(vec![Effect::RemoveBluetooth(address.clone())]),
             Confirm::RemoveProvider(id) => Step::Run(vec![Effect::RemoveProvider(id.clone())]),
         }
+    }
+}
+
+/// The outcomes that belong to no feature: a failure or a remark about whatever was last asked
+/// for. `Outcome::Refreshed` is not here: the frontend keeps the `Snapshot`, so it replaces its
+/// own. Every other outcome gives `Step::Stay`.
+pub fn apply(outcome: &Outcome) -> Step {
+    match outcome {
+        Outcome::Failed(text) => Step::Failed(Notice::error(text.clone())),
+        Outcome::Info(text) => Step::Done(Notice::info(text.clone())),
+        _ => Step::Stay,
     }
 }
 

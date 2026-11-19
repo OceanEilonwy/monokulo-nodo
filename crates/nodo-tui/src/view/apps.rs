@@ -30,7 +30,7 @@ pub fn apps(app: &App, t: &Theme, selected: usize) -> Page {
     let mut before_targets = Vec::new();
     screen.before = vec![Item::Blank, heading_link(t, t.b("Installed"), "Get apps ›", key('g'), &mut before_targets), Item::Blank];
     screen.targets.extend(before_targets);
-    let names = crate::update::installed_apps(app);
+    let names = nodo_ui_core::flows::services::installed_apps(&app.data);
     let mut card = Card::new(t, w);
     card.blank(t);
     let rows: Vec<(String, bool, bool)> = names
@@ -219,13 +219,16 @@ pub fn app_remove(app: &App, t: &Theme, state: &AppRemoveState) -> Page {
     screen.targets.extend(before_targets);
     let mut card = Card::new(t, w);
     card.blank(t);
-    card.row(t, vec![t.e("▲  "), t.b(format!("Remove {name}?"))]);
+    let question = &state.question;
+    card.row(t, vec![t.e("▲  "), t.b(question.title.clone())]);
     card.blank(t);
-    card.row(t, vec![t.n(format!("{name} stops and its program is removed. Anything that relies on it stops working."))]);
-    card.row(t, vec![t.d("Its data stays on the drive, so installing it again brings everything back. A site still online has to be taken offline first, in Hosting.")]);
+    // What goes, then what stays and what blocks it, the second one dimmed.
+    for (index, line) in question.body.iter().enumerate() {
+        card.row(t, vec![if index == 0 { t.n(line.clone()) } else { t.d(line.clone()) }]);
+    }
     card.blank(t);
     let cancel = focused("Cancel", !state.confirm_focused);
-    let confirm = focused(&format!("!Remove {name}"), state.confirm_focused);
+    let confirm = focused(&format!("!{}", question.confirm_label), state.confirm_focused);
     card.buttons(t, &[(cancel.as_str(), false, pick(0)), (confirm.as_str(), true, pick(1))]);
     let keys = if state.confirm_focused { "Keys: ↵ remove  ←→ choose  Esc cancel" } else { "Keys: ←→ choose  Esc cancel  (Enter cancels until you move to Remove)" };
     screen.card(t, card, keys, w, h)

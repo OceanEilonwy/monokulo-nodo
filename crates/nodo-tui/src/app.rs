@@ -9,6 +9,7 @@ use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
 use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
@@ -1035,7 +1036,8 @@ pub enum Screen {
 /// Settings and Logs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPageState {
-    pub name: String,
+    /// Which app, with what its buttons do.
+    pub page: AppPage,
     pub selected: usize,
     /// At 80 columns the page actions fold into "⋯ More", which opens them as a list.
     pub more_open: bool,
@@ -1043,7 +1045,15 @@ pub struct AppPageState {
 
 impl AppPageState {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_owned(), selected: 0, more_open: false }
+        Self { page: AppPage::new(name), selected: 0, more_open: false }
+    }
+}
+
+impl std::ops::Deref for AppPageState {
+    type Target = AppPage;
+
+    fn deref(&self) -> &AppPage {
+        &self.page
     }
 }
 
@@ -1188,7 +1198,15 @@ pub fn copy_targets(view: &nodo_api::OwnerPageView) -> Vec<(String, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppRemoveState {
     pub name: String,
+    /// What is asked and what confirming does, from the core. It is drawn as a page of its own.
+    pub question: Question,
     pub confirm_focused: bool,
+}
+
+impl AppRemoveState {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_owned(), question: nodo_ui_core::flows::services::ask_remove(name), confirm_focused: false }
+    }
 }
 
 /// The rows of the System page, in order.
