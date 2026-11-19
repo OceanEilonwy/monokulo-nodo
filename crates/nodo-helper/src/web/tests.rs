@@ -201,7 +201,6 @@ fn input(local: bool, public: bool) -> WebInput {
                 name: "web".into(),
                 upstream: "127.0.0.1:3001".into(),
                 suggested_subdomain: Some("shop".into()),
-                admin_paths: vec!["/admin".into()],
                 multi_address: true,
                 upstream_protocol: nodo_manifest::UpstreamProtocol::H1,
             },

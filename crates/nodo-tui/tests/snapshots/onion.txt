@@ -26,7 +26,7 @@
        port.
        ● The node's address serves only its restricted RPC, which wallets use. Never the full
        RPC.
-       ● Admin paths of sites are blocked on onion addresses. Keys are kept in backups.
+       ● Onion address keys are kept in backups.
 
 
     Keys: ↑↓ move  Space turn on or off  s node settings  g look again  Esc back

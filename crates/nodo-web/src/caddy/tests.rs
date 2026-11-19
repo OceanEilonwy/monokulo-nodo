@@ -10,7 +10,6 @@ fn service(name: &str, upstream: &str) -> WebService {
         name: name.to_owned(),
         upstream: upstream.to_owned(),
         suggested_subdomain: None,
-        admin_paths: vec!["/admin".to_owned()],
         multi_address: true,
         upstream_protocol: UpstreamProtocol::H1,
     }
@@ -67,16 +66,7 @@ fn matches(matcher: &Matcher, host: &str, path: &str, client: &str) -> bool {
         // These tests only use the two client addresses above.
         client == LAN_CLIENT && remote.ranges.iter().any(|r| r == "192.168.0.0/16")
     });
-    let regexp_ok = matcher.path_regexp.as_ref().is_none_or(|re| {
-        let inner = re.pattern.strip_prefix("(?i)^(?:").and_then(|p| p.strip_suffix(")(?:[^a-z0-9_~-]|$)")).unwrap();
-        let lower = path.to_lowercase();
-        inner.split('|').any(|alt| {
-            lower.strip_prefix(&alt.replace("\\.", ".").to_lowercase()).is_some_and(|rest| {
-                rest.chars().next().is_none_or(|c| !(c.is_ascii_alphanumeric() || "_~-".contains(c)))
-            })
-        })
-    });
-    host_ok && path_ok && regexp_ok && ip_ok
+    host_ok && path_ok && ip_ok
 }
 
 fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
@@ -157,13 +147,11 @@ fn caddy_json_has_the_documented_shape() {
     assert_eq!(route["match"][0]["host"][0], "shop.example.com");
     assert_eq!(route["terminal"], true);
     assert_eq!(route["handle"][0]["handler"], "subroute");
-    let inner = &route["handle"][0]["routes"];
-    assert_eq!(inner[0]["match"][0]["path"][0], "/admin");
-    assert_eq!(inner[0]["match"][1]["path_regexp"]["pattern"], "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)");
-    assert_eq!(inner[0]["handle"][0]["handler"], "static_response");
-    assert_eq!(inner[0]["handle"][0]["status_code"], "404");
-    assert_eq!(inner[1]["handle"][0]["handler"], "reverse_proxy");
-    assert_eq!(inner[1]["handle"][0]["upstreams"][0]["dial"], "127.0.0.1:8080");
+    let inner = route["handle"][0]["routes"].as_array().unwrap();
+    assert_eq!(inner.len(), 1, "the whole site goes to the upstream: {inner:?}");
+    assert!(inner[0].get("match").is_none());
+    assert_eq!(inner[0]["handle"][0]["handler"], "reverse_proxy");
+    assert_eq!(inner[0]["handle"][0]["upstreams"][0]["dial"], "127.0.0.1:8080");
     assert_eq!(server["routes"][1]["handle"][0]["abort"], true);
     assert_eq!(value["apps"]["tls"]["automation"]["policies"][0]["issuers"][0]["module"], "acme");
     assert_eq!(value["admin"]["listen"], "unix//run/nodo-web/caddy-admin.sock");
@@ -202,81 +190,50 @@ fn one_site_can_be_local_onion_and_public_at_once() {
 }
 
 #[test]
-fn admin_paths_are_blocked_on_public_and_onion_only() {
+fn every_path_is_served_at_every_address() {
+    // Sites are served whole wherever the owner puts them; an app guards its own admin pages, as
+    // mk-pay does behind its sign-in. Paths that once could be hidden are no different.
     let mut shop = site("shop", "shop", 8080, all_exposures());
     shop.onion_host = Some(ONION.to_owned());
     let plan = generate(&[shop], &settings()).unwrap();
     let onion = onion_server_for(&plan, ONION);
-    let blocked = Outcome::Status("404".into());
-
-    for path in ["/admin", "/ADMIN", "/admin/", "/admin/users", "/admin;x=1", "/admin.", "/admin ", "/admin\0", "/Admin.json"] {
-        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), blocked, "{path}");
-        assert_eq!(request(&plan, onion, ONION, path, "127.0.0.1"), blocked, "{path}");
-        assert_eq!(
-            request(&plan, "local", "shop.local", path, LAN_CLIENT),
-            Outcome::Proxy("127.0.0.1:8080".into()),
-            "{path}"
-        );
-    }
-    // A LAN client using the public name gets the public rules.
-    assert_eq!(request(&plan, "public", "shop.example.com", "/admin", LAN_CLIENT), blocked);
-    // Neighbouring names stay served.
-    for path in ["/administrator", "/admin-panel", "/admin_x", "/admins"] {
-        assert_eq!(
-            request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT),
-            Outcome::Proxy("127.0.0.1:8080".into()),
-            "{path}"
-        );
+    let served = Outcome::Proxy("127.0.0.1:8080".into());
+    for path in ["/", "/admin", "/ADMIN", "/admin/users", "/admin;x=1", "/api/v1/admin/x", "/status/engine"] {
+        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), served, "{path}");
+        assert_eq!(request(&plan, onion, ONION, path, "127.0.0.1"), served, "{path}");
+        assert_eq!(request(&plan, "local", "shop.local", path, LAN_CLIENT), served, "{path}");
     }
 }
 
 #[test]
-fn admin_paths_stay_blocked_while_the_upstream_is_down() {
+fn a_stopped_site_answers_503_on_every_path() {
     let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
     shop.state = ServiceState::Locked;
     let plan = generate(&[shop], &settings()).unwrap();
-    assert_eq!(request(&plan, "public", "shop.example.com", "/admin", INTERNET_CLIENT), Outcome::Status("404".into()));
+    for path in ["/", "/admin"] {
+        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), Outcome::Status("503".into()));
+    }
 }
 
 #[test]
-fn root_admin_path_blocks_the_whole_host() {
-    let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
-    shop.service.admin_paths = vec!["/".to_owned()];
-    let plan = generate(&[shop], &settings()).unwrap();
-    assert_eq!(request(&plan, "public", "shop.example.com", "/any", INTERNET_CLIENT), Outcome::Status("404".into()));
-}
-
-#[test]
-fn an_admin_path_with_a_trailing_wildcard_means_the_path_itself() {
-    // mk-pay's manifest writes each admin path twice, plain and with `/*`; nodo-manifest allows both.
-    let mut pay = site("mk-pay", "web", 8081, Exposure { public: true, ..Exposure::default() });
-    pay.service.admin_paths = ["/admin", "/admin/*", "/api/v1/admin", "/api/v1/admin/*", "/status/engine", "/status/engine/*"]
-        .map(str::to_owned)
-        .to_vec();
-    let plan = generate(&[pay], &settings()).expect("mk-pay's admin paths are accepted");
-    let blocked = Outcome::Status("404".into());
-    let served = Outcome::Proxy("127.0.0.1:8081".into());
-    for path in ["/admin", "/admin/", "/admin/stores", "/api/v1/admin/x", "/status/engine", "/status/engine/sync"] {
-        assert_eq!(request(&plan, "public", "web.example.com", path, INTERNET_CLIENT), blocked, "{path}");
+fn admin_paths_in_an_old_manifest_change_nothing_in_the_proxy_config() {
+    // Manifests from before admin paths were removed still parse (nodo-manifest drops the key).
+    // Publishing a site from one gives exactly the config of the same manifest without it.
+    let text = "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n\
+                [[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8080\"\nmulti_address = true\n";
+    let plan = |text: &str| {
+        let manifest = nodo_manifest::Manifest::parse(text).unwrap();
+        let mut published = site("shop", "web", 8080, all_exposures());
+        published.service = manifest.web[0].clone();
+        published.onion_host = Some(ONION.to_owned());
+        generate(&[published], &settings()).unwrap()
+    };
+    let plain = plan(text);
+    for paths in ["[\"/admin\", \"/admin/*\"]", "[\"/\"]", "[\"/*\"]"] {
+        let old = plan(&format!("{text}admin_paths = {paths}\n"));
+        assert_eq!(old, plain, "{paths}");
+        assert_eq!(request(&old, "public", "web.example.com", "/admin", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
     }
-    for path in ["/", "/api/v1/checkout/abc", "/status", "/administrator"] {
-        assert_eq!(request(&plan, "public", "web.example.com", path, INTERNET_CLIENT), served, "{path}");
-    }
-
-    // On its own, `/admin/*` blocks exactly what `/admin` does.
-    let mut wild = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
-    wild.service.admin_paths = vec!["/admin/*".to_owned()];
-    let plan = generate(&[wild], &settings()).expect("a trailing /* is accepted");
-    for path in ["/admin", "/admin/users", "/admin;x=1", "/Admin.json"] {
-        assert_eq!(request(&plan, "public", "shop.example.com", path, INTERNET_CLIENT), blocked, "{path}");
-    }
-    assert_eq!(request(&plan, "public", "shop.example.com", "/admins", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
-
-    // A bare `/*` is the whole host, as `/` is.
-    let mut all = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
-    all.service.admin_paths = vec!["/*".to_owned()];
-    let plan = generate(&[all], &settings()).expect("/* is accepted");
-    assert_eq!(request(&plan, "public", "shop.example.com", "/any", INTERNET_CLIENT), blocked);
 }
 
 #[test]
@@ -334,10 +291,10 @@ fn internet_clients_cannot_reach_local_or_onion_hosts_through_the_public_listene
     // A masquerading router makes internet clients look local, so the LAN address must not help either.
     for client in [INTERNET_CLIENT, LAN_CLIENT] {
         assert_eq!(request(&plan, "public", "shop.local", "/", client), Outcome::Dropped);
-        assert_eq!(request(&plan, "public", "shop.local", "/admin", client), Outcome::Dropped);
+        assert_eq!(request(&plan, "public", "shop.local", "/other", client), Outcome::Dropped);
         assert_eq!(request(&plan, "public", ONION, "/", client), Outcome::Dropped);
         assert_eq!(request(&plan, "public", "unknown.example.com", "/", client), Outcome::Dropped);
-        assert_eq!(request(&plan, "public", "shop.example.com", "/admin", client), Outcome::Status("404".into()));
+        assert_eq!(request(&plan, "public", "shop.example.com", "/", client), Outcome::Proxy("127.0.0.1:8080".into()));
     }
     let public = &plan.caddy.apps.http.servers["public"];
     assert_eq!(public.tls_connection_policies[0].matcher.sni, vec!["shop.example.com"]);
@@ -349,7 +306,7 @@ fn the_local_listener_serves_only_local_hosts_to_lan_clients() {
     shop.onion_host = Some(ONION.to_owned());
     let plan = generate(&[shop], &settings()).unwrap();
 
-    assert_eq!(request(&plan, "local", "shop.local", "/admin", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "local", "shop.local", "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
     assert_eq!(request(&plan, "local", "shop.local", "/", INTERNET_CLIENT), Outcome::Dropped);
     assert_eq!(request(&plan, "local", "shop.example.com", "/", LAN_CLIENT), Outcome::Dropped);
     assert_eq!(request(&plan, "local", ONION, "/", LAN_CLIENT), Outcome::Dropped);
@@ -665,13 +622,12 @@ fn rate_limit_runs_only_on_public_routes_that_asked() {
     let value = json(&limited);
     let public = value["apps"]["http"]["servers"]["public"]["routes"][0]["handle"][0]["routes"].as_array().unwrap();
     let local = value["apps"]["http"]["servers"]["local"]["routes"][0]["handle"][0]["routes"].as_array().unwrap();
-    assert_eq!(public[0]["handle"][0]["handler"], "static_response", "admin paths are refused before counting");
-    assert_eq!(public[1]["handle"][0]["handler"], "rate_limit");
-    let zone = &public[1]["handle"][0]["rate_limits"]["shop.shop"];
+    assert_eq!(public[0]["handle"][0]["handler"], "rate_limit", "counted before anything else");
+    let zone = &public[0]["handle"][0]["rate_limits"]["shop.shop"];
     assert_eq!(zone["key"], "{http.request.remote.host}");
     assert_eq!(zone["window"], "60s");
     assert_eq!(zone["max_events"], 600);
-    assert_eq!(public[2]["handle"][0]["handler"], "reverse_proxy");
+    assert_eq!(public[1]["handle"][0]["handler"], "reverse_proxy");
     assert!(local.iter().all(|r| r["handle"][0]["handler"] != "rate_limit"));
 
     shop.rate_limit = false;
@@ -792,15 +748,6 @@ fn hostile_upstreams_are_rejected() {
             matches!(generate(&[s], &settings()), Err(WebConfigError::InvalidUpstream { .. })),
             "{upstream:?}"
         );
-    }
-}
-
-#[test]
-fn hostile_admin_paths_are_rejected() {
-    for path in ["admin", "/admin*", "/{x}", "/a b", "/a\n", "//admin", "/a/../b", "/%61dmin", ""] {
-        let mut s = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
-        s.service.admin_paths = vec![path.to_owned()];
-        assert!(matches!(generate(&[s], &settings()), Err(WebConfigError::InvalidAdminPath { .. })), "{path:?}");
     }
 }
 
@@ -969,13 +916,6 @@ fn vm_fixture_matches_the_generator() {
 }
 
 #[test]
-fn admin_regexp_escapes_dots_and_joins_paths() {
-    let paths = vec!["/wp-admin/".to_owned(), "/v1.0/admin".to_owned(), "/".to_owned()];
-    assert_eq!(admin_path_regexp(&paths).unwrap(), "(?i)^(?:/wp-admin|/v1\\.0/admin)(?:[^a-z0-9_~-]|$)");
-    assert_eq!(admin_path_regexp(&[]), None);
-}
-
-#[test]
 fn a_chosen_public_host_needs_no_domain_and_is_validated() {
     let mut shop = site("shop", "shop", 8080, Exposure { public: true, ..Exposure::default() });
     shop.public_host = Some("shop.other.org".to_owned());
@@ -1099,7 +1039,7 @@ fn local_names_under_the_owners_domain_get_acme_on_the_local_listener_only() {
     assert!(plan.local.mdns_names.is_empty());
     assert!(plan.local.waiting.is_empty());
     // Served on the local address, for LAN clients only, and never on the public listener.
-    assert_eq!(request(&plan, "local", local_host, "/admin", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    assert_eq!(request(&plan, "local", local_host, "/", LAN_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
     assert_eq!(request(&plan, "local", local_host, "/", INTERNET_CLIENT), Outcome::Dropped);
     assert_eq!(request(&plan, "public", local_host, "/", INTERNET_CLIENT), Outcome::Dropped);
     let servers = &plan.caddy.apps.http.servers;
@@ -1253,7 +1193,7 @@ fn an_apex_redirect_alias_answers_308_to_the_primary_keeping_path_and_query() {
     assert_eq!(handler["status_code"], "308");
     // The request URI is the path with its query, so both survive the redirect.
     assert_eq!(handler["headers"]["Location"], serde_json::json!(["https://www.example.com{http.request.uri}"]));
-    // The redirect never reaches the upstream, so it needs no admin block or rate limit.
+    // The redirect never reaches the upstream, so it needs no rate limit.
     assert_eq!(redirect["handle"][0]["routes"].as_array().unwrap().len(), 1);
 }
 
@@ -1293,7 +1233,7 @@ fn a_serving_alias_under_a_second_domain_gets_that_domains_challenge_and_the_sam
     };
     let plan = generate(&[pay], &settings).unwrap();
     assert_eq!(request(&plan, "public", "pay.example.org", "/", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
-    assert_eq!(request(&plan, "public", "pay.example.org", "/admin", INTERNET_CLIENT), Outcome::Status("404".into()));
+    assert_eq!(request(&plan, "public", "pay.example.org", "/admin", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8002".into()));
     let value = json(&plan);
     let policies = value["apps"]["tls"]["automation"]["policies"].as_array().unwrap();
     let provider_of = |host: &str| {

@@ -123,15 +123,7 @@ pub struct Matcher {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub path_regexp: Option<PathRegexp>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_ip: Option<RemoteIp>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PathRegexp {
-    pub name: String,
-    pub pattern: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

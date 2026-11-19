@@ -138,19 +138,13 @@ pub() { get webinet --resolve "$1:443:$wan" "https://$1$2" ${3:-}; }
 # Public hosts from an internet client, through the 443 redirect.
 expect "public host reaches its upstream" 200 "$(pub shop.example.com /)"
 body_has "upstream shop /"; result "public host is served by the shop upstream" "$?"
-for path in /admin /ADMIN /Admin/users /admin/ /admin/x //admin ///admin /admin//x '/admin;x=1' /admin%2Fx \
-	/%61dmin /%41DMIN /./admin /x/../admin /x/%2e%2e/admin '/admin?x=1' /admin%00 /admin. /admin%20 \
-	//ADMIN. /x/../admin%00 /admin%09 /admin.json; do
-	code=$(pub shop.example.com "$path" --path-as-is)
-	if body_has upstream; then leaked=1; else leaked=0; fi
-	case $code in 404|400) ok=$leaked ;; *) ok=1 ;; esac
-	result "public admin path blocked: $path ($code)" "$ok"
-done
-for path in /administrator /admin-panel /admins; do
-	expect "neighbouring path is served: $path" 200 "$(pub shop.example.com "$path")"
+# A site is served whole at every address; an app guards its own admin pages behind its sign-in.
+for path in /admin /admin/users /api/v1/admin; do
+	expect "public host serves $path" 200 "$(pub shop.example.com "$path")"
+	body_has "upstream shop $path"; result "public $path reaches the shop upstream" "$?"
 done
 # The shop's other names: the bare domain redirects to it, keeping path and query, and a name under
-# a second domain serves it with the same admin block.
+# a second domain serves it.
 code=$(get webinet -D /tmp/headers --resolve "example.com:443:$wan" "https://example.com/cart?item=2&x=%20")
 grep -qi '^location: https://shop.example.com/cart?item=2&x=%20' /tmp/headers && [ "$code" = 308 ] && ! body_has upstream
 result "a redirect alias answers 308 to the primary with path and query ($code)" "$?"
@@ -159,15 +153,14 @@ grep -qi '^location: https://example.com/x' /tmp/headers && [ "$code" = 308 ]
 result "port 80 sends a redirect alias to https first ($code)" "$?"
 expect "a serving alias reaches the same upstream" 200 "$(pub shop.example.org /a?b=1)"
 body_has "upstream shop /a?b=1"; result "a serving alias is served by the shop upstream" "$?"
-expect "a serving alias hides admin paths too" 404 "$(pub shop.example.org /admin)"
+expect "a serving alias serves every path too" 200 "$(pub shop.example.org /admin)"
 code=$(get webinet --resolve "example.com:443:$wan" -H "Host: shop.example.org" https://example.com/)
 ! body_has upstream && [ "$code" != 200 ]
 result "SNI of a redirect alias cannot reach the site by Host header ($code)" "$?"
 expect "locked site shows the unavailable page" 503 "$(pub vault.example.com /)"
 body_has "This site is unavailable"; result "unavailable page body" "$?"
 expect "stopped site shows the unavailable page" 503 "$(pub pay.example.com /)"
-# Admin paths answer the same whatever the upstream state, so they reveal nothing about it.
-expect "locked site still hides admin paths" 404 "$(pub vault.example.com /admin)"
+expect "locked site shows the unavailable page on every path" 503 "$(pub vault.example.com /admin)"
 
 # Host isolation on the public listener.
 expect "local host refused on the public port" ERR35 "$(pub shop.local /)"
@@ -215,8 +208,8 @@ found=$(ip netns exec webinet nodo-mdns --query shop.local --via 203.0.113.1 2>&
 case $found in *"no answer"*) r=0 ;; *) r=1 ;; esac
 result "mDNS does not answer the internet side" "$r"
 expect "local host reaches its upstream" 200 "$(loc shop.local /)"
-expect "local host serves admin paths to the LAN" 200 "$(loc shop.local /admin)"
-body_has "upstream shop /admin"; result "local admin path reaches the shop upstream" "$?"
+expect "local host serves every path to the LAN" 200 "$(loc shop.local /admin)"
+body_has "upstream shop /admin"; result "local /admin reaches the shop upstream" "$?"
 expect "stopped local site shows the unavailable page" 503 "$(loc pay.local /)"
 expect "public host refused on the local address" ERR35 "$(loc shop.example.com /)"
 code=$(get weblan --resolve "shop.local:443:$local" -H "Host: $onion" https://shop.local/)
@@ -246,16 +239,15 @@ done
 code=$(get weblan -k --resolve "shop.local:443:$lan" https://shop.local/admin)
 ! body_has upstream
 result "masqueraded client cannot reach a local host even ignoring certificates ($code)" "$?"
-code=$(get weblan --resolve "shop.example.com:443:$lan" https://shop.example.com/admin)
-! body_has upstream && [ "$code" = 404 ]
-result "masqueraded client cannot reach admin paths ($code)" "$?"
+expect "masqueraded client gets the public site, as any internet client does" 200 \
+	"$(get weblan --resolve "shop.example.com:443:$lan" https://shop.example.com/)"
 code=$(get weblan --resolve "shop.example.com:443:$lan" -H "Host: shop.local" https://shop.example.com/admin)
 ! body_has upstream
 result "masqueraded client cannot reach a local host by Host header ($code)" "$?"
 
 # The onion listener, as Tor reaches it.
 expect "onion host reaches its upstream" 200 "$(get host -H "Host: $onion" http://127.0.0.1:19000/)"
-expect "onion admin path blocked" 404 "$(get host -H "Host: $onion" http://127.0.0.1:19000//ADMIN)"
+expect "onion host serves every path" 200 "$(get host -H "Host: $onion" http://127.0.0.1:19000/admin)"
 expect "onion listener refuses other hosts" ERR52 "$(get host -H 'Host: shop.example.com' http://127.0.0.1:19000/)"
 expect "onion listener refuses local hosts" ERR52 "$(get host -H 'Host: shop.local' http://127.0.0.1:19000/admin)"
 
@@ -275,7 +267,7 @@ pkill -u nobody -f 'up-shop/config.json'
 sleep 1
 expect "dead upstream shows the unavailable page" 502 "$(pub shop.example.com /)"
 body_has "This site is unavailable"; result "dead upstream page body" "$?"
-expect "dead upstream still hides admin paths" 404 "$(pub shop.example.com /admin)"
+expect "dead upstream shows the unavailable page on every path" 502 "$(pub shop.example.com /admin)"
 
 sv -w 30 stop nodo-caddy | grep -q '^ok: down'
 result "nodo-caddy stops cleanly under TERM" "$?"

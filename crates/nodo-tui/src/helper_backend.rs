@@ -943,7 +943,7 @@ impl ScreenData for HelperBackend {
     }
 
     fn set_public_access(&mut self, _site: &str, access: &PublicAccess) -> Result<(), String> {
-        // Admin paths and rate limiting are always on. A password in front of a site is not built.
+        // Rate limiting is always on. A password in front of a site is not built.
         if access.require_password {
             Err("A password in front of a site is not available yet. Turn it off to go public.".to_owned())
         } else {
