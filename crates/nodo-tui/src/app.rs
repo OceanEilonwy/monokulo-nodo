@@ -904,9 +904,6 @@ pub struct ExposureState {
     /// The controls that put a new name together are open. They stay closed until the owner asks
     /// for another address, so a site with one address shows only that one.
     pub adding_alias: bool,
-    /// The site was public when the screen opened. The helper then lets names be removed but not
-    /// added, since going public confirmed the names it had.
-    pub was_public: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -962,7 +959,6 @@ impl ExposureState {
             picking_alias: false,
             alias_error: None,
             adding_alias: false,
-            was_public: draft.public,
         }
     }
 
@@ -974,9 +970,7 @@ impl ExposureState {
             if has_provider {
                 order.extend([HostingFocus::Domain, HostingFocus::Address]);
                 order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if self.was_public {
-                    // Names can only be removed while the site is public.
-                } else if self.adding_alias {
+                if self.adding_alias {
                     order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
                 } else {
                     order.push(HostingFocus::AliasOpen);
@@ -1546,6 +1540,8 @@ pub enum ModalAction {
     RemoveBluetooth(String),
     /// Disconnects a domain provider, by id.
     RemoveProvider(String),
+    /// Saves Hosting with these new names, which go on the internet at once: the site is public.
+    AddPublicNames(Vec<String>),
 }
 
 /// A yes-or-no question whose focus always starts on the safe answer.
@@ -1736,7 +1732,8 @@ pub enum Effect {
     SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
     /// Saves the host and every other name of a site. `then` runs only once that worked, so a
     /// refused name never goes on to the checks or to going public with the old names.
-    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, then: Vec<Effect> },
+    /// `confirm_added` are the new names the owner confirmed putting on a site that is public.
+    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, confirm_added: Vec<String>, then: Vec<Effect> },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
     /// `domain` only for a provider that cannot list its domains.

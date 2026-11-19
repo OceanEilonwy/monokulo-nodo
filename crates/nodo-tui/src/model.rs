@@ -1068,8 +1068,9 @@ pub trait ScreenData {
     fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String>;
     fn reachability(&mut self, site: &str) -> Reachability;
     /// Saves the site's public host and the other names it answers at, all of them: a name left
-    /// out is removed.
-    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias]) -> Result<(), String>;
+    /// out is removed. While the site is public a new name goes on the internet at once, so
+    /// `confirm_added` lists the new names the owner confirmed; without them it is refused.
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias], confirm_added: &[String]) -> Result<(), String>;
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
     fn save_acme(&mut self, _settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
         Err("Certificate settings are not available here.".to_owned())

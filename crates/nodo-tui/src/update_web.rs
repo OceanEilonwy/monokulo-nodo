@@ -143,7 +143,7 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site.package)),
-        KeyCode::Enter => return save(app, &site),
+        KeyCode::Enter => return save(app, &site, &[]),
         _ if focus == HostingFocus::Address => {
             edit_input(&mut state.sub, key);
         }
@@ -201,7 +201,9 @@ fn toggle(state: &mut ExposureState, focus: HostingFocus) {
     state.selected = state.selected.min(len - 1);
 }
 
-fn save(app: &mut App, site: &Site) -> Vec<Effect> {
+/// Saves Hosting. `confirmed` are the new names the owner agreed to put on a site that is public;
+/// when it has others, the question is asked first and nothing is saved yet.
+fn save(app: &mut App, site: &Site, confirmed: &[String]) -> Vec<Effect> {
     let Screen::WebExposure(state) = &app.screen else {
         return Vec::new();
     };
@@ -211,6 +213,38 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
     let name = state.site.clone();
     if draft.public && !state.has_provider {
         notice(app, NoticeKind::Info, "Add a domain provider first, so the internet can use your web address.");
+        return Vec::new();
+    }
+    // A site that is public and stays public gains its new names at once: no going-public
+    // confirmation follows that would list them, so they are confirmed here.
+    let added: Vec<&PublicAlias> = if draft.public && site.exposure.public {
+        aliases.iter().filter(|alias| !site.public_aliases.iter().any(|old| old.host == alias.host)).collect()
+    } else {
+        Vec::new()
+    };
+    let added_names: Vec<String> = added.iter().map(|alias| alias.host.clone()).collect();
+    if !added_names.is_empty() && added_names != confirmed {
+        let title = match added_names.as_slice() {
+            [one] => format!("Add {one} to the internet?"),
+            many => format!("Add {} addresses to the internet?", many.len()),
+        };
+        let mut body: Vec<String> = added
+            .iter()
+            .map(|alias| match alias.mode {
+                AliasMode::Redirect => format!("https://{}  redirects to {host}", alias.host),
+                AliasMode::Serve => format!("https://{}  shows the same site", alias.host),
+            })
+            .collect();
+        body.push(format!("{name} is on the internet, so this happens as soon as you add it."));
+        body.push("It points to your home's internet address, like the main address.".to_owned());
+        body.push(format!("Public certificate logs list {} permanently.", added_names.join(", ")));
+        app.modal = Some(Modal {
+            title,
+            body,
+            confirm_label: "Add".to_owned(),
+            confirm_focused: false,
+            action: ModalAction::AddPublicNames(added_names),
+        });
         return Vec::new();
     }
     // Going public sends the names even unchanged, so the helper checks them again first: a
@@ -238,9 +272,20 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
     }
     if names_change {
         // The names go first, and the rest only once the helper took them.
-        return vec![Effect::SetPublicHost { site: name, host, aliases, then: effects }];
+        return vec![Effect::SetPublicHost { site: name, host, aliases, confirm_added: added_names, then: effects }];
     }
     effects
+}
+
+/// The owner agreed to put `names` on a public site: Hosting is saved with them confirmed.
+pub(super) fn add_public_names(app: &mut App, names: &[String]) -> Vec<Effect> {
+    let Screen::WebExposure(state) = &app.screen else {
+        return Vec::new();
+    };
+    let Some(site) = app.data.web.sites.iter().find(|site| site.package == state.site).cloned() else {
+        return Vec::new();
+    };
+    save(app, &site, names)
 }
 
 /// The names were saved, or refused. Refused, the Hosting screen stays as it was, so the owner can

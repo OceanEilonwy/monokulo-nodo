@@ -31,9 +31,10 @@ pub use system::*;
 /// rollbacks and confirmed exposure changes. Version 3 added [`ServiceStatus::uptime_secs`].
 /// Version 4 added bundles and owner pages: the bundle and owner page facts in [`PackageInfo`],
 /// [`CatalogEntry`] and [`InstallReview`]. Version 5 added the names a site also answers at:
-/// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Postcard reads
-/// fields by position, so `#[serde(default)]` alone would not let the old and new forms meet.
-pub const PROTOCOL_VERSION: u8 = 5;
+/// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Version 6 added
+/// its `confirm_added`, which lets a public site gain a name. Postcard reads fields by position,
+/// so `#[serde(default)]` alone would not let the old and new forms meet.
+pub const PROTOCOL_VERSION: u8 = 6;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -823,12 +824,16 @@ pub enum Request {
     RepairDrive(RepairConfirmation),
     ListSites,
     /// The host the user brought for a site. Going public must then quote it. `aliases` replaces
-    /// the other names the site answers at; `None` keeps the saved ones.
+    /// the other names the site answers at; `None` keeps the saved ones. While the site is public
+    /// a name it does not answer at yet goes on the internet at once, so `confirm_added` must
+    /// list each such name: proof the user saw it and agreed, so a client cannot skip the step.
     SetPublicHost {
         site: SiteId,
         host: String,
         #[serde(default)]
         aliases: Option<Vec<PublicAlias>>,
+        #[serde(default)]
+        confirm_added: Vec<String>,
     },
     CheckReachability {
         site: SiteId,

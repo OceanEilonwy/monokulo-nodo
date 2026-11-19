@@ -311,18 +311,15 @@ fn domain_list(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
 
 /// "Also answers at": the site's other names, each with Remove. A site with no other name shows
 /// only the "Add another address" button; the controls that add one (domain, the part before it,
-/// serve or redirect) open from that button. While the site is public only Remove is offered, as
-/// the helper allows.
+/// serve or redirect) open from that button.
 fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(String, String)], index_of: &dyn Fn(HostingFocus) -> usize) {
     let focus = state.focus();
     let host = state.host();
     let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
-    let adding = state.adding_alias && !state.was_public;
+    let adding = state.adding_alias;
     if state.aliases.is_empty() && !adding {
-        if !state.was_public {
-            card.blank(t);
-            open_button(card, t, state, index_of);
-        }
+        card.blank(t);
+        open_button(card, t, state, index_of);
         return;
     }
     card.blank(t);
@@ -342,10 +339,6 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
         // The row picks the name; its Remove button removes it. Text targets go on first.
         card.on_row(card.next_row(), [Target::row(alias.host.clone(), Click::Pick { index: at, then: None })]);
         card.row_with_button(t, spans, "Remove", false, Click::Pick { index: at, then: Some(KeyCode::Char('x')) });
-    }
-    if state.was_public {
-        card.row(t, vec![t.d("       To add a name, take the site off the internet first. Removing one works now.")]);
-        return;
     }
     if !adding {
         open_button(card, t, state, index_of);

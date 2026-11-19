@@ -1537,7 +1537,7 @@ impl ScreenData for MockBackend {
         reachability_checks(&host, ports_open)
     }
 
-    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias]) -> Result<(), String> {
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias], confirm_added: &[String]) -> Result<(), String> {
         if !self.under_a_domain(host) {
             return Err(s("The address must be under one of your domains."));
         }
@@ -1549,8 +1549,19 @@ impl ScreenData for MockBackend {
         if entry.exposure.public && entry.public_host.as_deref() != Some(host) {
             return Err(s("take the site off its public address before changing the host"));
         }
-        if entry.exposure.public && !aliases.iter().all(|alias| entry.public_aliases.contains(alias)) {
-            return Err(s("take the site off its public address before adding another name; removing one works while it is public"));
+        if entry.exposure.public {
+            let unconfirmed: Vec<&str> = aliases
+                .iter()
+                .map(|alias| alias.host.as_str())
+                .filter(|name| !entry.public_aliases.iter().any(|old| old.host == *name))
+                .filter(|name| !confirm_added.iter().any(|confirmed| confirmed == name))
+                .collect();
+            if !unconfirmed.is_empty() {
+                return Err(format!(
+                    "the site is public, so {} would go on the internet at once: confirm adding it",
+                    unconfirmed.join(", ")
+                ));
+            }
         }
         let owned = self.owned_domains();
         let taken: Vec<(String, String)> = self

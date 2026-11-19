@@ -200,6 +200,7 @@ mod tests {
                 site: site(),
                 host: "h".into(),
                 aliases: None,
+                confirm_added: Vec::new(),
             },
             Request::SetPublicHost {
                 site: site(),
@@ -208,6 +209,7 @@ mod tests {
                     PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect },
                     PublicAlias { host: "pay.example.org".into(), mode: AliasMode::Serve },
                 ]),
+                confirm_added: vec!["pay.example.org".into()],
             },
             Request::CheckReachability { site: site() },
             Request::ListProviders,

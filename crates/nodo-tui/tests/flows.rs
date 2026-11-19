@@ -2907,23 +2907,76 @@ fn esc_in_the_new_names_controls_closes_them_and_keeps_the_screen() {
 }
 
 #[test]
-fn a_public_site_can_lose_a_name_but_not_gain_one() {
+fn a_public_site_loses_a_name_without_being_asked() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).site, "shop");
     assert_eq!(hosting(&app).aliases, [redirect("example.com")]);
-    let order = hosting(&app).order();
-    assert!(!order.contains(&HostingFocus::AliasAdd) && !order.contains(&HostingFocus::AliasAddress) && !order.contains(&HostingFocus::AliasOpen), "{order:?}");
     focus_on(&mut app, &mut mock, HostingFocus::Alias(0));
-    assert!(hosting_text(&app).contains("take the site off the internet first"), "{}", hosting_text(&app));
     key(&mut app, &mut mock, KeyCode::Char('x'));
     assert!(hosting(&app).aliases.is_empty());
     focus_on(&mut app, &mut mock, HostingFocus::Save);
     key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "taking a name away publishes nothing, so nothing is asked");
     let shop = mock.web.sites.iter().find(|s| s.package == "shop").unwrap();
     assert!(shop.public_aliases.is_empty() && shop.exposure.public, "removed while it stays public");
     assert_eq!(app.notice.as_ref().map(|n| n.text.as_str()), Some("Saved."));
     assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+#[test]
+fn a_public_site_gains_a_name_once_the_owner_confirms_it() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).site, "shop");
+    assert!(site_of(&mock, "shop").exposure.public);
+    assert!(hosting_text(&app).contains("Add another address"), "{}", hosting_text(&app));
+    assert!(!hosting_text(&app).contains("take the site off the internet"), "{}", hosting_text(&app));
+    open_new_name(&mut app, &mut mock);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    type_text(&mut app, &mut mock, "www");
+    focus_on(&mut app, &mut mock, HostingFocus::AliasMode);
+    key(&mut app, &mut mock, SPACE);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAdd);
+    key(&mut app, &mut mock, ENTER);
+    let both = [redirect("example.com"), serve("www.example.com")];
+    assert_eq!(hosting(&app).aliases, both);
+
+    // Saving asks first, about the new name only, and starts on Cancel.
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.clone().expect("a new name on a public site is confirmed");
+    assert_eq!(modal.title, "Add www.example.com to the internet?");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert!(modal.body.iter().any(|l| l == "https://www.example.com  shows the same site"), "{:?}", modal.body);
+    assert!(modal.body.iter().any(|l| l == "Public certificate logs list www.example.com permanently."), "{:?}", modal.body);
+    assert!(!modal.body.iter().any(|l| l.contains("https://example.com")), "the name it had is not asked about: {:?}", modal.body);
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetPublicHost { .. })), "nothing is sent before the answer");
+
+    // Cancel keeps the screen and the draft, and saves nothing.
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none());
+    assert_eq!(app.screen.id(), ScreenId::WebExposure);
+    assert_eq!(hosting(&app).aliases, both);
+    assert_eq!(site_of(&mock, "shop").public_aliases, [redirect("example.com")]);
+
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_some(), "saving again asks again");
+    keys(&mut app, &mut mock, &[KeyCode::Right, ENTER]);
+    assert_eq!(site_of(&mock, "shop").public_aliases, both, "confirmed, the name is saved while the site stays public");
+    assert!(site_of(&mock, "shop").exposure.public);
+    assert_eq!(app.notice.as_ref().map(|n| n.text.as_str()), Some("Saved."));
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+#[test]
+fn the_device_refuses_a_public_sites_new_name_that_was_not_confirmed() {
+    use nodo_tui::model::ScreenData;
+    let mut mock = MockBackend::new();
+    let both = [redirect("example.com"), serve("www.example.com")];
+    let refused = mock.set_public_host("shop", "shop.example.com", &both, &[]);
+    assert_eq!(refused, Err("the site is public, so www.example.com would go on the internet at once: confirm adding it".to_owned()));
+    assert_eq!(mock.set_public_host("shop", "shop.example.com", &both, &["www.example.com".to_owned()]), Ok(()));
 }
 
 #[test]
