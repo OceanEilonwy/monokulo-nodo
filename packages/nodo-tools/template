@@ -7,9 +7,7 @@ version=0.1.0
 revision=33
 archs="aarch64 x86_64"
 build_style=cargo
-# TODO(nodo-web-gui): add "-p nodo-web-gui" here together with the crate (crates/nodo-web-gui). Its
-# service, account and firewall rules below are already in place; only the binary is missing.
-configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash"
+configure_args="-p nodo-helper -p nodo-tui -p nodo-health -p nodo-confine -p nodo-update -p nodo-gpu-check -p nodo-screen -p nodo-gui -p nodo-power -p nodo-screen-font -p nodo-splash -p nodo-web-gui"
 # terminus-font is what nodo-screen-font builds the screen's console font from.
 hostmakedepends="pkg-config terminus-font"
 # The feed gate reads zstd packages, and Void builds zstd-sys against the system library. nodo-gui
@@ -124,9 +122,7 @@ do_install() {
 	vsv nodo-power
 	# The web GUI, off until the owner turns it on over SSH: the helper links and starts the
 	# service then, so no board enables it. bwrap does not forward signals, hence control/t.
-	# TODO(nodo-web-gui): add "vbin target/${RUST_TARGET}/release/nodo-web-gui" here together with
-	# the crate. Until then the service has no program to run, and turning the web GUI on leaves
-	# it restarting.
+	vbin target/${RUST_TARGET}/release/nodo-web-gui
 	vsv nodo-web-gui
 	vmkdir etc/sv/nodo-web-gui/control
 	vinstall ${FILESDIR}/nodo-web-gui/control/t 755 etc/sv/nodo-web-gui/control
