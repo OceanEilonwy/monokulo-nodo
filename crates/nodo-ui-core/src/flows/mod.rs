@@ -34,7 +34,8 @@
 //! or the module's `apply(&Outcome) -> Step` where the feature has no type. `apply` says what the
 //! result means. **An outcome that is not the flow's own gives `Step::Stay` and changes nothing**,
 //! so a frontend may hand an outcome to the flow of the page it shows without knowing whose it
-//! is. Outcomes of features not extracted yet are still handled by the frontend.
+//! is. Every outcome belongs to a flow here; `Outcome::Refreshed` alone is the frontend's own, since
+//! it keeps the `Snapshot`.
 //!
 //! **Following a step.** A frontend has one function that follows a `Step`: it shows the notice,
 //! shows the question, goes to the destination, and performs the effects of `Step::Run` and
