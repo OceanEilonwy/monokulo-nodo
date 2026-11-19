@@ -31,9 +31,10 @@ pub use system::*;
 /// rollbacks and confirmed exposure changes. Version 3 added [`ServiceStatus::uptime_secs`].
 /// Version 4 added bundles and owner pages: the bundle and owner page facts in [`PackageInfo`],
 /// [`CatalogEntry`] and [`InstallReview`]. Version 5 added the names a site also answers at:
-/// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Postcard reads
-/// fields by position, so `#[serde(default)]` alone would not let the old and new forms meet.
-pub const PROTOCOL_VERSION: u8 = 5;
+/// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Version 6 added
+/// its `confirm_added`, which lets a public site gain a name. Postcard reads fields by position,
+/// so `#[serde(default)]` alone would not let the old and new forms meet.
+pub const PROTOCOL_VERSION: u8 = 6;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -519,6 +520,32 @@ pub struct DomainProvider {
     /// Why the last listing failed, already scrubbed of credentials.
     pub problem: Option<String>,
     pub dns01: Dns01Support,
+    /// Which key this connection uses, masked, so the owner can match it to the keys in the
+    /// provider's account. Missing for a connection made before hints were kept, until its domains
+    /// are next looked up while the device is unlocked.
+    #[serde(default)]
+    pub key: Option<ProviderKey>,
+    /// Domains the account holds that this key may not change yet, each with what to switch on at
+    /// the provider. Only some providers can tell.
+    #[serde(default)]
+    pub blocked: Vec<BlockedDomain>,
+}
+
+/// The first credential of a connection, mostly hidden: enough to recognise, not enough to use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderKey {
+    /// The credential's field, such as `api_key`.
+    pub field: String,
+    /// Its first and last characters around an ellipsis, such as `pk1_3f9a…c2d1`.
+    pub hint: String,
+}
+
+/// A domain in the provider account that the connected key cannot change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockedDomain {
+    pub name: String,
+    /// What to change in the provider's account so the domain can be used.
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -823,12 +850,16 @@ pub enum Request {
     RepairDrive(RepairConfirmation),
     ListSites,
     /// The host the user brought for a site. Going public must then quote it. `aliases` replaces
-    /// the other names the site answers at; `None` keeps the saved ones.
+    /// the other names the site answers at; `None` keeps the saved ones. While the site is public
+    /// a name it does not answer at yet goes on the internet at once, so `confirm_added` must
+    /// list each such name: proof the user saw it and agreed, so a client cannot skip the step.
     SetPublicHost {
         site: SiteId,
         host: String,
         #[serde(default)]
         aliases: Option<Vec<PublicAlias>>,
+        #[serde(default)]
+        confirm_added: Vec<String>,
     },
     CheckReachability {
         site: SiteId,

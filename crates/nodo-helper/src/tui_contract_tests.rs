@@ -61,8 +61,9 @@ fn the_tui_saves_a_sites_other_names_through_the_helper_as_the_mock_does() {
     let h = Arc::new(h);
     std::thread::spawn(move || serve(listener, h));
     let mut backend = HelperBackend::connect(&path).unwrap();
-    backend.set_public_host("shop/single", "one.example.com", &[]).unwrap();
+    backend.set_public_host("shop/single", "one.example.com", &[], &[]).unwrap();
     contract::site_aliases(&mut backend, "shop/web", "example.com", "one.example.com");
+    contract::public_site_gains_confirmed_names(&mut backend, "shop/web", "example.com");
 }
 
 #[test]

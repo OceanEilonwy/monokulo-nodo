@@ -264,20 +264,26 @@ codebase, and signed xbps packages from user-added feeds.
 - **Other names of a site:** A public site can also answer at more names, each either served (the
   same site, as a second host in its Caddy route) or redirected (a 308 to `https://<primary>` with
   the path and query kept, such as the bare `example.com` beside `www.example.com`). Hosting lists
-  them under "Also answers at": a new name is picked like the main address (a connected domain plus
-  an optional part, empty for the domain itself), and the going-public confirmation lists every
-  name. Each name must be under a connected provider's domain, because that provider publishes its
+  them under "Also answers at", which appears once a site has such a name: until then the screen
+  shows only an "Add another address" button, which opens the controls for a new name. It is picked
+  like the main address (a connected domain plus an optional part, empty for the domain itself),
+  and the going-public confirmation lists every name. Each name must be under a connected provider's domain, because that provider publishes its
   record (`@` for the bare domain) and answers its DNS-01 challenge; names are unique across all
   sites, and a provider is in use while any name of a public site is under its domains. While the
-  site is public, names can be removed (the change is applied at once) but not added or changed,
-  since the confirmation covered the names it had; going public checks again that every name still
-  has its provider. `SetPublicHost` carries them (`aliases`, `None` keeping the saved ones), and
-  `SiteInfo::public_aliases` reports them (protocol version 5). `public-hosts.toml` keeps a site
+  site is public its names can still change, and the change is applied at once. Removing a name,
+  or changing whether one redirects, publishes nothing new and needs no confirmation. A name the
+  site does not answer at yet does (a record pointing at the home, and a certificate that public
+  logs keep), and the going-public confirmation never listed it, so the helper takes it only when
+  `SetPublicHost` lists it in `confirm_added`, and answers `NeedsConfirmation` otherwise. The TUI
+  asks before it saves, naming the new names; `--ctl` takes `confirm=NAME`. Going public checks
+  again that every name still has its provider. `SetPublicHost` carries the names (`aliases`,
+  `None` keeping the saved ones), and `SiteInfo::public_aliases` reports them (protocol version 5;
+  `confirm_added` is version 6). `public-hosts.toml` keeps a site
   without other names as the plain host string, and one with them as `{ host, aliases = [{ host,
   mode }] }`; a helper from before this cannot read that table, so before a downgrade remove the
   names (or the downgraded helper treats the whole file as corrupt until they are gone). Backups
   carry the file as it is. The GUI shows the names on a site's page; they are changed in the TUI or
-  with `nodo-tui --ctl host PACKAGE SITE HOST NAME=serve|NAME=redirect…`.
+  with `nodo-tui --ctl host PACKAGE SITE HOST NAME=serve|NAME=redirect… [confirm=NAME…]`.
 - **Mouse:** The TUI turns on mouse reporting (crossterm's `EnableMouseCapture`; it is turned off
   again on exit and from the panic hook). Screens declare click targets by the text they draw, which
   are found in the drawn frame (`crates/nodo-tui/src/hit.rs`), so a click lands on exactly what is

@@ -40,7 +40,7 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 open_hosting(app, &site);
             }
         }
-        KeyCode::Char('p') => push(app, Screen::WebProviders(ProvidersState::list(""))),
+        KeyCode::Char('p') => return open_providers(app),
         KeyCode::Char('d') => {
             let state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
             push(app, Screen::WebDomain(state));
@@ -104,7 +104,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     let len = state.order().len();
     let focus = state.focus();
+    let in_alias_form = matches!(focus, HostingFocus::AliasDomain | HostingFocus::AliasAddress | HostingFocus::AliasMode | HostingFocus::AliasAdd);
     match key.code {
+        // Esc in the new name's controls gives up the new name, not the whole screen.
+        KeyCode::Esc if in_alias_form => state.close_alias_form(),
         KeyCode::Esc => pop(app),
         KeyCode::Tab | KeyCode::Down => state.selected = (state.selected.min(len - 1) + 1).min(len - 1),
         KeyCode::BackTab | KeyCode::Up => state.selected = state.selected.min(len - 1).saturating_sub(1),
@@ -115,6 +118,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::Domain => {
             state.picking = true;
             state.pick = choices.iter().position(|(d, _)| *d == state.domain).unwrap_or(0);
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasOpen => {
+            state.adding_alias = true;
+            state.focus_on(HostingFocus::AliasDomain);
         }
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasDomain => {
             state.picking_alias = true;
@@ -136,7 +143,7 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
         }
         KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site.package)),
-        KeyCode::Enter => return save(app, &site),
+        KeyCode::Enter => return save(app, &site, &[]),
         _ if focus == HostingFocus::Address => {
             edit_input(&mut state.sub, key);
         }
@@ -170,10 +177,8 @@ fn add_alias(state: &mut ExposureState, choices: &[(String, String)], sites: &[S
     match nodo_api::check_aliases(&state.host(), &next, &owned, &names_of_other_sites(sites, &state.site)) {
         Ok(()) => {
             state.aliases = next;
-            state.alias_sub.clear();
-            state.alias_error = None;
-            // The new row comes before the controls, so the focus moves on one to stay where it was.
-            state.selected = (state.selected + 1).min(state.order().len() - 1);
+            // The name is on the list now; the controls close until another one is wanted.
+            state.close_alias_form();
         }
         Err(reason) => state.alias_error = Some(sentence(&reason)),
     }
@@ -196,7 +201,9 @@ fn toggle(state: &mut ExposureState, focus: HostingFocus) {
     state.selected = state.selected.min(len - 1);
 }
 
-fn save(app: &mut App, site: &Site) -> Vec<Effect> {
+/// Saves Hosting. `confirmed` are the new names the owner agreed to put on a site that is public;
+/// when it has others, the question is asked first and nothing is saved yet.
+fn save(app: &mut App, site: &Site, confirmed: &[String]) -> Vec<Effect> {
     let Screen::WebExposure(state) = &app.screen else {
         return Vec::new();
     };
@@ -206,6 +213,38 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
     let name = state.site.clone();
     if draft.public && !state.has_provider {
         notice(app, NoticeKind::Info, "Add a domain provider first, so the internet can use your web address.");
+        return Vec::new();
+    }
+    // A site that is public and stays public gains its new names at once: no going-public
+    // confirmation follows that would list them, so they are confirmed here.
+    let added: Vec<&PublicAlias> = if draft.public && site.exposure.public {
+        aliases.iter().filter(|alias| !site.public_aliases.iter().any(|old| old.host == alias.host)).collect()
+    } else {
+        Vec::new()
+    };
+    let added_names: Vec<String> = added.iter().map(|alias| alias.host.clone()).collect();
+    if !added_names.is_empty() && added_names != confirmed {
+        let title = match added_names.as_slice() {
+            [one] => format!("Add {one} to the internet?"),
+            many => format!("Add {} addresses to the internet?", many.len()),
+        };
+        let mut body: Vec<String> = added
+            .iter()
+            .map(|alias| match alias.mode {
+                AliasMode::Redirect => format!("https://{}  redirects to {host}", alias.host),
+                AliasMode::Serve => format!("https://{}  shows the same site", alias.host),
+            })
+            .collect();
+        body.push(format!("{name} is on the internet, so this happens as soon as you add it."));
+        body.push("It points to your home's internet address, like the main address.".to_owned());
+        body.push(format!("Public certificate logs list {} permanently.", added_names.join(", ")));
+        app.modal = Some(Modal {
+            title,
+            body,
+            confirm_label: "Add".to_owned(),
+            confirm_focused: false,
+            action: ModalAction::AddPublicNames(added_names),
+        });
         return Vec::new();
     }
     // Going public sends the names even unchanged, so the helper checks them again first: a
@@ -233,9 +272,20 @@ fn save(app: &mut App, site: &Site) -> Vec<Effect> {
     }
     if names_change {
         // The names go first, and the rest only once the helper took them.
-        return vec![Effect::SetPublicHost { site: name, host, aliases, then: effects }];
+        return vec![Effect::SetPublicHost { site: name, host, aliases, confirm_added: added_names, then: effects }];
     }
     effects
+}
+
+/// The owner agreed to put `names` on a public site: Hosting is saved with them confirmed.
+pub(super) fn add_public_names(app: &mut App, names: &[String]) -> Vec<Effect> {
+    let Screen::WebExposure(state) = &app.screen else {
+        return Vec::new();
+    };
+    let Some(site) = app.data.web.sites.iter().find(|site| site.package == state.site).cloned() else {
+        return Vec::new();
+    };
+    save(app, &site, names)
 }
 
 /// The names were saved, or refused. Refused, the Hosting screen stays as it was, so the owner can
@@ -254,6 +304,33 @@ pub(super) fn on_public_host_set(app: &mut App, result: Result<(), String>, then
             Vec::new()
         }
         Ok(()) => then,
+    }
+}
+
+/// The list of connected providers. Each one that can list its domains is asked again as the list
+/// opens, so a domain the owner just allowed in the provider's account shows up without knowing to
+/// ask. A locked Nodo cannot open the keys, so there the list shows what was last known.
+fn open_providers(app: &mut App) -> Vec<Effect> {
+    push(app, Screen::WebProviders(ProvidersState::list("")));
+    if app.is_locked() {
+        return Vec::new();
+    }
+    app.data.connected.iter().filter(|p| p.lists_domains).map(|p| Effect::RefreshProvider(p.id.clone())).collect()
+}
+
+/// The question before a provider's key is forgotten.
+fn remove_provider_modal(provider: &ConnectedProvider) -> Modal {
+    let used: Vec<String> = provider.domains.iter().flat_map(|d| d.used_by.clone()).collect();
+    let mut body = vec![format!("The Nodo forgets the {} key. Its domains can't be picked for apps any more.", provider.name)];
+    if !used.is_empty() {
+        body.push(format!("{} still use it, so take them off the internet first.", used.join(", ")));
+    }
+    Modal {
+        title: format!("Remove {}?", provider.name),
+        body,
+        confirm_label: "Remove".to_owned(),
+        confirm_focused: false,
+        action: ModalAction::RemoveProvider(provider.id.clone()),
     }
 }
 
@@ -312,6 +389,8 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         ProviderStage::List => match key.code {
             KeyCode::Esc => pop(app),
             KeyCode::Down | KeyCode::Up => step(&mut state.selected, connected.len(), key.code == KeyCode::Down),
+            // Enter opens the provider under the cursor; with none connected it adds the first.
+            KeyCode::Enter if state.selected < connected.len() => state.stage = ProviderStage::Details,
             KeyCode::Char('a') | KeyCode::Enter => {
                 *state = ProvidersState { return_to: state.return_to.take(), ..ProvidersState::new("") };
                 return vec![Effect::LoadProviders];
@@ -323,23 +402,26 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             }
             KeyCode::Char('x') | KeyCode::Delete => {
                 if let Some(provider) = connected.get(state.selected) {
-                    let used: Vec<String> = provider.domains.iter().flat_map(|d| d.used_by.clone()).collect();
-                    let mut body = vec![format!("The Nodo forgets the {} key. Its domains can't be picked for apps any more.", provider.name)];
-                    if !used.is_empty() {
-                        body.push(format!("{} still use it, so take them off the internet first.", used.join(", ")));
-                    }
-                    app.modal = Some(Modal {
-                        title: format!("Remove {}?", provider.name),
-                        body,
-                        confirm_label: "Remove".to_owned(),
-                        confirm_focused: false,
-                        action: ModalAction::RemoveProvider(provider.id.clone()),
-                    });
+                    app.modal = Some(remove_provider_modal(provider));
                 }
             }
             KeyCode::Char('c') => {
                 let domain_state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
                 push(app, Screen::WebDomain(domain_state));
+            }
+            _ => {}
+        },
+        ProviderStage::Details => match key.code {
+            KeyCode::Esc | KeyCode::Backspace => state.stage = ProviderStage::List,
+            KeyCode::Char('r') | KeyCode::Enter => {
+                if let Some(provider) = connected.get(state.selected) {
+                    return vec![Effect::RefreshProvider(provider.id.clone())];
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete => {
+                if let Some(provider) = connected.get(state.selected) {
+                    app.modal = Some(remove_provider_modal(provider));
+                }
             }
             _ => {}
         },
@@ -465,7 +547,7 @@ pub(super) fn on_provider_added(app: &mut App, result: Result<ConnectedProvider,
             let mut held_by: Vec<String> = provider.domains.iter().filter_map(|d| d.held_by.clone()).collect();
             held_by.sort();
             held_by.dedup();
-            state.stage = ProviderStage::Done { provider: provider.name, domains, held_by };
+            state.stage = ProviderStage::Done { provider: provider.name, domains, held_by, blocked: provider.blocked };
             vec![Effect::Refresh]
         }
         Err(text) => {
@@ -480,6 +562,10 @@ pub(super) fn on_provider_removed(app: &mut App, result: Result<(), String>) -> 
         Ok(()) => {
             if let Screen::WebProviders(state) = &mut app.screen {
                 state.selected = 0;
+                // Its details have nothing left to show.
+                if state.stage == ProviderStage::Details {
+                    state.stage = ProviderStage::List;
+                }
             }
             notice(app, NoticeKind::Ok, "The provider was removed.");
             vec![Effect::Refresh]
@@ -496,7 +582,21 @@ pub(super) fn on_provider_refreshed(app: &mut App, result: Result<ConnectedProvi
         Ok(provider) => {
             match &provider.problem {
                 Some(problem) => notice(app, NoticeKind::Error, problem.clone()),
-                None => notice(app, NoticeKind::Ok, format!("{} lists {} domains.", provider.name, provider.domains.len())),
+                None if provider.blocked.is_empty() => {
+                    notice(app, NoticeKind::Ok, format!("{} lists {} domains.", provider.name, provider.domains.len()));
+                }
+                // Not an error, but the owner looking for a domain needs to know it was found.
+                None => notice(
+                    app,
+                    NoticeKind::Info,
+                    format!(
+                        "{} lists {} domains, and {} more its key can't change yet: {}. Open it (↵) to see why.",
+                        provider.name,
+                        provider.domains.len(),
+                        provider.blocked.len(),
+                        provider.blocked.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
+                ),
             }
             vec![Effect::Refresh]
         }

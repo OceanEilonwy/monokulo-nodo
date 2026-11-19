@@ -647,6 +647,7 @@ fn modal_action(app: &mut App, action: ModalAction) -> Vec<Effect> {
         | ModalAction::WifiOff
         | ModalAction::RemoveBluetooth(_)) => net::modal_action(app, action),
         ModalAction::RemoveProvider(id) => vec![Effect::RemoveProvider(id)],
+        ModalAction::AddPublicNames(names) => web::add_public_names(app, &names),
         ModalAction::RemoveSshKey(fingerprint) => {
             if let Screen::Setup(state) = &mut app.screen {
                 state.busy = true;

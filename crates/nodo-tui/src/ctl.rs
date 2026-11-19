@@ -27,7 +27,9 @@ nodo-tui --ctl COMMAND [ARGS]
   set PACKAGE NAME ref TARGET.SETTING
   set PACKAGE NAME secret          (value on stdin)
   reset PACKAGE NAME
-  host PACKAGE SITE HOST [NAME=serve|NAME=redirect...|none]   (other names; none clears, nothing keeps)
+  host PACKAGE SITE HOST [NAME=serve|NAME=redirect...|none] [confirm=NAME...]
+                                   (other names; none clears, nothing keeps; a public site
+                                    gains a name only with confirm=NAME, and at once)
   expose PACKAGE SITE LOCAL ONION PUBLIC [TYPED_HOST]   (each flag 0 or 1)
   add-key LINE | remove-key FINGERPRINT
   drive-check | drive-repair CHECK_ID | drive-mount
@@ -231,7 +233,10 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             changes: vec![SettingChange { name: id(name), value: SettingInput::Reset }],
         },
         ["host", package, s, host, rest @ ..] => {
-            Request::SetPublicHost { site: site(package, s), host: id(host), aliases: aliases(rest)? }
+            // `confirm=NAME` agrees to a new name of a public site; the rest are the names.
+            let (confirmed, names): (Vec<&str>, Vec<&str>) = rest.iter().partition(|arg| arg.starts_with("confirm="));
+            let confirm_added = confirmed.iter().map(|arg| id(arg.trim_start_matches("confirm="))).collect();
+            Request::SetPublicHost { site: site(package, s), host: id(host), aliases: aliases(&names)?, confirm_added }
         }
         ["expose", package, s, local, onion, public, typed @ ..] => Request::SetExposure {
             site: site(package, s),
@@ -441,6 +446,19 @@ mod tests {
         assert_eq!(confirmation.unwrap().typed_host, "shop.example.com");
         assert!(parse(&args("expose shop web 1 0 2")).is_err());
         assert!(parse(&args("bogus")).is_err());
+    }
+
+    #[test]
+    fn parses_the_confirmation_of_a_public_sites_new_name() {
+        let Ok(Request::SetPublicHost { aliases, confirm_added, .. }) =
+            parse(&args("host shop web www.example.com example.com=redirect confirm=example.com"))
+        else {
+            panic!()
+        };
+        assert_eq!(aliases.unwrap(), vec![PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect }]);
+        assert_eq!(confirm_added, ["example.com"]);
+        let Ok(Request::SetPublicHost { aliases, confirm_added, .. }) = parse(&args("host shop web www.example.com")) else { panic!() };
+        assert!(aliases.is_none() && confirm_added.is_empty());
     }
 
     #[test]

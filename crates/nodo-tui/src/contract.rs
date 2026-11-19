@@ -95,7 +95,7 @@ pub fn site_aliases(backend: &mut impl ScreenData, site: &str, domain: &str, oth
         backend().sites.into_iter().find(|s| s.package == site).map(|s| s.public_aliases).expect("the site is listed")
     };
     let names = vec![alias(domain, AliasMode::Redirect), alias(&format!("pay.{domain}"), AliasMode::Serve)];
-    assert_eq!(backend.set_public_host(site, &primary, &names), Ok(()), "an apex redirect and a serving name are saved");
+    assert_eq!(backend.set_public_host(site, &primary, &names, &[]), Ok(()), "an apex redirect and a serving name are saved");
     assert_eq!(saved(&mut || backend.web()), names, "and read back as saved");
 
     let refusals = [
@@ -106,11 +106,46 @@ pub fn site_aliases(backend: &mut impl ScreenData, site: &str, domain: &str, oth
         (vec![alias("Shop.Example", AliasMode::Redirect)], "not a full lowercase domain name"),
     ];
     for (aliases, why) in refusals {
-        let result = backend.set_public_host(site, &primary, &aliases);
+        let result = backend.set_public_host(site, &primary, &aliases, &[]);
         assert!(result.as_ref().is_err_and(|text| text.contains(why)), "{aliases:?} is refused because {why}: {result:?}");
         assert_eq!(saved(&mut || backend.web()), names, "a refusal leaves the saved names");
     }
 
-    assert_eq!(backend.set_public_host(site, &primary, &[]), Ok(()), "the names are removed");
+    assert_eq!(backend.set_public_host(site, &primary, &[], &[]), Ok(()), "the names are removed");
     assert_eq!(saved(&mut || backend.web()), Vec::new());
+}
+
+/// A public site's other names: a new one goes on only when it is confirmed, and is refused in
+/// the same words otherwise; whether a name redirects changes without a confirmation. `site` is
+/// not public and has no other names; `domain` is the one connected domain.
+pub fn public_site_gains_confirmed_names(backend: &mut (impl ScreenData + nodo_api::Backend), site: &str, domain: &str) {
+    use nodo_api::{AliasMode, Exposure, PublicAlias, PublicConfirmation, Request};
+    let alias = |host: &str, mode| PublicAlias { host: host.to_owned(), mode };
+    let primary = format!("www.{domain}");
+    let pay = format!("pay.{domain}");
+    let saved = |backend: &mut dyn FnMut() -> WebOverview| {
+        backend().sites.into_iter().find(|s| s.package == site).map(|s| s.public_aliases).expect("the site is listed")
+    };
+    let apex = vec![alias(domain, AliasMode::Redirect)];
+    assert_eq!(backend.set_public_host(site, &primary, &apex, &[]), Ok(()), "before going public no name needs confirming");
+    let going_public = Request::SetExposure {
+        site: backend.site_id(site),
+        exposure: Exposure { local: false, onion: false, public: true },
+        confirmation: Some(PublicConfirmation { typed_host: primary.clone() }),
+    };
+    backend.call(going_public).expect("the site goes public");
+
+    let both = vec![apex[0].clone(), alias(&pay, AliasMode::Serve)];
+    let wanted = format!("the site is public, so {pay} would go on the internet at once: confirm adding it");
+    for confirmed in [Vec::new(), vec![domain.to_owned()]] {
+        assert_eq!(backend.set_public_host(site, &primary, &both, &confirmed), Err(wanted.clone()), "confirmed: {confirmed:?}");
+        assert_eq!(saved(&mut || backend.web()), apex, "a refusal leaves the saved names");
+    }
+    assert_eq!(backend.set_public_host(site, &primary, &both, std::slice::from_ref(&pay)), Ok(()), "the confirmed name is added");
+    assert_eq!(saved(&mut || backend.web()), both);
+
+    let served = vec![alias(domain, AliasMode::Serve), both[1].clone()];
+    assert_eq!(backend.set_public_host(site, &primary, &served, &[]), Ok(()), "a name that is public already changes how it answers");
+    assert_eq!(saved(&mut || backend.web()), served);
+    assert_eq!(backend.set_public_host(site, &primary, &[], &[]), Ok(()), "and names are removed while public");
 }

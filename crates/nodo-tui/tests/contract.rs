@@ -40,6 +40,7 @@ fn the_mock_checks_a_sites_other_names_as_the_helper_does() {
     // The sample shop answers at the bare domain, which the scenario gives monokulo-pay.
     mock.web.sites.iter_mut().for_each(|site| site.public_aliases.clear());
     contract::site_aliases(&mut mock, "monokulo-pay", "example.com", "moneropay.example.com");
+    contract::public_site_gains_confirmed_names(&mut mock, "monokulo-pay", "example.com");
 }
 
 #[test]

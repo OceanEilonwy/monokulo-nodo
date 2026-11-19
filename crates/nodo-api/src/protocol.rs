@@ -200,6 +200,7 @@ mod tests {
                 site: site(),
                 host: "h".into(),
                 aliases: None,
+                confirm_added: Vec::new(),
             },
             Request::SetPublicHost {
                 site: site(),
@@ -208,6 +209,7 @@ mod tests {
                     PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect },
                     PublicAlias { host: "pay.example.org".into(), mode: AliasMode::Serve },
                 ]),
+                confirm_added: vec!["pay.example.org".into()],
             },
             Request::CheckReachability { site: site() },
             Request::ListProviders,
@@ -532,6 +534,8 @@ mod tests {
                 checked_at: Some(1),
                 problem: None,
                 dns01: crate::Dns01Support::Bundled,
+                key: Some(crate::ProviderKey { field: "api_token".into(), hint: "abcd1234…wxyz".into() }),
+                blocked: vec![crate::BlockedDomain { name: "example.net".into(), reason: "switch it on".into() }],
             }])),
             Ok(Response::RetiredRecords(vec!["shop/A".into()])),
             Ok(Response::ReachabilityDetail(crate::ReachabilityDetail {

@@ -275,6 +275,10 @@ pub fn exposure(app: &App, t: &Theme, state: &ExposureState) -> Page {
         "Keys: ↑↓ choose  ↵ pick  Esc close the list"
     } else if matches!(focus, HostingFocus::Alias(_)) {
         "Keys: Tab move  x remove this name  ↵ save  Esc back"
+    } else if focus == HostingFocus::AliasOpen {
+        "Keys: Tab move  ↵ add an address  Esc back"
+    } else if matches!(focus, HostingFocus::AliasDomain | HostingFocus::AliasAddress | HostingFocus::AliasMode | HostingFocus::AliasAdd) {
+        "Keys: Tab move  Esc cancel the new name"
     } else {
         "Keys: Tab move  Space tick  ↵ save  Esc back"
     };
@@ -305,18 +309,21 @@ fn domain_list(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
     );
 }
 
-/// "Also answers at": the site's other names, each with Remove, and the controls that add one
-/// (domain, the part before it, serve or redirect). While the site is public only Remove is
-/// offered, as the helper allows.
+/// "Also answers at": the site's other names, each with Remove. A site with no other name shows
+/// only the "Add another address" button; the controls that add one (domain, the part before it,
+/// serve or redirect) open from that button.
 fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(String, String)], index_of: &dyn Fn(HostingFocus) -> usize) {
     let focus = state.focus();
     let host = state.host();
     let field_label = |text: &str| t.d(format!("       {}", pad(text, 12)));
+    let adding = state.adding_alias;
+    if state.aliases.is_empty() && !adding {
+        card.blank(t);
+        open_button(card, t, state, index_of);
+        return;
+    }
     card.blank(t);
     card.row(t, vec![t.n("       "), t.b("Also answers at")]);
-    if state.aliases.is_empty() {
-        card.row(t, vec![t.d(format!("       Nothing else yet: only {host}."))]);
-    }
     for (index, alias) in state.aliases.iter().enumerate() {
         let which = HostingFocus::Alias(index);
         let focused = focus == which && !state.list_open();
@@ -333,8 +340,8 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
         card.on_row(card.next_row(), [Target::row(alias.host.clone(), Click::Pick { index: at, then: None })]);
         card.row_with_button(t, spans, "Remove", false, Click::Pick { index: at, then: Some(KeyCode::Char('x')) });
     }
-    if state.was_public {
-        card.row(t, vec![t.d("       To add a name, take the site off the internet first. Removing one works now.")]);
+    if !adding {
+        open_button(card, t, state, index_of);
         return;
     }
     card.blank(t);
@@ -388,6 +395,16 @@ fn other_names(card: &mut Card, t: &Theme, state: &ExposureState, choices: &[(St
     if let Some(error) = &state.alias_error {
         card.row(t, vec![t.e(format!("       {error}"))]);
     }
+}
+
+/// The button that opens the controls for a new name.
+fn open_button(card: &mut Card, t: &Theme, state: &ExposureState, index_of: &dyn Fn(HostingFocus) -> usize) {
+    let focused = state.focus() == HostingFocus::AliasOpen && !state.list_open();
+    if focused {
+        card.focus_here();
+    }
+    let label = super::v3::focused("Add another address", focused);
+    card.row_with_button(t, Vec::new(), &label, false, Click::Pick { index: index_of(HostingFocus::AliasOpen), then: Some(KeyCode::Enter) });
 }
 
 /// Each connected provider's name, numbered when the owner connected two accounts at one company.
@@ -473,6 +490,11 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 if !held.is_empty() {
                     card.row(t, vec![t.n("   "), t.d(held.join(". "))]);
                 }
+                if !provider.blocked.is_empty() {
+                    let names: Vec<&str> = provider.blocked.iter().map(|(name, _)| name.as_str()).collect();
+                    let text = format!("Can't be used yet: {}", names.join(", "));
+                    card.row_link(t, vec![t.n("   "), t.d(text)], "Why", Click::Pick { index, then: Some(KeyCode::Enter) });
+                }
                 if let Some(problem) = &provider.problem {
                     let again = "Look again";
                     card.row_link(t, vec![t.n("   "), t.e(problem.clone())], again, Click::Pick { index, then: Some(KeyCode::Char('r')) });
@@ -492,7 +514,82 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             after.push(Item::Blank);
             after.push(line(vec![margin(t), t.a("Certificates and home names ›")]));
             after_targets.push(Target::text("Certificates and home names ›", Click::Key(KeyCode::Char('c'))));
-            "Keys: ↑↓ choose  a add  r look again  x remove  c certificates  Esc back"
+            "Keys: ↑↓ choose  ↵ details  a add  r look again  x remove  c certificates  Esc back"
+        }
+        ProviderStage::Details => {
+            let connected = &app.data.connected;
+            let labels = provider_labels(connected);
+            let title = labels.get(state.selected).cloned().unwrap_or_else(|| "Provider".to_owned());
+            let field = |label: &str| t.d(pad(label, 15));
+            match connected.get(state.selected) {
+                None => card.row(t, vec![t.d("This provider is no longer connected.")]),
+                Some(provider) => {
+                    card.row(t, vec![field("Connection"), t.n(provider.id.clone())]);
+                    match &provider.key {
+                        Some((name, hint)) => card.row(t, vec![field(&field_name(name)), t.n(hint.clone())]),
+                        None => card.row(
+                            t,
+                            vec![field("Key"), t.d("Not read yet. Look again while the Nodo is unlocked to show which key this is.")],
+                        ),
+                    }
+                    card.row(t, vec![field(""), t.d("The rest of the key stays locked on this Nodo and is never shown.")]);
+                    let checked = provider.checked.clone().unwrap_or_else(|| "Not since it was connected".to_owned());
+                    card.row(t, vec![field("Domains read"), t.n(checked)]);
+                    card.blank(t);
+                    card.row(t, vec![t.b("Domains apps can use")]);
+                    if provider.domains.is_empty() {
+                        card.row(t, vec![t.d("   None.")]);
+                    }
+                    for domain in &provider.domains {
+                        let note = match (&domain.held_by, domain.used_by.is_empty()) {
+                            (Some(other), _) => format!("used through {other}, which was connected first"),
+                            (None, false) => format!("used by {}", domain.used_by.join(", ")),
+                            (None, true) => "not used by an app yet".to_owned(),
+                        };
+                        card.row(t, vec![t.n("   "), t.n(pad(&domain.name, 26)), t.n("  "), t.d(note)]);
+                    }
+                    card.blank(t);
+                    if provider.blocked.is_empty() {
+                        if provider.lists_domains {
+                            card.row(t, vec![t.d(format!(
+                                "A domain missing here is one this key may not change. Allow it in your {} account, then look again.",
+                                provider.name
+                            ))]);
+                        } else {
+                            card.row(t, vec![t.d(format!("{} can't list its domains, so each is added by name.", provider.name))]);
+                        }
+                    } else {
+                        card.row(t, vec![t.b("In the account, but this key can't change them yet")]);
+                        let mut reasons: Vec<&str> = Vec::new();
+                        for (name, reason) in &provider.blocked {
+                            card.row(t, vec![t.n("   "), t.n(name.clone())]);
+                            if !reasons.contains(&reason.as_str()) {
+                                reasons.push(reason);
+                            }
+                        }
+                        for reason in reasons {
+                            card.row(t, vec![t.d(format!("   {reason}, then look again."))]);
+                        }
+                    }
+                    if let Some(problem) = &provider.problem {
+                        card.blank(t);
+                        card.row(t, vec![t.e(problem.clone())]);
+                    }
+                    card.blank(t);
+                    card.buttons(
+                        t,
+                        &[("Look again", true, Click::Key(KeyCode::Char('r'))), ("Remove", false, Click::Key(KeyCode::Char('x')))],
+                    );
+                }
+            }
+            screen.before = vec![
+                Item::Blank,
+                trail(t, &["Web", "Domain providers", title.as_str()], &mut screen.targets),
+                Item::Blank,
+                heading(t, &title),
+                Item::Blank,
+            ];
+            "Keys: r look again  x remove  Esc back"
         }
         ProviderStage::Pick => {
             for (index, provider) in app.data.providers.iter().enumerate() {
@@ -578,7 +675,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
             ];
             "Keys: Tab next box  ↵ connect  Esc back"
         }
-        ProviderStage::Done { provider, domains, held_by } => {
+        ProviderStage::Done { provider, domains, held_by, blocked } => {
             card.row(t, vec![t.o("✓  "), t.b(format!("{provider} is connected"))]);
             card.blank(t);
             if domains.is_empty() {
@@ -590,6 +687,21 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
                 card.row(t, vec![t.d("   Apps can now use these web addresses:")]);
                 for domain in domains {
                     card.row(t, vec![t.n(format!("   {domain}"))]);
+                }
+            }
+            if !blocked.is_empty() {
+                // The domains the owner is about to go looking for, with what to switch on.
+                card.blank(t);
+                card.row(t, vec![t.d("   Also in the account, but this key can't change them yet:")]);
+                let mut reasons: Vec<&str> = Vec::new();
+                for (name, reason) in blocked {
+                    card.row(t, vec![t.n(format!("   {name}"))]);
+                    if !reasons.contains(&reason.as_str()) {
+                        reasons.push(reason);
+                    }
+                }
+                for reason in reasons {
+                    card.row(t, vec![t.d(format!("   {reason}, then look again."))]);
                 }
             }
             card.blank(t);
@@ -608,7 +720,7 @@ pub fn providers(app: &App, t: &Theme, state: &ProvidersState) -> Page {
 
 /// Providers list only the domains a key may change, and some (Porkbun) need that allowed per
 /// domain. Connecting the same account again finds nothing more, which is what owners try first.
-const MISSING_DOMAIN: &str = "Missing a domain? Allow the key to change it in the provider's account (Porkbun: API Access, on each domain), then look again (r) under Domain providers.";
+const MISSING_DOMAIN: &str = "Missing a domain? Allow the key to change it in the provider's account (Porkbun: API Access, on each domain), then look again (r) under Domain providers. A provider's details (↵) show its key and the domains it can't change.";
 
 fn check_symbol(t: &Theme, state: CheckState) -> Span<'static> {
     match state {

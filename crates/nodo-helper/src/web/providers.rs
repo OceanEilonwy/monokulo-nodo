@@ -14,11 +14,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use nodo_api::{ApiError, Dns01Support, DomainProvider, ProviderDomain, Secret, SiteId};
+use nodo_api::{ApiError, BlockedDomain, Dns01Support, DomainProvider, ProviderDomain, ProviderKey, Secret, SiteId};
 use nodo_web::caddy::{DnsChallenge, ZoneChallenge};
 use nodo_web::dns::catalog::{self, Dns01, ProviderStatus};
 use nodo_web::dns::config::ProviderConfig;
-use nodo_web::dns::{DnsProvider, Zone};
+use nodo_web::dns::{DnsProvider, DomainListing, Zone};
 use serde::{Deserialize, Serialize};
 
 use super::{field_names, secrets, Credentials, NodoWeb, WebIo, ROOT_ONLY, SEAL_PACKAGE};
@@ -42,6 +42,40 @@ pub(super) struct StoredProvider {
     pub checked_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// The first credential, masked (see [`key_hint`]), in the clear so the owner can be shown which
+    /// key this is while the device is locked. Never enough of the credential to use it, and never
+    /// the start of a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_hint: Option<String>,
+    /// The account's domains the key could not change at the last listing, with the reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<StoredBlocked>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(super) struct StoredBlocked {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Whether a provider's first credential only names the key (Porkbun's `pk1_…` API key, an Alibaba
+/// AccessKey ID, a Name.com username) and is useless without the second one. A provider with a
+/// single token has no such half: its first credential is the whole secret.
+fn first_field_is_an_identifier(kind: &str) -> bool {
+    matches!(kind, "porkbun" | "namecom" | "alibaba")
+}
+
+/// Enough of a credential to recognise it beside the keys in the provider's account, and no more.
+/// An identifier shows its first eight and last four characters. A secret shows its last four
+/// only, as account pages do, so no prefix of a token is ever kept in the clear.
+pub(super) fn key_hint(value: &str, identifier: bool) -> String {
+    let chars: Vec<char> = value.trim().chars().collect();
+    let part = |range: std::ops::Range<usize>| chars[range].iter().collect::<String>();
+    match chars.len() {
+        n if identifier && n >= 24 => format!("{}…{}", part(0..8), part(n - 4..n)),
+        n if n >= 16 => format!("…{}", part(n - 4..n)),
+        _ => "…".to_owned(),
+    }
 }
 
 impl StoredProvider {
@@ -154,6 +188,28 @@ fn valid_domains(names: Vec<String>) -> Vec<String> {
     domains
 }
 
+/// A listing as stored: the usable domains, and the blocked ones that are valid names and not usable.
+fn valid_listing(listing: DomainListing) -> (Vec<String>, Vec<StoredBlocked>) {
+    let usable = valid_domains(listing.usable);
+    let mut blocked: Vec<StoredBlocked> = listing
+        .blocked
+        .into_iter()
+        .filter_map(|b| {
+            let name = valid_domains(vec![b.name]).pop()?;
+            (!usable.contains(&name)).then_some(StoredBlocked { name, reason: b.reason })
+        })
+        .collect();
+    blocked.sort_by(|a, b| a.name.cmp(&b.name));
+    blocked.dedup_by(|a, b| a.name == b.name);
+    (usable, blocked)
+}
+
+/// "a.com, b.org: reason" for blocked domains that share a reason, which they do per provider.
+fn blocked_text(blocked: &[StoredBlocked]) -> String {
+    let names: Vec<&str> = blocked.iter().map(|b| b.name.as_str()).collect();
+    format!("{}: {}", names.join(", "), blocked.first().map_or("", |b| b.reason.as_str()))
+}
+
 fn failed(error: impl std::fmt::Display) -> ApiError {
     ApiError::Failed(error.to_string())
 }
@@ -177,6 +233,8 @@ impl<I: WebIo> NodoWeb<I> {
                     domains: vec![old.domain],
                     checked_at: None,
                     problem: None,
+                    key_hint: None,
+                    blocked: Vec::new(),
                 };
                 (ProviderStore { version: STORE_VERSION, providers: vec![provider] }, true)
             }
@@ -307,7 +365,21 @@ impl<I: WebIo> NodoWeb<I> {
             domains,
             checked_at: provider.checked_at,
             problem: provider.problem.clone(),
+            key: provider.key_hint.clone().and_then(|hint| {
+                Some(ProviderKey { field: field_names(provider.kind()).into_iter().next()?, hint })
+            }),
+            blocked: provider
+                .blocked
+                .iter()
+                .map(|b| BlockedDomain { name: b.name.clone(), reason: b.reason.clone() })
+                .collect(),
         }
+    }
+
+    /// The hint for a provider's first credential, from its opened table.
+    fn hint_of(kind: &str, opened: &BTreeMap<String, String>) -> Option<String> {
+        let identifier = first_field_is_an_identifier(kind);
+        field_names(kind).first().and_then(|field| opened.get(field)).map(|value| key_hint(value, identifier))
     }
 
     pub(super) fn list_domain_providers(&self, input: &WebInput) -> Vec<DomainProvider> {
@@ -316,27 +388,38 @@ impl<I: WebIo> NodoWeb<I> {
     }
 
     /// Lists the key's domains, or for a provider that cannot list, proves the key on `domain`.
-    fn discover(&self, config: ProviderConfig, domain: Option<&str>) -> Result<Vec<String>, ApiError> {
+    /// Beside them come the account's domains the key may not change yet, when the provider tells.
+    fn discover(&self, config: ProviderConfig, domain: Option<&str>) -> Result<(Vec<String>, Vec<StoredBlocked>), ApiError> {
         let name = display_name(config.kind());
         let wanted = domain
             .map(|d| Zone::new(&d.trim().to_ascii_lowercase()).map(|z| z.as_str().to_owned()))
             .transpose()
             .map_err(failed)?;
-        let listing = self.io.list_domains(config.clone()).map_err(ApiError::Failed)?.map(valid_domains);
+        let listing = self.io.list_domains(config.clone()).map_err(ApiError::Failed)?.map(valid_listing);
         match (listing, wanted) {
-            (Some(listed), Some(domain)) if !listed.contains(&domain) => Err(failed(format!(
-                "{name} accepted the key, but it does not control {domain}. It controls: {}",
-                if listed.is_empty() { "no domains".to_owned() } else { listed.join(", ") }
+            (Some((listed, blocked)), Some(domain)) if !listed.contains(&domain) => {
+                // The account has it but the key may not change it: say what to switch on.
+                if let Some(found) = blocked.iter().find(|b| b.name == domain) {
+                    return Err(failed(format!("{name} accepted the key, but cannot change {domain} yet. {}", found.reason)));
+                }
+                Err(failed(format!(
+                    "{name} accepted the key, but it does not control {domain}. It controls: {}",
+                    if listed.is_empty() { "no domains".to_owned() } else { listed.join(", ") }
+                )))
+            }
+            (Some((listed, blocked)), _) if listed.is_empty() && !blocked.is_empty() => Err(failed(format!(
+                "{name} accepted the key, but it may not change any domain yet. {}",
+                blocked_text(&blocked)
             ))),
-            (Some(listed), _) if listed.is_empty() => {
+            (Some((listed, _)), _) if listed.is_empty() => {
                 Err(failed(format!("{name} accepted the key, but it controls no domains the API may change")))
             }
-            (Some(listed), _) => Ok(listed),
+            (Some(listing), _) => Ok(listing),
             (None, None) => Err(failed(format!("{name} cannot list your domains, so type the domain to use"))),
             (None, Some(domain)) => {
                 let provider = self.io.dns_provider(config, &domain).map_err(ApiError::Failed)?;
                 provider.test().map_err(failed)?;
-                Ok(vec![domain])
+                Ok((vec![domain], Vec::new()))
             }
         }
     }
@@ -353,8 +436,14 @@ impl<I: WebIo> NodoWeb<I> {
             .as_deref()
             .ok_or_else(|| ApiError::Locked("unlock the device to store DNS credentials".to_owned()))?;
         let (sealed, config) = self.seal_fields(kind, fields, key)?;
-        let domains = self.discover(config, domain)?;
+        let (domains, blocked) = self.discover(config, domain)?;
         let (mut store, _) = self.provider_store();
+        let first = field_names(kind).into_iter().next();
+        let identifier = first_field_is_an_identifier(kind);
+        let key_hint = fields
+            .iter()
+            .find(|(name, _)| Some(name) == first.as_ref())
+            .map(|(_, value)| key_hint(value.expose(), identifier));
         let provider = StoredProvider {
             id: store.next_id(kind),
             dns: sealed,
@@ -362,6 +451,8 @@ impl<I: WebIo> NodoWeb<I> {
             domains,
             checked_at: Some(self.io.now()),
             problem: None,
+            key_hint,
+            blocked,
         };
         store.providers.push(provider.clone());
         self.save_store(&store).map_err(ApiError::Failed)?;
@@ -403,9 +494,16 @@ impl<I: WebIo> NodoWeb<I> {
         let index = store.get(id)?;
         let config = self.provider_config(&store.providers[index], key)?;
         let name = display_name(config.kind());
-        match self.io.list_domains(config).map(|l| l.map(valid_domains)) {
-            Ok(Some(listed)) => {
+        // A connection made before hints were kept gets its hint now, while the key can be opened.
+        if store.providers[index].key_hint.is_none() {
+            let opened = self.open_provider(&store.providers[index], key).map_err(failed)?;
+            store.providers[index].key_hint = Self::hint_of(config.kind(), &opened);
+        }
+        let before = store.providers[index].domains.clone();
+        match self.io.list_domains(config).map(|l| l.map(valid_listing)) {
+            Ok(Some((listed, blocked))) => {
                 let provider = &mut store.providers[index];
+                provider.blocked = blocked;
                 // A domain a site still uses stays, so its record and certificate keep working, but
                 // the problem says the key no longer lists it.
                 let kept: Vec<String> = provider.domains.iter().filter(|d| !listed.contains(d)).cloned().collect();
@@ -431,7 +529,11 @@ impl<I: WebIo> NodoWeb<I> {
             Err(e) => store.providers[index].problem = Some(e),
         }
         self.save_store(&store).map_err(ApiError::Failed)?;
-        ExposureApplier::apply(self, input).map_err(ApiError::Failed)?;
+        // Only a changed set of domains can change what is served or which challenge is used, and
+        // the providers are looked up again every time their screen opens.
+        if store.providers[index].domains != before {
+            ExposureApplier::apply(self, input).map_err(ApiError::Failed)?;
+        }
         Ok(self.describe(&store, &store.providers[index], input))
     }
 
@@ -447,7 +549,7 @@ impl<I: WebIo> NodoWeb<I> {
             return Ok(self.describe(&store, &store.providers[index], input));
         }
         let config = self.provider_config(&store.providers[index], key)?;
-        let added = self.discover(config, Some(&domain))?;
+        let (added, _) = self.discover(config, Some(&domain))?;
         let provider = &mut store.providers[index];
         provider.domains.extend(added.into_iter().filter(|d| d == &domain));
         provider.domains.sort();
@@ -506,6 +608,8 @@ impl<I: WebIo> NodoWeb<I> {
                 domains: vec![credentials.domain.clone()],
                 checked_at: None,
                 problem: None,
+                key_hint: None,
+                blocked: Vec::new(),
             });
         }
         self.save_store(&store)
