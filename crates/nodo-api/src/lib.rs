@@ -39,6 +39,16 @@ pub const PROTOCOL_VERSION: u8 = 5;
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
 /// The touchscreen's own socket. Only its account may connect, and the helper limits what it may do.
 pub const SCREEN_SOCKET: &str = "/run/nodo/screen.sock";
+/// The web GUI's own socket. Only its account may connect, and the helper answers nothing but
+/// [`Request::WebGuiLogin`] and [`Request::WebGuiStatus`] on it until someone has logged in.
+pub const WEBGUI_SOCKET: &str = "/run/nodo/webgui.sock";
+/// The loopback port the web GUI's process listens on. Only Caddy reaches it.
+pub const WEBGUI_UPSTREAM_PORT: u16 = 10082;
+/// Where the web GUI answers on the home network while it is on and the local address exists.
+pub const WEBGUI_URL: &str = "https://nodo.local";
+/// What [`ApiError::Locked`] carries when the web GUI's socket refuses a request because nobody is
+/// logged in. See [`ApiError::is_web_login_required`].
+pub const WEBGUI_LOGIN_REQUIRED: &str = "web login required";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceState {
@@ -1182,6 +1192,36 @@ pub enum Request {
         package: String,
         passphrase: Secret,
     },
+    /// Logs the web GUI in with the device passphrase, and unlocks the device if it is locked.
+    /// Only the web GUI's account sends it, on its own socket. A wrong passphrase answers
+    /// `BadPassphrase` after the same growing delay as an unlock, counted separately from it.
+    /// Answers [`Response::WebGui`].
+    WebGuiLogin {
+        passphrase: Secret,
+    },
+    /// Ends the web GUI's login at once. Only the web GUI's account sends it.
+    WebGuiLogout,
+    /// Whether the web GUI is on, where it answers, and whether the caller is logged in.
+    WebGuiStatus,
+    /// Turns the web GUI on or off. Only from SSH or the TUI, never from the web GUI or the
+    /// touchscreen, and only once the device passphrase is set up.
+    SetWebGui(bool),
+}
+
+/// The web GUI on the home network: the same screens as the TUI, in a browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebGuiStatus {
+    /// The owner turned it on.
+    pub enabled: bool,
+    /// Its address ([`WEBGUI_URL`]) while it is being served. `None` while it is off or waiting,
+    /// and always `None` for the web GUI's own account before it has logged in.
+    pub url: Option<String>,
+    /// It is on, but the device has no local address yet, so nothing is served. Always `false`
+    /// for the web GUI's own account before it has logged in.
+    pub waiting: bool,
+    /// The caller is the web GUI's account and its login is open. Always `false` on the other
+    /// sockets.
+    pub open: bool,
 }
 
 /// What the touchscreen may do right now.
@@ -1270,6 +1310,8 @@ pub enum Response {
     BundleReview(BundleReview),
     BundleReport(BundleReport),
     OwnerPage(OwnerPageView),
+    /// Answer to `WebGuiStatus` and `WebGuiLogin`.
+    WebGui(WebGuiStatus),
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1293,8 +1335,24 @@ pub enum ApiError {
     #[error("encrypted storage has not been set up")]
     NotSetUp,
     /// The action needs secrets or storage that open only with the device passphrase.
+    ///
+    /// The web GUI's socket also answers this, carrying exactly [`WEBGUI_LOGIN_REQUIRED`], to every
+    /// request but `WebGuiLogin` and `WebGuiStatus` while nobody is logged in.
     #[error("locked: {0}")]
     Locked(String),
+}
+
+impl ApiError {
+    /// The refusal the web GUI's socket gives while its login is closed: after a helper restart,
+    /// after the idle time or the 12 hour limit, or once the web GUI was turned off. The web GUI
+    /// then drops its sessions and asks for the passphrase again.
+    pub fn web_login_required() -> Self {
+        ApiError::Locked(WEBGUI_LOGIN_REQUIRED.to_owned())
+    }
+
+    pub fn is_web_login_required(&self) -> bool {
+        matches!(self, ApiError::Locked(reason) if reason == WEBGUI_LOGIN_REQUIRED)
+    }
 }
 
 /// Implemented by the helper client and by a mock for TUI development and tests.
@@ -1421,6 +1479,10 @@ pub fn action_name(request: &Request) -> &'static str {
         Request::ReviewBundle { .. } => "review-bundle",
         Request::InstallBundle { .. } => "install-bundle",
         Request::OwnerPage { .. } => "owner-page",
+        Request::WebGuiLogin { .. } => "web-gui-login",
+        Request::WebGuiLogout => "web-gui-logout",
+        Request::WebGuiStatus => "web-gui-status",
+        Request::SetWebGui(_) => "set-web-gui",
     }
 }
 
@@ -1534,11 +1596,32 @@ mod tests {
                 package: "a".into(),
                 passphrase: Secret::new("hunter2"),
             },
+            Request::WebGuiLogin {
+                passphrase: Secret::new("hunter2"),
+            },
         ];
         for request in requests {
             let text = format!("{request:?}");
             assert!(!text.contains("hunter"), "{text}");
             assert!(!action_name(&request).contains("hunter"));
         }
+    }
+
+    #[test]
+    fn the_web_login_refusal_is_told_apart_from_a_locked_device() {
+        let refusal = ApiError::web_login_required();
+        assert_eq!(refusal, ApiError::Locked(WEBGUI_LOGIN_REQUIRED.to_owned()));
+        assert!(refusal.is_web_login_required());
+        assert_eq!(refusal.to_string(), "locked: web login required");
+        assert!(!ApiError::Locked("unlock the device to use the DNS provider".into()).is_web_login_required());
+        assert!(!ApiError::Denied.is_web_login_required());
+    }
+
+    #[test]
+    fn web_gui_requests_have_their_own_log_names() {
+        assert_eq!(action_name(&Request::WebGuiLogin { passphrase: Secret::new("p") }), "web-gui-login");
+        assert_eq!(action_name(&Request::WebGuiLogout), "web-gui-logout");
+        assert_eq!(action_name(&Request::WebGuiStatus), "web-gui-status");
+        assert_eq!(action_name(&Request::SetWebGui(true)), "set-web-gui");
     }
 }
