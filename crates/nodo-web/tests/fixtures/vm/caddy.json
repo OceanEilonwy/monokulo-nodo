@@ -377,30 +377,6 @@
                   "handler": "subroute",
                   "routes": [
                     {
-                      "match": [
-                        {
-                          "path": [
-                            "/admin",
-                            "/admin/*",
-                            "/admin;*"
-                          ]
-                        },
-                        {
-                          "path_regexp": {
-                            "name": "admin",
-                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
-                          }
-                        }
-                      ],
-                      "handle": [
-                        {
-                          "handler": "static_response",
-                          "status_code": "404"
-                        }
-                      ],
-                      "terminal": true
-                    },
-                    {
                       "handle": [
                         {
                           "handler": "reverse_proxy",
@@ -479,30 +455,6 @@
                   "handler": "subroute",
                   "routes": [
                     {
-                      "match": [
-                        {
-                          "path": [
-                            "/admin",
-                            "/admin/*",
-                            "/admin;*"
-                          ]
-                        },
-                        {
-                          "path_regexp": {
-                            "name": "admin",
-                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
-                          }
-                        }
-                      ],
-                      "handle": [
-                        {
-                          "handler": "static_response",
-                          "status_code": "404"
-                        }
-                      ],
-                      "terminal": true
-                    },
-                    {
                       "handle": [
                         {
                           "handler": "rate_limit",
@@ -548,30 +500,6 @@
                   "handler": "subroute",
                   "routes": [
                     {
-                      "match": [
-                        {
-                          "path": [
-                            "/admin",
-                            "/admin/*",
-                            "/admin;*"
-                          ]
-                        },
-                        {
-                          "path_regexp": {
-                            "name": "admin",
-                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
-                          }
-                        }
-                      ],
-                      "handle": [
-                        {
-                          "handler": "static_response",
-                          "status_code": "404"
-                        }
-                      ],
-                      "terminal": true
-                    },
-                    {
                       "handle": [
                         {
                           "handler": "static_response",
@@ -610,30 +538,6 @@
                 {
                   "handler": "subroute",
                   "routes": [
-                    {
-                      "match": [
-                        {
-                          "path": [
-                            "/admin",
-                            "/admin/*",
-                            "/admin;*"
-                          ]
-                        },
-                        {
-                          "path_regexp": {
-                            "name": "admin",
-                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
-                          }
-                        }
-                      ],
-                      "handle": [
-                        {
-                          "handler": "static_response",
-                          "status_code": "404"
-                        }
-                      ],
-                      "terminal": true
-                    },
                     {
                       "handle": [
                         {
@@ -695,30 +599,6 @@
                 {
                   "handler": "subroute",
                   "routes": [
-                    {
-                      "match": [
-                        {
-                          "path": [
-                            "/admin",
-                            "/admin/*",
-                            "/admin;*"
-                          ]
-                        },
-                        {
-                          "path_regexp": {
-                            "name": "admin",
-                            "pattern": "(?i)^(?:/admin)(?:[^a-z0-9_~-]|$)"
-                          }
-                        }
-                      ],
-                      "handle": [
-                        {
-                          "handler": "static_response",
-                          "status_code": "404"
-                        }
-                      ],
-                      "terminal": true
-                    },
                     {
                       "handle": [
                         {

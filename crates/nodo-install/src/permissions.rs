@@ -1,13 +1,13 @@
 //! What a package may do, in a form the user approves and the installer compares across updates.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use nodo_manifest::{Manifest, Outbound, Protocol, Scope};
 use serde::{Deserialize, Serialize};
 
 /// One thing the user agrees to. Reduced protection is a permission too, so that moving from
-/// encrypted to plain storage, or making an admin path public, counts as asking for more.
+/// encrypted to plain storage counts as asking for more.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Permission {
@@ -17,10 +17,8 @@ pub enum Permission {
     Provides { name: String },
     OutboundInternet,
     Inbound { port: u16, protocol: String, scope: String },
-    /// A site the user can expose. Paths the package does not mark as admin can become public.
+    /// A site the user can expose. Wherever the user puts it, the whole site is served.
     Web { name: String, multi_address: bool },
-    /// A path that was admin only in an approved version and no longer is.
-    AdminPathOpened { web: String, path: String },
     UnencryptedStorage,
     /// The GPU's render nodes, for compute through Vulkan. The service joins the `gpu` group and
     /// its sandbox gets `/dev/dri/renderD*`, never the display's card nodes.
@@ -51,7 +49,6 @@ impl fmt::Display for Permission {
                 }
                 Ok(())
             }
-            Permission::AdminPathOpened { web, path } => write!(f, "no longer keeps {path} of '{web}' admin only"),
             Permission::UnencryptedStorage => f.write_str("keeps its data unencrypted"),
             Permission::Gpu => f.write_str("uses the GPU for computation (Vulkan)"),
             Permission::SystemPackage { name } => write!(f, "needs the system package {name}"),
@@ -67,9 +64,8 @@ impl fmt::Display for Permission {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions {
     pub granted: BTreeSet<Permission>,
-    /// Admin paths per site. Kept apart because removing one widens access.
-    #[serde(default)]
-    pub admin_paths: BTreeMap<String, BTreeSet<String>>,
+    // Approvals stored by older helpers also have an `admin_paths` table, from when sites could
+    // hide paths from public addresses. Unknown keys are ignored here, so those files still read.
     /// Panels the package shows on the device's screen. Shown in the review but not a permission:
     /// a panel only reads what the package's own service already serves on loopback
     /// (docs/SCREEN.md), so a version that adds one needs no new approval. Left out of the stored
@@ -131,10 +127,8 @@ impl Permissions {
                 scope: scope(rule.scope).to_string(),
             });
         }
-        let mut admin_paths = BTreeMap::new();
         for web in &manifest.web {
             granted.insert(Permission::Web { name: web.name.clone(), multi_address: web.multi_address });
-            admin_paths.insert(web.name.clone(), web.admin_paths.iter().cloned().collect());
         }
         if !manifest.storage.encrypted {
             granted.insert(Permission::UnencryptedStorage);
@@ -157,30 +151,17 @@ impl Permissions {
         for dependency in run_depends {
             granted.insert(Permission::SystemPackage { name: dependency_name(dependency) });
         }
-        Permissions { granted, admin_paths, panels: manifest.panels.len() }
+        Permissions { granted, panels: manifest.panels.len() }
     }
 
     /// What `self` asks for beyond `approved`. Empty means no new approval is needed.
     pub fn added_since(&self, approved: &Permissions) -> Vec<Permission> {
-        let mut added: Vec<Permission> = self.granted.difference(&approved.granted).cloned().collect();
-        for (web, paths) in &approved.admin_paths {
-            let Some(now) = self.admin_paths.get(web) else { continue };
-            for path in paths.difference(now) {
-                added.push(Permission::AdminPathOpened { web: web.clone(), path: path.clone() });
-            }
-        }
-        added
+        self.granted.difference(&approved.granted).cloned().collect()
     }
 
     /// One line per permission, for the approval screen.
     pub fn summary(&self) -> Vec<String> {
         let mut lines: Vec<String> = self.granted.iter().map(ToString::to_string).collect();
-        for (web, paths) in &self.admin_paths {
-            if !paths.is_empty() {
-                let list: Vec<&str> = paths.iter().map(String::as_str).collect();
-                lines.push(format!("keeps {} of '{web}' admin only", list.join(", ")));
-            }
-        }
         match self.panels {
             0 => {}
             1 => lines.push("shows a panel on the screen, reading its own service".to_string()),
@@ -199,7 +180,7 @@ mod tests {
             .unwrap()
     }
 
-    const WEB: &str = "[[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8081\"\nadmin_paths = [\"/admin\", \"/admin/*\"]\n";
+    const WEB: &str = "[[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8081\"\n";
 
     #[test]
     fn summarises_a_manifest() {
@@ -213,7 +194,6 @@ mod tests {
                 "serves the site 'web'",
                 "needs the system package glibc",
                 "needs the system package libstdc++",
-                "keeps /admin, /admin/* of 'web' admin only",
             ]
         );
     }
@@ -259,7 +239,7 @@ mod tests {
         let old = Permissions::of(&manifest(&format!("[storage]\nencrypted = true\n{WEB}")), &[]);
         let grown = Permissions::of(
             &manifest(
-                "needs = [\"tor\"]\n[network]\noutbound = \"internet\"\n[[network.inbound]]\nport = 9000\nprotocol = \"tcp\"\nscope = \"lan\"\n[[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8081\"\nadmin_paths = [\"/admin/*\"]\n",
+                "needs = [\"tor\"]\n[network]\noutbound = \"internet\"\n[[network.inbound]]\nport = 9000\nprotocol = \"tcp\"\nscope = \"lan\"\n[[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8081\"\n",
             ),
             &["libfoo-1.0_1".into()],
         );
@@ -271,7 +251,6 @@ mod tests {
                 Permission::Inbound { port: 9000, protocol: "tcp".into(), scope: "local network".into() },
                 Permission::UnencryptedStorage,
                 Permission::SystemPackage { name: "libfoo".into() },
-                Permission::AdminPathOpened { web: "web".into(), path: "/admin".into() },
             ]
         );
         assert!(old.added_since(&grown).is_empty(), "going back to the old version asks for nothing new");
@@ -319,6 +298,26 @@ mod tests {
         ] {
             assert_eq!(dependency_name(pattern), name, "{pattern}");
         }
+    }
+
+    #[test]
+    fn old_admin_paths_ask_for_nothing_and_old_approvals_still_read() {
+        // A manifest that still lists admin paths gives the same permissions as one that does not:
+        // nothing in a review mentions them, and dropping them from an update asks for nothing.
+        let old = manifest(&format!("[storage]\nencrypted = true\n{WEB}admin_paths = [\"/admin\", \"/admin/*\"]\n"));
+        let new = manifest(&format!("[storage]\nencrypted = true\n{WEB}"));
+        let (old, new) = (Permissions::of(&old, &[]), Permissions::of(&new, &[]));
+        assert_eq!(old, new);
+        assert_eq!(new.summary(), ["serves the site 'web'"]);
+        assert!(new.added_since(&old).is_empty());
+        // An approval an older helper stored, with its admin paths table, still reads, and the table
+        // asks for nothing.
+        let stored = "[[granted]]\nkind = \"web\"\nname = \"web\"\nmulti_address = false\n\n\
+                      [admin_paths]\nweb = [\"/admin\", \"/admin/*\"]\n";
+        let approved: Permissions = toml::from_str(stored).unwrap();
+        assert_eq!(approved, new);
+        assert!(new.added_since(&approved).is_empty());
+        assert!(!toml::to_string(&approved).unwrap().contains("admin"));
     }
 
     #[test]

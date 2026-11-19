@@ -171,23 +171,16 @@ fn check_port(port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// `/admin` or `/admin/*`. The value lands in generated proxy config, so nothing with meaning to a
-/// URL parser or config syntax is allowed, and `..` could step around the rule it declares.
-fn is_valid_url_path(path: &str, allow_trailing_wildcard: bool) -> bool {
+/// A plain absolute path such as `/health`, for the loopback URLs a manifest names. Nothing with
+/// meaning to a URL parser is allowed, and `..` could step outside the path the package names.
+fn is_valid_url_path(path: &str) -> bool {
     if path.len() > MAX_PATH_LEN || !path.starts_with('/') {
         return false;
     }
     if path == "/" {
         return true;
     }
-    let trimmed = match path.strip_suffix("/*") {
-        Some(rest) if allow_trailing_wildcard => rest,
-        _ => path,
-    };
-    if trimmed.is_empty() {
-        return true;
-    }
-    trimmed.split('/').skip(1).all(|segment| {
+    path.split('/').skip(1).all(|segment| {
         !segment.is_empty()
             && segment != "."
             && segment != ".."
@@ -219,7 +212,7 @@ fn check_health_url(url: &str) -> Result<(), String> {
         .ok_or("must be a loopback address with an explicit port")?;
     let port = parse_port(port).ok_or("has an invalid port")?;
     check_port(port)?;
-    if !is_valid_url_path(path, false) {
+    if !is_valid_url_path(path) {
         return Err("has an invalid path".to_string());
     }
     Ok(())
@@ -373,14 +366,6 @@ impl Manifest {
             if let Some(subdomain) = &web.suggested_subdomain {
                 if !is_valid_name(subdomain) {
                     c.add(format!("web[{index}].suggested_subdomain"), "is not a valid DNS label");
-                }
-            }
-            if web.admin_paths.len() > MAX_LIST_LEN {
-                c.add(format!("web[{index}].admin_paths"), format!("has more than {MAX_LIST_LEN} entries"));
-            }
-            for (path_index, path) in web.admin_paths.iter().enumerate() {
-                if !is_valid_url_path(path, true) {
-                    c.add(format!("web[{index}].admin_paths[{path_index}]"), "is not a plain absolute URL path");
                 }
             }
         }
@@ -635,7 +620,7 @@ pub(crate) fn loopback_target(url: &str) -> Option<(u16, String)> {
     let at = rest.find('/')?;
     let (port, path) = rest.split_at(at);
     let port = parse_port(port)?;
-    if port < MIN_PACKAGE_PORT || !is_valid_url_path(path, false) {
+    if port < MIN_PACKAGE_PORT || !is_valid_url_path(path) {
         return None;
     }
     Some((port, path.to_owned()))

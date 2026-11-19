@@ -166,8 +166,8 @@ codebase, and signed xbps packages from user-added feeds.
   with its own DHCP lease or a static address, and their `.local` names come from a small mDNS
   responder. Forwarded traffic is always addressed to the main address, so even a router that
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
-  and are never moved to the main address or a port. Admin paths are always blocked on public and
-  onion addresses.
+  and are never moved to the main address or a port. A site is served whole at every address the
+  owner gives it; an app that has admin pages guards them with its own sign-in.
 - **TUI navigation:** Four tabs, Home, Apps, Web and System (`1`–`4`, Tab, or a click). Home shows
   what needs the owner first, one card and one button each (unlock, an app that keeps stopping, updates
   ready), then the other apps and one line of device health. Apps lists the installed apps; each has
