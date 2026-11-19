@@ -74,6 +74,13 @@ pub fn nft_fragment(spec: &ServiceSpec) -> String {
         ));
     }
     if spec.internet {
+        // Name lookups. The resolver in /etc/resolv.conf comes from the DHCP lease and is usually
+        // the router, a private address, and lookups go over UDP, so this must come before the
+        // private range block and the TCP-only accept. Without it every lookup is dropped and the
+        // app sees EPERM. Loopback stays closed: no resolver listens there.
+        output.push(format!(
+            "{who} oifname != \"lo\" meta l4proto {{ tcp, udp }} th dport 53 accept"
+        ));
         output.push(format!("{who} ip daddr {PRIVATE_V4} drop"));
         // `meta l4proto tcp accept` below also matches IPv6, so the block must cover it too.
         output.push(format!("{who} ip6 daddr {PRIVATE_V6} drop"));

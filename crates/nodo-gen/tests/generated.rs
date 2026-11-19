@@ -1031,6 +1031,36 @@ fn internet_access_does_not_open_loopback() {
     );
 }
 
+/// An internet app must be able to look up names. The resolver in /etc/resolv.conf comes from the
+/// DHCP lease and is usually the router, a private address, and lookups go over UDP, so neither
+/// the private range block nor the TCP-only internet accept may come before the DNS accept.
+/// Without it every lookup is dropped and the app sees EPERM ("Operation not permitted").
+#[test]
+fn internet_access_allows_name_lookups_but_not_on_loopback() {
+    let nft = golden_artifacts("shop").nft;
+    let lines: Vec<&str> = nft.lines().map(str::trim).collect();
+    let dns_rule = "meta skuid \"_shop\" oifname != \"lo\" meta l4proto { tcp, udp } th dport 53 accept";
+    let dns = lines.iter().position(|l| *l == dns_rule).expect(&nft);
+    let private = lines
+        .iter()
+        .position(|l| l.starts_with("meta skuid \"_shop\" ip daddr { 10.0.0.0/8"))
+        .expect(&nft);
+    assert!(dns < private, "DNS must be accepted before private ranges are dropped\n{nft}");
+}
+
+/// An app with no internet access gets no DNS hole either.
+#[test]
+fn no_internet_means_no_name_lookups() {
+    let m = Manifest::parse_system(
+        "api_version = 1\nid = \"a\"\nversion = \"1\"\nexec = [\"bin/a\"]\n",
+    )
+    .unwrap();
+    let nft = generate(&m, Profile::App, &ResolvedGrants::default())
+        .unwrap()
+        .nft;
+    assert!(!nft.contains("dport 53"), "{nft}");
+}
+
 fn with_gpu(id: &str) -> Manifest {
     Manifest::parse_system(&format!(
         "api_version = 1\nid = \"{id}\"\nversion = \"1\"\nexec = [\"bin/a\"]\n\n[devices]\ngpu = true\n"
