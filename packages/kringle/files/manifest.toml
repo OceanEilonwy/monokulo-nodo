@@ -1,8 +1,9 @@
 api_version = 1
 id = "kringle"
 version = "@VERSION@"
-# bin/kringle is a small launcher that puts the data file in the data directory and passes the
-# optional public address, then executes libexec/kringle under the same name.
+# bin/kringle is a small launcher that puts the data file in the data directory, passes the
+# optional public address and maps the email settings, then executes libexec/kringle under the
+# same name.
 exec = [
     "bin/kringle",
     # Visitors arrive through the appliance's proxy, whose X-Forwarded-Proto and X-Forwarded-Host
@@ -20,8 +21,10 @@ health = { http = { url = "http://127.0.0.1:8787/" } }
 encrypted = true
 size_mib = 32
 
-# No [network] outbound: Kringle's optional email (SMTP or Tuta) is left off, so it needs no
-# internet access. Everything else is served to visitors through the proxy.
+[network]
+# Email to members and the host (invites, the draw, reminders) goes out through Tuta or an SMTP
+# server, both on the internet. Visitors are still served only through the proxy.
+outbound = "internet"
 
 [[web]]
 name = "web"
