@@ -5,6 +5,7 @@ use nodo_api::ApiError;
 
 use super::{edit_input, fail, notice, pop, push, step};
 use crate::app::*;
+use nodo_ui_core::flows::documents::copy_targets;
 use nodo_ui_core::flows::NoticeKind;
 use nodo_ui_core::Effect;
 

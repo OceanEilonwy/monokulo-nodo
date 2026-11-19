@@ -10,6 +10,7 @@ use nodo_api::Exposure;
 
 use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
+use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
@@ -735,17 +736,35 @@ pub struct UpdateResultsState {
     pub choice: usize,
 }
 
+/// The logs page: which source is chosen and the search box. The lines and what narrows them
+/// are the core's `Logs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogsState {
+    pub flow: Logs,
+    /// An index into the device's log sources.
     pub selected: usize,
-    pub view: LogView,
-    pub errors_only: bool,
-    pub follow: bool,
     pub find: Input,
     pub finding: bool,
-    /// Opened from an app's page: only that app's log, under Apps. Otherwise the device logs,
-    /// under System, with every source as a filter.
-    pub app: Option<String>,
+}
+
+impl LogsState {
+    pub fn new(flow: Logs, selected: usize) -> Self {
+        Self { flow, selected, find: Input::plain(""), finding: false }
+    }
+}
+
+impl std::ops::Deref for LogsState {
+    type Target = Logs;
+
+    fn deref(&self) -> &Logs {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for LogsState {
+    fn deref_mut(&mut self) -> &mut Logs {
+        &mut self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1202,7 +1221,7 @@ pub struct OwnerPageState {
     pub loading: bool,
     /// Rows scrolled past.
     pub scroll: usize,
-    /// An index into [`copy_targets`].
+    /// An index into the core's `documents::copy_targets`.
     pub focus: usize,
     /// The copy target last copied, for the "Copied" note.
     pub copied: Option<usize>,
@@ -1226,30 +1245,6 @@ impl OwnerPageState {
             follow: false,
         }
     }
-}
-
-/// Everything on a setup page that can be copied, in the order drawn: values, QR codes' data and
-/// the DNS records' values, each with its label.
-pub fn copy_targets(view: &nodo_api::OwnerPageView) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for step in &view.steps {
-        for item in &step.items {
-            match item {
-                nodo_api::OwnerItem::Value { label, value } => out.push((label.clone(), value.clone())),
-                nodo_api::OwnerItem::Qr { label, data } => out.push((label.clone(), data.clone())),
-                nodo_api::OwnerItem::Site(site) => {
-                    if let Some(host) = &site.host {
-                        out.push(("Address".to_owned(), host.clone()));
-                    }
-                    for record in &site.records {
-                        out.push((format!("{} record {}", record.kind, record.name), record.value.clone()));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    out
 }
 
 /// Removing an app asks first. The confirm button starts unfocused, so Enter cancels.

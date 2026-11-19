@@ -221,15 +221,12 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let report = scratch.apply_updates(&["moneropay".to_owned(), "system base".to_owned()], &[]);
             Screen::UpdateResults(UpdateResultsState { report, choice: 0 })
         }
-        ScreenId::Logs => Screen::Logs(LogsState {
-            selected: 1,
-            view: mock.logs("bell"),
-            errors_only: false,
-            follow: true,
-            find: Input::plain(""),
-            finding: false,
-            app: None,
-        }),
+        ScreenId::Logs => {
+            let mut state = LogsState::new(nodo_ui_core::flows::logs::Logs::device(), 1);
+            state.errors_only = false;
+            state.view = mock.logs("bell");
+            Screen::Logs(state)
+        }
         ScreenId::Rejected => {
             let InstallGate::Rejected(data) = gate(mock, "community", "fast-sync-helper") else {
                 unreachable!("fast-sync-helper is always rejected");

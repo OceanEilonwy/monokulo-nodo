@@ -62,7 +62,10 @@
 //! **Tests.** Each flow has unit tests here against `MockBackend`: actions are run with
 //! `execute_effect`, their outcomes are fed to `apply`, and the steps and effects are asserted.
 
+pub mod documents;
+pub mod drive;
 pub mod install;
+pub mod logs;
 pub mod services;
 pub mod setup;
 pub mod sources;
@@ -72,7 +75,7 @@ use nodo_api::Exposure;
 
 use crate::effect::ExposureAfter;
 use crate::model::{
-    CapabilityData, DriveAction, FeedProbe, InstallSnapshot, KeyChange, PackageDetail, RejectionData, Snapshot,
+    CapabilityData, Document, DriveAction, FeedProbe, InstallSnapshot, KeyChange, PackageDetail, RejectionData, Snapshot,
 };
 use crate::{Effect, Outcome};
 
@@ -188,6 +191,8 @@ pub enum Dest {
     /// here, the frontend applies it, asking for the device passphrase when one of them grows
     /// encrypted storage.
     ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
+    /// A text to read, shown on top of the page the owner is on.
+    Document(Document),
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or

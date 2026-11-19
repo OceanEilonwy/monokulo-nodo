@@ -12,7 +12,8 @@ use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
 use nodo_ui_core::flows::install::{self, Search};
-use nodo_ui_core::flows::{self, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
+use nodo_ui_core::flows::logs::{self, Logs};
+use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -171,18 +172,6 @@ fn apply_batch(app: &mut App, names: Vec<String>, approvals: Vec<(String, nodo_a
     Vec::new()
 }
 
-fn logs_state(selected: usize) -> LogsState {
-    LogsState {
-        selected,
-        view: LogView::default(),
-        errors_only: false,
-        follow: true,
-        find: Input::plain(""),
-        finding: false,
-        app: None,
-    }
-}
-
 pub fn search_state(focus_query: bool) -> SearchState {
     SearchState { flow: Search::default(), query: Input::plain(""), list_focused: !focus_query, selected: 0 }
 }
@@ -201,19 +190,15 @@ fn switch_tab(app: &mut App, tab: Tab) -> Vec<Effect> {
 /// One source's log: an app's from its page (under Apps), or a device part's (under System).
 fn open_logs(app: &mut App, source: &str) -> Vec<Effect> {
     let selected = app.data.log_sources.iter().position(|name| name == source).unwrap_or(0);
-    let is_app = app.data.services.iter().any(|svc| svc.id == source);
-    let mut state = logs_state(selected);
-    state.app = is_app.then(|| source.to_owned());
+    let state = LogsState::new(Logs::of(&app.data, source), selected);
     push(app, Screen::Logs(state));
-    app.data.log_sources.get(selected).map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+    app.data.log_sources.get(selected).map(|name| Logs::load(name)).unwrap_or_default()
 }
 
 /// The device logs under System: every source, problems first.
 fn open_device_logs(app: &mut App) -> Vec<Effect> {
-    let mut state = logs_state(0);
-    state.errors_only = true;
-    push(app, Screen::Logs(state));
-    app.data.log_sources.first().map(|name| Effect::LoadLogs(name.clone())).into_iter().collect()
+    push(app, Screen::Logs(LogsState::new(Logs::device(), 0)));
+    app.data.log_sources.first().map(|name| Logs::load(name)).unwrap_or_default()
 }
 
 /// Apps › Get apps: searching what the sources offer.
@@ -479,7 +464,7 @@ fn system_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             "Network" => return net::open_network(app),
             "Device logs" => return open_device_logs(app),
             _ => {
-                app.overlay = Some(Overlay { doc: about_document(app), scroll: 0 });
+                app.overlay = Some(Overlay { doc: documents::about(&app.data), scroll: 0 });
             }
         },
         KeyCode::Char('u') => return open_unlock(app),
@@ -496,16 +481,6 @@ fn open_backups(app: &mut App) -> Vec<Effect> {
     let device_set_up = !app.data.overview.setup_needed;
     push(app, Screen::Backup(BackupState::new(device_set_up)));
     vec![Effect::LoadBackups]
-}
-
-/// System › About this Nodo: what the device reports about itself.
-fn about_document(app: &App) -> Document {
-    let mut lines: Vec<String> = app.data.overview.device.iter().map(|(k, v)| format!("{k:<16} {v}")).collect();
-    if let Some(note) = &app.data.system_note {
-        lines.push(String::new());
-        lines.push(note.clone());
-    }
-    Document { title: "About this Nodo".to_owned(), lines }
 }
 
 /// The input that currently has keyboard focus. Pasted text only ever goes here, because pasted
@@ -681,6 +656,7 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         // The install's page takes the place of the review that started it.
         Dest::Installing(report) => app.screen = Screen::Installing(report),
         Dest::ApplyUpdates { names, approvals } => return apply_batch(app, names, approvals),
+        Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -710,13 +686,9 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
         // Only a backend that reports progress is polled. The helper's install answers once it
         // is over, and polling it would only queue behind that answer.
         Screen::Installing(snapshot) => install::poll(snapshot, &app.data.capabilities),
-        Screen::Logs(state) if state.follow && app.ticks % (2 * TICKS_PER_SECOND) == 0 => app
-            .data
-            .log_sources
-            .get(state.selected)
-            .map(|source| Effect::LoadLogs(source.clone()))
-            .into_iter()
-            .collect(),
+        Screen::Logs(state) if app.ticks % (logs::FOLLOW_SECONDS * TICKS_PER_SECOND) == 0 => {
+            state.follow_up(app.data.log_sources.get(state.selected).map(String::as_str))
+        }
         Screen::Home { .. } if app.ticks % (10 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
         // Caddy works on the certificate in the background, so its progress is read again.
         Screen::WebCertificate(_) if app.ticks % (2 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
@@ -851,25 +823,13 @@ fn no_drive_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Up => step(choice, 4, key.code == KeyCode::Down),
         KeyCode::Enter => match *choice {
-            0 => return vec![Effect::Drive(DriveAction::Retry)],
-            1 => return vec![Effect::Drive(DriveAction::ReadOnlyCheck)],
-            2 => {
-                app.modal = Some(Modal::ask(Question {
-                    title: "Repair the filesystem?".to_owned(),
-                    body: vec![
-                        "Repairing rewrites damaged parts of the filesystem and can lose data.".to_owned(),
-                        "Run the read-only check first if you have not. Chain data can be synced again."
-                            .to_owned(),
-                    ],
-                    confirm_label: "Repair".to_owned(),
-                    cancel_is_default: true,
-                    confirm: Confirm::RepairDrive,
-                }));
-            }
-            _ => return vec![Effect::Drive(DriveAction::Diagnostics)],
+            0 => return drive::retry(),
+            1 => return drive::check(),
+            2 => app.modal = Some(Modal::ask(drive::ask_repair())),
+            _ => return drive::diagnostics(),
         },
         KeyCode::Char('l') => return open_logs(app, "System"),
-        KeyCode::Char('!') => return vec![Effect::Shell],
+        KeyCode::Char('!') => return drive::shell(),
         _ => {}
     }
     Vec::new()
@@ -1968,20 +1928,20 @@ fn logs_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Up => {
             step(&mut state.selected, sources.len(), key.code == KeyCode::Down);
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::LoadLogs(source.clone())];
+                return Logs::load(source);
             }
         }
         KeyCode::F(5) => {
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::LoadLogs(source.clone())];
+                return Logs::load(source);
             }
         }
         KeyCode::Char('/') => state.finding = true,
-        KeyCode::Char('e') => state.errors_only ^= true,
-        KeyCode::Char('f') => state.follow ^= true,
+        KeyCode::Char('e') => state.flow.toggle_errors_only(),
+        KeyCode::Char('f') => state.flow.toggle_follow(),
         KeyCode::Char('y') => {
             if let Some(source) = sources.get(state.selected) {
-                return vec![Effect::CopyReport(format!("{source} log"))];
+                return documents::log_report(source);
             }
         }
         KeyCode::Char('u') => return open_unlock(app),
@@ -2321,23 +2281,17 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             }
             Err(text) => fail(app, text),
         },
-        Outcome::LogsLoaded { source, view } => {
-            let current = if let Screen::Logs(state) = &app.screen {
-                app.data.log_sources.get(state.selected).cloned()
-            } else {
-                None
-            };
-            if let (Screen::Logs(state), Some(current)) = (&mut app.screen, current) {
-                // A slow reply for a service the user has already left must not replace the view.
-                if current == source {
-                    state.view = view;
-                }
+        Outcome::LogsLoaded { .. } => {
+            if let Screen::Logs(state) = &mut app.screen {
+                let shown = app.data.log_sources.get(state.selected).map(String::as_str);
+                let step = state.flow.apply(&event, shown);
+                return follow(app, step);
             }
         }
-        Outcome::DriveResult(result) => match result {
-            Ok(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
-            Err(text) => fail(app, text),
-        },
+        Outcome::DriveResult(_) => {
+            let step = drive::apply(&event);
+            return follow(app, step);
+        }
         Outcome::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
         Outcome::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
         Outcome::Reachability { site, going_public, result } => {
@@ -2369,7 +2323,10 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                 state.checks = Some(result);
             }
         }
-        Outcome::DocumentLoaded(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
+        Outcome::DocumentLoaded(_) => {
+            let step = documents::apply(&event);
+            return follow(app, step);
+        }
         Outcome::BundleInstalled(result) => owner::on_bundle_installed(app, result),
         Outcome::OwnerPageLoaded { package, result } => owner::on_owner_page(app, package, result),
     }

@@ -377,14 +377,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
     screen.before = before;
     screen.targets.extend(before_targets);
 
-    let needle = state.find.text().to_lowercase();
-    let lines: Vec<&LogLine> = state
-        .view
-        .lines
-        .iter()
-        .filter(|line| !state.errors_only || line.kind == LogKind::Error)
-        .filter(|line| needle.is_empty() || line.text.to_lowercase().contains(&needle))
-        .collect();
+    let lines = state.lines(state.find.text());
     let mut card = Card::new(t, w);
     card.blank(t);
     if state.app.is_none() {
@@ -403,8 +396,7 @@ pub fn logs(app: &App, t: &Theme, state: &LogsState) -> Page {
         card.row(t, vec![text]);
     }
     if lines.is_empty() {
-        let empty = if state.errors_only { "No problems in this log." } else { "Nothing in this log yet." };
-        card.row(t, vec![t.d(empty)]);
+        card.row(t, vec![t.d(state.empty_text())]);
     }
     card.blank(t);
     for suggestion in &state.view.suggestion {
