@@ -7,25 +7,22 @@
 //! provider keys are only ever sent to the provider they were typed for, and never shown again.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nodo_api::{AliasMode, ApiError, Exposure, PublicAlias};
+use nodo_api::{AliasMode, Exposure};
 
-use super::{edit_input, fail, more, notice, open_logs, pop, push, step, tab_key};
+use super::{edit_input, follow, more, notice, open_logs, pop, push, step, tab_key};
 use crate::app::*;
-use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
+use nodo_ui_core::flows::web::public::{CgnatWay, Found};
+use nodo_ui_core::flows::web::{self, hosting};
+use nodo_ui_core::flows::{Confirm, Notice, NoticeKind, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::Effect;
-use nodo_ui_core::effect::ExposureAfter;
 
-/// Opens the Hosting screen of a site. Returns false when there is no such site.
-pub(super) fn open_hosting(app: &mut App, site: &str) -> bool {
-    let choices = app.domain_choices();
-    let Some(entry) = app.data.web.sites.iter().find(|entry| entry.package == site) else {
-        return false;
-    };
-    let mut state = ExposureState::new(&entry.package, entry.exposure, entry.public_host.as_deref(), &choices);
-    state.aliases = entry.public_aliases.clone();
+/// Opens the Hosting screen of a site, or says why there is none.
+pub(super) fn open_hosting(app: &mut App, site: &str) -> Result<(), Notice> {
+    let flow = hosting::open(&app.data, site)?;
+    let state = ExposureState::of(flow, &app.domain_choices());
     push(app, Screen::WebExposure(state));
-    true
+    Ok(())
 }
 
 pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -40,7 +37,8 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Up => step(selected, sites.len(), key.code == KeyCode::Down),
         KeyCode::Enter => {
             if let Some(site) = sites.get(*selected).cloned() {
-                open_hosting(app, &site);
+                // The list is of sites, so there is one; nothing to say when it just went.
+                let _gone: Result<(), Notice> = open_hosting(app, &site);
             }
         }
         KeyCode::Char('p') => push(app, Screen::WebProviders(ProvidersState::list(""))),
@@ -50,17 +48,10 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('l') => return open_logs(app, "System"),
         KeyCode::Char('n') => return more::open_onion(app),
-        KeyCode::Char('o') if !sites.is_empty() => {
-            app.modal = Some(Modal::ask(Question {
-                title: "Take all sites offline?".to_owned(),
-                body: vec![
-                    "Home network, Tor and internet addresses all stop, for every site.".to_owned(),
-                    "Records of your home's address can stay in public DNS history after this.".to_owned(),
-                ],
-                confirm_label: "Take offline".to_owned(),
-                cancel_is_default: true,
-                confirm: Confirm::AllSitesOffline,
-            }));
+        KeyCode::Char('o') => {
+            if let Some(question) = web::ask_all_offline(&app.data) {
+                app.modal = Some(Modal::ask(question));
+            }
         }
         _ => {}
     }
@@ -70,21 +61,15 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 /// The Hosting screen of one app: who can open it, and for the internet, at which address.
 pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let choices = app.domain_choices();
-    let sites = app.data.web.sites.clone();
     let Screen::WebExposure(state) = &mut app.screen else {
         return Vec::new();
     };
-    state.has_provider = !choices.is_empty();
-    if state.domain.is_empty() || !choices.iter().any(|(d, _)| *d == state.domain) {
-        state.domain = choices.first().map(|(d, _)| d.clone()).unwrap_or_default();
-    }
-    if state.alias_domain.is_empty() || !choices.iter().any(|(d, _)| *d == state.alias_domain) {
-        state.alias_domain = choices.first().map(|(d, _)| d.clone()).unwrap_or_default();
-    }
-    let Some(site) = sites.iter().find(|site| site.package == state.site).cloned() else {
+    state.sync(&app.data);
+    if !app.data.web.sites.iter().any(|site| site.package == state.site) {
         pop(app);
         return Vec::new();
-    };
+    }
+    let site = state.site.clone();
     if state.list_open() {
         match key.code {
             KeyCode::Down | KeyCode::Up => step(&mut state.pick, choices.len() + 1, key.code == KeyCode::Down),
@@ -95,10 +80,12 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 match choices.get(state.pick) {
                     Some((domain, _)) if for_alias => {
                         state.alias_domain = domain.clone();
-                        state.alias_error = None;
+                        state.flow.clear_alias_error();
                     }
-                    Some((domain, _)) => state.domain = domain.clone(),
-                    None => return open_add_provider(app, Some(site.package)),
+                    Some((domain, _)) => {
+                        state.flow.set_domain(domain, &app.data);
+                    }
+                    None => return open_add_provider(app, Some(site)),
                 }
             }
             _ => {}
@@ -130,134 +117,55 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             };
         }
         // Enter in the name box adds it too: that is what someone who just typed a name means.
-        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasAdd => add_alias(state, &choices, &sites),
-        KeyCode::Enter if focus == HostingFocus::AliasAddress => add_alias(state, &choices, &sites),
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasAdd => add_alias(state, &app.data),
+        KeyCode::Enter if focus == HostingFocus::AliasAddress => add_alias(state, &app.data),
         KeyCode::Char('x') | KeyCode::Delete if matches!(focus, HostingFocus::Alias(_)) => {
             if let HostingFocus::Alias(index) = focus {
-                state.aliases.remove(index);
+                if let Some(name) = state.aliases.get(index).map(|alias| alias.host.clone()) {
+                    state.flow.remove_alias(&name);
+                }
                 state.selected = state.selected.min(state.order().len() - 1);
             }
         }
-        KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site.package)),
-        KeyCode::Enter => return save(app, &site),
+        KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site)),
+        KeyCode::Enter => {
+            let step = state.flow.save(&app.data);
+            return follow(app, step);
+        }
         _ if focus == HostingFocus::Address => {
             edit_input(&mut state.sub, key);
+            state.flow.set_sub(state.sub.text());
         }
         _ if focus == HostingFocus::AliasAddress => {
             edit_input(&mut state.alias_sub, key);
-            state.alias_error = None;
+            state.flow.clear_alias_error();
         }
         _ => {}
     }
     Vec::new()
 }
 
-/// Every name the other sites answer at, with the site, as the helper checks them.
-fn names_of_other_sites(sites: &[Site], site: &str) -> Vec<(String, String)> {
-    sites
-        .iter()
-        .filter(|other| other.package != site)
-        .flat_map(|other| {
-            let names = other.public_host.iter().cloned().chain(other.public_aliases.iter().map(|a| a.host.clone()));
-            names.map(|name| (name, other.package.clone())).collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-/// Puts the new name on the list, after the same checks the helper makes on saving, so a name it
-/// would refuse is refused here at once, in its words.
-fn add_alias(state: &mut ExposureState, choices: &[(String, String)], sites: &[Site]) {
-    let owned: Vec<String> = choices.iter().map(|(domain, _)| domain.clone()).collect();
-    let mut next = state.aliases.clone();
-    next.push(PublicAlias { host: state.alias_host(), mode: state.alias_mode });
-    match nodo_api::check_aliases(&state.host(), &next, &owned, &names_of_other_sites(sites, &state.site)) {
-        Ok(()) => {
-            state.aliases = next;
-            state.alias_sub.clear();
-            state.alias_error = None;
-            // The new row comes before the controls, so the focus moves on one to stay where it was.
-            state.selected = (state.selected + 1).min(state.order().len() - 1);
-        }
-        Err(reason) => state.alias_error = Some(sentence(&reason)),
+/// Puts the new name on the list, when the core takes it.
+fn add_alias(state: &mut ExposureState, data: &Snapshot) {
+    let name = state.alias_host();
+    if state.flow.add_alias(&name, state.alias_mode, data) {
+        state.alias_sub.clear();
+        // The new row comes before the controls, so the focus moves on one to stay where it was.
+        state.selected = (state.selected + 1).min(state.order().len() - 1);
     }
-}
-
-/// A helper message as a sentence on its own. It often starts with a name, which keeps its case.
-fn sentence(text: &str) -> String {
-    if text.ends_with('.') { text.to_owned() } else { format!("{text}.") }
 }
 
 /// Ticks or unticks one choice. Each choice is its own flag: the exposures are independent.
 fn toggle(state: &mut ExposureState, focus: HostingFocus) {
+    let Exposure { local, onion, public } = state.draft;
     match focus {
-        HostingFocus::Home => state.draft.local ^= true,
-        HostingFocus::Tor => state.draft.onion ^= true,
-        HostingFocus::Internet => state.draft.public ^= true,
+        HostingFocus::Home => state.flow.set_exposure(!local, onion, public),
+        HostingFocus::Tor => state.flow.set_exposure(local, !onion, public),
+        HostingFocus::Internet => state.flow.set_exposure(local, onion, !public),
         _ => {}
     }
     let len = state.order().len();
     state.selected = state.selected.min(len - 1);
-}
-
-fn save(app: &mut App, site: &Site) -> Vec<Effect> {
-    let Screen::WebExposure(state) = &app.screen else {
-        return Vec::new();
-    };
-    let draft = state.draft;
-    let host = state.host();
-    let aliases = state.aliases.clone();
-    let name = state.site.clone();
-    if draft.public && !state.has_provider {
-        notice(app, NoticeKind::Info, "Add a domain provider first, so the internet can use your web address.");
-        return Vec::new();
-    }
-    // Going public sends the names even unchanged, so the helper checks them again first: a
-    // provider removed since they were saved would leave a name with no record or certificate.
-    let going_public = draft.public && !site.exposure.public;
-    let names_change = draft.public
-        && (site.public_host.as_deref() != Some(host.as_str())
-            || aliases != site.public_aliases
-            || (going_public && !aliases.is_empty()));
-    if draft == site.exposure && !names_change {
-        notice(app, NoticeKind::Info, "There are no changes to save.");
-        return Vec::new();
-    }
-    let mut effects = Vec::new();
-    if draft.public && !site.exposure.public {
-        // The internet only comes on after the checks and a confirm. Home network and Tor apply
-        // now, since they stay as chosen while the internet is checked.
-        let others = Exposure { public: false, ..draft };
-        if others != site.exposure {
-            effects.push(Effect::SetExposure { site: name.clone(), exposure: others, after: ExposureAfter::Stay, confirmation: None });
-        }
-        effects.push(Effect::CheckReachability { site: name.clone(), going_public: true });
-    } else if draft != site.exposure {
-        effects.push(Effect::SetExposure { site: name.clone(), exposure: draft, after: ExposureAfter::Back, confirmation: None });
-    }
-    if names_change {
-        // The names go first, and the rest only once the helper took them.
-        return vec![Effect::SetPublicHost { site: name, host, aliases, then: effects }];
-    }
-    effects
-}
-
-/// The names were saved, or refused. Refused, the Hosting screen stays as it was, so the owner can
-/// fix the name; saved with nothing else to do, it is done.
-pub(super) fn on_public_host_set(app: &mut App, result: Result<(), String>, then: Vec<Effect>) -> Vec<Effect> {
-    match result {
-        Err(text) => {
-            fail(app, format!("Not saved: {text}"));
-            Vec::new()
-        }
-        Ok(()) if then.is_empty() => {
-            if matches!(app.screen, Screen::WebExposure(_)) {
-                pop(app);
-            }
-            notice(app, NoticeKind::Ok, "Saved.");
-            Vec::new()
-        }
-        Ok(()) => then,
-    }
 }
 
 fn open_add_provider(app: &mut App, return_to: Option<String>) -> Vec<Effect> {
@@ -438,12 +346,8 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 if state.return_to.is_some() {
                     pop(app);
                     if let Screen::WebExposure(hosting) = &mut app.screen {
-                        hosting.has_provider = true;
-                        hosting.draft.public = true;
+                        hosting.flow.provider_connected(&domains);
                         hosting.selected = 0;
-                        if let Some(first) = domains.first() {
-                            hosting.domain = first.clone();
-                        }
                     }
                 } else {
                     *state = ProvidersState::list("");
@@ -510,39 +414,23 @@ pub(super) fn on_provider_refreshed(app: &mut App, result: Result<ConnectedProvi
     }
 }
 
-/// Tor on, every other choice as it is. Tor is the fallback that never reveals the home address.
-fn with_onion(app: &App, site: &str) -> Option<Effect> {
-    let entry = app.data.web.sites.iter().find(|entry| entry.package == site)?;
-    Some(Effect::SetExposure {
-        site: site.to_owned(),
-        exposure: Exposure { onion: true, ..entry.exposure },
-        after: ExposureAfter::Stay,
-        confirmation: None,
-    })
-}
-
 pub(super) fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::WebCheck(state) = &mut app.screen else {
         return Vec::new();
     };
-    let site = state.site.clone();
-    let going_public = state.going_public;
-    let continue_with =
-        state.plan.clone().filter(|_| going_public && !state.checks.iter().any(|c| c.state == CheckState::Failed));
     match key.code {
-        KeyCode::Char('r') => vec![Effect::CheckReachability { site, going_public }],
+        KeyCode::Char('r') => state.check_again(),
         KeyCode::Char('d') => {
             state.details = !state.details;
             Vec::new()
         }
         // Nothing failed, but something could not be verified. The owner decides, having seen it.
         KeyCode::Char('c') => {
-            let Some(plan) = continue_with else { return Vec::new() };
-            push(app, confirm_screen(site, plan));
-            Vec::new()
+            let step = state.continue_anyway();
+            follow(app, step)
         }
-        KeyCode::Char('?') => vec![Effect::ShowDocument(DocKind::RouterGuides)],
-        KeyCode::Char('o') | KeyCode::Enter => with_onion(app, &site).into_iter().collect(),
+        KeyCode::Char('?') => state.router_guides(),
+        KeyCode::Char('o') | KeyCode::Enter => state.use_tor(&app.data),
         KeyCode::Esc => {
             pop(app);
             Vec::new()
@@ -551,18 +439,7 @@ pub(super) fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
 }
 
-fn confirm_screen(site: String, plan: PublicPlan) -> Screen {
-    Screen::WebConfirm(WebConfirmState {
-        site,
-        plan,
-        access: PublicAccess { require_password: false },
-        focus: ConfirmFocus::Cancel,
-        details: false,
-    })
-}
-
 pub(super) fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let sites = app.data.web.sites.clone();
     let Screen::WebConfirm(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -573,22 +450,9 @@ pub(super) fn web_confirm_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('d') => state.details = !state.details,
         KeyCode::Enter if state.focus == ConfirmFocus::Cancel => pop(app),
-        KeyCode::Enter => {
-            let Some(site) = sites.iter().find(|site| site.package == state.site) else {
-                return Vec::new();
-            };
-            // Protections go first, so the site is never public without them. The helper wants
-            // the address quoted back: it is the one this screen shows.
-            return vec![
-                Effect::SetPublicAccess { site: state.site.clone(), access: state.access.clone() },
-                Effect::SetExposure {
-                    site: state.site.clone(),
-                    exposure: Exposure { public: true, ..site.exposure },
-                    after: ExposureAfter::WentPublic,
-                    confirmation: Some(state.plan.host.clone()),
-                },
-            ];
-        }
+        // The button is under the address this screen shows, and that address is what it quotes
+        // back; the core never refuses its own.
+        KeyCode::Enter => return state.confirm(&state.plan.host, &app.data).unwrap_or_default(),
         _ => {}
     }
     Vec::new()
@@ -598,79 +462,46 @@ pub(super) fn cgnat_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let Screen::WebCgnat(state) = &mut app.screen else {
         return Vec::new();
     };
-    let site = state.site.clone();
     match key.code {
-        KeyCode::Down | KeyCode::Up if state.details => step(&mut state.choice, 4, key.code == KeyCode::Down),
+        KeyCode::Down | KeyCode::Up if state.details => step(&mut state.choice, CgnatWay::ALL.len(), key.code == KeyCode::Down),
         KeyCode::Char('d') => state.details = !state.details,
-        KeyCode::Char('r') => {
-            let going_public = state.going_public;
-            return vec![Effect::CheckReachability { site, going_public }];
-        }
-        KeyCode::Char('o') => return with_onion(app, &site).into_iter().collect(),
+        KeyCode::Char('r') => return state.check_again(),
+        KeyCode::Char('o') => return state.use_tor(&app.data),
         KeyCode::Esc => pop(app),
-        KeyCode::Enter => match state.choice {
-            0 => return with_onion(app, &site).into_iter().collect(),
-            1 => return vec![Effect::ShowDocument(DocKind::PublicIpFromIsp)],
-            2 => return vec![Effect::ShowDocument(DocKind::Ipv6)],
-            _ => return vec![Effect::ShowDocument(DocKind::RelayTunnel)],
-        },
+        KeyCode::Enter => {
+            let way = CgnatWay::ALL.get(state.choice).copied().unwrap_or(CgnatWay::Relay);
+            return state.choose(way, &app.data);
+        }
         _ => {}
     }
     Vec::new()
 }
 
-/// Takes the check screen off the stack so that "check again" replaces it instead of piling up.
-fn drop_check_screen(app: &mut App) {
+/// The page for what a check found. It takes the place of an earlier check's page, so that
+/// "check again" replaces it instead of piling up.
+pub(super) fn show_found(app: &mut App, found: Found) {
     if matches!(app.screen, Screen::WebCheck(_) | Screen::WebCgnat(_)) {
         pop(app);
     }
+    let screen = match found {
+        Found::Cgnat(flow) => Screen::WebCgnat(CgnatState { flow, choice: 0, details: false }),
+        Found::Problems(flow) => Screen::WebCheck(WebCheckState { flow, details: false }),
+        Found::Clear(flow) => Screen::WebConfirm(WebConfirmState::new(flow)),
+    };
+    push(app, screen);
 }
 
-pub(super) fn on_exposure_set(app: &mut App, after: ExposureAfter, result: Result<(), ApiError>) -> Vec<Effect> {
-    if let Err(error) = result {
-        fail(app, format!("Not changed: {error}"));
-        return Vec::new();
-    }
-    match after {
-        ExposureAfter::Back => {
-            if matches!(app.screen, Screen::WebExposure(_)) {
-                pop(app);
-            }
-            notice(app, NoticeKind::Ok, "Saved.");
-        }
-        ExposureAfter::Stay => notice(app, NoticeKind::Ok, "Saved."),
-        ExposureAfter::WentPublic => {
-            let target = match &app.screen {
-                Screen::WebConfirm(state) => Some(CertificateState { site: state.site.clone(), host: state.plan.host.clone() }),
-                _ => None,
-            };
-            app.stack.clear();
-            app.screen = Screen::Web { selected: 0 };
-            // The online screen follows the secure connection until it is in place.
-            if let Some(target) = target {
-                push(app, Screen::WebCertificate(target));
-            }
-        }
-    }
-    Vec::new()
-}
-
-pub(super) fn on_reachability(app: &mut App, site: String, going_public: bool, result: Reachability) {
-    drop_check_screen(app);
-    match result {
-        Reachability::Cgnat { wan_address, wan_range, internet_address } => push(
-            app,
-            Screen::WebCgnat(CgnatState { site, wan_address, wan_range, internet_address, choice: 0, going_public, details: false }),
-        ),
-        // Unknown results, such as untested ports, are shown before confirming, never skipped.
-        Reachability::Checked { plan: Some(plan), checks, .. }
-            if going_public && checks.iter().all(|c| c.state == CheckState::Passed) =>
-        {
-            push(app, confirm_screen(site, plan));
-        }
-        Reachability::Checked { checks, router, plan, manual } => {
-            push(app, Screen::WebCheck(WebCheckState { site, checks, router, plan, going_public, manual, details: false }));
-        }
+/// The site is public: the Web tab, and on it the screen that follows the secure connection
+/// until it is in place, when the confirmation is what led here.
+pub(super) fn went_public(app: &mut App) {
+    let target = match &app.screen {
+        Screen::WebConfirm(state) => Some(state.certificate()),
+        _ => None,
+    };
+    app.stack.clear();
+    app.screen = Screen::Web { selected: 0 };
+    if let Some(target) = target {
+        push(app, Screen::WebCertificate(target));
     }
 }
 
@@ -710,8 +541,8 @@ pub(super) fn pick(app: &mut App, index: usize) {
 
 /// The Hosting screen for an app's page in Packages, if the app has a site.
 pub(super) fn hosting_from_detail(app: &mut App, package: &str) -> Vec<Effect> {
-    if !open_hosting(app, package) {
-        notice(app, NoticeKind::Info, format!("{package} has no web page to put online."));
+    if let Err(remark) = open_hosting(app, package) {
+        app.notice = Some(remark);
     }
     Vec::new()
 }

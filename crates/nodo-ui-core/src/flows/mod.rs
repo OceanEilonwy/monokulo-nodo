@@ -72,6 +72,7 @@ pub mod setup;
 pub mod sources;
 pub mod unlock;
 pub mod updates;
+pub mod web;
 
 use nodo_api::Exposure;
 
@@ -202,6 +203,20 @@ pub enum Dest {
     ApplyFailed(settings::ApplyFailed),
     /// A text to read, shown on top of the page the owner is on.
     Document(Document),
+    /// A site's Hosting page has nothing more to show: its draft was saved. A frontend showing
+    /// that page goes back to the page that opened it; one whose owner has left it already stays
+    /// where it is.
+    LeaveHosting,
+    /// The page for what a reachability check found. It takes the place of the page of an
+    /// earlier check or of the CGNAT guidance, when one of those is shown, so checking again
+    /// never piles pages up.
+    Reachability(web::public::Found),
+    /// The confirmation before a site goes public, on top of the page the owner is on.
+    PublicConfirm(web::public::PublicConfirm),
+    /// The site is on the internet. Every page that led there is left for the list of sites
+    /// that are online; a frontend that was showing the confirmation shows, on top of that list,
+    /// the page following the secure connection (`PublicConfirm::certificate`).
+    WentPublic,
 }
 
 /// A yes-or-no question the owner must answer before something that cannot be taken back, or
@@ -248,9 +263,9 @@ pub enum Confirm {
     DiscardAutoUpdate,
     /// Puts a package back to the version given.
     RollBack { package: String, to: String },
-
     /// Takes every site offline.
     AllSitesOffline,
+
     /// Joins an open network, whose traffic anyone nearby can read.
     JoinOpenWifi(String),
     ForgetWifi(String),

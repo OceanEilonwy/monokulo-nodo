@@ -15,6 +15,7 @@ use super::v3::{heading, inset, line, margin, quiet, tick, trail, Card, Screen3}
 use crate::app::*;
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
+use nodo_ui_core::flows::web::certs::Certificate;
 use nodo_ui_core::screen::Tab;
 use crate::theme::Theme;
 use nodo_api::AliasMode;
@@ -764,7 +765,7 @@ pub fn cgnat(app: &App, t: &Theme, state: &CgnatState) -> Page {
 }
 
 /// After going public: online, with the secure connection followed until it is in place.
-pub fn online(app: &App, t: &Theme, state: &CertificateState) -> Page {
+pub fn online(app: &App, t: &Theme, state: &Certificate) -> Page {
     let (w, h) = size(app);
     let mut screen = Screen3::new(app, t, app.screen.area(), w);
     let web = &app.data.web;

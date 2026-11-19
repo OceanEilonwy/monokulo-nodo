@@ -15,6 +15,7 @@ use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::logs::{self, Logs};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked};
 use nodo_ui_core::flows::updates::{self, AutoUpdate};
+use nodo_ui_core::flows::web::certs;
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -645,6 +646,14 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::Settings(form) => push(app, Screen::Settings(SettingsState::new(form))),
         Dest::ApplyFailed(failed) => push(app, Screen::ApplyFailed(failed)),
         Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
+        Dest::LeaveHosting => {
+            if matches!(app.screen, Screen::WebExposure(_)) {
+                pop(app);
+            }
+        }
+        Dest::Reachability(found) => web::show_found(app, found),
+        Dest::PublicConfirm(confirm) => push(app, Screen::WebConfirm(WebConfirmState::new(confirm))),
+        Dest::WentPublic => web::went_public(app),
         Dest::Resume => {
             pop(app);
             return on_key(app, KeyEvent::from(KeyCode::Enter));
@@ -679,7 +688,7 @@ fn on_tick(app: &mut App) -> Vec<Effect> {
         }
         Screen::Home { .. } if app.ticks % (10 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
         // Caddy works on the certificate in the background, so its progress is read again.
-        Screen::WebCertificate(_) if app.ticks % (2 * TICKS_PER_SECOND) == 0 => vec![Effect::Refresh],
+        Screen::WebCertificate(page) if app.ticks % (certs::POLL_SECONDS * TICKS_PER_SECOND) == 0 => page.poll(),
         Screen::Network(_) => net::on_tick(app),
         _ => Vec::new(),
     }
@@ -1779,7 +1788,7 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn trust_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc | KeyCode::Enter => pop(app),
-        KeyCode::Char('r') => return vec![Effect::Refresh],
+        KeyCode::Char('r') => return certs::refresh(),
         _ => {}
     }
     Vec::new()
@@ -1788,7 +1797,7 @@ fn trust_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn certificate_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Esc | KeyCode::Enter => pop(app),
-        KeyCode::Char('r') => return vec![Effect::Refresh],
+        KeyCode::Char('r') => return certs::refresh(),
         KeyCode::Char('l') => return open_logs(app, "System"),
         KeyCode::Char('d') => {
             let state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
@@ -1981,10 +1990,9 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             let step = drive::apply(&event);
             return follow(app, step);
         }
-        Outcome::ExposureSet { after, result } => return web::on_exposure_set(app, after, result),
-        Outcome::PublicHostSet { result, then } => return web::on_public_host_set(app, result, then),
-        Outcome::Reachability { site, going_public, result } => {
-            web::on_reachability(app, site, going_public, result);
+        Outcome::ExposureSet { .. } | Outcome::PublicHostSet { .. } | Outcome::Reachability { .. } => {
+            let step = flows::web::apply(&event);
+            return follow(app, step);
         }
         Outcome::ProviderAdded(result) => return web::on_provider_added(app, result),
         Outcome::ProvidersLoaded(result) => web::on_providers_loaded(app, result),

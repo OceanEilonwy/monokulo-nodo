@@ -15,6 +15,8 @@ use nodo_ui_core::exec::load_snapshot;
 use nodo_ui_core::flows::install::ReviewPurpose;
 use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow, PickMode, Picker};
 use nodo_ui_core::flows::updates::Rollbacks;
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 
@@ -268,19 +270,14 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             let Reachability::Checked { checks, router, plan, manual } = reachability_checks("shop.example.com", false) else {
                 unreachable!("this helper only builds checked results");
             };
-            Screen::WebCheck(WebCheckState { site: "shop".to_owned(), checks, router, plan, going_public: true, manual, details: false })
+            let flow = PublicCheck { site: "shop".to_owned(), checks, router, plan, going_public: true, manual };
+            Screen::WebCheck(WebCheckState { flow, details: false })
         }
         ScreenId::WebConfirm => {
             let Reachability::Checked { plan: Some(plan), .. } = reachability_checks("shop.example.com", true) else {
                 unreachable!("open ports always produce a plan");
             };
-            Screen::WebConfirm(WebConfirmState {
-                site: "shop".to_owned(),
-                plan,
-                access: PublicAccess { require_password: false },
-                focus: ConfirmFocus::Cancel,
-                details: false,
-            })
+            Screen::WebConfirm(WebConfirmState::new(PublicConfirm::new("shop", plan)))
         }
         ScreenId::WebDomain => {
             let mut state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
@@ -297,18 +294,20 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::WebDomain(state)
         }
         ScreenId::WebTrust => Screen::WebTrust,
-        ScreenId::WebCertificate => Screen::WebCertificate(CertificateState {
+        ScreenId::WebCertificate => Screen::WebCertificate(Certificate {
             site: "shop".to_owned(),
             host: "shop.example.com".to_owned(),
         }),
         ScreenId::WebCgnat => Screen::WebCgnat(CgnatState {
-            site: "shop".to_owned(),
-            wan_address: "100.72.14.9".to_owned(),
-            wan_range: "100.64.0.0/10".to_owned(),
-            internet_address: "203.0.113.42".to_owned(),
+            flow: Cgnat {
+                site: "shop".to_owned(),
+                wan_address: "100.72.14.9".to_owned(),
+                wan_range: "100.64.0.0/10".to_owned(),
+                internet_address: "203.0.113.42".to_owned(),
+                going_public: true,
+            },
             choice: 0,
             details: false,
-            going_public: true,
         }),
     }
 }

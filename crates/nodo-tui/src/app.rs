@@ -16,6 +16,9 @@ use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::hosting::{self, Hosting};
+use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
@@ -680,25 +683,21 @@ pub struct CapabilityState {
     pub choice: usize,
 }
 
+/// A site's Hosting page: the cursor, the boxes being typed in and the open domain list. The
+/// draft and every rule about it are the core's `Hosting`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureState {
-    pub site: String,
-    pub draft: Exposure,
+    pub flow: Hosting,
     /// An index into [`ExposureState::order`].
     pub selected: usize,
-    /// The part of the public address before the domain, such as `pay` in `pay.example.com`.
+    /// The part of the public address before the domain, as it is typed. `sync` hands it to the
+    /// draft.
     pub sub: Input,
-    /// The chosen domain, one of [`App::domain_choices`].
-    pub domain: String,
     /// The domain list is open.
     pub picking: bool,
     /// Index into the open domain list: the domains, then "Add a provider".
     pub pick: usize,
     pub details: bool,
-    /// A domain provider is connected, so the internet choice can pick a domain.
-    pub has_provider: bool,
-    /// The other names the site answers at, as they will be saved.
-    pub aliases: Vec<nodo_api::PublicAlias>,
     /// The new name being put together: the part before its domain, empty for the domain itself.
     pub alias_sub: Input,
     /// The new name's domain, one of [`App::domain_choices`].
@@ -706,11 +705,6 @@ pub struct ExposureState {
     pub alias_mode: nodo_api::AliasMode,
     /// The open domain list is for the new name, not the main address.
     pub picking_alias: bool,
-    /// Why the new name could not be added.
-    pub alias_error: Option<String>,
-    /// The site was public when the screen opened. The helper then lets names be removed but not
-    /// added, since going public confirmed the names it had.
-    pub was_public: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -721,7 +715,7 @@ pub enum HostingFocus {
     Internet,
     Domain,
     Address,
-    /// One of the other names, by index into [`ExposureState::aliases`]: x removes it.
+    /// One of the other names, by index into the draft's `aliases`: x removes it.
     Alias(usize),
     AliasDomain,
     AliasAddress,
@@ -733,57 +727,56 @@ pub enum HostingFocus {
 }
 
 impl ExposureState {
-    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`]. The domain is
-    /// the longest one the host is under, or the first.
+    /// `host` is the site's saved public host; `domains` are [`App::domain_choices`].
     pub fn new(site: &str, draft: Exposure, host: Option<&str>, domains: &[(String, String)]) -> Self {
-        let under = |host: &str, domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-        let domain = host
-            .and_then(|host| domains.iter().filter(|(d, _)| under(host, d)).max_by_key(|(d, _)| d.len()))
-            .or(domains.first())
-            .map(|(d, _)| d.clone())
-            .unwrap_or_default();
-        let sub = host
-            .filter(|host| under(host, &domain))
-            .and_then(|host| host.strip_suffix(domain.as_str()))
-            .map(|rest| rest.trim_end_matches('.').to_owned())
-            .unwrap_or_else(|| site.split('-').next_back().unwrap_or(site).to_owned());
+        Self::of(Hosting::new(site, draft, host, domains), domains)
+    }
+
+    pub fn of(flow: Hosting, domains: &[(String, String)]) -> Self {
         Self {
-            site: site.to_owned(),
-            draft,
             selected: 0,
-            sub: Input::plain(sub),
-            domain,
+            sub: Input::plain(flow.sub.clone()),
             picking: false,
             pick: 0,
             details: false,
-            has_provider: !domains.is_empty(),
-            aliases: Vec::new(),
             alias_sub: Input::plain(String::new()),
             alias_domain: domains.first().map(|(d, _)| d.clone()).unwrap_or_default(),
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
-            alias_error: None,
-            was_public: draft.public,
+            flow,
         }
     }
 
-    /// The focus order, which depends on whether the internet is ticked and a provider exists.
+    /// Hands what is typed to the draft and brings both in line with the providers connected
+    /// now. Every key on the page starts with it.
+    pub fn sync(&mut self, data: &Snapshot) {
+        self.flow.set_sub(self.sub.text());
+        self.flow.sync(data);
+        self.alias_domain = hosting::domain_or_first(&self.alias_domain, &data.domain_choices());
+    }
+
+    /// The focus order: the rows the draft offers, with the new name's four controls and the
+    /// details toggle, which are this screen's own.
     pub fn order(&self) -> Vec<HostingFocus> {
-        let has_provider = self.has_provider;
-        let mut order = vec![HostingFocus::Home, HostingFocus::Tor, HostingFocus::Internet];
-        if self.draft.public {
-            if has_provider {
-                order.extend([HostingFocus::Domain, HostingFocus::Address]);
-                order.extend((0..self.aliases.len()).map(HostingFocus::Alias));
-                if !self.was_public {
-                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd]);
+        let mut order = Vec::new();
+        let mut save = false;
+        for row in self.flow.rows() {
+            match row {
+                hosting::Row::Home => order.push(HostingFocus::Home),
+                hosting::Row::Tor => order.push(HostingFocus::Tor),
+                hosting::Row::Internet => order.push(HostingFocus::Internet),
+                hosting::Row::Domain => order.push(HostingFocus::Domain),
+                hosting::Row::Address => order.push(HostingFocus::Address),
+                hosting::Row::Alias(index) => order.push(HostingFocus::Alias(index)),
+                hosting::Row::NewAlias => {
+                    order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd])
                 }
-            } else {
-                order.push(HostingFocus::AddProvider);
+                hosting::Row::AddProvider => order.push(HostingFocus::AddProvider),
+                hosting::Row::Save => save = true,
             }
         }
         order.push(HostingFocus::Details);
-        if !self.draft.public || has_provider {
+        if save {
             order.push(HostingFocus::Save);
         }
         order
@@ -794,21 +787,33 @@ impl ExposureState {
         order[self.selected.min(order.len() - 1)]
     }
 
-    /// The public host the choices make: the address part and the chosen domain.
+    /// The public host the choices make, from the box as it is typed.
     pub fn host(&self) -> String {
-        let sub = self.sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.domain.clone() } else { format!("{sub}.{}", self.domain) }
+        hosting::join_host(self.sub.text(), &self.flow.domain)
     }
 
     /// The new name the choices make, the same way: an empty part is the domain itself.
     pub fn alias_host(&self) -> String {
-        let sub = self.alias_sub.text().trim().trim_matches('.');
-        if sub.is_empty() { self.alias_domain.clone() } else { format!("{sub}.{}", self.alias_domain) }
+        hosting::join_host(self.alias_sub.text(), &self.alias_domain)
     }
 
     /// The domain list is open, for either address.
     pub fn list_open(&self) -> bool {
         self.picking || self.picking_alias
+    }
+}
+
+impl std::ops::Deref for ExposureState {
+    type Target = Hosting;
+
+    fn deref(&self) -> &Hosting {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for ExposureState {
+    fn deref_mut(&mut self) -> &mut Hosting {
+        &mut self.flow
     }
 }
 
@@ -869,16 +874,20 @@ impl ProvidersState {
     }
 }
 
+/// The checks that found a problem: whether the details are open. The checks and what can be
+/// done about them are the core's `PublicCheck`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCheckState {
-    pub site: String,
-    pub checks: Vec<Check>,
-    pub router: Option<RouterHelp>,
-    pub plan: Option<PublicPlan>,
-    /// True when this check is a step towards going public, not just a test from the overview.
-    pub going_public: bool,
-    pub manual: Vec<String>,
+    pub flow: PublicCheck,
     pub details: bool,
+}
+
+impl std::ops::Deref for WebCheckState {
+    type Target = PublicCheck;
+
+    fn deref(&self) -> &PublicCheck {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -887,13 +896,29 @@ pub enum ConfirmFocus {
     GoPublic,
 }
 
+/// The confirmation before going public: which button has the focus. What is confirmed is the
+/// core's `PublicConfirm`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebConfirmState {
-    pub site: String,
-    pub plan: PublicPlan,
-    pub access: PublicAccess,
+    pub flow: PublicConfirm,
     pub focus: ConfirmFocus,
     pub details: bool,
+}
+
+impl WebConfirmState {
+    /// The focus starts on Cancel, as the core says the answer does.
+    pub fn new(flow: PublicConfirm) -> Self {
+        let focus = if flow.cancel_is_default() { ConfirmFocus::Cancel } else { ConfirmFocus::GoPublic };
+        Self { flow, focus, details: false }
+    }
+}
+
+impl std::ops::Deref for WebConfirmState {
+    type Target = PublicConfirm;
+
+    fn deref(&self) -> &PublicConfirm {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -952,22 +977,21 @@ impl DomainState {
     }
 }
 
-/// A public or local host while Caddy gets its certificate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CertificateState {
-    pub site: String,
-    pub host: String,
-}
-
+/// The CGNAT guidance: the chosen way on. What each way does is the core's `Cgnat`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgnatState {
-    pub site: String,
-    pub wan_address: String,
-    pub wan_range: String,
-    pub internet_address: String,
+    pub flow: Cgnat,
+    /// An index into the core's `CgnatWay::ALL`.
     pub choice: usize,
-    pub going_public: bool,
     pub details: bool,
+}
+
+impl std::ops::Deref for CgnatState {
+    type Target = Cgnat;
+
+    fn deref(&self) -> &Cgnat {
+        &self.flow
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -999,7 +1023,8 @@ pub enum Screen {
     WebConfirm(WebConfirmState),
     WebCgnat(CgnatState),
     WebDomain(DomainState),
-    WebCertificate(CertificateState),
+    /// A public or local host while Caddy gets its certificate.
+    WebCertificate(Certificate),
     /// The local CA's fingerprint and the page where LAN devices get its root.
     WebTrust,
     Setup(SetupState),
