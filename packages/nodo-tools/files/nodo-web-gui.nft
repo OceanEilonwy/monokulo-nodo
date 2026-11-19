@@ -1,12 +1,10 @@
-# The web GUI's process (nodo-web-gui, as _nodo_webgui) answers Caddy on loopback and talks to the
-# helper over a Unix socket. It never opens a connection of its own, so it may send only answers.
-# The rules sit in a chain of their own: a drop in any chain on the hook is final, so they hold
-# whatever other fragments accept in theirs.
-# Who may connect to its port is in nodo-caddy's fragment, which is where the _caddy account exists.
+# The web GUI's process (nodo-web-gui, as _nodo_webgui) answers Caddy and asks the helper over
+# Unix sockets, which the firewall does not see. It has no business on the network at all, so it
+# may send nothing there. The rule sits in a chain of its own: a drop in any chain on the hook
+# is final, so it holds whatever other fragments accept in theirs.
 table inet monokulo {
 	chain web_gui_output {
 		type filter hook output priority filter; policy accept;
-		meta skuid "_nodo_webgui" ct state established,related accept
 		meta skuid "_nodo_webgui" drop
 	}
 }

@@ -15,18 +15,30 @@ if [ ! -S "$socket" ]; then
 	exit 1
 fi
 
-# It keeps nothing on disk and looks nothing up: it gets /usr, and /run/nodo for the socket, which
-# is bound as a directory because the helper makes a new socket each time it starts. The other
-# sockets and files there belong to other accounts and stay closed to this one. It listens only on
-# 127.0.0.1:10082, where the firewall lets only Caddy and root connect, and may send nothing but
-# its answers (/etc/nftables.d/nodo-web-gui.nft). It needs a Unix socket for the helper, so
-# nodo-confine keeps it away from abstract sockets outside its sandbox.
+# Caddy reaches it on a Unix socket, /run/nodo-web-gui/http.sock, which no other account can open
+# or put a socket of its own in place of: the directory is this account's, and only Caddy's group
+# may enter it. The directory is setgid, so the socket gets Caddy's group whoever makes it, and
+# nodo-web-gui gives it mode 0660. Caddy's run script makes the same directory, so whichever
+# starts first, Caddy's sandbox has it. Never removed and made again, as that would leave Caddy
+# holding the old one; only a socket left from the last run goes.
+group=_nodo_webgui
+getent group _caddy >/dev/null 2>&1 && group=_caddy
+install -d -m 2750 -o _nodo_webgui -g "$group" /run/nodo-web-gui
+rm -f /run/nodo-web-gui/http.sock
+
+# It keeps nothing on disk and looks nothing up: it gets /usr, /run/nodo for the helper's socket,
+# which is bound as a directory because the helper makes a new socket each time it starts, and its
+# own socket directory. The other sockets and files in /run/nodo belong to other accounts and stay
+# closed to this one. It has no business on the network, and the firewall lets it send nothing
+# there (/etc/nftables.d/nodo-web-gui.nft). It needs Unix sockets, so nodo-confine keeps it away
+# from abstract sockets outside its sandbox.
 exec chpst -u _nodo_webgui:_nodo_webgui bwrap \
 	--ro-bind /usr /usr \
 	--symlink usr/bin /bin \
 	--symlink usr/lib /lib \
 	--symlink usr/lib /lib64 \
 	--ro-bind /run/nodo /run/nodo \
+	--bind /run/nodo-web-gui /run/nodo-web-gui \
 	--proc /proc \
 	--dev /dev \
 	--tmpfs /tmp \

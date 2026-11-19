@@ -130,7 +130,7 @@ do_install() {
 	vsv nodo-web-gui
 	vmkdir etc/sv/nodo-web-gui/control
 	vinstall ${FILESDIR}/nodo-web-gui/control/t 755 etc/sv/nodo-web-gui/control
-	# The web GUI's process may send nothing but its answers.
+	# The web GUI's process may send nothing on the network.
 	vinstall ${FILESDIR}/nodo-web-gui.nft 644 etc/nftables.d
 	# Settings knowledge for the base image's node, until cuprated-service ships its own.
 	vinstall ${FILESDIR}/cuprated/manifest.toml 644 usr/share/nodo/manifests cuprated.toml
