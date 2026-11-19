@@ -66,6 +66,33 @@ fn the_tui_saves_a_sites_other_names_through_the_helper_as_the_mock_does() {
     contract::public_site_gains_confirmed_names(&mut backend, "shop/web", "example.com");
 }
 
+/// demo keeps its data on the data drive, and its update moves the data to a newer layout, which
+/// needs room on the drive for a copy that is not there.
+#[test]
+fn the_tui_hears_a_refused_update_as_the_mock_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, packages) = setup();
+    h.sys.put("/s/bindings.toml", b"data_drive = [\"demo\"]\n");
+    h.sys.set_mounted("/media/monero");
+    h.allowed = AllowedUids::new([rustix::process::geteuid().as_raw()]);
+    let path = dir.path().join("helper.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let h = Arc::new(h);
+    let served = Arc::clone(&h);
+    std::thread::spawn(move || serve(listener, served));
+    let mut backend = HelperBackend::connect(&path).unwrap();
+    let probe = backend.probe_feed(FEED).unwrap();
+    backend.trust_feed(&probe).unwrap();
+    let done = contract::install(&mut backend, &PackageId::new(&probe.name, "demo"));
+    assert_eq!(done.outcome, InstallOutcome::Succeeded, "{done:?}");
+    let next = super::manifest("\n[storage]\ndata_layout = 2\n");
+    packages.publish("2.0_1", &next);
+    h.sys.put("/opt/nodo/apps/demo/manifest.toml", next.as_bytes());
+    assert_eq!(backend.check_updates().apps, Ok(()));
+    packages.0.lock().unwrap().free = Some(100 << 20);
+    contract::refused_update_changes_nothing(&mut backend, "demo");
+}
+
 #[test]
 fn the_tui_hears_the_helper_refuse_what_the_mock_refuses() {
     let dir = tempfile::tempdir().unwrap();

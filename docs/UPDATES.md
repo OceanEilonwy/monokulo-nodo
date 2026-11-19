@@ -263,18 +263,24 @@ window, while the device is locked, or while disk is low (`refuse_installs` from
 
 Installs run one at a time with the node last, and conditions are checked again before each one,
 so locking the device or filling the disk mid-run postpones the rest. Each install goes through
-the `Installer` trait (install, health check, rollback), which nodo-install implements. A failed
-install or health check is rolled back, that version is held, and the outcome (`RolledBack`, or
-`RollbackFailed` when the old version did not come back) stays in `attention` for Home until
-dismissed. Nothing retries a held version until the user releases it.
+the `Installer` trait (prepare, install, health check, rollback), which nodo-install implements. A
+failed install or health check is rolled back, that version is held, and the outcome (`RolledBack`,
+or `RollbackFailed` when the old version did not come back) stays in `attention` for Home until
+dismissed. Nothing retries a held version until the user releases it. An update refused by
+`prepare`, before anything changed (no room for the data copy, a data drive that is not mounted,
+an older data layout than the data's), is `NotUpdated`: the old version never stopped, so nothing
+is rolled back and the version is not held; the next run tries it again. The latest refusal of each
+package is kept in `refusals`, apart from `history`, so a helper from before refusals still reads
+the file after a system fallback; one from an unattended run shows on Home until dismissed. The
+TUI says "Not updated: <reason>", in the device's words, with no rollback, log or publisher report.
 
 **Connected** (`crates/nodo-helper/src/updates.rs`). The helper keeps the policy, holds, history
 and the last check's candidates in `/var/lib/nodo/updates`. A check refreshes the feeds and
 reviews every newer version with nodo-install, so the permission delta, a changed key and failed
 checks are known before anyone selects it. Each update keeps the previous version's verified
 package file in `/var/lib/nodo/packages/<id>` and a copy of the package's data (inside the volume
-for encrypted packages), and a rollback reinstalls that file with `xbps-install -f` and puts the
-data back. Updates the user selects follow the same rules, and one that asks for more needs the
+for encrypted packages, see below for the data drive), and a rollback reinstalls that file with
+`xbps-install -f` and puts the data back. Updates the user selects follow the same rules, and one that asks for more needs the
 reviewed permission lines quoted back. The `nodo-autoupdate` runit service is the timer: every ten
 minutes it asks the helper for one run (`RunAutoUpdate`, root only), and the helper decides whether
 a check is due and whether the window is open. With automatic updates off, the run still reads
@@ -290,7 +296,8 @@ offers it, and `RollbackPackage` (the TUI's System › Updates › Undo an updat
 the data is copied, the kept file reinstalled, the old version health checked, and on failure the
 newer version and its data come back. The version left is then held. It refuses data already in a
 newer layout than the old version's, a kept file asking for permissions no longer approved, a locked
-device, low disk, and data on the data drive. After every update, rollback, install and USB
+device, low disk, and an unmounted data drive. Data on the data drive is not copied: a rollback
+by hand is only offered onto data in a layout the old version ran on. After every update, rollback, install and USB
 restore the helper removes kept files nothing names: all of a package that is no longer installed
 (the helper has no uninstall request yet, so today that means a first install that failed, or files
 a restored device's records do not name), and for an installed package anything beyond its current
@@ -332,6 +339,29 @@ Proven in the KVM VM by `tests/helper-e2e.sh` with `e2e-store`, an encrypted tes
 grows the same LUKS volume (same UUID) and its mounted filesystem and converts the data; 3.0
 destroys the data on its way to layout 3 and fails its health check, and the rollback brings back
 2.0 and its data byte for byte in layout 2; 4.0 declares layout 1 and is refused unchanged.
+
+**Data on the data drive across updates.** An app the owner put on the data drive (a bundle's
+`data_drive` members, `UseDataDrive`) keeps its data in the clear at `<drive>/<id>`, which can be
+far larger than anything worth copying on every update. The helper records the layout that data
+is in at `<drive>/.nodo-layouts/<id>` (root-only, written only when an update changes it; with no
+record, the layout the installed version declares).
+
+- A new version declaring the same layout updates without copying the data. Both versions read
+  that layout, so a failed install or health check puts the old package back (and renders its
+  settings again) onto the same data.
+- A new version raising the layout gets a copy first, next to the data on the same drive
+  (`<drive>/.nodo-rollback/<id>`, root-only), removed once the new version passes its health
+  check, and put back by a rollback. The copy is made with `cp --reflink=auto`, so on the drive's
+  XFS it shares blocks and takes almost no room until the new version rewrites the data. The room
+  checked first is still the data's size plus 256 MiB: rewriting the data into its new layout
+  unshares every block it touches. An update that does not fit is refused before anything stops,
+  saying how much room it needs and how much to free.
+- A version declaring an older layout than the data's is refused, and one whose installed
+  manifest declares another layout than the check found never starts.
+
+Unit tested with the helper's fake system (`data_drive_updates` in `manage_tests.rs`). Before
+this, every update of a data-drive app was refused but recorded as a rollback, and its version
+held; the helper turns those records into refusals and releases the holds they made.
 
 ## 3. A/B system rollback on the NanoPC-T6N
 

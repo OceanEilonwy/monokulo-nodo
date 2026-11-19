@@ -231,7 +231,8 @@ pub struct Storage {
     /// The version of the package's own data layout, 1 when not given. A new version that raises
     /// it converts the data itself on its first start. The helper records the layout the data is
     /// in, keeps a copy of the data for a rollback, and never starts a version on data in a newer
-    /// layout than it declares.
+    /// layout than it declares. Data on the data drive is only copied when the layout rises: a
+    /// version declaring the same layout shares the data with the old one both ways.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_layout: Option<u32>,
 }

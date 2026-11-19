@@ -2,13 +2,16 @@
 //!
 //! A successful update keeps the previous version's verified file, one generation deep, with
 //! the data layout its data was in. A rollback goes through the same engine as an update: the
-//! data is copied first, the kept file is reinstalled with `xbps-install -f`, the old version
-//! must pass its health check, and on failure the newer version and its data come back. The
-//! version rolled back from is then held, so automatic updates do not reinstall it.
+//! data is copied first (except on the data drive, see below), the kept file is reinstalled with
+//! `xbps-install -f`, the old version must pass its health check, and on failure the newer
+//! version and its data come back. The version rolled back from is then held, so automatic
+//! updates do not reinstall it.
 //!
 //! What it refuses: data already converted to a newer layout than the old version declares
 //! (it could not read it), a kept file that asks for permissions no longer approved, a locked
-//! device for encrypted storage, and data kept on the data drive, which no update can copy yet.
+//! device for encrypted storage, and a data drive that is not mounted. Data on the data drive is
+//! never copied for a rollback by hand: it is only allowed onto data in a layout the old version
+//! ran on, which both versions read.
 
 use std::path::PathBuf;
 
@@ -16,7 +19,7 @@ use nodo_api::{ApiError, Response, RollbackOption, UpdateOutcome};
 use nodo_update::auto::{self, Candidate, Checks, Origin};
 use serde::{Deserialize, Serialize};
 
-use super::{apply_one, fail, result_of, Failure, Updater, COPY_MARGIN, IN_VOLUME_MARGIN};
+use super::{apply_one, fail, result_of, DataHome, DataPlan, Failure, Prepared, Updater};
 use crate::helper::{lock, Helper};
 use crate::system::System;
 
@@ -61,8 +64,8 @@ impl<S: System> Updater<'_, S> {
         }
     }
 
-    /// The install step of a rollback: the kept older file instead of a download from the feed.
-    pub(super) fn install_previous(&mut self, c: &Candidate, previous: &PreviousVersion) -> Result<(), Failure> {
+    /// The checks of a rollback, before anything changes.
+    pub(super) fn prepare_previous(&mut self, c: &Candidate, previous: &PreviousVersion) -> Result<(), Failure> {
         let h = self.helper;
         let id = c.package.as_str();
         let state = h.read_feeds().map_err(fail)?;
@@ -70,7 +73,6 @@ impl<S: System> Updater<'_, S> {
             .installed
             .get(id)
             .ok_or_else(|| Failure(format!("{id} was not installed from a feed")))?;
-        let feed_name = record.feed.clone();
         let current = record
             .kept
             .clone()
@@ -91,36 +93,48 @@ impl<S: System> Updater<'_, S> {
             return Err(Failure(format!("{id} {} asks for permissions that are no longer approved", c.to)));
         }
         let package = h.package(id).map_err(fail)?;
-        let encrypted = package.manifest.storage.encrypted;
-        let (data, copy, skip) = self.data_copy(id, encrypted)?;
-        if encrypted {
-            if !h.sys.is_mounted(&data) {
-                return Err(Failure(format!("{id}'s encrypted storage is locked")));
-            }
-            let layout = h.data_layout_of(id);
-            if previous.data_layout < layout {
-                return Err(Failure(format!(
-                    "{id}'s data is in layout {layout}, which {} cannot read",
-                    c.to
-                )));
-            }
-        }
-        let size = h.manage.packages.tree_size(&data);
-        let free = h.manage.packages.free_bytes(&data);
-        let margin = if encrypted { IN_VOLUME_MARGIN } else { COPY_MARGIN };
-        if size.saturating_add(margin) > free {
+        let home = self.data_home(id, package.manifest.storage.encrypted)?;
+        self.data_present(id, &home)?;
+        let layout = self.data_layout(id, &home, &package.manifest);
+        if home != DataHome::SystemDisk && previous.data_layout < layout {
             return Err(Failure(format!(
-                "there is not enough free space to keep a copy of {id}'s data while rolling back"
+                "{id}'s data is in layout {layout}, which {} cannot read",
+                c.to
             )));
         }
+        let data = match home {
+            // The old version ran on data in this same layout, so it reads it as it is, and
+            // coming back to the newer version needs no copy either.
+            DataHome::Drive(_) => DataPlan::InPlace,
+            _ => self.copy_plan(c, &home, "while rolling back")?,
+        };
+        self.prepared.insert(
+            id.to_owned(),
+            Prepared {
+                current,
+                feed: record.feed.clone(),
+                from_feed: None,
+                home,
+                data,
+                layout,
+                stop_timeout: package.manifest.stop_timeout_secs,
+            },
+        );
+        Ok(())
+    }
 
+    /// The install step of a rollback: the kept older file instead of a download from the feed.
+    pub(super) fn install_previous(&mut self, c: &Candidate) -> Result<(), Failure> {
+        let h = self.helper;
+        let id = c.package.as_str();
+        let p = self.prepared(id)?;
+        let previous = self
+            .downgrade
+            .get(id)
+            .cloned()
+            .ok_or_else(|| Failure(format!("{id} has no earlier version kept")))?;
         // From here on a failure brings the newer version back.
-        self.previous.insert(id.to_owned(), current);
-        self.stop(id, package.manifest.stop_timeout_secs)?;
-        h.manage.packages.remove_tree(&copy).map_err(Failure)?;
-        if h.sys.exists(&data) || h.manage.packages.tree_size(&data) > 0 {
-            h.manage.packages.copy_tree(&data, &copy, skip).map_err(Failure)?;
-        }
+        self.take_over(id, &p)?;
         h.manage.packages.reinstall(&previous.kept).map_err(fail)?;
         let (version, kept) = (c.to.clone(), previous.kept.clone());
         h.with_feeds(|state| {
@@ -135,7 +149,7 @@ impl<S: System> Updater<'_, S> {
         let manifest = self.installed_manifest(id)?;
         h.place_manifest(id, &h.app_dir(id).map_err(fail)?, &manifest)
             .map_err(Failure)?;
-        h.install_package(id, None, Some(&feed_name)).map_err(fail)?;
+        h.install_package(id, None, Some(&p.feed)).map_err(fail)?;
         Ok(())
     }
 }
@@ -199,8 +213,17 @@ impl<S: System> Helper<S> {
                     previous.version
                 ));
             }
-        } else if self.data_mount_of(id).ok().flatten().is_some() {
-            return Some("its data is on the data drive, which a rollback cannot copy yet".to_owned());
+        } else if let Some(mount) = self.data_mount_of(id).ok().flatten() {
+            if !self.sys.is_mounted(mount) {
+                return Some("the data drive is not mounted".to_owned());
+            }
+            let layout = self.drive_layout_of(id, mount, &package.manifest);
+            if previous.data_layout < layout {
+                return Some(format!(
+                    "its data is in layout {layout}, which {} cannot read",
+                    previous.version
+                ));
+            }
         }
         None
     }

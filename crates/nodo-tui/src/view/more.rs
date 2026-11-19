@@ -406,7 +406,7 @@ pub fn rollbacks(t: &Theme, state: &RollbacksState) -> Page {
                 t.e(format!("✕ {} failed and did not come back: {reason}", result.package))
             }
             UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => {
-                t.a(format!("▲ {}: {reason}", result.package))
+                t.a(format!("▲ {} was not rolled back, nothing changed: {reason}", result.package))
             }
         })));
     }

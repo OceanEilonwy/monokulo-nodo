@@ -4,7 +4,9 @@
 //! feed key, failed install checks, a version the user put on hold, and anything needing a system
 //! restart. Others wait for conditions to change: the window, a locked device, or a low disk.
 //! A failed update is rolled back, its version is held so nothing retries it, and the outcome is
-//! kept for the Home screen until the user dismisses it.
+//! kept for the Home screen until the user dismisses it. An update the installer refuses before
+//! changing anything is neither rolled back nor held: the old version never stopped, and the same
+//! version can go ahead once whatever refused it is sorted out.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -308,6 +310,12 @@ pub struct Failure(pub String);
 /// The install step, implemented by nodo-install. Each call must leave the package either fully
 /// on the new version or fully on the old one.
 pub trait Installer {
+    /// Checks everything that can refuse the update, before anything on the device changes. A
+    /// refusal here is not rolled back, since there is nothing to put back, and does not hold the
+    /// version, since the version itself did nothing wrong.
+    fn prepare(&mut self, _c: &Candidate) -> Result<(), Failure> {
+        Ok(())
+    }
     fn install(&mut self, c: &Candidate) -> Result<(), Failure>;
     /// Restarts the package and waits for its declared health check.
     fn health_check(&mut self, c: &Candidate) -> Result<(), Failure>;
@@ -326,12 +334,28 @@ pub enum Outcome {
     /// The worst case: the new version failed and the old one did not come back.
     RollbackFailed { package: String, from: String, to: String, reason: String, rollback_error: String },
     Postponed { package: String, wait: Wait },
+    /// Refused before anything changed, so the old version kept running untouched. Recorded in
+    /// [`UpdateState::refusals`], never in `history` or `attention`.
+    NotUpdated { package: String, from: String, to: String, reason: String },
 }
 
 impl Outcome {
     fn needs_attention(&self) -> bool {
         matches!(self, Outcome::RolledBack { .. } | Outcome::RollbackFailed { .. })
     }
+}
+
+/// An update refused before anything changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refusal {
+    pub at: u64,
+    pub package: String,
+    pub from: String,
+    pub to: String,
+    pub reason: String,
+    /// Refused in an unattended run, which nobody watched, so Home shows it until dismissed.
+    #[serde(default)]
+    pub unseen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,10 +376,32 @@ pub struct UpdateState {
     /// Shown on Home until dismissed.
     #[serde(default)]
     pub attention: Vec<Event>,
+    /// The latest refusal of each package, if it has not updated or been rolled back since. Kept
+    /// apart from `history`, whose entries a helper from before refusals existed would fail to
+    /// read after a system fallback; that helper ignores this field instead.
+    #[serde(default)]
+    pub refusals: Vec<Refusal>,
 }
 
 impl UpdateState {
+    /// Keeps one refusal per package, the latest, so a refusal repeated every night does not
+    /// push everything else out of view.
+    pub fn record_refusal(&mut self, refusal: Refusal) {
+        self.refusals.retain(|r| r.package != refusal.package);
+        self.refusals.push(refusal);
+        if self.refusals.len() > HISTORY_LEN {
+            let excess = self.refusals.len() - HISTORY_LEN;
+            self.refusals.drain(..excess);
+        }
+    }
+
     fn record(&mut self, at: u64, outcome: Outcome) {
+        if let Outcome::NotUpdated { package, from, to, reason } = outcome {
+            // Unattended, so the owner learns of it on Home.
+            self.record_refusal(Refusal { at, package, from, to, reason, unseen: true });
+            return;
+        }
+        self.forget_refusal(&outcome);
         let event = Event { at, outcome };
         if event.outcome.needs_attention() {
             self.attention.push(event.clone());
@@ -367,11 +413,22 @@ impl UpdateState {
         }
     }
 
+    /// An update that got past its preparation, whatever happened next, replaces the package's
+    /// last refusal.
+    pub fn forget_refusal(&mut self, outcome: &Outcome) {
+        if let Outcome::Updated { package, .. } | Outcome::RolledBack { package, .. } | Outcome::RollbackFailed { package, .. } = outcome {
+            self.refusals.retain(|r| &r.package != package);
+        }
+    }
+
     pub fn dismiss(&mut self, package: &str) {
         self.attention.retain(|e| match &e.outcome {
             Outcome::RolledBack { package: p, .. } | Outcome::RollbackFailed { package: p, .. } => p != package,
             _ => true,
         });
+        for r in self.refusals.iter_mut().filter(|r| r.package == package) {
+            r.unseen = false;
+        }
     }
 }
 
@@ -397,7 +454,7 @@ pub fn run(
             continue;
         }
         let outcome = apply_one(installer, c);
-        if !matches!(outcome, Outcome::Updated { .. }) {
+        if outcome.holds() {
             state.holds.hold(&c.package, &c.to);
         }
         state.record(now, outcome.clone());
@@ -406,7 +463,18 @@ pub fn run(
     outcomes
 }
 
+impl Outcome {
+    /// Only a version that actually failed is held. A refusal or a postponement says nothing
+    /// against the version.
+    pub fn holds(&self) -> bool {
+        matches!(self, Outcome::RolledBack { .. } | Outcome::RollbackFailed { .. })
+    }
+}
+
 fn apply_one(installer: &mut dyn Installer, c: &Candidate) -> Outcome {
+    if let Err(Failure(reason)) = installer.prepare(c) {
+        return Outcome::NotUpdated { package: c.package.clone(), from: c.from.clone(), to: c.to.clone(), reason };
+    }
     let failure = match installer.install(c).and_then(|()| installer.health_check(c)) {
         Ok(()) => return Outcome::Updated { package: c.package.clone(), from: c.from.clone(), to: c.to.clone() },
         Err(Failure(reason)) => reason,
@@ -465,10 +533,18 @@ mod tests {
         fail_install: BTreeSet<String>,
         fail_health: BTreeSet<String>,
         fail_rollback: BTreeSet<String>,
+        refuse: BTreeSet<String>,
         log: Vec<String>,
     }
 
     impl Installer for FakeInstaller {
+        fn prepare(&mut self, c: &Candidate) -> Result<(), Failure> {
+            if self.refuse.contains(&c.package) {
+                self.log.push(format!("refuse {}", c.package));
+                return Err(Failure("not enough room on the data drive".into()));
+            }
+            Ok(())
+        }
         fn install(&mut self, c: &Candidate) -> Result<(), Failure> {
             self.log.push(format!("install {}", c.package));
             if self.fail_install.contains(&c.package) {
@@ -642,6 +718,34 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_changes_nothing_holds_nothing_and_is_kept_apart() {
+        let p = policy(&["x"]);
+        let mut inst = FakeInstaller::default();
+        inst.refuse.insert("x".into());
+        let mut state = UpdateState::default();
+        let out = run(&p, &mut state, &[cand("x", Origin::App)], &FixedDevice(open()), &mut inst, 1);
+        assert!(matches!(&out[0], Outcome::NotUpdated { reason, .. } if reason.contains("data drive")), "{out:?}");
+        assert_eq!(inst.log, ["refuse x"], "neither installed nor rolled back");
+        assert!(!state.holds.is_held("x", "1.1_1"));
+        assert!(state.history.is_empty() && state.attention.is_empty(), "{state:?}");
+        assert_eq!(state.refusals.len(), 1);
+        assert!(state.refusals[0].unseen, "nobody watched an unattended run");
+
+        // Tried again next night, and still one refusal is kept, the latest.
+        run(&p, &mut state, &[cand("x", Origin::App)], &FixedDevice(open()), &mut inst, 2);
+        assert_eq!(state.refusals.len(), 1);
+        assert_eq!(state.refusals[0].at, 2);
+        state.dismiss("x");
+        assert!(!state.refusals[0].unseen);
+
+        // Once there is room, it updates, and the refusal is no longer news.
+        inst.refuse.clear();
+        let out = run(&p, &mut state, &[cand("x", Origin::App)], &FixedDevice(open()), &mut inst, 3);
+        assert!(matches!(&out[0], Outcome::Updated { .. }));
+        assert!(state.refusals.is_empty());
+    }
+
+    #[test]
     fn a_failed_rollback_is_reported_as_such() {
         let mut inst = FakeInstaller::default();
         inst.fail_health.insert("x".into());
@@ -698,8 +802,11 @@ mod tests {
         state.holds.hold("x", "1.1_1");
         state.record(5, Outcome::RolledBack { package: "x".into(), from: "1".into(), to: "2".into(), reason: "r".into() });
         state.record(6, Outcome::Postponed { package: "y".into(), wait: Wait::DiskLow });
+        state.record(7, Outcome::NotUpdated { package: "z".into(), from: "1".into(), to: "2".into(), reason: "r".into() });
         let text = toml::to_string(&state).unwrap();
         assert_eq!(toml::from_str::<UpdateState>(&text).unwrap(), state);
+        // A helper from before refusals ignores them, and reads the rest as before.
+        assert!(!text.contains("NotUpdated"), "{text}");
         let p = policy(&["a"]);
         let text = toml::to_string(&p).unwrap();
         assert_eq!(toml::from_str::<AutoPolicy>(&text).unwrap(), p);

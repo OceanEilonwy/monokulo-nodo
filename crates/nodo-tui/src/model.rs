@@ -502,7 +502,10 @@ pub struct UpdateFailure {
     pub kept_version: String,
     pub restored: String,
     pub running: bool,
+    /// The app's own last log line, when it wrote one.
     pub log_line: String,
+    /// Why the device rolled it back, in the device's words, for when the app's log is empty.
+    pub reason: String,
     pub verdict: String,
 }
 

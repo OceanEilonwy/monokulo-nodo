@@ -315,12 +315,15 @@ impl PackageBackend for RealPackages {
             .create(to)
             .map_err(io_text)?;
         for entry in entries(from, skip)? {
-            // -a keeps owners, modes and symlinks as links. -T makes the target exact.
+            // -a keeps owners, modes and symlinks as links. -T makes the target exact. A copy on
+            // a filesystem that can share blocks (the data drive's XFS) shares them, so a large
+            // copy is quick and takes room only as the data changes; elsewhere it is a plain copy.
             let name = entry.file_name().ok_or("bad entry")?;
             run(
                 "cp",
                 &[
                     "-a".as_ref(),
+                    "--reflink=auto".as_ref(),
                     "-T".as_ref(),
                     entry.as_os_str(),
                     to.join(name).as_os_str(),
@@ -345,6 +348,7 @@ impl PackageBackend for RealPackages {
                 "cp",
                 &[
                     "-a".as_ref(),
+                    "--reflink=auto".as_ref(),
                     "-T".as_ref(),
                     entry.as_os_str(),
                     to.join(name).as_os_str(),
