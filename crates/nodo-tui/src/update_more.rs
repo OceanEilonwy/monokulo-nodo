@@ -4,11 +4,11 @@
 //! is overwritten, and the helper checks every rule again.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nodo_api::UpdateOutcome;
 
-use super::{edit_input, fail, notice, open_logs, pop, push, step};
+use super::{edit_input, follow, notice, open_logs, pop, push, step};
 use crate::app::*;
-use nodo_ui_core::flows::{Confirm, NoticeKind, Question};
+use nodo_ui_core::flows::updates::Rollbacks;
+use nodo_ui_core::flows::NoticeKind;
 use nodo_ui_core::secret::Input;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -26,7 +26,7 @@ pub(super) fn open_restore(app: &mut App) -> Vec<Effect> {
 
 pub(super) fn open_rollbacks(app: &mut App) -> Vec<Effect> {
     push(app, Screen::Rollbacks(RollbacksState::new()));
-    vec![Effect::LoadRollbacks]
+    Rollbacks::load()
 }
 
 // Onion
@@ -315,62 +315,31 @@ pub(super) fn rollbacks_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     if key.code == KeyCode::Esc {
-        pop(app);
-        return vec![Effect::Refresh];
+        let step = state.leave();
+        return follow(app, step);
     }
     if state.busy {
         return Vec::new();
     }
-    let options = state.view.as_ref().map(|v| v.options.clone()).unwrap_or_default();
-    let chosen = options.get(state.selected).cloned();
+    let count = state.options().len();
+    let chosen = state.options().get(state.selected).map(|option| option.package.clone());
     match key.code {
-        KeyCode::Down | KeyCode::Up => step(&mut state.selected, options.len(), key.code == KeyCode::Down),
-        KeyCode::Char('g') => {
-            state.busy = true;
-            state.error = None;
-            return vec![Effect::LoadRollbacks];
-        }
+        KeyCode::Down | KeyCode::Up => step(&mut state.selected, count, key.code == KeyCode::Down),
+        KeyCode::Char('g') => return state.flow.reload(),
         KeyCode::Char('l') => {
-            if let Some(option) = chosen {
-                return open_logs(app, &option.package);
+            if let Some(package) = chosen {
+                return open_logs(app, &package);
             }
         }
         KeyCode::Enter | KeyCode::Char('r') => {
-            let Some(option) = chosen else {
-                state.error = Some("Nothing can be rolled back now.".to_owned());
-                return Vec::new();
-            };
-            if let Some(reason) = &option.blocked {
-                state.error = Some(format!("{} cannot roll back now: {reason}.", option.package));
-                return Vec::new();
-            }
-            app.modal = Some(Modal::ask(Question {
-                title: format!("Roll {} back?", option.package),
-                body: vec![
-                    format!("{} goes from {} back to {}.", option.package, option.current, option.previous),
-                    "Its data is copied first and put back if the old version fails.".to_owned(),
-                    format!("{} is held, so automatic updates leave it alone.", option.current),
-                ],
-                confirm_label: "Roll back".to_owned(),
-                cancel_is_default: true,
-                confirm: Confirm::RollBack { package: option.package, to: option.previous },
-            }));
+            // With nothing listed there is no name, and the core says so.
+            let step = state.flow.roll_back(chosen.as_deref().unwrap_or_default());
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
 }
-
-/// Shows a confirmed rollback as running. The request itself is the core's `Confirm::step`.
-pub(super) fn mark_rolling_back(app: &mut App) {
-    if let Screen::Rollbacks(state) = &mut app.screen {
-        state.busy = true;
-        state.error = None;
-        state.result = None;
-    }
-}
-
-// Results
 
 pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
     match event {
@@ -459,42 +428,6 @@ pub(super) fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                     Ok(report) => RestoreStep::Done(report),
                     Err(reason) => RestoreStep::Failed { device, name, reason },
                 };
-            }
-        }
-        Outcome::RollbacksLoaded(result) => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                state.busy = false;
-                match result {
-                    Ok(view) => {
-                        state.selected = state.selected.min(view.options.len().saturating_sub(1));
-                        state.view = Some(view);
-                    }
-                    Err(e) => state.error = Some(e),
-                }
-            }
-        }
-        Outcome::RolledBack(result) => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                match result {
-                    Ok(outcome) => {
-                        let text = match &outcome.outcome {
-                            UpdateOutcome::Updated => {
-                                Some(format!("{} is back on {}.", outcome.package, outcome.to))
-                            }
-                            _ => None,
-                        };
-                        state.result = Some(outcome);
-                        state.busy = true;
-                        if let Some(text) = text {
-                            notice(app, NoticeKind::Ok, text);
-                        }
-                        return vec![Effect::LoadRollbacks, Effect::Refresh];
-                    }
-                    Err(e) => {
-                        state.busy = false;
-                        fail(app, e);
-                    }
-                }
             }
         }
         _ => {}

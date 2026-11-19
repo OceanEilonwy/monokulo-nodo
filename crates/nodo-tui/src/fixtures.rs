@@ -14,6 +14,7 @@ use nodo_ui_core::effect::{RollbackView, UsbView};
 use nodo_ui_core::exec::load_snapshot;
 use nodo_ui_core::flows::install::ReviewPurpose;
 use nodo_ui_core::flows::settings::{ApplyFailed, DraftRow, PickMode, Picker};
+use nodo_ui_core::flows::updates::Rollbacks;
 use nodo_ui_core::screen::ScreenId;
 use crate::update::search_state;
 
@@ -122,15 +123,17 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             Screen::Restore(RestoreState { drives, busy: false, ..RestoreState::new() })
         }
         ScreenId::Rollbacks => Screen::Rollbacks(RollbacksState {
-            view: Some(RollbackView {
-                options: mock.rollbacks.clone(),
-                events: mock.update_history.clone(),
-                boot_fallback: None,
-            }),
+            flow: Rollbacks {
+                view: Some(RollbackView {
+                    options: mock.rollbacks.clone(),
+                    events: mock.update_history.clone(),
+                    boot_fallback: None,
+                }),
+                error: None,
+                busy: false,
+                result: None,
+            },
             selected: 0,
-            error: None,
-            busy: false,
-            result: None,
         }),
         ScreenId::Backup => {
             let mut state = BackupState::new(true);

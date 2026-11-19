@@ -71,6 +71,7 @@ pub mod settings;
 pub mod setup;
 pub mod sources;
 pub mod unlock;
+pub mod updates;
 
 use nodo_api::Exposure;
 
@@ -188,10 +189,13 @@ pub enum Dest {
     /// The page of the install under way, showing this report. A frontend already on that page
     /// shows the report in place.
     Installing(InstallSnapshot),
-    /// A batch of updates was approved and goes on to be applied. Until the updates' own flow is
-    /// here, the frontend applies it, asking for the device passphrase when one of them grows
-    /// encrypted storage.
-    ApplyUpdates { names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)> },
+    /// The Updates page, asking for the device passphrase before this batch is applied, because
+    /// one of its updates grows encrypted storage. A review or a report of results that led here
+    /// is left first.
+    UpdatePassphrase(updates::Batch),
+    /// What a batch of updates came to. It takes the place of the review or the earlier report
+    /// that led to the batch.
+    UpdateResults(crate::model::UpdateReport),
     /// An app's settings, with the form the helper gave: the page of a new `settings::Settings`.
     Settings(crate::model::SettingsForm),
     /// The page of a save the helper took back, on top of the form, which keeps its draft.
@@ -240,13 +244,13 @@ pub enum Confirm {
     RemoveSshKey(String),
     /// Leaves an app's settings without saving.
     DiscardSettings,
-
-    /// Takes every site offline.
-    AllSitesOffline,
     /// Leaves the auto-update choices without saving.
     DiscardAutoUpdate,
     /// Puts a package back to the version given.
     RollBack { package: String, to: String },
+
+    /// Takes every site offline.
+    AllSitesOffline,
     /// Joins an open network, whose traffic anyone nearby can read.
     JoinOpenWifi(String),
     ForgetWifi(String),

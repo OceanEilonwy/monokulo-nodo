@@ -8,13 +8,14 @@
 use crossterm::event::KeyEvent;
 use nodo_api::Exposure;
 
-use nodo_ui_core::effect::{RollbackView, UsbView};
+use nodo_ui_core::effect::UsbView;
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
 use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
+use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
 use nodo_ui_core::flows::{Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
@@ -312,20 +313,18 @@ impl Default for RestoreState {
     }
 }
 
+/// The page that undoes an update: the chosen row. The list, what is running and how the last
+/// rollback went are the core's `Rollbacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbacksState {
-    pub view: Option<RollbackView>,
-    /// Over `view.options`.
+    pub flow: Rollbacks,
+    /// Over the versions that can be put back.
     pub selected: usize,
-    pub error: Option<String>,
-    pub busy: bool,
-    /// The last rollback's outcome, shown until the next action.
-    pub result: Option<nodo_api::UpdateResult>,
 }
 
 impl RollbacksState {
     pub fn new() -> Self {
-        Self { view: None, selected: 0, error: None, busy: true, result: None }
+        Self { flow: Rollbacks::new(), selected: 0 }
     }
 }
 
@@ -335,7 +334,20 @@ impl Default for RollbacksState {
     }
 }
 
-/// Which list on the Network screen has the focus.
+impl std::ops::Deref for RollbacksState {
+    type Target = Rollbacks;
+
+    fn deref(&self) -> &Rollbacks {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for RollbacksState {
+    fn deref_mut(&mut self) -> &mut Rollbacks {
+        &mut self.flow
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkFocus {
     Wifi,
@@ -572,6 +584,8 @@ impl std::ops::DerefMut for ReferenceState {
     }
 }
 
+/// The Updates page: the chosen row, the updates ticked, and the passphrase box when a batch
+/// waits for it. What ticking, checking and updating do are the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatesState {
     pub selected: usize,
@@ -580,29 +594,26 @@ pub struct UpdatesState {
     pub passphrase: Option<UpdatePassphrase>,
 }
 
-/// The device passphrase for a batch of updates, and the batch it is for.
+/// The device passphrase being typed for a batch of updates, and the batch it is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdatePassphrase {
-    pub names: Vec<String>,
-    pub approvals: Vec<(String, nodo_api::PermissionApproval)>,
-    /// Each growing update in words, such as "vault: 256 MB to 512 MB".
-    pub growing: Vec<String>,
+    pub batch: Batch,
     pub input: Input,
 }
 
+/// The automatic-update choices: the chosen row and the window being typed. The choices and
+/// what is checked about them are the core's `AutoUpdate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoUpdateState {
-    pub saved: AutoUpdatePrefs,
-    pub draft: AutoUpdatePrefs,
+    pub flow: AutoUpdate,
     /// 0 is the frequency selector, and the package rows follow it.
     pub selected: usize,
     pub editing_window: Option<Input>,
-    pub error: Option<String>,
 }
 
 impl AutoUpdateState {
     pub fn new(prefs: AutoUpdatePrefs) -> Self {
-        Self { saved: prefs.clone(), draft: prefs, selected: 0, editing_window: None, error: None }
+        Self { flow: AutoUpdate::new(prefs), selected: 0, editing_window: None }
     }
 
     pub fn focused_package(&self) -> Option<usize> {
@@ -610,21 +621,22 @@ impl AutoUpdateState {
     }
 }
 
-/// Parses `HH:MM to HH:MM`. A window may cross midnight, so only an empty one is refused.
-pub fn parse_window(text: &str) -> Option<(String, String)> {
-    fn time(text: &str) -> Option<String> {
-        let (hours, minutes) = text.trim().split_once(':')?;
-        if hours.len() != 2 || minutes.len() != 2 {
-            return None;
-        }
-        let (hours, minutes) = (hours.parse::<u8>().ok()?, minutes.parse::<u8>().ok()?);
-        (hours < 24 && minutes < 60).then(|| format!("{hours:02}:{minutes:02}"))
+impl std::ops::Deref for AutoUpdateState {
+    type Target = AutoUpdate;
+
+    fn deref(&self) -> &AutoUpdate {
+        &self.flow
     }
-    let (start, end) = text.split_once(" to ")?;
-    let (start, end) = (time(start)?, time(end)?);
-    (start != end).then_some((start, end))
 }
 
+impl std::ops::DerefMut for AutoUpdateState {
+    fn deref_mut(&mut self) -> &mut AutoUpdate {
+        &mut self.flow
+    }
+}
+
+/// What a batch of updates came to, and the chosen way on after a failure. What each way does
+/// is the core's `flows::updates`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateResultsState {
     pub report: UpdateReport,

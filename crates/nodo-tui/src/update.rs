@@ -14,7 +14,8 @@ use nodo_ui_core::flows::setup::{Setup, MIN_PASSPHRASE_CHARS};
 use nodo_ui_core::flows::install::{self, Search};
 use nodo_ui_core::flows::logs::{self, Logs};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked};
-use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Question, Step};
+use nodo_ui_core::flows::updates::{self, AutoUpdate};
+use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
 
@@ -136,41 +137,9 @@ fn home_screen(app: &App) -> Screen {
     }
 }
 
-fn updates_screen(app: &App) -> Screen {
-    Screen::Updates(UpdatesState {
-        selected: 0,
-        checked: app
-            .update_rows()
-            .iter()
-            .filter(|item| item.preselected && !item.held)
-            .map(|item| item.name.clone())
-            .collect(),
-        passphrase: None,
-    })
-}
-
-/// Applies a batch of updates. When one of them grows encrypted storage, the Updates screen
-/// first asks for the device passphrase, which LUKS needs to resize the volume.
-fn apply_batch(app: &mut App, names: Vec<String>, approvals: Vec<(String, nodo_api::PermissionApproval)>) -> Vec<Effect> {
-    let growing: Vec<String> = app
-        .data
-        .updates
-        .iter()
-        .filter(|item| names.contains(&item.name))
-        .filter_map(|item| item.grows.as_ref().map(|grows| format!("{}: {grows}", item.name)))
-        .collect();
-    if growing.is_empty() {
-        return vec![Effect::ApplyUpdates { names, approvals }];
-    }
-    if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
-        pop(app);
-    }
-    let Screen::Updates(state) = &mut app.screen else {
-        // The helper refuses a growing update without the passphrase, and says why.
-        return vec![Effect::ApplyUpdates { names, approvals }];
-    };
-    state.passphrase = Some(UpdatePassphrase { names, approvals, growing, input: Input::secret() });
-    Vec::new()
+/// The Updates page as it opens. `only` names the one app whose update the owner came for.
+fn updates_screen(app: &App, only: Option<&str>) -> Screen {
+    Screen::Updates(UpdatesState { selected: 0, checked: updates::ticked_at_open(&app.data, only), passphrase: None })
 }
 
 pub fn search_state(focus_query: bool) -> SearchState {
@@ -226,7 +195,7 @@ fn open_updates(app: &mut App) -> Vec<Effect> {
     if !matches!(app.screen, Screen::System { .. }) {
         switch_tab(app, Tab::System);
     }
-    let screen = updates_screen(app);
+    let screen = updates_screen(app, None);
     push(app, screen);
     Vec::new()
 }
@@ -578,7 +547,11 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 /// what confirming does comes from the core.
 fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
     match &confirm {
-        Confirm::RollBack { .. } => more::mark_rolling_back(app),
+        Confirm::RollBack { .. } => {
+            if let Screen::Rollbacks(state) = &mut app.screen {
+                state.flow.confirmed(&confirm);
+            }
+        }
         Confirm::JoinOpenWifi(_) | Confirm::ForgetWifi(_) | Confirm::WifiOff | Confirm::RemoveBluetooth(_) => {
             if !net::mark_confirmed(app, &confirm) {
                 return Vec::new();
@@ -626,11 +599,8 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
             }
         }
         Dest::Updates { only } => {
-            let screen = updates_screen(app);
+            let screen = updates_screen(app, only.as_deref());
             push(app, screen);
-            if let (Screen::Updates(updates), Some(name)) = (&mut app.screen, only) {
-                updates.checked = vec![name];
-            }
         }
         Dest::Unlock { resume } => push(app, Screen::Unlock(UnlockState::new(resume))),
         // The screen below asked for the unlock on Enter, so it gets its Enter again.
@@ -656,7 +626,22 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::MissingCapability(data) => push(app, Screen::Capability(CapabilityState { data, choice: 0 })),
         // The install's page takes the place of the review that started it.
         Dest::Installing(report) => app.screen = Screen::Installing(report),
-        Dest::ApplyUpdates { names, approvals } => return apply_batch(app, names, approvals),
+        Dest::UpdatePassphrase(batch) => {
+            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
+                pop(app);
+            }
+            let Screen::Updates(state) = &mut app.screen else {
+                // There is no Updates page under this one to ask on.
+                return batch.without_passphrase();
+            };
+            state.passphrase = Some(UpdatePassphrase { batch, input: Input::secret() });
+        }
+        Dest::UpdateResults(report) => {
+            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
+                pop(app);
+            }
+            push(app, Screen::UpdateResults(UpdateResultsState { report, choice: 0 }));
+        }
         Dest::Settings(form) => push(app, Screen::Settings(SettingsState::new(form))),
         Dest::ApplyFailed(failed) => push(app, Screen::ApplyFailed(failed)),
         Dest::Document(doc) => app.overlay = Some(Overlay { doc, scroll: 0 }),
@@ -939,7 +924,7 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             KeyCode::Esc => state.passphrase = None,
             KeyCode::Enter => {
                 // An empty box is refused with a remark and stays open.
-                let step = state.flow.approve(Some(input));
+                let step = state.flow.approve(Some(input), &app.data);
                 return follow(app, step);
             }
             _ => {
@@ -961,7 +946,7 @@ fn review_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 state.passphrase = Some(Input::secret());
                 return Vec::new();
             }
-            let step = state.flow.approve(None);
+            let step = state.flow.approve(None, &app.data);
             return follow(app, step);
         }
         _ => {}
@@ -1502,13 +1487,13 @@ fn update_passphrase_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     };
     match key.code {
         KeyCode::Esc => state.passphrase = None,
-        KeyCode::Enter if prompt.input.is_empty() => {
-            notice(app, NoticeKind::Info, "Enter the device passphrase to grow the encrypted storage.");
-        }
         KeyCode::Enter => {
-            let passphrase = prompt.input.take_secret();
-            let prompt = state.passphrase.take().expect("prompt checked above");
-            return vec![Effect::ApplyUpdatesWithPassphrase { names: prompt.names, approvals: prompt.approvals, passphrase }];
+            // An empty box is refused with a remark and stays open.
+            let step = prompt.batch.submit(&mut prompt.input);
+            if matches!(step, Step::Run(_)) {
+                state.passphrase = None;
+            }
+            return follow(app, step);
         }
         _ => {
             edit_input(&mut prompt.input, key);
@@ -1528,7 +1513,7 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if let Some(effects) = tab_key(app, key) {
         return effects;
     }
-    let rows: Vec<UpdateItem> = app.update_rows().into_iter().cloned().collect();
+    let rows: Vec<(String, bool)> = app.update_rows().into_iter().map(|item| (item.name.clone(), item.held)).collect();
     let auto_update = app.data.auto_update.clone();
     let Screen::Updates(state) = &mut app.screen else {
         return Vec::new();
@@ -1537,69 +1522,35 @@ fn updates_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows.len(), key.code == KeyCode::Down),
         KeyCode::Char(' ') => {
-            if let Some(item) = current {
-                if let Some(position) = state.checked.iter().position(|name| name == &item.name) {
-                    state.checked.remove(position);
-                } else {
-                    state.checked.push(item.name.clone());
-                    if item.held {
-                        return vec![Effect::SetHeld { name: item.name.clone(), held: false }];
-                    }
-                }
+            if let Some((name, _)) = current {
+                return updates::tick(&mut state.checked, &app.data, name);
             }
         }
         // The Nodo's own update has its own button, apart from the apps.
         KeyCode::Char('n') => {
-            if rows.iter().any(|item| item.name == SYSTEM_BASE && !item.held) {
-                return apply_batch(app, vec![SYSTEM_BASE.to_owned()], Vec::new());
-            }
-            notice(app, NoticeKind::Info, "The Nodo is up to date.");
+            let step = updates::update_system(&app.data);
+            return follow(app, step);
         }
         KeyCode::Char('z') => return more::open_rollbacks(app),
         KeyCode::Enter => {
-            // Keep the on-screen order, not the order the boxes were ticked in. The Nodo's own
-            // update is never part of the apps' batch: it has its own button.
-            let batch: Vec<String> = rows
-                .iter()
-                .filter(|item| item.name != SYSTEM_BASE && state.checked.contains(&item.name))
-                .map(|item| item.name.clone())
-                .collect();
-            if batch.is_empty() {
-                notice(app, NoticeKind::Info, "Tick at least one app first.");
-                return Vec::new();
-            }
-            // A new permission is always approved first, even when the box is ticked.
-            let mut pending_reviews: Vec<String> = rows
-                .iter()
-                .filter(|item| {
-                    batch.contains(&item.name) && matches!(item.note, UpdateNote::NewPermission(_))
-                })
-                .map(|item| item.name.clone())
-                .collect();
-            if pending_reviews.is_empty() {
-                return apply_batch(app, batch, Vec::new());
-            }
-            let name = pending_reviews.remove(0);
-            return vec![Effect::ReviewUpdate { name, batch, pending_reviews, approvals: Vec::new() }];
+            let step = updates::update_apps(&app.data, &state.checked);
+            return follow(app, step);
         }
         KeyCode::Char('c') => {
-            if let Some(item) = current {
-                return vec![Effect::ShowDocument(DocKind::Changelog(item.name.clone()))];
+            if let Some((name, _)) = current {
+                return updates::changelog(name);
             }
         }
         KeyCode::Char('r') => {
             // Check now is a link, not a button, so it is marked as running here: it shows the
             // hourglass and a second press waits for the first instead of queueing another check.
             app.pending = Some(Pending { click: crate::hit::Click::Key(KeyCode::Char('r')), screen: ScreenId::Updates });
-            return vec![Effect::CheckUpdates];
+            return updates::check_now();
         }
         KeyCode::Char('h') => {
-            if let Some(item) = current {
-                let name = item.name.clone();
-                let held = !item.held;
-                state.checked.retain(|checked| checked != &name);
+            if let Some((name, held)) = current {
                 state.selected = 0;
-                return vec![Effect::SetHeld { name, held }];
+                return updates::set_held(&mut state.checked, name, !held);
             }
         }
         KeyCode::Char('a') => {
@@ -1618,20 +1569,14 @@ fn auto_update_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => {
                 state.editing_window = None;
-                state.error = None;
+                state.flow.error = None;
             }
-            KeyCode::Enter => match parse_window(input.text()) {
-                Some((start, end)) => {
-                    state.draft.window_start = start;
-                    state.draft.window_end = end;
+            // A window that is refused stays in the box, with the reason beside it.
+            KeyCode::Enter => {
+                if state.flow.set_window(input.text()) {
                     state.editing_window = None;
-                    state.error = None;
                 }
-                None => {
-                    state.error =
-                        Some("Use two different device times, like 03:00 to 05:00.".to_owned());
-                }
-            },
+            }
             _ => {
                 edit_input(input, key);
             }
@@ -1641,40 +1586,21 @@ fn auto_update_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     let rows = state.draft.packages.len() + 1;
     match key.code {
         KeyCode::Down | KeyCode::Up => step(&mut state.selected, rows, key.code == KeyCode::Down),
-        KeyCode::Char(' ') => match state.focused_package() {
-            Some(index) => state.draft.packages[index].enabled ^= true,
-            None => cycle_frequency(&mut state.draft),
+        KeyCode::Char(' ') => match state.focused_package().map(|index| state.draft.packages[index].name.clone()) {
+            Some(name) => state.flow.toggle(&name),
+            None => state.flow.next_frequency(),
         },
-        KeyCode::Left | KeyCode::Right if state.selected == 0 => cycle_frequency(&mut state.draft),
-        KeyCode::Char('w') => {
-            let current = format!("{} to {}", state.draft.window_start, state.draft.window_end);
-            state.editing_window = Some(Input::plain(current));
-        }
-        KeyCode::Char('h') => return vec![Effect::ShowDocument(DocKind::AutoUpdateHistory)],
-        KeyCode::Enter => return vec![Effect::SaveAutoUpdate(state.draft.clone())],
+        KeyCode::Left | KeyCode::Right if state.selected == 0 => state.flow.next_frequency(),
+        KeyCode::Char('w') => state.editing_window = Some(Input::plain(state.window())),
+        KeyCode::Char('h') => return AutoUpdate::history(),
+        KeyCode::Enter => return state.save(),
         KeyCode::Esc => {
-            if state.draft == state.saved {
-                pop(app);
-            } else {
-                app.modal = Some(Modal::ask(Question {
-                    title: "Discard your changes?".to_owned(),
-                    body: vec!["Your auto-update choices will not be saved.".to_owned()],
-                    confirm_label: "Discard".to_owned(),
-                    cancel_is_default: true,
-                    confirm: Confirm::DiscardAutoUpdate,
-                }));
-            }
+            let step = state.leave();
+            return follow(app, step);
         }
         _ => {}
     }
     Vec::new()
-}
-
-fn cycle_frequency(prefs: &mut AutoUpdatePrefs) {
-    let position = prefs.frequencies.iter().position(|option| option == &prefs.frequency).unwrap_or(0);
-    if let Some(next) = prefs.frequencies.get((position + 1) % prefs.frequencies.len().max(1)) {
-        prefs.frequency = next.clone();
-    }
 }
 
 fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -1688,29 +1614,18 @@ fn update_results_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 step(&mut state.choice, 4, key.code == KeyCode::Down);
             }
         }
-        KeyCode::Esc => {
-            pop(app);
-            return vec![Effect::Refresh];
-        }
+        KeyCode::Esc => return follow(app, updates::leave_results()),
         KeyCode::Enter => {
             let Some(name) = failed else {
-                pop(app);
-                return vec![Effect::Refresh];
+                return follow(app, updates::leave_results());
             };
-            match state.choice {
-                0 => {
-                    pop(app);
-                    return vec![Effect::SetHeld { name, held: true }];
-                }
-                // A failed version is held, and the helper only retries it once released.
-                1 => {
-                    let mut effects = vec![Effect::SetHeld { name: name.clone(), held: false }];
-                    effects.extend(apply_batch(app, vec![name], Vec::new()));
-                    return effects;
-                }
-                2 => return vec![Effect::CopyReport(format!("{name} update"))],
+            let step = match state.choice {
+                0 => updates::hold_failed(&state.report),
+                1 => updates::retry_failed(&state.report, &app.data),
+                2 => return updates::report_failed(&state.report),
                 _ => return open_logs(app, &name),
-            }
+            };
+            return follow(app, step);
         }
         _ => {}
     }
@@ -1906,8 +1821,7 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
     let services = app.data.services.len();
     let feeds = app.data.feeds.len();
     let sites = app.data.web.sites.len();
-    let update_rows: Vec<(String, bool)> =
-        app.update_rows().iter().map(|item| (item.name.clone(), item.preselected && !item.held)).collect();
+    let update_rows: Vec<String> = app.update_rows().iter().map(|item| item.name.clone()).collect();
     let rows = update_rows.len();
     let drive_missing = app.data.overview.drive.is_some();
     let clamp = |index: &mut usize, len: usize| *index = (*index).min(len.saturating_sub(1));
@@ -1917,17 +1831,12 @@ fn on_refreshed(app: &mut App, snapshot: Snapshot) {
         Screen::Home { selected } => clamp(selected, services),
         Screen::Feeds { selected, .. } => clamp(selected, feeds),
         Screen::Web { selected } => clamp(selected, sites),
-        // A check can add and remove updates. New ones are ticked as the list ticks them when it
-        // opens, gone ones are unticked, and the selection stays on the same app rather than
-        // the same row number, which would now be another app.
+        // A check can add and remove updates. The ticks follow them by the core's rule, and the
+        // selection stays on the same app rather than the same row number, which would now be
+        // another app.
         Screen::Updates(state) => {
-            state.checked.retain(|name| update_rows.iter().any(|(row, _)| row == name));
-            for (name, preselected) in &update_rows {
-                if *preselected && !shown.contains(name) && !state.checked.contains(name) {
-                    state.checked.push(name.clone());
-                }
-            }
-            match was_selected.and_then(|name| update_rows.iter().position(|(row, _)| *row == name)) {
+            updates::carry_ticks(&mut state.checked, &shown, &app.data);
+            match was_selected.and_then(|name| update_rows.iter().position(|row| *row == name)) {
                 Some(position) => state.selected = position,
                 None => clamp(&mut state.selected, rows),
             }
@@ -1970,9 +1879,14 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
         | Outcome::RestoreDrives(_)
         | Outcome::RestoreBackups(_)
         | Outcome::RestoreInspected(_)
-        | Outcome::RestoreFinished(_)
-        | Outcome::RollbacksLoaded(_)
-        | Outcome::RolledBack(_) => return more::on_result(app, event),
+        | Outcome::RestoreFinished(_) => return more::on_result(app, event),
+        Outcome::RollbacksLoaded(_) | Outcome::RolledBack(_) => {
+            if let Screen::Rollbacks(state) = &mut app.screen {
+                let step = state.flow.apply(&event);
+                state.selected = state.selected.min(state.options().len().saturating_sub(1));
+                return follow(app, step);
+            }
+        }
         Outcome::NetworkLoaded { .. }
         | Outcome::WifiChanged { .. }
         | Outcome::WifiScanned(_)
@@ -1993,14 +1907,16 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
             return follow(app, step);
         }
         Outcome::InstallProgress(None) => {}
-        Outcome::UpdatesChecked(report) => {
-            let summary = report.summary(app.update_rows().len(), &app.data.feeds);
-            let kind = match (summary.trouble, summary.found) {
-                (true, _) => NoticeKind::Error,
-                (false, 0) => NoticeKind::Ok,
-                (false, _) => NoticeKind::Info,
+        Outcome::UpdatesChecked(_) | Outcome::UpdatesApplied(_) => {
+            let step = updates::apply(&event, &app.data);
+            return follow(app, step);
+        }
+        Outcome::AutoUpdateSaved(_) => {
+            let step = match &mut app.screen {
+                Screen::AutoUpdate(state) => state.flow.apply(&event),
+                _ => updates::apply(&event, &app.data),
             };
-            notice(app, kind, summary.text);
+            return follow(app, step);
         }
         Outcome::FeedProbed(_) => {
             if let Screen::AddFeed(state) = &mut app.screen {
@@ -2054,21 +1970,6 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                 return follow(app, step);
             }
         }
-        Outcome::UpdatesApplied(report) => {
-            if matches!(app.screen, Screen::Review(_) | Screen::UpdateResults(_)) {
-                pop(app);
-            }
-            push(app, Screen::UpdateResults(UpdateResultsState { report, choice: 0 }));
-        }
-        Outcome::AutoUpdateSaved(result) => match result {
-            Ok(()) => {
-                if matches!(app.screen, Screen::AutoUpdate(_)) {
-                    pop(app);
-                }
-                notice(app, NoticeKind::Ok, "Auto-update choices saved.");
-            }
-            Err(text) => fail(app, text),
-        },
         Outcome::LogsLoaded { .. } => {
             if let Screen::Logs(state) = &mut app.screen {
                 let shown = app.data.log_sources.get(state.selected).map(String::as_str);
@@ -2527,15 +2428,6 @@ fn click(app: &mut App, click: crate::hit::Click) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn window_parsing_accepts_only_two_different_valid_times() {
-        assert_eq!(parse_window("03:00 to 05:00"), Some(("03:00".to_owned(), "05:00".to_owned())));
-        assert_eq!(parse_window("23:00 to 01:00"), Some(("23:00".to_owned(), "01:00".to_owned())));
-        assert_eq!(parse_window("03:00 to 03:00"), None);
-        assert_eq!(parse_window("25:00 to 05:00"), None);
-        assert_eq!(parse_window("3am to 5am"), None);
-    }
 
     fn mail_form() -> SettingsForm {
         let field = |key: &str, kind: FieldKind, required: bool, value: &str| Field {
