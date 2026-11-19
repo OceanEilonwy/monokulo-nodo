@@ -201,7 +201,7 @@ check "the helper's gate is open for its account now, and never takes its own sw
 	webctl web-gui-status | flat | tee /dev/stderr | grep -q "enabled: true.*open: true" && webctl services | grep -q cuprated &&
 	webctl web-gui 0 2>&1 | tee /dev/stderr | grep -q "Err(Denied)" && ctl web-gui-status | flat | grep -q "enabled: true"'
 page() { [ "$(web "$OWN" "$1" -H "Cookie: $(session)")" = 200 ] && grep -q "$2" "$work/body"; }
-check "Home is served to the session" page / "<nav class=\"tabs\""
+check "Home is served to the session" page / "<nav class=\"nav\""
 check "an app's page shows the real device" page /apps/cuprated "cuprated"
 check "System shows the web GUI as on, without a switch" sh -c '
 	[ "$(web "$0" /system -H "Cookie: $1")" = 200 ] && grep -q "Web GUI" /tmp/webgui-e2e/body && grep -q "● </span>On" /tmp/webgui-e2e/body &&

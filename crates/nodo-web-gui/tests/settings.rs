@@ -55,7 +55,7 @@ async fn every_kind_of_field_has_its_control_and_a_change_is_checked_as_it_is_ma
     let mut browser = app.login().await;
     let page = browser.get(SETTINGS).await;
     assert_eq!(page.status, StatusCode::OK);
-    page.assert_has("<h1>Settings</h1>").assert_has("No changes yet").assert_has("moneropay restarts with the new settings.");
+    page.assert_has("<h2>Settings</h2>").assert_has("No changes yet").assert_has("moneropay restarts with the new settings.");
     page.assert_has(r#"name="f.daemon_rpc" value="http://127.0.0.1:18081""#);
     page.assert_has(r#"name="f.api_port" value="5000""#).assert_has(r#"inputmode="numeric""#);
     page.assert_has(r#"<select id="f-log_level" name="f.log_level""#).assert_has(r#"<option value="info" selected>"#);
@@ -72,9 +72,11 @@ async fn every_kind_of_field_has_its_control_and_a_change_is_checked_as_it_is_ma
     htmx.htmx = true;
     let row = htmx.post(&format!("{SETTINGS}/field/api_port"), &[("f.api_port", "http")]).await;
     assert_eq!(row.status, StatusCode::OK);
-    assert!(row.body.starts_with(r#"<div class="setting" id="field-api_port">"#), "{}", row.body);
+    assert!(row.body.starts_with(r#"<div class="frow changed" id="field-api_port">"#), "{}", row.body);
     row.assert_has("✕ Port must be a number from 1 to 65535.").assert_has(r#"aria-invalid="true""#).assert_has("changed");
     row.assert_has(r#"<p id="changes" class="warn" hx-swap-oob="true">1 change, not saved yet</p>"#).assert_lacks("<html");
+    // The count inside the Save button is replaced with it.
+    row.assert_has(r#"<span class="bcnt" id="save-count" aria-hidden="true" hx-swap-oob="true">1</span>"#);
 
     // The same for each kind, in the flow's words.
     for (key, value, problem) in [
@@ -166,7 +168,7 @@ async fn a_reference_is_picked_placed_taken_back_typed_instead_and_removed() {
 
     // One that fits goes into the field, with what it resolves to and the way back.
     let placed = browser.post_then("/apps/moneropay/settings/reference/choose", &[("app", "cuprated"), ("setting", "rpc_url")]).await;
-    placed.assert_has("<h1>Settings</h1>").assert_has("cuprated·rpc_url").assert_has("→ http://127.0.0.1:18081").assert_has("1 change, not saved yet");
+    placed.assert_has("<h2>Settings</h2>").assert_has("cuprated·rpc_url").assert_has("→ http://127.0.0.1:18081").assert_has("1 change, not saved yet");
     placed.assert_has("↺ Undo: back to http://127.0.0.1:18081").assert_lacks(r#"name="f.daemon_rpc""#);
     let undone = press(&mut browser, "undo:daemon_rpc", &[]).await;
     undone.assert_has(r#"name="f.daemon_rpc" value="http://127.0.0.1:18081""#).assert_has("No changes yet").assert_lacks("cuprated·rpc_url");
@@ -212,7 +214,7 @@ async fn a_setting_that_is_not_public_is_asked_about_and_saving_says_what_the_re
     // Approved: the reference goes into the field and the approval is said, once.
     browser.post("/apps/moneropay/settings/reference/choose", &[("app", "cuprated"), ("setting", "zmq_url")]).await;
     let granted = browser.post_then("/apps/moneropay/settings/reference/grant", &[]).await;
-    granted.assert_has("<h1>Settings</h1>").assert_has("cuprated·zmq_url").assert_has("Approved: moneropay can use cuprated.zmq_url.");
+    granted.assert_has("<h2>Settings</h2>").assert_has("cuprated·zmq_url").assert_has("Approved: moneropay can use cuprated.zmq_url.");
     assert_eq!(granted.body.matches("Approved:").count(), 1, "{}", granted.body);
     // The picker is done with.
     assert_eq!(browser.get("/apps/moneropay/settings/reference").await.location(), SETTINGS);

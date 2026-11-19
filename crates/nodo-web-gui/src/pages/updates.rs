@@ -25,7 +25,7 @@ use nodo_ui_core::words::update_note;
 use nodo_ui_core::words::{self, day, Tone};
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{follow_plain, no_flow, Reply};
 
 const TRAIL: [(&str, &str); 2] = [("System", dest::SYSTEM), ("Updates", dest::UPDATES)];
@@ -86,72 +86,105 @@ fn page(snapshot: &Snapshot, ticked: &[String]) -> Page {
         0 => "automatic updates are off".to_owned(),
         n => format!("automatic for {n}"),
     };
+    let ticked_count = apps.iter().filter(|item| ticked.contains(&item.name)).count();
     let body = html! {
-        div.head {
-            h1 { "Updates" }
-            div.actions {
-                // Its own form: checking needs none of the ticks to be valid.
-                button.btn type="submit" form="updates" name="do" value="check" { "Check now" }
-            }
-        }
         form.stack #updates method="post" action=(dest::UPDATES) {
-            @if let Some(update) = nodo {
-                section.card.attn {
-                    h2 { "The Nodo" span.dim { "   " (update.from) "  →  " (update.to) } }
-                    div.head {
-                        p.dim {
-                            @match &update.note {
-                                UpdateNote::RestartNeeded => { "Needs a restart. Apps stop safely first." },
-                                UpdateNote::Withdrawal(withdrawn) => { "Replaces " (withdrawn) ", which its publisher withdrew." },
-                                _ => { "No restart needed." },
+            section.sec {
+                h2 {
+                    span { "The Nodo" }
+                    // Checking needs none of the ticks to be valid.
+                    button.btn type="submit" name="do" value="check" { "Check now" }
+                }
+                table.kv {
+                    tbody {
+                        @if let Some(update) = nodo {
+                            tr { td { "Version" } td { span.mono { (update.from) "  →  " (update.to) } " " (layout::label("info", "Update ready")) @if update.held { " " (layout::label("off", "Held back")) } } }
+                            tr {
+                                td { "What it needs" }
+                                td.sub {
+                                    @match &update.note {
+                                        UpdateNote::RestartNeeded => { "Needs a restart. Apps stop safely first." },
+                                        UpdateNote::Withdrawal(withdrawn) => { "Replaces " (withdrawn) ", which its publisher withdrew." },
+                                        _ => { "No restart needed." },
+                                    }
+                                }
                             }
-                            @if update.held { " Held back." }
                         }
-                        button.btn.primary type="submit" name="do" value="system" {
-                            @if update.note == UpdateNote::RestartNeeded { "Update and restart" } @else { "Update the Nodo" }
+                        @if !snapshot.overview.updates_checked.is_empty() {
+                            tr { td { "Last checked" } td.sub { (snapshot.overview.updates_checked) } }
+                        }
+                    }
+                }
+                @if let Some(update) = nodo {
+                    div.foot {
+                        span.sub { "Each app keeps its settings and can be undone." }
+                        div.btns {
+                            button.btn.primary type="submit" name="do" value="system" {
+                                @if update.note == UpdateNote::RestartNeeded { "Update and restart" } @else { "Update the Nodo" }
+                            }
                         }
                     }
                 }
             }
-            section.card {
+            section.sec {
                 h2 { "Apps" }
-                @if apps.is_empty() { p.dim { "Every app is up to date." } }
-                @for item in &apps {
-                    @let (note, wants_eye) = update_note(item);
-                    div.setting {
-                        label.check {
-                            input type="checkbox" name="tick" value=(item.name) checked[ticked.contains(&item.name)];
-                            strong { (item.name) }
-                            span.dim { (item.from) "  →  " (item.to) }
-                        }
-                        @if !note.is_empty() { p class=(if wants_eye { "warn" } else { "dim" }) { (note) } }
-                        div.actions {
-                            a href=(format!("{}/changes/{}", dest::UPDATES, dest::seg(&item.name))) { "What changes" }
-                            @if item.held {
-                                button.btn.link type="submit" name="do" value=(format!("release:{}", item.name)) { "Release it" }
-                            } @else {
-                                button.btn.link type="submit" name="do" value=(format!("hold:{}", item.name)) { "Hold it back" }
+                @if apps.is_empty() {
+                    p.dim { "Every app is up to date." }
+                } @else {
+                    div.tbox {
+                        table {
+                            thead { tr { th.tick { span.vh { "Ticked" } } th { "App" } th { "Installed" } th { "Ready" } th { "From" } th.end { "Actions" } } }
+                            tbody {
+                                @for item in &apps {
+                                    @let (note, wants_eye) = update_note(item);
+                                    @let id = format!("tick-{}", dest::seg(&item.name));
+                                    tr {
+                                        td.tick { input type="checkbox" id=(id) name="tick" value=(item.name) checked[ticked.contains(&item.name)]; }
+                                        td {
+                                            label for=(id) { strong { (item.name) } }
+                                            @if !note.is_empty() { div class=(if wants_eye { "sub warn" } else { "sub" }) { (note) } }
+                                        }
+                                        td.mono { (item.from) }
+                                        td.mono { (item.to) }
+                                        td.sub { (item.source) }
+                                        td {
+                                            div.btns {
+                                                a.btn href=(format!("{}/changes/{}", dest::UPDATES, dest::seg(&item.name))) { "What changes" }
+                                                @if item.held {
+                                                    button.btn type="submit" name="do" value=(format!("release:{}", item.name)) { "Release it" }
+                                                } @else {
+                                                    button.btn type="submit" name="do" value=(format!("hold:{}", item.name)) { "Hold it back" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                @if !apps.is_empty() {
-                    div.head {
-                        p.dim { "Each app keeps its settings and can be undone." }
-                        button class=(if nodo.is_none() { "btn primary" } else { "btn" }) type="submit" name="do" value="apps" { "Update the ticked apps" }
+                    div.foot {
+                        span.sub { (ticked_count) " ticked · Each app keeps its settings and can be undone." }
+                        div.btns {
+                            button class=(if nodo.is_none() { "btn primary" } else { "btn" }) type="submit" name="do" value="apps" { "Update the ticked apps" }
+                        }
                     }
                 }
             }
         }
-        section.card.flush {
-            div.rows {
-                (layout::row(dest::AUTO_UPDATE, "Automatic updates", &automatic, html! {}))
-                (layout::row(dest::UNDO, "Undo an update", "Put an app back to the version before", html! {}))
+        section.sec {
+            h2 { "Automatic updates" a.btn href=(dest::AUTO_UPDATE) { "Change" } }
+            table.kv { tbody { tr { td { "Now" } td { (automatic) } } } }
+        }
+        section.sec {
+            h2 { "Undo an update" }
+            div.foot {
+                span.sub { "Put an app back to the version before." }
+                div.btns { a.btn href=(dest::UNDO) { "Undo an update" } }
             }
         }
-        @if !snapshot.overview.updates_checked.is_empty() { p.dim.small { (snapshot.overview.updates_checked) } }
     };
-    Page { trail: trail(&[]), ..Page::new(Tab::System, "Updates", body) }
+    let head = layout::heading("Updates", Some("Update the Nodo and its apps now, or let them update by themselves in a quiet hour."));
+    Page { trail: trail(&[]), ..Page::new(Tab::System, "Updates", body) }.head(head).sub(Sub::Updates)
 }
 
 /// `GET /system/updates`. The ticks are the flow's for a page that opens, or the ones the last
@@ -418,37 +451,46 @@ fn auto_update_page(flow: &AutoUpdate, window: &str) -> Page {
         }
         p.lead { "Only versions that ask for nothing new. Anything else waits for you." (next) }
         form.stack method="post" action=(dest::AUTO_UPDATE) {
-            section.card {
-                div.field {
-                    label for="frequency" { "How often" }
-                    select id="frequency" name="frequency" {
-                        @for each in &draft.frequencies { option value=(each) selected[*each == draft.frequency] { (each) } }
-                    }
-                }
-                div.field {
-                    label for="window" { "Between" }
-                    input type="text" id="window" name="window" value=(window) autocomplete="off" inputmode="numeric"
-                        aria-invalid=[problem.map(|_| "true")] aria-describedby=[problem.map(|_| "window-problem")];
-                    @if let Some(problem) = problem { p.problem #window-problem { "✕ " (problem) } }
-                    p.hint { "The Nodo's own time, as 03:00 to 05:00." }
-                }
-            }
-            section.card {
-                h2 { "Update these apps by themselves" }
-                @for entry in &draft.packages {
-                    div.setting {
-                        label.check {
-                            input type="checkbox" name="on" value=(entry.name) checked[entry.enabled];
-                            strong { @if entry.name == SYSTEM_BASE { "Update the Nodo by itself" } @else { (entry.name) } }
+            section.sec {
+                h2 { "When" }
+                div.body {
+                    div.frow {
+                        label for="frequency" { "How often" }
+                        div.fld {
+                            select id="frequency" name="frequency" {
+                                @for each in &draft.frequencies { option value=(each) selected[*each == draft.frequency] { (each) } }
+                            }
                         }
-                        // Shown whether it is on or not: a browser has no row in focus.
-                        @if entry.shows_warning(true) { p.warn { "▲ Runs new code without your review" } }
-                        @if !entry.note.is_empty() { p.dim { (entry.note) } }
-                        @if entry.name == SYSTEM_BASE { p.dim { "Updates that need a restart always wait for you, whatever this says." } }
+                    }
+                    div.frow {
+                        label for="window" { "Between" }
+                        div.fld {
+                            input type="text" id="window" name="window" value=(window) autocomplete="off" inputmode="numeric"
+                                aria-invalid=[problem.map(|_| "true")] aria-describedby=[problem.map(|_| "window-problem")];
+                            @if let Some(problem) = problem { p.problem #window-problem { "✕ " (problem) } }
+                            p.hint { "The Nodo's own time, as 03:00 to 05:00." }
+                        }
                     }
                 }
             }
-            div.actions.end {
+            section.sec {
+                h2 { "Update these apps by themselves" }
+                div.body {
+                    @for entry in &draft.packages {
+                        div.setting {
+                            label.check {
+                                input type="checkbox" name="on" value=(entry.name) checked[entry.enabled];
+                                strong { @if entry.name == SYSTEM_BASE { "Update the Nodo by itself" } @else { (entry.name) } }
+                            }
+                            // Shown whether it is on or not: a browser has no row in focus.
+                            @if entry.shows_warning(true) { p.warn { "▲ Runs new code without your review" } }
+                            @if !entry.note.is_empty() { p.dim { (entry.note) } }
+                            @if entry.name == SYSTEM_BASE { p.dim { "Updates that need a restart always wait for you, whatever this says." } }
+                        }
+                    }
+                }
+            }
+            div.applybar {
                 // With htmx the question about unsaved choices comes over the form, which keeps
                 // them if the answer is to stay; without, staying shows the stored choices.
                 button.btn type="submit" name="do" value="leave" hx-post=(dest::AUTO_UPDATE) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }

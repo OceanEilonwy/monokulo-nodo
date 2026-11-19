@@ -26,7 +26,7 @@ use nodo_ui_core::words::status_word;
 use nodo_ui_core::words::empty_catalog_line;
 use crate::ctx::{Ctx, JobSpec, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{follow_plain, no_flow, Reply};
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,10 +85,6 @@ pub async fn search(ctx: Ctx, Query(query): Query<SearchQuery>) -> Response {
         }
         let source = search.feed_filter.as_deref();
         let body = html! {
-            div.head {
-                h1 { "Get apps" }
-                div.actions { a.btn href=(dest::SOURCES) { "Sources ›" } }
-            }
             form.searchbar method="get" action=(dest::GET_APPS) role="search"
                 hx-get=(dest::GET_APPS) hx-trigger="input delay:300ms, submit" hx-target="#results" hx-swap="outerHTML" {
                 input type="search" name="q" value=(query.q) placeholder="Search apps" aria-label="Search apps" autocomplete="off";
@@ -107,7 +103,8 @@ pub async fn search(ctx: Ctx, Query(query): Query<SearchQuery>) -> Response {
             }
             (list)
         };
-        Out::Page(Page::new(Tab::Apps, "Get apps", body).trail(&[("Apps", dest::APPS), ("Get apps", dest::GET_APPS)]))
+        let head = layout::heading("Get apps", Some("What your sources offer. Open one to see what it does before installing."));
+        Out::Page(Page::new(Tab::Apps, "Get apps", body).trail(&[("Apps", dest::APPS), ("Get apps", dest::GET_APPS)]).head(head).sub(Sub::GetApps))
     })
     .await
 }

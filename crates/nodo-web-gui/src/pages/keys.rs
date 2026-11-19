@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::Reply;
 
 /// The keys page's flow with the keys read. A failure to read them is in `error`.
@@ -26,9 +26,8 @@ fn loaded(work: &mut Work<'_>) -> (Setup, Reply) {
 
 fn page(setup: &Setup, line: &str) -> Page {
     let problem = setup.error.as_deref();
+    let head = layout::heading("SSH keys", Some("The keys that may log in to this Nodo over SSH. Whoever holds one can open the terminal interface and a shell."));
     let body = html! {
-        h1 { "SSH keys" }
-        p.lead { "The keys that may log in to this Nodo over SSH. Whoever holds one can open the terminal interface and a shell." }
         section.card.flush {
             @if setup.keys.is_empty() { p.pad.dim { "No key may log in yet." } }
             div.rows {
@@ -62,7 +61,7 @@ fn page(setup: &Setup, line: &str) -> Page {
         }
     };
     let status = if problem.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
-    Page::new(Tab::System, "SSH keys", body).trail(&[("System", dest::SYSTEM), ("SSH keys", dest::KEYS)]).status(status)
+    Page::new(Tab::System, "SSH keys", body).trail(&[("System", dest::SYSTEM), ("SSH keys", dest::KEYS)]).status(status).head(head).sub(Sub::Keys)
 }
 
 /// `GET /system/keys`.

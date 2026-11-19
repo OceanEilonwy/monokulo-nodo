@@ -21,7 +21,7 @@ use crate::glue::{tone, typed_secret};
 use nodo_ui_core::words::{self, cert_status, provider_field_name, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::{follow_plain, no_flow, Reply};
 
 type Posted = Vec<(String, String)>;
@@ -44,31 +44,56 @@ pub async fn list(ctx: Ctx) -> Response {
         let any_public = sites.iter().any(|site| site.exposure.public);
         let certificates = if snapshot.web.certificates.is_empty() { "Certificates and home names".to_owned() } else { snapshot.web.certificates.clone() };
         let body = html! {
-            div.head {
-                h1 { "Sites online" }
-                @if web::ask_all_offline(snapshot).is_some() {
-                    div.actions { (layout::ask(&format!("{}/offline", dest::WEB), "Take all offline…", "btn danger")) }
-                }
-            }
-            section.card.flush {
-                @if sites.is_empty() { p.pad.dim { "No site is online yet." } }
-                div.rows {
-                    @for site in &sites {
-                        (layout::row(&dest::hosting(&site.package), &site.package, &site_address(site), html! {
-                            (reach_words(site)) @if site.locked { " · locked until unlocked" } @if site.local_waiting { " · waiting for a home address" }
-                        }))
+            @if let Some(problem) = &snapshot.web.local_problem {
+                div.alert.warn {
+                    (layout::label("warn", "Home names"))
+                    div.grow {
+                        p { (problem) }
+                        @if let Some(remedy) = &snapshot.web.local_remedy { p.sub { (remedy) } }
                     }
                 }
             }
-            p.dim { "To put another app online, open it in " a href=(dest::APPS) { "Apps" } "." }
-            @if !any_public { p.dim { "Nothing is on the internet, so ports 80 and 443 are closed on this device." } }
-            @if let Some(problem) = &snapshot.web.local_problem {
-                section.card.attn {
-                    p { span.warn aria-hidden="true" { "▲ " } (problem) }
-                    @if let Some(remedy) = &snapshot.web.local_remedy { p.dim { (remedy) } }
+            section.sec {
+                h2 {
+                    span { "Sites" }
+                    @if web::ask_all_offline(snapshot).is_some() {
+                        (layout::ask(&format!("{}/offline", dest::WEB), "Take all offline…", "btn danger"))
+                    }
+                }
+                @if sites.is_empty() {
+                    p.dim { "No site is online yet." }
+                } @else {
+                    div.tbox {
+                        table {
+                            thead { tr { th { "Address" } th { "App" } th { "Also answers at" } th { "Reach" } th.end { "Actions" } } }
+                            tbody {
+                                @for site in &sites {
+                                    @let aliases: Vec<&str> = if site.exposure.public { site.public_aliases.iter().map(|alias| alias.host.as_str()).collect() } else { Vec::new() };
+                                    tr {
+                                        td.mono { (site_address(site)) }
+                                        td { a href=(dest::app(&site.package)) { (site.package) } }
+                                        td { @if aliases.is_empty() { span.sub { "—" } } @else { span.mono.sub { (aliases.join(", ")) } } }
+                                        td {
+                                            (layout::label(if site.exposure.public { "ok" } else if site.exposure.local { "info" } else { "off" }, reach_words(site)))
+                                            @if site.locked { " " (layout::label("warn", "locked until unlocked")) }
+                                            @if site.local_waiting { " " (layout::label("warn", "waiting for a home address")) }
+                                        }
+                                        td { div.btns { a.btn href=(dest::hosting(&site.package)) { "Hosting" } } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                div.foot {
+                    span.sub {
+                        "To put another app online, open it in " a href=(dest::APPS) { "Apps" } "."
+                        @if !any_public { " Nothing is on the internet, so ports 80 and 443 are closed on this device." }
+                    }
                 }
             }
-            section.card.flush {
+            section.sec {
+                h2 { "Settings for the web" }
                 div.rows {
                     (layout::row(dest::PROVIDERS, "Domain providers", &snapshot.connected.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "), html! {}))
                     (layout::row(dest::DOMAIN, "Certificates and home names", &certificates, html! {}))
@@ -81,7 +106,8 @@ pub async fn list(ctx: Ctx) -> Response {
                 p.dim.small { "Home's internet address " span.mono { (snapshot.web.public_ip) } @if !snapshot.web.dns_changed.is_empty() { " · " (snapshot.web.dns_changed) } }
             }
         };
-        Out::Page(Page::new(Tab::Web, "Web", body))
+        let head = layout::heading("Sites online", Some("Which apps answer on the web, at which names, and who can reach them."));
+        Out::Page(Page::new(Tab::Web, "Web", body).head(head).sub(Sub::Sites))
     })
     .await
 }
@@ -209,11 +235,10 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
         },
         // The list, and a key step whose company is not offered any more.
         _ => html! {
-            div.head {
-                h1 { "Domain providers" }
+            div.tools {
+                p.grow.sub { "The key stays on this Nodo, locked with your device passphrase, and is never shown again." }
                 form.actions method="post" action=(here) { (button("add", "Add a provider", "btn primary")) }
             }
-            p.lead { "The companies that hold your web addresses. Add each once; then any app can use their domains." }
             (test)
             @if snapshot.connected.is_empty() { section.card { p.dim { "To use a web address you own, first add the company you bought it from." } } }
             @for each in &snapshot.connected {
@@ -256,11 +281,17 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
                     }
                 }
             }
-            p.dim.small { "The key stays on this Nodo, locked with your device passphrase, and is never shown again. " (MISSING_DOMAIN) }
+            p.dim.small { (MISSING_DOMAIN) }
         },
     };
+    let listing = !matches!((&flow.stage, provider), (ProviderStage::Pick, _) | (ProviderStage::Key, Some(_)) | (ProviderStage::Done { .. }, _));
     let status = if marked.is_some() || matches!(flow.test, Some(Err(_))) { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
-    Page { trail: web_trail(&[("Domain providers", dest::PROVIDERS)]), ..Page::new(Tab::Web, "Domain providers", body) }.status(status)
+    let page = Page { trail: web_trail(&[("Domain providers", dest::PROVIDERS)]), ..Page::new(Tab::Web, "Domain providers", body) }.status(status);
+    if listing {
+        page.head(layout::heading("Domain providers", Some("The companies that hold your web addresses. Add each once; then any app can use their domains."))).sub(Sub::Providers)
+    } else {
+        page
+    }
 }
 
 /// Leaves the provider pages when a reply names a page to go to: they are done with, and
@@ -424,10 +455,6 @@ fn domain_page(snapshot: &Snapshot, flow: &Domain, typed: &DomainTyped) -> Page 
     let local_domain = typed.local_domain.clone().unwrap_or(suggested);
     let email = typed.email.clone().unwrap_or_else(|| acme.email.clone());
     let body = html! {
-        div.head {
-            h1 { "Certificates and home names" }
-            div.actions { a.btn.quiet href=(dest::CERTIFICATES) { "Certificates ›" } a.btn.quiet href=(dest::TRUST) { "Local CA ›" } }
-        }
         // The helper's refusal of a save, in its words, above the fields.
         @if let Some(error) = &flow.error { p.notice.error { "✕ " (error) } }
         form.stack method="post" action=(dest::DOMAIN) {
@@ -521,7 +548,10 @@ fn domain_page(snapshot: &Snapshot, flow: &Domain, typed: &DomainTyped) -> Page 
         }
     };
     let status = if flow.error.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
-    Page { trail: web_trail(&[("Certificates and home names", dest::DOMAIN)]), ..Page::new(Tab::Web, "Certificates and home names", body) }.status(status)
+    Page { trail: web_trail(&[("Certificates and home names", dest::DOMAIN)]), ..Page::new(Tab::Web, "Certificates and home names", body) }
+        .status(status)
+        .head(layout::heading("Certificates and home names", Some("How sites get their certificates, and what local sites are called.")))
+        .sub(Sub::Domain)
 }
 
 /// `GET /web/domain`.
@@ -563,37 +593,45 @@ pub async fn certificates(ctx: Ctx) -> Response {
         let snapshot = &work.snapshot;
         let troubled = snapshot.web.certs.iter().filter(|row| matches!(row.state, nodo_api::CertState::Failed | nodo_api::CertState::Expired)).count();
         let waiting = snapshot.web.certs.iter().any(|row| matches!(row.state, nodo_api::CertState::Waiting | nodo_api::CertState::Obtaining));
-        let body = html! {
-            div.head {
-                h1 { "Certificates" }
-                @match (troubled, waiting) {
-                    (0, false) => p.ok { "✓ Certificates in place" },
-                    (0, true) => p.warn { "◆ Certificates on the way" },
-                    (1, _) => p.err { "✕ 1 certificate needs attention" },
-                    (n, _) => p.err { "✕ " (n) " certificates need attention" },
-                }
+        let head = html! {
+            h1 { "Certificates" }
+            @match (troubled, waiting) {
+                (0, false) => p.desc { (layout::label("ok", "✓ Certificates in place")) },
+                (0, true) => p.desc { (layout::label("warn", "◆ Certificates on the way")) },
+                (1, _) => p.desc { (layout::label("bad", "✕ 1 certificate needs attention")) },
+                (n, _) => p.desc { (layout::label("bad", &format!("✕ {n} certificates need attention"))) },
             }
-            section.card.flush {
-                @if snapshot.web.certs.is_empty() { p.pad.dim { "No site is served yet." } }
-                div.rows {
-                    @for row in &snapshot.web.certs {
-                        @let (how, words) = cert_status(row);
-                        @let (sign, class) = tone(how);
-                        div.row {
-                            span.name.mono { (row.host) }
-                            span.what {
-                                (row.site) @if !row.issuer.is_empty() { " · " (row.issuer) }
-                                @if let Some(problem) = &row.problem { span.note.err { " · " (problem) } }
+        };
+        let body = html! {
+            section.sec {
+                h2 { "Certificates" a.btn href=(dest::DOMAIN) { "Certificate settings" } }
+                @if snapshot.web.certs.is_empty() {
+                    p.dim { "No site is served yet." }
+                } @else {
+                    div.tbox {
+                        table {
+                            thead { tr { th { "Host" } th { "Site" } th { "Issuer" } th { "State" } } }
+                            tbody {
+                                @for row in &snapshot.web.certs {
+                                    @let (how, words) = cert_status(row);
+                                    @let (sign, class) = tone(how);
+                                    tr {
+                                        td.mono { (row.host) }
+                                        td { (row.site) }
+                                        td { (row.issuer) }
+                                        td {
+                                            (layout::label(if class == "err" { "bad" } else { class }, &format!("{sign} {words}")))
+                                            @if let Some(problem) = &row.problem { div.sub.err { (problem) } }
+                                        }
+                                    }
+                                }
                             }
-                            span class=(format!("end {class}")) { (sign) " " (words) }
-                            span.go {}
                         }
                     }
                 }
             }
-            div.actions.end { a.btn href=(dest::DOMAIN) { "Certificate settings" } a.btn href=(dest::TRUST) { "Local CA" } }
         };
-        Out::Page(Page { trail: web_trail(&[("Certificates", dest::CERTIFICATES)]), ..Page::new(Tab::Web, "Certificates", body) })
+        Out::Page(Page { trail: web_trail(&[("Certificates", dest::CERTIFICATES)]), ..Page::new(Tab::Web, "Certificates", body) }.head(head).sub(Sub::Certificates))
     })
     .await
 }
@@ -605,11 +643,11 @@ pub async fn trust(ctx: Ctx) -> Response {
     ctx.with(dest::WEB, |work| {
         let trust = Trust::of(&work.snapshot);
         let lines = trust.fingerprint_lines();
+        let head = html! {
+            h1 { "Local CA" }
+            @match &trust.url { Some(url) => p.desc { (layout::label("ok", "✓ Served")) " " span.mono { (url) } }, None => p.desc { (layout::label("off", "Not served now")) } }
+        };
         let body = html! {
-            div.head {
-                h1 { "Local CA" }
-                @match &trust.url { Some(url) => p.ok { "✓ Served at " (url) }, None => p.dim { "Not served now" } }
-            }
             section.card {
                 h2 { "Trust page" }
                 @match &trust.url {
@@ -631,7 +669,7 @@ pub async fn trust(ctx: Ctx) -> Response {
                 p.dim { "The root vouches only for this device's local sites. Remove it from a device to stop trusting them. Names under your own domain get public certificates instead." }
             }
         };
-        Out::Page(Page { trail: web_trail(&[("Local CA", dest::TRUST)]), ..Page::new(Tab::Web, "Local CA", body) })
+        Out::Page(Page { trail: web_trail(&[("Local CA", dest::TRUST)]), ..Page::new(Tab::Web, "Local CA", body) }.head(head).sub(Sub::Trust))
     })
     .await
 }
@@ -645,16 +683,21 @@ fn onion_loaded(work: &mut Work<'_>) -> (Onion, Reply) {
     (flow, reply)
 }
 
+fn onion_head(flow: &Onion) -> Markup {
+    html! {
+        h1 { "Onion addresses" }
+        @if let Some(status) = &flow.status {
+            p.desc {
+                @if status.tor_running { (layout::label("ok", "● Tor running")) } @else if status.tor_installed { (layout::label("warn", "○ Tor is not running")) } @else { (layout::label("off", "Tor is not installed")) }
+            }
+        }
+    }
+}
+
 fn onion_page(flow: &Onion) -> Markup {
     let action = |what: &str| format!("{}/{what}", dest::ONION);
     let switch = |on: bool| if on { "● On" } else { "○ Off" };
     html! {
-        div.head {
-            h1 { "Onion addresses" }
-            @if let Some(status) = &flow.status {
-                @if status.tor_running { p.ok { "● Tor running" } } @else if status.tor_installed { p.warn { "○ Tor is not running" } } @else { p.dim { "Tor is not installed" } }
-            }
-        }
         @if let Some(error) = &flow.error { p.notice.error { "✕ " (error) } }
         @if let Some(status) = &flow.status {
             @for row in flow.rows() {
@@ -713,7 +756,7 @@ pub async fn onion(ctx: Ctx) -> Response {
         if reply.login_required {
             return Out::Reply(reply);
         }
-        let page = Page { trail: web_trail(&[("Onion addresses", dest::ONION)]), ..Page::new(Tab::Web, "Onion addresses", onion_page(&flow)) };
+        let page = Page { trail: web_trail(&[("Onion addresses", dest::ONION)]), ..Page::new(Tab::Web, "Onion addresses", onion_page(&flow)) }.head(onion_head(&flow)).sub(Sub::Onion);
         Out::Page(page)
     })
     .await

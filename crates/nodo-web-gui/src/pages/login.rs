@@ -16,18 +16,25 @@ use crate::state::AppState;
 
 fn page(problem: Option<&str>, status: StatusCode) -> Response {
     let body = html! {
-        div.gate {
-            section.card {
-                span.brand { span.mark {} "Nodo" }
-                h1 { "Log in to your Nodo" }
-                form.stack method="post" action=(dest::LOGIN) {
-                    (layout::passphrase("passphrase", "Device passphrase", problem, true))
-                    button.btn.primary type="submit" { "Log in" }
-                }
-                p.dim.small { "It is the passphrase that unlocks this Nodo after a restart. Logging in also unlocks it." }
-                p.dim.small { "A lost passphrase can't be recovered; a backup brings the data back." }
-            }
+        div.pagehead {
+            h1 { "Log in to your Nodo" }
         }
+        form.sec method="post" action=(dest::LOGIN) {
+            h2 { "Log in" }
+            div.body {
+                div.frow {
+                    label for="passphrase" { "Device passphrase" }
+                    div.fld {
+                        input type="password" id="passphrase" name="passphrase" autocomplete="current-password" required autofocus
+                            aria-invalid=[problem.map(|_| "true")] aria-describedby=[problem.map(|_| "passphrase-problem")];
+                        @if let Some(problem) = problem { p.problem #passphrase-problem { "✕ " (problem) } }
+                        p.hint { "It is the passphrase that unlocks this Nodo after a restart. Logging in also unlocks it." }
+                    }
+                }
+            }
+            div.foot { div.btns { button.btn.primary type="submit" { "Log in" } } }
+        }
+        p.note { "A lost passphrase can't be recovered; a backup brings the data back." }
     };
     let page = Page::plain("Log in", body).status(status);
     (status, layout::document(&page, &Chrome::signed_out())).into_response()

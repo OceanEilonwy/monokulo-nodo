@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
-use crate::layout::{self, Page};
+use crate::layout::{self, Page, Sub};
 use crate::runner::no_flow;
 
 /// The newest lines are where a failure is, so a long log shows its end.
@@ -109,16 +109,15 @@ fn page(snapshot: &Snapshot, flow: &Logs, source: &str, find: &str) -> Page {
         url(&base, &other, find)
     };
     let body = html! {
-        div.head {
-            h1 { @if flow.app.is_some() { (source) " logs" } @else { "Device logs" } }
-            div.actions { (layout::post(&format!("{base}/save"), "Save to a file", "btn")) }
-        }
-        form.searchbar method="get" action=(base) role="search" {
-            input type="search" name="find" value=(find) placeholder="Search this log" aria-label="Search this log" autocomplete="off";
-            (layout::hidden("problems", &u8::from(flow.errors_only).to_string()))
-            (layout::hidden("follow", &u8::from(flow.follow).to_string()))
-            @if flow.app.is_none() { (layout::hidden("device", "1")) }
-            button.btn type="submit" { "Search" }
+        div.tools {
+            form.searchbar.grow method="get" action=(base) role="search" {
+                input type="search" name="find" value=(find) placeholder="Search this log" aria-label="Search this log" autocomplete="off";
+                (layout::hidden("problems", &u8::from(flow.errors_only).to_string()))
+                (layout::hidden("follow", &u8::from(flow.follow).to_string()))
+                @if flow.app.is_none() { (layout::hidden("device", "1")) }
+                button.btn type="submit" { "Search" }
+            }
+            (layout::post(&format!("{base}/save"), "Save to a file", "btn"))
         }
         nav.chips aria-label="What is listed" {
             a.chip href=(toggled(Logs::toggle_errors_only)) aria-current=[flow.errors_only.then_some("true")] { "Problems only" }
@@ -139,8 +138,8 @@ fn page(snapshot: &Snapshot, flow: &Logs, source: &str, find: &str) -> Page {
         }
     };
     let page = match &flow.app {
-        Some(name) => Page::new(Tab::Apps, format!("{name} logs"), body).trail(&[("Apps", dest::APPS), (name, &dest::app(name)), ("Logs", &base)]),
-        None => Page::new(Tab::System, "Device logs", body).trail(&[("System", dest::SYSTEM), ("Device logs", dest::LOGS)]),
+        Some(name) => super::apps::app_frame(snapshot, name, "Logs", None, format!("{name} logs"), body).trail(&[("Apps", dest::APPS), (name, &dest::app(name)), ("Logs", &base)]),
+        None => Page::new(Tab::System, "Device logs", body).trail(&[("System", dest::SYSTEM), ("Device logs", dest::LOGS)]).head(layout::heading("Device logs", None)).sub(Sub::Logs),
     };
     // Without scripts a followed log is read again by loading the page again.
     if flow.follow { page.waiting() } else { page }
@@ -150,8 +149,8 @@ fn page(snapshot: &Snapshot, flow: &Logs, source: &str, find: &str) -> Page {
 pub async fn device(ctx: Ctx, Query(query): Query<LogQuery>) -> Response {
     ctx.with(dest::SYSTEM, move |work| {
         let Some(source) = work.snapshot.log_sources.first().cloned() else {
-            let body = html! { h1 { "Device logs" } section.card { p.dim { "Nothing here keeps a log yet." } } };
-            return Out::Page(Page::new(Tab::System, "Device logs", body).trail(&[("System", dest::SYSTEM), ("Device logs", dest::LOGS)]));
+            let body = html! { section.card { p.dim { "Nothing here keeps a log yet." } } };
+            return Out::Page(Page::new(Tab::System, "Device logs", body).trail(&[("System", dest::SYSTEM), ("Device logs", dest::LOGS)]).head(layout::heading("Device logs", None)).sub(Sub::Logs));
         };
         let query = LogQuery { device: Some(1), ..query };
         let flow = read(work, &source, &query);

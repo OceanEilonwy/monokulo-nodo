@@ -11,10 +11,10 @@ use nodo_ui_core::model::{AttentionLevel, Snapshot};
 use nodo_ui_core::queries::{HomeItem, Landing};
 use nodo_ui_core::screen::Tab;
 
-use super::drive;
+use super::{apps, drive};
 use crate::glue::typed_secret;
 use nodo_ui_core::words::{home_card, unlock_lines};
-use nodo_ui_core::words::{app_state, health_line};
+use nodo_ui_core::words::{app_state, open_url, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::runner::follow_plain;
 use crate::dest;
@@ -26,19 +26,89 @@ fn seconds_until(at: Duration, now: Duration) -> u64 {
     left.as_secs() + u64::from(left.subsec_nanos() > 0)
 }
 
-/// The unlock card: after a login the device can still be partly locked (a helper that
+/// The unlock strip: after a login the device can still be partly locked (a helper that
 /// restarted since, storage that failed to open), and this is where it is unlocked.
 fn unlock_card(snapshot: &Snapshot, head: &str, body: &str, problem: Option<&str>) -> Markup {
     html! {
-        section.card.attn #unlock {
-            h2 { (head) }
-            p { (body) }
-            @for line in unlock_lines(snapshot, None) { p.dim { (line) } }
-            form.stack method="post" action=(dest::UNLOCK) {
-                (layout::passphrase("unlock-passphrase", "Device passphrase", problem, false))
-                div.actions.end { button.btn.primary type="submit" { "Unlock" } }
+        section.alert.warn #unlock {
+            (layout::label("warn", "Locked"))
+            div.grow {
+                p { strong { (head) "." } " " (body) }
+                @for line in unlock_lines(snapshot, None) { p.sub { (line) } }
+                p.sub { "A lost passphrase can't be recovered; a backup brings the data back." }
             }
-            p.dim.small { "A lost passphrase can't be recovered; a backup brings the data back." }
+            form method="post" action=(dest::UNLOCK) {
+                (layout::passphrase("unlock-passphrase", "Device passphrase", problem, false))
+                button.btn.primary type="submit" { "Unlock" }
+            }
+        }
+    }
+}
+
+/// How much of a disk or of memory is in use, from the device's own words for it: "412 GB of
+/// 1.9 TB" is used of the whole, "3.1 GB free of 7.6 GB" or "… available of …" what is left.
+/// `None` for anything else, which is shown as words without a bar.
+fn usage(value: &str) -> Option<f64> {
+    fn size(number: &str, unit: &str) -> Option<f64> {
+        let scale = match unit {
+            "KB" | "kB" => 1e3,
+            "MB" => 1e6,
+            "GB" => 1e9,
+            "TB" => 1e12,
+            _ => return None,
+        };
+        number.replace(',', "").parse::<f64>().ok().map(|n| n * scale)
+    }
+    let words: Vec<&str> = value.split_whitespace().collect();
+    let (part, left, total) = match words.as_slice() {
+        [n, u, "of", tn, tu] => (size(n, u)?, false, size(tn, tu)?),
+        [n, u, "free" | "available", "of", tn, tu] => (size(n, u)?, true, size(tn, tu)?),
+        _ => return None,
+    };
+    if total <= 0.0 || part > total {
+        return None;
+    }
+    Some(if left { (total - part) / total } else { part / total })
+}
+
+/// The device's own lines: what it is in one table, and the disks and memory with their bars
+/// in another beside it.
+fn device_sections(snapshot: &Snapshot) -> Markup {
+    let rows = &snapshot.overview.device;
+    let (meters, facts): (Vec<_>, Vec<_>) = rows.iter().partition(|(_, value)| usage(value).is_some());
+    html! {
+        div.grid2 {
+            section.sec {
+                h2 { "This Nodo" }
+                table.kv {
+                    tbody {
+                        @for (label, value) in &facts { tr { td { (label) } td { (value) } } }
+                        @if let Some(status) = &snapshot.web_gui {
+                            tr { td { "Web GUI" } td { (layout::label(if status.enabled { "ok" } else { "off" }, if status.enabled { "On" } else { "Off" })) @if let Some(url) = &status.url { " " span.mono { (url) } } } }
+                        }
+                        tr {
+                            td { "Data drive" }
+                            td { @if snapshot.overview.drive.is_some() { (layout::label("bad", "Not connected")) } @else { (layout::label("ok", "Connected")) } }
+                        }
+                    }
+                }
+            }
+            @if !meters.is_empty() {
+                section.sec {
+                    h2 { "Memory and storage" }
+                    table.kv {
+                        tbody {
+                            @for (label, value) in &meters {
+                                @let used = usage(value).unwrap_or_default();
+                                tr {
+                                    td { (label) }
+                                    td { div.meter { meter min="0" max="1" value=(format!("{used:.3}")) aria-label=(format!("{label}: {value}")) {} span.sub { (value) } } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -66,8 +136,8 @@ fn page(work: &mut Work<'_>) -> Page {
     } else {
         "Everything else is running"
     };
+    let sites = snapshot.active_sites();
     let body = html! {
-        h1 { (title) }
         // Where the terminal shows the drive's page in Home's place, the drive's card takes the
         // top here. First setup cannot be due: the web GUI is only on once it is done.
         @match (snapshot.landing(), &snapshot.overview.drive) {
@@ -75,66 +145,91 @@ fn page(work: &mut Work<'_>) -> Page {
             (Landing::Setup, _) => p.notice.error { "✕ This Nodo is not set up yet. Set it up on the device or over SSH." },
             _ => {},
         }
-        @for item in &needs {
-            @if let Some((head, body, label)) = home_card(snapshot, item) {
-                @match item {
-                    HomeItem::Unlock => (unlock_card(snapshot, &head, &body, unlock_problem.as_deref())),
-                    HomeItem::Failing(id) => section.card.bad {
-                        h2 { span.err aria-hidden="true" { "▲ " } (head) }
-                        p.dim { (body) }
-                        div.actions.end { a.btn.primary href=(dest::log(id)) { (label) } }
-                    },
-                    HomeItem::Updates => section.card.attn {
-                        h2 { (head) }
-                        p.dim { (body) }
-                        div.actions.end {
-                            a.btn.primary href=(dest::url(&Dest::Updates { only: None }, dest::HOME)) { (label) }
+        @if !needs.is_empty() || !notes.is_empty() {
+            div.alerts {
+                @for item in &needs {
+                    @if let Some((head, body, label)) = home_card(snapshot, item) {
+                        @match item {
+                            HomeItem::Unlock => (unlock_card(snapshot, &head, &body, unlock_problem.as_deref())),
+                            HomeItem::Failing(id) => section.alert.bad {
+                                (layout::label("bad", &app_state(snapshot, id).0))
+                                p { strong { (head) "." } " " (body) }
+                                a.btn href=(dest::log(id)) { (label) }
+                            },
+                            HomeItem::Updates => section.alert.info {
+                                (layout::label("info", "Updates"))
+                                p { strong { (head) } " — " (body) }
+                                a.btn.pos href=(dest::url(&Dest::Updates { only: None }, dest::HOME)) { (label) }
+                            },
+                            HomeItem::App(_) => {},
                         }
-                    },
-                    HomeItem::App(_) => {},
+                    }
+                }
+                @for note in notes {
+                    @let (kind, word) = match note.level {
+                        AttentionLevel::Critical => ("bad", "Critical"),
+                        AttentionLevel::Warning => ("warn", "Warning"),
+                        AttentionLevel::Info => ("info", "Note"),
+                    };
+                    div class=(format!("alert {kind}")) {
+                        (layout::label(kind, word))
+                        p { (note.text.replace('`', "")) }
+                    }
                 }
             }
         }
-        @if !notes.is_empty() {
-            section.card {
-                ul.bullets {
-                    @for note in notes {
-                        li {
-                            @match note.level {
-                                AttentionLevel::Critical => span.err aria-hidden="true" { "✕" },
-                                AttentionLevel::Warning => span.warn aria-hidden="true" { "▲" },
-                                AttentionLevel::Info => span.dim aria-hidden="true" { "▸" },
+        @if !snapshot.overview.device.is_empty() { (device_sections(snapshot)) }
+        section.sec {
+            h2 {
+                span { @if !problems && !apps.is_empty() { span.ok aria-hidden="true" { "✓ " } } (summary) }
+                a href=(dest::APPS) { "All apps" }
+            }
+            @if apps.is_empty() {
+                p.dim { "Get apps from " a href=(dest::GET_APPS) { "Apps › Get apps" } "." }
+            } @else {
+                div.tbox {
+                    table {
+                        thead { tr { th { "App" } th { "State" } th.end { "Actions" } } }
+                        tbody {
+                            @for id in &apps {
+                                @let site = snapshot.web.sites.iter().find(|site| site.package == *id);
+                                tr {
+                                    td { a href=(dest::app(id)) { strong { (id) } } }
+                                    td { (apps::state_label(snapshot, id)) }
+                                    td {
+                                        div.btns {
+                                            @if let Some(url) = site.and_then(open_url) { a.btn href=(url) rel="noreferrer" { "Open" } }
+                                            a.btn href=(dest::log(id)) { "Logs" }
+                                        }
+                                    }
+                                }
                             }
-                            span { (note.text.replace('`', "")) }
                         }
                     }
                 }
             }
         }
-        section.card.flush {
-            h2 {
-                @if !problems && !apps.is_empty() { span.ok aria-hidden="true" { "✓ " } }
-                (summary)
-            }
-            @if apps.is_empty() {
-                p.pad.dim { "Get apps from " a href=(dest::GET_APPS) { "Apps › Get apps" } "." }
-            }
-            div.rows {
-                @for id in &apps {
-                    @let (state, bad) = app_state(snapshot, id);
-                    (layout::row(&dest::app(id), id, "", html! { span class=[bad.then_some("err")] { (state) } }))
+        @if !sites.is_empty() {
+            section.sec {
+                h2 { "Sites online" a href=(dest::WEB) { "Web settings" } }
+                div.tbox {
+                    table {
+                        thead { tr { th { "Address" } th { "App" } th { "Reach" } } }
+                        tbody {
+                            @for site in &sites {
+                                tr {
+                                    td.mono { (site_address(site)) }
+                                    td { a href=(dest::hosting(&site.package)) { (site.package) } }
+                                    td { (layout::label(if site.exposure.public { "ok" } else { "info" }, reach_words(site))) }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        @let health = health_line(snapshot);
-        @if !health.is_empty() {
-            section.card {
-                h3 { "This Nodo" }
-                p { (health) }
-            }
-        }
     };
-    Page::new(Tab::Home, "Home", body)
+    Page::new(Tab::Home, "Home", body).head(layout::heading(title, Some("What needs you first, then everything else.")))
 }
 
 /// `GET /`.
@@ -228,4 +323,19 @@ pub async fn unlock(ctx: Ctx, Form(form): Form<UnlockForm>) -> Response {
         Out::Go(if from_page { dest::UNLOCK } else { dest::HOME }.to_owned())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::usage;
+
+    #[test]
+    fn usage_is_read_from_the_devices_words_or_not_at_all() {
+        assert_eq!(usage("412 GB of 1.9 TB").map(|used| (used * 1000.0).round()), Some(217.0));
+        assert_eq!(usage("3.1 GB free of 7.6 GB").map(|used| (used * 100.0).round()), Some(59.0));
+        assert_eq!(usage("6.1 GB available of 31.0 GB").map(|used| (used * 100.0).round()), Some(80.0));
+        assert_eq!(usage("3 days"), None);
+        assert_eq!(usage("52 °C"), None);
+        assert_eq!(usage("9 GB of 2 GB"), None);
+    }
 }
