@@ -11,6 +11,7 @@ use nodo_api::Exposure;
 use nodo_ui_core::flows::backup::{self, Backups, Restore};
 use nodo_ui_core::flows::install::{Review, ReviewPurpose, Search};
 use nodo_ui_core::flows::logs::Logs;
+use nodo_ui_core::flows::network::{self, Network};
 use nodo_ui_core::flows::services::AppPage;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
 use nodo_ui_core::flows::setup::Setup;
@@ -22,7 +23,7 @@ use nodo_ui_core::flows::web::hosting::{self, Hosting};
 use nodo_ui_core::flows::web::onion::Onion;
 use nodo_ui_core::flows::web::providers::{KeyField, Providers};
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
-use nodo_ui_core::flows::{Notice, Question};
+use nodo_ui_core::flows::{Confirm, Notice, Question};
 use nodo_ui_core::model::*;
 use nodo_ui_core::queries::HomeItem;
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -433,139 +434,81 @@ pub enum NetworkFocus {
     Bluetooth,
 }
 
-/// A row of the Wi-Fi list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiRow {
-    /// An index into the last scan.
-    InRange(usize),
-    /// An index into the saved networks, for one the last scan did not find.
-    Saved(usize),
-}
+/// How long the Network screen waits for the radios before saying there is no answer yet: the
+/// core's wait, in ticks.
+pub const NO_ANSWER_TICKS: u64 = network::NO_ANSWER_SECONDS * TICKS_PER_SECOND;
 
-/// The passphrase for the network being joined.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WifiPrompt {
-    pub ssid: String,
-    pub security: nodo_api::WifiSecurity,
-    pub passphrase: Input,
-}
-
-/// Where reading one radio's state from the helper stands, kept apart from the status itself so
-/// a panel with nothing to show yet can tell asking from failing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RadioRead {
-    Asking,
-    /// Asked [`NO_ANSWER_TICKS`] ago and still no answer. The helper does one thing at a time,
-    /// so the answer may only be waiting behind something slower.
-    NoAnswer,
-    Failed(String),
-    Read,
-}
-
-/// How long the Network screen waits for the radios before saying there is no answer yet.
-pub const NO_ANSWER_TICKS: u64 = 10 * TICKS_PER_SECOND;
-
-/// Wi-Fi and Bluetooth: both radios, the networks in range and the saved ones, and devices.
+/// The Network page: which radio and which row are chosen, the passphrase box and when the
+/// radios were asked. The radios, the lists and every rule about them are the core's `Network`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkState {
-    pub wifi: Option<nodo_api::WifiStatus>,
-    pub wifi_read: RadioRead,
-    pub bluetooth_read: RadioRead,
+    pub flow: Network,
     /// The tick the radios were last asked for.
     pub asked_at: u64,
-    /// The last scan, strongest first.
-    pub networks: Vec<nodo_api::WifiNetwork>,
-    pub bluetooth: Option<nodo_api::BluetoothStatus>,
     pub focus: NetworkFocus,
     pub wifi_selected: usize,
     pub bt_selected: usize,
-    pub prompt: Option<WifiPrompt>,
-    pub error: Option<String>,
-    /// What the helper is doing, while it works.
-    pub busy: Option<String>,
+    /// The passphrase of the network being joined, typed while the flow's `prompt` is set.
+    pub passphrase: Input,
 }
 
 impl NetworkState {
     pub fn new() -> Self {
         Self {
-            wifi: None,
-            wifi_read: RadioRead::Asking,
-            bluetooth_read: RadioRead::Asking,
+            flow: Network::new(),
             asked_at: 0,
-            networks: Vec::new(),
-            bluetooth: None,
             focus: NetworkFocus::Wifi,
             wifi_selected: 0,
             bt_selected: 0,
-            prompt: None,
-            error: None,
-            busy: Some("Reading the radios…".to_owned()),
+            passphrase: Input::secret(),
         }
-    }
-
-    /// Networks in range, then saved networks the last scan did not find.
-    pub fn wifi_rows(&self) -> Vec<WifiRow> {
-        let mut rows: Vec<WifiRow> = (0..self.networks.len()).map(WifiRow::InRange).collect();
-        if let Some(status) = &self.wifi {
-            for (index, saved) in status.saved.iter().enumerate() {
-                if !self.networks.iter().any(|n| n.ssid == saved.ssid) {
-                    rows.push(WifiRow::Saved(index));
-                }
-            }
-        }
-        rows
-    }
-
-    /// The name, security and saved state of a Wi-Fi row.
-    pub fn wifi_row(&self, row: WifiRow) -> Option<(String, nodo_api::WifiSecurity, bool)> {
-        match row {
-            WifiRow::InRange(i) => self.networks.get(i).map(|n| (n.ssid.clone(), n.security, n.saved || self.is_saved(&n.ssid))),
-            WifiRow::Saved(i) => self.wifi.as_ref()?.saved.get(i).map(|n| (n.ssid.clone(), n.security, true)),
-        }
-    }
-
-    pub fn is_saved(&self, ssid: &str) -> bool {
-        self.wifi.as_ref().is_some_and(|w| w.saved.iter().any(|s| s.ssid == ssid))
-    }
-
-    /// The network the device is joined to, if any.
-    pub fn joined(&self) -> Option<&str> {
-        let wifi = self.wifi.as_ref()?;
-        (wifi.link == nodo_api::WifiLink::Connected).then_some(())?;
-        wifi.ssid.as_deref()
-    }
-
-    /// Whether a radio with nothing to show failed or went unanswered, so asking again helps.
-    pub fn can_ask_again(&self) -> bool {
-        let stuck = |read: &RadioRead| matches!(read, RadioRead::NoAnswer | RadioRead::Failed(_));
-        (self.wifi.is_none() && stuck(&self.wifi_read)) || (self.bluetooth.is_none() && stuck(&self.bluetooth_read))
     }
 
     /// Asks for both radios again, counting the wait from tick `now`.
     pub fn ask_again(&mut self, now: u64) -> Vec<Effect> {
-        self.error = None;
-        self.busy = Some("Reading the radios…".to_owned());
-        self.wifi_read = RadioRead::Asking;
-        self.bluetooth_read = RadioRead::Asking;
         self.asked_at = now;
-        vec![Effect::LoadNetwork]
+        self.flow.ask_again()
     }
 
-    pub fn pairing_running(&self) -> bool {
-        self.bluetooth.as_ref().and_then(|b| b.pairing.as_ref()).is_some_and(|p| {
-            matches!(
-                p.stage,
-                nodo_api::PairingStage::Pairing
-                    | nodo_api::PairingStage::TypePasskey(_)
-                    | nodo_api::PairingStage::ComparePasskey(_)
-            )
-        })
+    /// The owner confirmed a question of this page. The scan goes with the radio, and the cursor
+    /// with the scan.
+    pub fn confirmed(&mut self, confirm: &Confirm) {
+        self.flow.confirmed(confirm);
+        if matches!(confirm, Confirm::WifiOff) {
+            self.wifi_selected = 0;
+        }
+    }
+
+    /// Keeps both selections inside their lists.
+    pub fn clamp(&mut self) {
+        let rows = self.flow.wifi_rows().len();
+        if self.wifi_selected >= rows {
+            self.wifi_selected = rows.saturating_sub(1);
+        }
+        let devices = self.flow.bluetooth.as_ref().map_or(0, |b| b.devices.len());
+        if self.bt_selected >= devices {
+            self.bt_selected = devices.saturating_sub(1);
+        }
     }
 }
 
 impl Default for NetworkState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::ops::Deref for NetworkState {
+    type Target = Network;
+
+    fn deref(&self) -> &Network {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for NetworkState {
+    fn deref_mut(&mut self) -> &mut Network {
+        &mut self.flow
     }
 }
 

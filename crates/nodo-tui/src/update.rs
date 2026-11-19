@@ -545,25 +545,13 @@ fn modal_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The owner confirmed a question. The screens that show the work as running are marked first;
-/// what confirming does comes from the core.
+/// The owner confirmed a question. The flow of the page that asked is told first, so it shows
+/// the work as running; what confirming does comes from the core.
 fn modal_action(app: &mut App, confirm: Confirm) -> Vec<Effect> {
-    match &confirm {
-        Confirm::RollBack { .. } => {
-            if let Screen::Rollbacks(state) = &mut app.screen {
-                state.flow.confirmed(&confirm);
-            }
-        }
-        Confirm::JoinOpenWifi(_) | Confirm::ForgetWifi(_) | Confirm::WifiOff | Confirm::RemoveBluetooth(_) => {
-            if !net::mark_confirmed(app, &confirm) {
-                return Vec::new();
-            }
-        }
-        Confirm::RemoveSshKey(_) => {
-            if let Screen::Setup(state) = &mut app.screen {
-                state.flow.confirmed(&confirm);
-            }
-        }
+    match &mut app.screen {
+        Screen::Rollbacks(state) => state.flow.confirmed(&confirm),
+        Screen::Network(state) => state.confirmed(&confirm),
+        Screen::Setup(state) => state.flow.confirmed(&confirm),
         _ => {}
     }
     let step = confirm.step(&app.data);

@@ -67,6 +67,7 @@ pub mod documents;
 pub mod drive;
 pub mod install;
 pub mod logs;
+pub mod network;
 pub mod services;
 pub mod settings;
 pub mod setup;
@@ -248,11 +249,8 @@ impl Question {
     }
 }
 
-/// What the owner confirmed. `step` carries it out.
-///
-/// The first group belongs to features whose flows are here. The second group is still asked by
-/// the terminal interface, with its own wording, until the slice of its feature moves the
-/// question here; what confirming does is already in `step`, so there is one copy of that.
+/// What the owner confirmed. `step` carries it out. The question itself, with its wording, is
+/// built by the flow that asks it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confirm {
     /// Removes an installed app, by name.
@@ -274,12 +272,13 @@ pub enum Confirm {
     AllSitesOffline,
     /// Disconnects a domain provider, by id.
     RemoveProvider(String),
-
-    /// Joins an open network, whose traffic anyone nearby can read.
+    /// Joins an open network, by name, whose traffic anyone nearby can read.
     JoinOpenWifi(String),
+    /// Forgets a saved network, by name, and deletes its key.
     ForgetWifi(String),
     /// Turns Wi-Fi off while it may be the connection in use.
     WifiOff,
+    /// Unpairs and forgets a Bluetooth device, by address.
     RemoveBluetooth(String),
 }
 
