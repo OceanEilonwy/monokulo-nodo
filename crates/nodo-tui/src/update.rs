@@ -208,7 +208,7 @@ fn open_sources(app: &mut App, selected: usize) -> Vec<Effect> {
     if !matches!(app.screen, Screen::Search(_)) {
         open_get_apps(app, None);
     }
-    push(app, Screen::Feeds { selected, keys: false });
+    push(app, Screen::Feeds { selected, keys: false, renaming: None });
     Vec::new()
 }
 
@@ -500,6 +500,8 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
         Screen::Search(state) if !state.list_focused => Some(&mut state.query),
         Screen::Unlock(state) => Some(&mut state.input),
         Screen::AddFeed(AddFeedState::Address { input, .. }) => Some(input),
+        Screen::AddFeed(AddFeedState::Confirm { naming, .. }) => naming.as_mut(),
+        Screen::Feeds { renaming, .. } => renaming.as_mut().map(|rename| &mut rename.input),
         Screen::FeedKey(state) => state.typing.as_mut(),
         Screen::Settings(state) => state.editing.as_mut(),
         Screen::Reference(state) if !state.list_focused => Some(&mut state.query),
@@ -637,7 +639,7 @@ fn go(app: &mut App, dest: Dest) -> Vec<Effect> {
         Dest::GetApps { source } => return open_get_apps(app, source),
         Dest::ConfirmSource(probe) => {
             if let Screen::AddFeed(state) = &mut app.screen {
-                *state = AddFeedState::Confirm { probe, trust_focused: false };
+                *state = AddFeedState::Confirm { probe, trust_focused: false, naming: None };
             }
         }
         Dest::KeyChange(change) => push(app, Screen::FeedKey(FeedKeyState { change, choice: 0, typing: None, error: None })),
@@ -1032,18 +1034,40 @@ fn unlock_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if let Screen::Feeds { renaming: renaming @ Some(_), .. } = &mut app.screen {
+        if key.code == KeyCode::Esc {
+            *renaming = None;
+            return Vec::new();
+        }
+    }
     if key.code == KeyCode::Esc {
         pop(app);
         return Vec::new();
     }
-    if let Some(effects) = tab_key(app, key) {
-        return effects;
+    let typing = matches!(app.screen, Screen::Feeds { renaming: Some(_), .. });
+    if !typing {
+        if let Some(effects) = tab_key(app, key) {
+            return effects;
+        }
     }
     let feeds = app.data.feeds.clone();
-    let Screen::Feeds { selected, keys } = &mut app.screen else {
+    let Screen::Feeds { selected, keys, renaming } = &mut app.screen else {
         return Vec::new();
     };
     let current = feeds.get(*selected);
+    if let Some(rename) = renaming {
+        match key.code {
+            KeyCode::Enter => match current.map(|feed| sources::rename(&feed.name, rename.input.text())) {
+                Some(Ok(effects)) => return effects,
+                Some(Err(text)) => rename.error = Some(text),
+                None => *renaming = None,
+            },
+            _ => {
+                edit_input(&mut rename.input, key);
+            }
+        }
+        return Vec::new();
+    }
     match key.code {
         KeyCode::Down | KeyCode::Up => step(selected, feeds.len(), key.code == KeyCode::Down),
         KeyCode::Char('a') => {
@@ -1051,6 +1075,12 @@ fn feeds_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Char('r') => return sources::refresh(),
         KeyCode::Char('d') => *keys = !*keys,
+        KeyCode::Char('n') => {
+            if let Some(feed) = current {
+                let input = Input::plain(feed.label.clone().unwrap_or_default());
+                *renaming = Some(FeedRename { input, error: None });
+            }
+        }
         KeyCode::Char('e' | ' ') => {
             if let Some(feed) = current {
                 return sources::toggle(&feed.name);
@@ -1087,7 +1117,18 @@ fn add_feed_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 edit_input(input, key);
             }
         },
-        AddFeedState::Confirm { probe, trust_focused } => match key.code {
+        AddFeedState::Confirm { probe, naming: naming @ Some(_), .. } => match key.code {
+            // The name is kept as it is typed, so Enter and Esc both just leave the box.
+            KeyCode::Enter | KeyCode::Esc => *naming = None,
+            _ => {
+                if let Some(input) = naming.as_mut() {
+                    edit_input(input, key);
+                    probe.label = input.text().to_owned();
+                }
+            }
+        },
+        AddFeedState::Confirm { probe, trust_focused, naming } => match key.code {
+            KeyCode::Char('n') => *naming = Some(Input::plain(probe.label.clone())),
             KeyCode::Left | KeyCode::Right => *trust_focused = !*trust_focused,
             KeyCode::Char('p') => return sources::packages(probe),
             KeyCode::Esc => pop(app),
@@ -1979,6 +2020,20 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
                     step => return follow(app, step),
                 }
             }
+        }
+        Outcome::FeedRenamed(_) => {
+            let step = sources::apply(&event);
+            if let Screen::Feeds { renaming, .. } = &mut app.screen {
+                match (&step, renaming.as_mut()) {
+                    // Why the name was refused is said beside the box it was typed in.
+                    (Step::Failed(refusal), Some(rename)) => {
+                        rename.error = Some(refusal.text.clone());
+                        return Vec::new();
+                    }
+                    _ => *renaming = None,
+                }
+            }
+            return follow(app, step);
         }
         Outcome::FeedTrusted(_) | Outcome::KeyChangeLoaded(_) | Outcome::NewKeyTrusted(_) => {
             let step = sources::apply(&event);

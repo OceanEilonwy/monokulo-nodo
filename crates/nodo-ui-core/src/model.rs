@@ -236,7 +236,10 @@ pub enum FeedStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feed {
+    /// What the device knows the feed by: installed apps and a changed key refer to it.
     pub name: String,
+    /// The name the owner gave it, shown in place of `name`.
+    pub label: Option<String>,
     pub packages: u32,
     pub key_state: KeyState,
     pub checked: String,
@@ -250,10 +253,27 @@ pub struct Feed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedProbe {
     pub name: String,
+    /// The name the owner gives the feed as they add it. Blank keeps `name`.
+    pub label: String,
     pub address: String,
     pub packages: u32,
     pub signed: bool,
     pub fingerprint: String,
+}
+
+impl Feed {
+    /// The feed's name on screen: the owner's, or else the one the device made.
+    pub fn shown(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
+    }
+}
+
+impl FeedProbe {
+    /// The name the feed will be shown by once added.
+    pub fn shown(&self) -> &str {
+        let label = self.label.trim();
+        if label.is_empty() { &self.name } else { label }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -574,7 +594,7 @@ impl CheckReport {
         let unreadable: Vec<String> = unread
             .iter()
             .filter_map(|feed| match &feed.status {
-                FeedStatus::Unreachable(problem) => Some(format!("Could not read {}: {}.", feed.name, clause(problem))),
+                FeedStatus::Unreachable(problem) => Some(format!("Could not read {}: {}.", feed.shown(), clause(problem))),
                 _ => None,
             })
             .collect();
@@ -1019,6 +1039,11 @@ pub enum Area {
 }
 
 impl Snapshot {
+    /// What source `name` is shown as: the name the owner gave it, or `name` itself.
+    pub fn feed_shown<'a>(&'a self, name: &'a str) -> &'a str {
+        self.feeds.iter().find(|feed| feed.name == name).map_or(name, Feed::shown)
+    }
+
     pub fn unavailable(&self, area: Area) -> Option<&str> {
         self.unavailable.iter().find(|(a, _)| *a == area).map(|(_, reason)| reason.as_str())
     }
@@ -1050,6 +1075,8 @@ pub trait ScreenData {
     fn refresh_feeds(&mut self) -> Result<(), String>;
     fn toggle_feed(&mut self, name: &str) -> Result<(), String>;
     fn remove_feed(&mut self, name: &str) -> Result<(), String>;
+    /// Gives feed `name` a name to show; `None` goes back to the one the device made.
+    fn rename_feed(&mut self, name: &str, label: Option<&str>) -> Result<(), String>;
     fn key_change(&self, feed: &str) -> Option<KeyChange>;
     /// `typed` is the feed name as the user typed it. The helper checks it, and both keys.
     fn trust_new_key(&mut self, change: &KeyChange, typed: &str) -> Result<(), String>;
@@ -1234,6 +1261,7 @@ mod tests {
         Feed {
             installed_from: vec![format!("{name}-app")],
             name: name.to_owned(),
+            label: None,
             packages: 1,
             key_state: KeyState::Pinned,
             checked: String::new(),

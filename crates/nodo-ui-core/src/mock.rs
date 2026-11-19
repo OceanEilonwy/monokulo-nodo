@@ -494,6 +494,17 @@ impl MockBackend {
 }
 
 impl MockBackend {
+    /// Refuses a label another feed is already called by, in the helper's words.
+    fn label_free(&self, name: Option<&str>, label: &str) -> Result<(), String> {
+        let taken = self.feeds.iter().filter(|feed| Some(feed.name.as_str()) != name).any(|feed| {
+            feed.name.eq_ignore_ascii_case(label) || feed.label.as_deref().is_some_and(|l| l.eq_ignore_ascii_case(label))
+        });
+        if taken {
+            return Err(format!("another feed is already called {label}"));
+        }
+        Ok(())
+    }
+
     /// The networks in range, marked as saved and joined as the helper marks them.
     pub fn wifi_networks(&self) -> Vec<nodo_api::WifiNetwork> {
         self.access_points
@@ -1266,6 +1277,7 @@ impl ScreenData for MockBackend {
         }
         Ok(FeedProbe {
             name: s(name),
+            label: String::new(),
             address: s(address),
             packages: 9,
             signed: true,
@@ -1278,8 +1290,13 @@ impl ScreenData for MockBackend {
         if self.feeds.iter().any(|feed| feed.name == probe.name) {
             return Err(format!("A feed named {} already exists.", probe.name));
         }
+        let label = Some(probe.label.trim()).filter(|label| !label.is_empty());
+        if let Some(label) = label {
+            self.label_free(None, label)?;
+        }
         self.feeds.push(Feed {
             name: probe.name.clone(),
+            label: label.map(str::to_owned),
             packages: probe.packages,
             key_state: KeyState::Pinned,
             checked: s("just now"),
@@ -1322,6 +1339,21 @@ impl ScreenData for MockBackend {
             return Err(ApiError::NotFound(format!("feed {name}")).to_string());
         }
         self.feeds.retain(|feed| feed.name != name);
+        Ok(())
+    }
+
+    fn rename_feed(&mut self, name: &str, label: Option<&str>) -> Result<(), String> {
+        self.screen_gate().map_err(|refusal| refusal.to_string())?;
+        self.knobs.feeds_failure.clone().map_or(Ok(()), Err)?;
+        if !self.feeds.iter().any(|feed| feed.name == name) {
+            return Err(ApiError::NotFound(format!("feed {name}")).to_string());
+        }
+        if let Some(label) = label {
+            self.label_free(Some(name), label)?;
+        }
+        if let Some(feed) = self.feeds.iter_mut().find(|feed| feed.name == name) {
+            feed.label = label.map(str::to_owned);
+        }
         Ok(())
     }
 
@@ -2070,6 +2102,7 @@ pub fn install_snapshot(id: &PackageId, version: &str, working: usize) -> Instal
 fn sample_feeds() -> Vec<Feed> {
     let feed = |name: &str, packages, key_state, status, address: &str, fingerprint: &str, from: &[&str]| Feed {
         name: s(name),
+        label: None,
         packages,
         key_state,
         checked: s("2 hours ago"),

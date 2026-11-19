@@ -6,7 +6,7 @@ use crossterm::event::KeyCode;
 use super::layout::{Item, Page};
 use super::pad;
 use super::v3::{focused, heading, heading_button, inset, key_row, link, quiet, toggle, trail, Card, Screen3};
-use crate::app::{AddFeedState, App, FeedKeyState};
+use crate::app::{AddFeedState, App, FeedKeyState, FeedRename};
 use crate::hit::{Click, Target};
 use nodo_ui_core::model::*;
 use nodo_ui_core::screen::Tab;
@@ -27,7 +27,7 @@ fn sources_trail(t: &Theme, last: &[&str], targets: &mut Vec<Target>) -> Vec<Ite
     vec![Item::Blank, trail(t, &parts, targets), Item::Blank]
 }
 
-pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
+pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool, renaming: Option<&FeedRename>) -> Page {
     let (w, h) = super::frame_size();
     let mut screen = Screen3::new(app, t, Tab::Apps, w);
     let mut before_targets = Vec::new();
@@ -47,7 +47,10 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
         if index == selected {
             card.focus_here();
         }
-        let mut head = vec![if index == selected { t.a("▸ ") } else { t.n("") }, t.b(feed.name.clone())];
+        let mut head = vec![if index == selected { t.a("▸ ") } else { t.n("") }, t.b(feed.shown().to_owned())];
+        if feed.label.is_some() {
+            head.push(t.d(format!("  {}", feed.name)));
+        }
         if feed.key_state == KeyState::BuiltIn {
             head.push(t.d("   built in"));
         }
@@ -61,9 +64,19 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
         // Tied to the head row, before its button: found by its name anywhere, a source's target
         // also took the address of the source above it (feeds.monokulo.example/official).
         let toggle_text = if feed.status == FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
-        card.on_row(card.next_row(), [Target::card_row(feed.name.clone(), pick(index, None)), Target::text(toggle_text, pick(index, Some(KeyCode::Char(' '))))]);
+        card.on_row(card.next_row(), [Target::card_row(feed.shown().to_owned(), pick(index, None)), Target::text(toggle_text, pick(index, Some(KeyCode::Char(' '))))]);
         card.row_with_button(t, head, "Remove", false, pick(index, Some(KeyCode::Char('x'))));
         card.row(t, vec![t.d(format!("{}   ·   {}", feed.address.trim_start_matches("https://"), counted(u64::from(feed.packages), "app")))]);
+        if let Some(rename) = renaming.filter(|_| index == selected) {
+            card.blank(t);
+            let mut name = vec![t.d(pad("Name", 10))];
+            name.extend(inset(t, rename.input.text(), 30, None, true));
+            card.row(t, name);
+            match &rename.error {
+                Some(error) => card.row(t, vec![t.n(" ".repeat(10)), t.e(format!("✕ {error}"))]),
+                None => card.row(t, vec![t.n(" ".repeat(10)), t.d(format!("Leave it empty to call it {} again.", feed.name))]),
+            }
+        }
         match &feed.status {
             FeedStatus::Unreachable(problem) => {
                 card.blank(t);
@@ -99,7 +112,11 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool) -> Page {
     let mut after_targets = Vec::new();
     screen.after = vec![Item::Blank, link(t, if keys { "Hide keys ‹" } else { "Show keys ›" }, key('d'), &mut after_targets)];
     // Targets after the cards come last, in drawing order.
-    let page_keys = "Keys: ↑↓ choose  Space on/off  a add  x remove  d keys  ↵ its apps  Esc back";
+    let page_keys = if renaming.is_some() {
+        "Keys: type its name  ↵ save  Esc cancel"
+    } else {
+        "Keys: ↑↓ choose  Space on/off  n name  a add  x remove  d keys  ↵ its apps  Esc back"
+    };
     let mut page = screen.stack(t, cards, page_keys, w, h);
     page.targets.extend(after_targets);
     page
@@ -131,9 +148,16 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
             card.buttons(t, &[("Cancel", false, Click::Key(KeyCode::Esc)), ("Check", true, Click::Key(KeyCode::Enter))]);
             "Keys: paste the address  ↵ check  Esc cancel"
         }
-        AddFeedState::Confirm { probe, .. } => {
+        AddFeedState::Confirm { probe, naming, .. } => {
             let mark = if probe.signed { t.o("✓  ") } else { t.e("✕  ") };
-            card.row(t, vec![mark, t.b(probe.name.clone()), t.d(format!("   {}", probe.address))]);
+            card.row(t, vec![mark, t.b(probe.shown().to_owned()), t.d(format!("   {}", probe.address))]);
+            card.blank(t);
+            let mut name = vec![t.d(pad("Name", 10))];
+            let typed = naming.as_ref().map_or(probe.label.as_str(), |input| input.text());
+            name.extend(inset(t, if typed.is_empty() && naming.is_none() { &probe.name } else { typed }, 30, None, naming.is_some()));
+            card.row(t, name);
+            let hint = if naming.is_some() { format!("Leave it empty to call it {}.", probe.name) } else { "Press n to give it a name of your own.".to_owned() };
+            card.row(t, vec![t.n(" ".repeat(10)), t.d(hint)]);
             card.blank(t);
             card.row(t, vec![t.n(format!("It offers {}.", counted(u64::from(probe.packages), "app")))]);
             if !probe.signed {
@@ -153,7 +177,7 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
             let cancel = focused("Cancel", !trust);
             let add = focused("Add source", trust);
             card.buttons(t, &[(cancel.as_str(), false, pick(0, Some(KeyCode::Enter))), (add.as_str(), true, pick(1, Some(KeyCode::Enter)))]);
-            "Keys: ←→ choose  ↵ confirm  p its apps  Esc cancel"
+            if naming.is_some() { "Keys: type its name  ↵ done" } else { "Keys: ←→ choose  ↵ confirm  n name  p its apps  Esc cancel" }
         }
     };
     screen.card(t, card, keys, w, h)

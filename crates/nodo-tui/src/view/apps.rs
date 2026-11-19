@@ -220,7 +220,7 @@ pub fn search(app: &App, t: &Theme, state: &SearchState) -> Page {
     let Item::Row(_, right) = search_row else { unreachable!() };
     // Ctrl, so a click opens Sources while the search box has the cursor instead of typing an s.
     before_targets.push(Target::text("Sources ›", Click::Ctrl('s')));
-    let scope = state.feed_filter.as_deref().map_or_else(String::new, |feed| format!(" from {feed}"));
+    let scope = state.feed_filter.as_deref().map_or_else(String::new, |feed| format!(" from {}", app.data.feed_shown(feed)));
     let count = quiet(t, &format!("{} of {} apps{scope} match. Click one to see what it does before installing.", results.len(), app.data.catalog.len()));
     screen.before = vec![Item::Blank, trail_row, Item::Blank, Item::Row(ratatui::text::Line::from(search), right), Item::Blank, count, Item::Blank];
     screen.targets.extend(before_targets);
@@ -265,7 +265,7 @@ pub fn detail(app: &App, t: &Theme, detail: &PackageDetail) -> Page {
     let mut card = Card::new(t, w);
     card.blank(t);
     let version = if detail.version.is_empty() { String::new() } else { format!("Version {}", detail.version) };
-    let facts: Vec<String> = [version, format!("from {}", detail.id.feed), detail.size.clone()].into_iter().filter(|p| !p.is_empty()).collect();
+    let facts: Vec<String> = [version, format!("from {}", app.data.feed_shown(&detail.id.feed)), detail.size.clone()].into_iter().filter(|p| !p.is_empty()).collect();
     card.row(t, vec![t.b(name.to_owned()), t.d(format!("   {}", facts.join(" · ")))]);
     card.blank(t);
     if !detail.about.is_empty() {

@@ -129,7 +129,7 @@ pub fn empty_catalog_line(snapshot: &Snapshot, query: &str) -> String {
     }
     let enabled: Vec<_> = snapshot.feeds.iter().filter(|f| f.status != FeedStatus::Disabled).collect();
     if let Some((name, problem)) = enabled.iter().find_map(|f| match &f.status {
-        FeedStatus::Unreachable(problem) => Some((&f.name, problem)),
+        FeedStatus::Unreachable(problem) => Some((f.shown(), problem)),
         _ => None,
     }) {
         return format!("Could not read the source {name}: {problem}");

@@ -326,7 +326,7 @@ pub fn real_all(out: &std::path::Path) {
         scenes.push((format!("real-tui-{}", id.slug()), format!("{} (real)", id.slug()), app));
     }
     let (mut app, _) = fixture(ScreenId::Feeds);
-    app.screen = Screen::Feeds { selected: 0, keys: true };
+    app.screen = Screen::Feeds { selected: 0, keys: true, renaming: None };
     scenes.push(("real-tui-feeds-keys".into(), "Sources with keys shown (real)".into(), app));
     scenes.extend(refs_scenes());
     let mut index = Vec::new();

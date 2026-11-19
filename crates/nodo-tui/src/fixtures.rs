@@ -180,10 +180,11 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
             state.failures = 1;
             Screen::Unlock(state)
         }
-        ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false },
+        ScreenId::Feeds => Screen::Feeds { selected: 1, keys: false, renaming: None },
         ScreenId::AddFeed => Screen::AddFeed(AddFeedState::Confirm {
             probe: mock.probe_feed("https://github.com/example/monero-tools-feed").expect("sample feed"),
             trust_focused: false,
+            naming: None,
         }),
         ScreenId::FeedKey => Screen::FeedKey(FeedKeyState {
             change: mock.key_change("old-tools").expect("sample key change"),

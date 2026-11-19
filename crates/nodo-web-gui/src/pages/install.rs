@@ -51,7 +51,7 @@ fn search_url(query: &str, source: Option<&str>) -> String {
 /// The list under the search box. With htmx it alone is replaced as the owner types.
 fn results(snapshot: &Snapshot, search: &Search, query: &str) -> Markup {
     let found = search.results(snapshot, query);
-    let scope = search.feed_filter.as_deref().map_or_else(String::new, |feed| format!(" from {feed}"));
+    let scope = search.feed_filter.as_deref().map_or_else(String::new, |feed| format!(" from {}", snapshot.feed_shown(feed)));
     html! {
         section.stack #results {
             p.dim role="status" {
@@ -96,7 +96,7 @@ pub async fn search(ctx: Ctx, Query(query): Query<SearchQuery>) -> Response {
                     a.chip href=(search_url(&query.q, None)) aria-current=[source.is_none().then_some("true")] { "Every source" }
                     @for feed in &snapshot.feeds {
                         a.chip href=(search_url(&query.q, Some(&feed.name))) aria-current=[(source == Some(feed.name.as_str())).then_some("true")] {
-                            (feed.name)
+                            (feed.shown())
                         }
                     }
                 }
@@ -134,12 +134,13 @@ fn load_detail(work: &mut Work<'_>, id: &PackageId) -> Result<PackageDetail, Rep
     }
 }
 
-fn detail_page(detail: &PackageDetail, has_site: bool) -> Page {
+/// `source` is what the app's source is shown as.
+fn detail_page(detail: &PackageDetail, source: &str, has_site: bool) -> Page {
     let id = &detail.id;
     let here = dest::offer(id);
     let version = if detail.version.is_empty() { String::new() } else { format!("Version {}", detail.version) };
     let facts: Vec<String> =
-        [version, format!("from {}", id.feed), detail.size.clone()].into_iter().filter(|part| !part.is_empty()).collect();
+        [version, format!("from {source}"), detail.size.clone()].into_iter().filter(|part| !part.is_empty()).collect();
     let mut asks: Vec<String> = detail.needs.iter().map(|need| format!("Use {}", need.name)).collect();
     asks.extend(detail.asks.iter().map(|(label, value)| format!("{label}: {value}")));
     if detail.encrypted_storage {
@@ -190,7 +191,8 @@ pub async fn detail(ctx: Ctx, Path((feed, package)): Path<(String, String)>) -> 
         Ok(detail) => {
             // An installed app with a web page: who can open it is one step away.
             let has_site = detail.installed && nodo_ui_core::flows::services::AppPage::new(&detail.id.name).has_site(&work.snapshot);
-            Out::Page(detail_page(&detail, has_site))
+            let source = work.snapshot.feed_shown(&detail.id.feed).to_owned();
+            Out::Page(detail_page(&detail, &source, has_site))
         }
         Err(reply) => Out::Reply(reply),
     })
