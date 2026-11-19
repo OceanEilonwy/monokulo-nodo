@@ -449,10 +449,15 @@ pub fn button(t: &Theme, label: &str, primary: bool, width: usize, under: Color)
 
 /// A button as `button` draws it, with its click target over exactly the drawn cells. While the
 /// work this button started is still running (`App::pending`), it shows the hourglass in front of
-/// its label, dimmed, and has no target, so it cannot be pressed twice.
+/// its label, dimmed, and has no target, so it cannot be pressed twice. Work with several slow
+/// steps names the one it is on in place of the label, so the owner can see it is still going;
+/// only where the step fits in the label's room, so the button never grows and moves its row.
 pub fn button_target(t: &Theme, label: &str, primary: bool, width: usize, under: Color, click: &Click, targets: &mut Vec<Target>) -> Vec<Span<'static>> {
-    if let Some((_, ticks)) = super::pending().filter(|(pending, _)| pending == click) {
-        return pending_button(t, label, width, under, ticks);
+    if let Some((_, ticks, step)) = super::pending().filter(|(pending, ..)| pending == click) {
+        let bare = label.trim_start_matches('!');
+        let room = bare.strip_prefix("▸ ").unwrap_or(bare).chars().count();
+        let shown = step.filter(|step| step.chars().count() <= room).unwrap_or(label);
+        return pending_button(t, shown, width, under, ticks);
     }
     targets.push(Target::button(label.trim_start_matches('!'), click.clone()).drawn(width));
     button(t, label, primary, width, under)

@@ -200,7 +200,7 @@ pub fn updates(app: &App, t: &Theme, state: &UpdatesState) -> Page {
         n => format!("automatic for {n}"),
     };
     // While a check runs, the link says so in place, and is not a target until it is done.
-    let checking = super::pending().filter(|(click, _)| *click == key('r')).map(|(_, ticks)| ticks);
+    let checking = super::pending().filter(|(click, ..)| *click == key('r')).map(|(_, ticks, _)| ticks);
     let check = match checking {
         Some(ticks) => t.d(format!("{} Checking…", super::v3::hourglass(ticks))),
         None => t.a("Check now ›"),
@@ -302,8 +302,8 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             card.blank(t);
             let running = if failure.running { format!("{} {} is running again as before.", failure.restored, failure.name) } else { format!("{} {} isn't running; its log says why.", failure.restored, failure.name) };
             card.row(t, vec![t.n(running)]);
-            if !failure.log_line.is_empty() {
-                card.row(t, vec![t.d(format!("{} said: \"{}\"", failure.name, failure.log_line))]);
+            if let Some(said) = nodo_ui_core::words::update_failure_said(failure) {
+                card.row(t, vec![t.d(said)]);
             }
             for result in report.results.iter().filter(|r| r.applied) {
                 let name = if result.name == SYSTEM_BASE { "The Nodo" } else { result.name.as_str() };
@@ -320,14 +320,26 @@ pub fn results(app: &App, t: &Theme, state: &UpdateResultsState) -> Page {
             let ok = super::v3::focused("OK", state.choice != 1);
             card.buttons(t, &[(again.as_str(), false, pick(1, Some(KeyCode::Enter))), (ok.as_str(), true, pick(0, Some(KeyCode::Enter)))]);
         }
+        // Without a rollback, an update that did not apply was refused before anything changed.
+        // What that comes to, and its words, are the core's.
         None => {
-            let applied = report.results.iter().filter(|r| r.applied).count();
-            card.row(t, vec![t.o("✓  "), t.b(if applied == 1 { "1 update is installed".to_owned() } else { format!("{applied} updates are installed") })]);
+            let came_to = nodo_ui_core::words::update_results(report);
+            let mark = if came_to.tone == nodo_ui_core::words::Tone::Good { t.o("✓  ") } else { t.a("▲  ") };
+            card.row(t, vec![mark, t.b(came_to.headline.clone())]);
             card.blank(t);
-            for result in &report.results {
-                let (mark, text) = if result.applied { (t.o("✓  "), t.n(format!("{} {}", result.name, result.version))) } else { (t.e("✕  "), t.e(format!("{} {}", result.name, result.version))) };
-                let note = if result.note.is_empty() { String::new() } else { format!("   {}", result.note) };
+            for row in &came_to.rows {
+                let (mark, text) = if row.applied { (t.o("✓  "), t.n(row.text.clone())) } else { (t.e("✕  "), t.e(row.text.clone())) };
+                let note = if row.note.is_empty() { String::new() } else { format!("   {}", row.note) };
                 card.row(t, vec![mark, text, t.d(note)]);
+            }
+            if let Some(unchanged) = &came_to.unchanged {
+                if !came_to.rows.is_empty() {
+                    card.blank(t);
+                }
+                card.row(t, vec![t.n(unchanged.clone())]);
+            }
+            if let Some(advice) = came_to.advice {
+                card.row(t, vec![t.d(advice)]);
             }
             card.blank(t);
             card.buttons(t, &[("Done", true, Click::Key(KeyCode::Enter))]);

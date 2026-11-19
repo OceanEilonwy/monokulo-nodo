@@ -49,7 +49,8 @@ pub fn dispatch_async(app: &mut App, worker: &mut EffectWorker, event: Event) {
 }
 
 /// Mirrors the worker's state into the app. Once it is idle, no work a button started can still be
-/// running, so the pending button is cleared even if its result never named it.
+/// running, so the pending button is cleared here. This is what ends it: a result on its own may
+/// only start the next step, as Check and save's saved names start its checks.
 fn sync_working(app: &mut App, worker: &EffectWorker) {
     app.working = worker.busy();
     if !app.working {

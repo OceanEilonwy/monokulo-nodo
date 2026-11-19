@@ -99,7 +99,6 @@ fn the_permission_summary_is_what_the_user_sees() {
     let p = Permissions::of(&manifest(), &["glibc>=2.41_1".into(), "libgcc>=4.4.0_1".into(), "libstdc++>=4.4.0_1".into()]);
     assert!(p.granted.contains(&Permission::OutboundInternet));
     assert!(!p.granted.contains(&Permission::UnencryptedStorage));
-    assert!(p.admin_paths["web"].contains("/admin/*"));
 }
 
 /// Runs the launcher with a stand-in binary that prints what it was given.

@@ -39,12 +39,12 @@ pub(crate) fn frame_size() -> (u16, u16) {
 }
 
 thread_local! {
-    static PENDING: std::cell::RefCell<Option<(Click, u64)>> = const { std::cell::RefCell::new(None) };
+    static PENDING: std::cell::RefCell<Option<(Click, u64, Option<&'static str>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The click of the button whose work is still running on the screen `render` is drawing, with
-/// the tick count for its spinner (`App::pending`).
-pub(crate) fn pending() -> Option<(Click, u64)> {
+/// the tick count for its spinner and the step the work is on, if it names one (`App::pending`).
+pub(crate) fn pending() -> Option<(Click, u64, Option<&'static str>)> {
     PENDING.with(|pending| pending.borrow().clone())
 }
 
@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) -> FitReport {
     let area = frame.area();
     FRAME_SIZE.with(|size| size.set((area.width, area.height)));
     let pending = app.pending.as_ref().filter(|p| p.screen == app.screen.id() && app.modal.is_none());
-    PENDING.with(|cell| *cell.borrow_mut() = pending.map(|p| (p.click.clone(), app.ticks)));
+    PENDING.with(|cell| *cell.borrow_mut() = pending.map(|p| (p.click.clone(), app.ticks, p.step)));
     frame.buffer_mut().set_style(area, theme.base());
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(frame, area, theme);

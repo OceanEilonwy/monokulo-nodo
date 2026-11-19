@@ -203,6 +203,11 @@ impl FakeSystem {
         self.state().mounted.insert(path.to_owned());
     }
 
+    /// As a data drive that was pulled or never came up.
+    pub fn set_unmounted(&self, path: &str) {
+        self.state().mounted.remove(path);
+    }
+
     pub fn mounted(&self, path: &str) -> bool {
         self.state().mounted.contains(path)
     }

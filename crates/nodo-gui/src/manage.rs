@@ -922,6 +922,8 @@ impl Manage {
             Some(Hint::Unlock) => " Unlock the device from Home first.",
             // The switch and the list are on the page the message is shown on.
             Some(Hint::TurnOn | Hint::ScanWifi | Hint::ScanBluetooth | Hint::LookForDrives | Hint::Install) | None => "",
+            // Each provider's card on that page names the domains and what to switch on.
+            Some(Hint::ProviderDetails) => " Domain providers says why.",
         };
         self.say(&format!("{}{how}", notice.text), notice.kind == NoticeKind::Error);
     }
@@ -2839,7 +2841,7 @@ impl Manage {
                 rows.push(buttons(vec![button("provider-kind:", "Cancel", 1), self.change_button("provider-connect", "Connect", 0)]));
                 cards.push(card(format!("Connect {}", p.name), "The key is stored as a secret and never shown again.", rows));
             }
-            (ProviderStage::Done { provider, domains, held_by }, _) => {
+            (ProviderStage::Done { provider, domains, held_by, blocked: _ }, _) => {
                 let mut rows: Vec<MRow> = domains.iter().map(|domain| line(domain, "Its key controls this domain")).collect();
                 if domains.is_empty() {
                     rows.push(text("Its key controls no domain a site can use.", 0));

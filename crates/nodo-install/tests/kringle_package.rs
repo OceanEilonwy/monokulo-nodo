@@ -26,11 +26,11 @@ fn the_manifest_passes_feed_validation_and_names_its_files() {
     assert!(files().join("kringle").exists());
     assert!(m.needs.is_empty());
     assert!(m.storage.encrypted, "names, hints, emails and the draw are user data");
-    assert_eq!(m.network.outbound, Outbound::None, "email is left off");
+    assert_eq!(m.network.outbound, Outbound::Internet, "email goes out through Tuta or SMTP");
     assert!(m.panels.is_empty(), "Kringle has no unauthenticated status endpoint");
     assert_eq!(m.web[0].upstream, "127.0.0.1:8787");
     let p = Permissions::of(&m, &[]);
-    assert!(!p.granted.contains(&Permission::OutboundInternet));
+    assert!(p.granted.contains(&Permission::OutboundInternet));
     assert!(!p.granted.contains(&Permission::UnencryptedStorage));
 }
 
@@ -62,7 +62,7 @@ fn launch(env: &[(&str, &str)]) -> String {
     }
     std::fs::copy(files().join("kringle"), bin.join("kringle")).unwrap();
     let stand_in = libexec.join("kringle");
-    std::fs::write(&stand_in, "#!/bin/sh\nfor a do echo \"arg:$a\"; done\necho \"env:$(env | grep -c '^NODO_\\|^KRINGLE_')\"\n").unwrap();
+    std::fs::write(&stand_in, "#!/bin/sh\nfor a do echo \"arg:$a\"; done\nenv | grep -E '^(KRINGLE_|XDG_CACHE_HOME=)' | sort\necho \"nodo:$(env | grep -c '^NODO_')\"\n").unwrap();
     std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut command = Command::new("sh");
     command.arg(bin.join("kringle")).args(["--addr", "127.0.0.1:8787"]);
@@ -79,11 +79,53 @@ fn launch(env: &[(&str, &str)]) -> String {
 fn the_launcher_passes_the_data_file_and_public_address() {
     assert_eq!(
         launch(&[("NODO_KEEP_DAYS", "120")]),
-        "arg:--data\narg:$HOME/kringle.json\narg:--addr\narg:127.0.0.1:8787\nenv:0\n"
+        "arg:--data\narg:$HOME/kringle.json\narg:--addr\narg:127.0.0.1:8787\nXDG_CACHE_HOME=$HOME/cache\nnodo:0\n"
     );
+    // A KRINGLE_ variable the device did not set never reaches Kringle.
     assert_eq!(
         launch(&[("NODO_PUBLIC_URL", "https://kringle.example.org"), ("KRINGLE_MAIL", "smtp")]),
         "arg:--data\narg:$HOME/kringle.json\narg:--addr\narg:127.0.0.1:8787\n\
-         arg:--public-url\narg:https://kringle.example.org\nenv:0\n"
+         arg:--public-url\narg:https://kringle.example.org\nXDG_CACHE_HOME=$HOME/cache\nnodo:0\n"
     );
+}
+
+#[test]
+fn the_launcher_maps_the_email_settings() {
+    assert_eq!(
+        launch(&[
+            ("NODO_MAIL", "tuta"),
+            ("NODO_TUTA_USER", "kringle@tuta.com"),
+            ("NODO_TUTA_PASSWORD", "s3cret pass"),
+            ("NODO_SMTP_PORT", "587"),
+            ("NODO_UNRELATED", "x"),
+        ]),
+        "arg:--data\narg:$HOME/kringle.json\narg:--addr\narg:127.0.0.1:8787\n\
+         KRINGLE_MAIL=tuta\nKRINGLE_SMTP_PORT=587\nKRINGLE_TUTA_PASSWORD=s3cret pass\nKRINGLE_TUTA_USER=kringle@tuta.com\n\
+         XDG_CACHE_HOME=$HOME/cache\nnodo:0\n"
+    );
+}
+
+#[test]
+fn email_settings_validate_and_default_to_off() {
+    let source = std::fs::read_to_string(files().join("settings.lua")).unwrap();
+    let loaded = load_settings(&source, Limits::default()).unwrap();
+    let schema = loaded.schema().clone();
+    for secret in ["tuta_password", "smtp_password"] {
+        assert_eq!(schema.setting(secret).unwrap().ty.name(), "secret", "{secret}");
+        assert!(schema.setting(secret).unwrap().public.is_none(), "{secret} is never exported");
+    }
+    let mut installed = Installed::default();
+    installed.packages.insert("kringle".into(), InstalledPackage { manifest: manifest(), schema, values: BTreeMap::new() });
+    let resolved = installed.resolve("kringle").unwrap();
+    assert_eq!(resolved.values["mail"], Value::Enum("off".into()), "nothing is sent until the owner says so");
+    let with = |name: &str, value: Value| {
+        let mut values = resolved.values.clone();
+        values.insert(name.into(), value);
+        loaded.validate_values(&values)
+    };
+    assert!(!with("mail", Value::Enum("sendmail".into())).is_empty());
+    assert!(!with("tuta_user", Value::String("kringle".into())).is_empty());
+    assert!(!with("smtp_port", Value::Int(0)).is_empty());
+    assert!(with("mail", Value::Enum("tuta".into())).is_empty());
+    assert!(with("tuta_user", Value::String("kringle@tuta.com".into())).is_empty());
 }

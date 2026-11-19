@@ -1,8 +1,8 @@
 # The app feed
 
 `https://nodo.monokulo.com/feed` is the project's own feed of apps: Monokulo (`mk-pay`), the Bell
-(`mk-bell`), the push relay (`mk-push-relay`), the light wallet server (`mk-lws`) and Kringle. It is
-an ordinary xbps feed, checked on the device like any user-added feed (ARCHITECTURE.md, Feeds),
+(`mk-bell`), the push relay (`mk-push-relay`), the light wallet server (`mk-lws`), Kringle and the
+Library (`library`). It is an ordinary xbps feed, checked on the device like any user-added feed (ARCHITECTURE.md, Feeds),
 with one difference: every image ships it as a default, its key already pinned. Base system
 packages never go in it; they reach devices in signed system snapshots (UPDATES.md).
 

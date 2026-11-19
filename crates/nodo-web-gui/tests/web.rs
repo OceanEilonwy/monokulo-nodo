@@ -142,17 +142,95 @@ async fn the_internet_comes_on_only_after_the_check_and_the_address_typed() {
     // The confirmation is used up.
     assert_eq!(browser.get("/apps/moneropay/hosting/confirm").await.location(), HOSTING);
 
-    // While it is public its address is fixed and no name can be added; one posted anyway is
-    // refused in the flow's words.
+    // While it is public its address is fixed. Another address can still be added, behind its
+    // button (`a_public_site_gains_a_name_once_the_owner_confirms_it`).
     let public = browser.get(HOSTING).await;
-    public.assert_has(r#"name="public" value="on" checked"#).assert_has("To change the address, take the site off the internet first.").assert_lacks(r#"name="alias""#);
-    let refused = browser.post(HOSTING, &[("do", "add-alias"), ("alias", "www.example.com"), ("ticks", "1"), ("local", "on"), ("public", "on")]).await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
-    refused.assert_has("Take the site off the internet before adding another name.");
+    public.assert_has(r#"name="public" value="on" checked"#).assert_has("To change the address, take the site off the internet first.");
+    public.assert_has("Add another address").assert_lacks(r#"name="alias""#).assert_lacks("To add a name, take the site off the internet first.");
 
     // Off the internet again: no question.
     assert_eq!(browser.post(HOSTING, &[("do", "save"), ("ticks", "1"), ("local", "on")]).await.location(), "/web");
     assert!(site_row(&browser.get("/web").await, "moneropay").contains("Home network"));
+}
+
+/// The mock's shop is on the internet at shop.example.com and redirects example.com there.
+const SHOP: &str = "/apps/shop/hosting";
+
+#[tokio::test]
+async fn a_public_site_gains_a_name_once_the_owner_confirms_it() {
+    let app = App::new();
+    let mut browser = app.login().await;
+    let page = browser.get(SHOP).await;
+    page.assert_has(r#"name="public" value="on" checked"#).assert_has("example.com").assert_has("redirects to shop.example.com");
+    page.assert_has(">Add another address<").assert_lacks("take the site off the internet first. Removing").assert_lacks(r#"name="alias""#);
+
+    // The new name goes on the draft; nothing is on the internet before Save and its answer.
+    browser.post(SHOP, &[("do", "open-alias")]).await.assert_has(r#"name="alias""#);
+    let added = browser.post_then(SHOP, &[("adding", "1"), ("do", "add-alias"), ("alias", "www.example.com"), ("mode", "serve")]).await;
+    added.assert_has("www.example.com").assert_has("shows the same site");
+    added.assert_has("shop is on the internet, so a new name goes on it as soon as it is saved. Save asks first.");
+
+    // Saving asks first, about the new name only, and Cancel comes first and has the focus.
+    assert_eq!(browser.post(SHOP, &[("do", "save")]).await.location(), "/confirm");
+    let question = browser.get("/confirm").await;
+    question.assert_has("Add www.example.com to the internet?").assert_has("https://www.example.com  shows the same site");
+    question.assert_has("shop is on the internet, so this happens as soon as you add it.").assert_has("Public certificate logs list www.example.com permanently.");
+    question.assert_lacks("https://example.com  redirects").assert_has(">Add</button>");
+    let cancel = question.body.find(r#"<a class="btn" href="/apps/shop/hosting" autofocus>Cancel</a>"#).expect("Cancel returns to the page, and has the focus");
+    assert!(cancel < question.body.find(">Add</button>").expect("the confirming button"));
+
+    // Cancel keeps the page and the draft, and saves nothing: the name is still one the device
+    // does not have.
+    let kept = browser.get(SHOP).await;
+    kept.assert_has("www.example.com").assert_has("Save asks first.");
+
+    // Saving again asks again; confirmed, the name is saved while the site stays public.
+    assert_eq!(browser.post(SHOP, &[("do", "save")]).await.location(), "/confirm");
+    let saved = confirm(&mut browser, "Add www.example.com to the internet?").await;
+    saved.assert_has("<h1>Sites online</h1>").assert_has("Saved.");
+    assert!(site_row(&saved, "shop").contains("https://shop.example.com") && site_row(&saved, "shop").contains("internet"));
+    let now = browser.get(SHOP).await;
+    now.assert_has("www.example.com").assert_has(r#"name="public" value="on" checked"#).assert_lacks("Save asks first.");
+    // The answer is used up: the question cannot be confirmed a second time.
+    assert_eq!(browser.get("/confirm").await.location(), "/");
+}
+
+#[tokio::test]
+async fn a_public_site_loses_a_name_or_changes_nothing_without_being_asked() {
+    let app = App::new();
+    let mut browser = app.login().await;
+    // Nothing new would go on the internet, so nothing is asked.
+    browser.post_then(SHOP, &[("do", "save")]).await.assert_has("There are no changes to save.");
+    browser.post(SHOP, &[("do", "remove-alias:example.com")]).await;
+    assert_eq!(browser.post(SHOP, &[("do", "save")]).await.location(), "/web");
+    let web = browser.get("/web").await;
+    web.assert_has("Saved.");
+    assert!(site_row(&web, "shop").contains("internet"), "removed while it stays public");
+    browser.get(SHOP).await.assert_lacks("redirects to shop.example.com").assert_lacks("Also answers at");
+    assert_eq!(browser.get("/confirm").await.location(), "/", "no question was kept");
+}
+
+/// Check and save is one piece of work from its first step to its last: the names are saved,
+/// then the checks run. The session is busy for all of it, and a second press is not queued.
+#[tokio::test]
+async fn check_and_save_is_busy_from_saving_the_names_until_the_checks_are_done() {
+    let app = App::new();
+    app.backends.prepare(|mock| mock.knobs.delay = Some(Duration::from_millis(150)));
+    let mut browser = app.login().await;
+    let save = [("do", "save"), ("ticks", "1"), ("local", "on"), ("public", "on"), ("sub", "donate"), ("domain", "example.com")];
+    assert_eq!(browser.post(HOSTING, &save).await.location(), "/working");
+    let session = app.session(&browser).await;
+    assert!(session.running_job(app.state.clock()).is_some());
+    let waiting = browser.get("/working").await;
+    waiting.assert_has("Checking whether the internet can reach your Nodo").assert_has("The names are saved, then the Nodo is tried from outside.");
+    // The page itself says what is running in place of its button, and a second save is refused.
+    let page = browser.get(HOSTING).await;
+    page.assert_has("Checking whether the internet can reach your Nodo").assert_lacks("Check and save");
+    assert_eq!(browser.post(HOSTING, &save).await.location(), HOSTING);
+    // Only the checks' result ends it: the saved names alone led nowhere.
+    assert_eq!(browser.wait_for_job().await.location(), "/apps/moneropay/hosting/confirm");
+    assert!(session.running_job(app.state.clock()).is_none());
+    browser.get("/apps/moneropay/hosting/confirm").await.assert_has("Ready to put moneropay on the internet");
 }
 
 #[tokio::test]
@@ -258,7 +336,28 @@ async fn other_names_are_checked_as_they_are_added() {
     let mut browser = app.login().await;
     let draft = [("ticks", "1"), ("local", "on"), ("public", "on"), ("sub", "donate"), ("domain", "example.com")];
     browser.post(HOSTING, &draft).await;
-    browser.get(HOSTING).await.assert_has("Nothing else yet: only donate.example.com.").assert_has(r#"name="alias""#);
+    // One address is all a site shows until the owner asks for another.
+    let closed = browser.get(HOSTING).await;
+    closed.assert_has(">Add another address<").assert_lacks(r#"name="alias""#).assert_lacks("Also answers at").assert_lacks("New name");
+    // The button opens the boxes for a new name, and giving the name up closes them again.
+    let mut open = draft.to_vec();
+    open.push(("do", "open-alias"));
+    let opened = browser.post(HOSTING, &open).await;
+    assert_eq!(opened.status, StatusCode::OK);
+    opened.assert_has("Also answers at").assert_has(r#"<label for="alias">New name</label>"#).assert_has(r#"name="alias""#).assert_has(r#"name="adding" value="1""#);
+    opened.assert_has("Cancel the new name").assert_lacks(">Add another address<");
+    let mut htmx = browser.clone();
+    htmx.htmx = true;
+    let mut close = draft.to_vec();
+    close.extend([("adding", "1"), ("do", "close-alias")]);
+    let closed = htmx.post(HOSTING, &close).await;
+    assert!(closed.body.starts_with("<form"), "{}", closed.body);
+    closed.assert_has(">Add another address<").assert_lacks(r#"name="alias""#).assert_lacks("Also answers at");
+    // With htmx a tick keeps the boxes open, since the form says they are.
+    let mut ticked = draft.to_vec();
+    ticked.extend([("adding", "1"), ("onion", "on")]);
+    htmx.post(HOSTING, &ticked).await.assert_has(r#"name="alias""#);
+    browser.post(HOSTING, &draft).await;
     let add = |alias: &'static str, mode: &'static str| {
         let mut fields = draft.to_vec();
         fields.extend([("do", "add-alias"), ("alias", alias), ("mode", mode)]);
@@ -270,10 +369,15 @@ async fn other_names_are_checked_as_they_are_added() {
         assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{taken}");
         refused.assert_has(r#"<p class="problem" id="alias-problem">"#);
     }
+    // A refusal keeps the boxes open, with the reason beside them.
+    browser.post(HOSTING, &add("shop.example.com", "serve")).await.assert_has(r#"name="alias""#).assert_has("is already an address of shop.");
     // Said once.
     browser.get(HOSTING).await.assert_lacks("alias-problem\">");
-    // Two that are fine, one of each kind.
-    browser.post_then(HOSTING, &add("tips.example.com", "serve")).await.assert_has("tips.example.com").assert_has("shows the same site");
+    // Two that are fine, one of each kind. A name on the list closes the boxes until another
+    // one is wanted.
+    let added = browser.post_then(HOSTING, &add("tips.example.com", "serve")).await;
+    added.assert_has("tips.example.com").assert_has("shows the same site").assert_has("Also answers at");
+    added.assert_has(">Add another address<").assert_lacks(r#"name="alias""#);
     let both = browser.post_then(HOSTING, &add("give.example.com", "redirect")).await;
     both.assert_has("give.example.com").assert_has("redirects to donate.example.com");
     // Removed.

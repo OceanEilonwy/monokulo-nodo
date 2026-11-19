@@ -1223,12 +1223,15 @@ mod encrypted_updates {
         call(&h, Request::CheckUpdates).unwrap();
         let updates = vec![UpdateApproval { package: "demo".into(), to: "3.0_1".into(), approval: None }];
         let Ok(Response::UpdateResults(results)) = call(&h, Request::ApplyUpdates { updates }) else { panic!() };
+        // Refused, not rolled back: nothing had changed, so nothing was put back or held.
         assert!(
-            matches!(&results[0].outcome, UpdateOutcome::RolledBack { reason, recovered: true, .. } if reason.contains("data layout 1")),
+            matches!(&results[0].outcome, UpdateOutcome::Refused(reason) if reason.contains("data layout 1")),
             "{results:?}"
         );
         assert_eq!(packages.installed().as_deref(), Some("2.0_1"));
+        assert!(!packages.log().iter().any(|l| l == "reinstall demo-2.0_1"), "nothing to roll back");
         assert_eq!(h.data_layout_of("demo"), 2);
+        assert!(!status(&h).candidates[0].info.held);
     }
 
     #[test]
@@ -1270,6 +1273,236 @@ fn the_health_config_lists_apps_on_the_system_disk_and_the_node_on_the_drive() {
     assert_eq!(cfg.filesystems[0].services, ["demo"]);
     assert_eq!(cfg.filesystems[1].services, ["node"]);
     assert_eq!(cfg.filesystems[1].path, Path::new("/media/monero"));
+}
+
+/// Apps whose data the owner keeps in the clear on the data drive (`/media/monero` in the fake).
+mod data_drive_updates {
+    use super::*;
+
+    const COPY: &str = "copy /media/monero/demo /media/monero/.nodo-rollback/demo";
+    const LAYOUT_RECORD: &str = "/media/monero/.nodo-layouts/demo";
+
+    fn layout(n: u32) -> String {
+        manifest(&format!("\n[storage]\ndata_layout = {n}\n"))
+    }
+
+    /// demo 1.0 installed with its data on the data drive, and 2.0 published with `next` as its
+    /// manifest and checked.
+    fn updating(next: &str) -> (Helper<FakeSystem>, FakePackages) {
+        let (h, packages) = setup();
+        h.sys.put("/s/bindings.toml", b"data_drive = [\"demo\"]\n");
+        h.sys.set_mounted("/media/monero");
+        add_feed(&h);
+        let r = review(&h);
+        let Ok(Response::InstallReport(report)) = install(&h, approve(&r)) else { panic!() };
+        assert_eq!(report.problem, None, "{report:?}");
+        assert_eq!(h.data_mount_of("demo").unwrap(), Some(Path::new("/media/monero")));
+        packages.publish("2.0_1", next);
+        // The fake backend unpacks nothing, so the new manifest goes where xbps would put it.
+        h.sys.put("/opt/nodo/apps/demo/manifest.toml", next.as_bytes());
+        status(&h);
+        (h, packages)
+    }
+
+    fn apply(h: &Helper<FakeSystem>) -> Vec<nodo_api::UpdateResult> {
+        let updates = vec![UpdateApproval { package: "demo".into(), to: "2.0_1".into(), approval: None }];
+        let Ok(Response::UpdateResults(results)) = call(h, Request::ApplyUpdates { updates }) else { panic!() };
+        results
+    }
+
+    fn copies(packages: &FakePackages) -> Vec<String> {
+        packages.log().into_iter().filter(|l| l.starts_with("copy ") || l.starts_with("restore ")).collect()
+    }
+
+    #[test]
+    fn the_same_layout_updates_without_copying_the_data() {
+        let (h, packages) = updating(&manifest(""));
+        let results = apply(&h);
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        assert_eq!(packages.installed().as_deref(), Some("2.0_1"));
+        assert!(copies(&packages).is_empty(), "{:?}", packages.log());
+        assert_eq!(h.sys.get(LAYOUT_RECORD), None, "the layout did not change, so nothing is recorded");
+        // A rollback by hand needs no copy either: both versions read this layout.
+        let Ok(Response::Rollbacks(list)) = call(&h, Request::ListRollbacks) else { panic!() };
+        assert_eq!(list[0].blocked, None, "{list:?}");
+        let Ok(Response::UpdateResults(back)) =
+            call(&h, Request::RollbackPackage { package: "demo".into(), to: "1.0_1".into() })
+        else {
+            panic!()
+        };
+        assert_eq!(back[0].outcome, UpdateOutcome::Updated, "{back:?}");
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        assert!(copies(&packages).is_empty(), "{:?}", packages.log());
+    }
+
+    #[test]
+    fn a_failed_same_layout_update_puts_the_old_package_back_on_the_same_data() {
+        let (h, packages) = updating(&manifest(""));
+        h.sys.script_probes(&[false, false, false, false, false]);
+        let results = apply(&h);
+        assert!(matches!(&results[0].outcome, UpdateOutcome::RolledBack { recovered: true, .. }), "{results:?}");
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        let log = packages.log();
+        assert!(log.iter().any(|l| l == "reinstall demo-1.0_1"), "{log:?}");
+        assert!(copies(&packages).is_empty(), "the data is left as it is: {log:?}");
+        assert!(!log.iter().any(|l| l.starts_with("rmtree /media/monero")), "{log:?}");
+        // Its service was written again for the old version, still pointing at the drive.
+        let run = String::from_utf8(h.sys.get("/sv/demo/run").unwrap()).unwrap();
+        assert!(run.contains("DATA_MOUNT=/media/monero\n"), "{run}");
+        assert!(status(&h).candidates[0].info.held, "a version that failed is held");
+    }
+
+    #[test]
+    fn a_raised_layout_copies_the_data_on_the_drive_and_drops_the_copy_once_healthy() {
+        let (h, packages) = updating(&layout(2));
+        let results = apply(&h);
+        assert_eq!(results[0].outcome, UpdateOutcome::Updated, "{results:?}");
+        let log = packages.log();
+        let copied = log.iter().position(|l| l == COPY).unwrap_or_else(|| panic!("{log:?}"));
+        let installed = log.iter().position(|l| l == "install demo-2.0_1").unwrap();
+        let dropped = log.iter().rposition(|l| l == "rmtree /media/monero/.nodo-rollback/demo").unwrap();
+        assert!(copied < installed && installed < dropped, "{log:?}");
+        assert_eq!(h.sys.get(LAYOUT_RECORD).as_deref(), Some(&b"2\n"[..]));
+        // 1.0 cannot read layout 2, so it is shown but cannot be put back.
+        let Ok(Response::Rollbacks(list)) = call(&h, Request::ListRollbacks) else { panic!() };
+        assert!(list[0].blocked.as_deref().unwrap().contains("layout 2"), "{list:?}");
+    }
+
+    #[test]
+    fn a_failed_raised_layout_update_puts_the_copy_back() {
+        let (h, packages) = updating(&layout(2));
+        h.sys.script_probes(&[false, false, false, false, false]);
+        let results = apply(&h);
+        assert!(matches!(&results[0].outcome, UpdateOutcome::RolledBack { recovered: true, .. }), "{results:?}");
+        let log = packages.log();
+        assert!(log.iter().any(|l| l == "restore /media/monero/.nodo-rollback/demo /media/monero/demo"), "{log:?}");
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        assert_eq!(h.sys.get(LAYOUT_RECORD), None, "the data is back in its old layout");
+    }
+
+    #[test]
+    fn a_raised_layout_without_room_is_refused_not_rolled_back_or_held() {
+        let (h, packages) = updating(&layout(2));
+        packages.0.lock().unwrap().free = Some(100 << 20);
+        let results = apply(&h);
+        let UpdateOutcome::Refused(reason) = &results[0].outcome else { panic!("{results:?}") };
+        assert!(reason.contains("data drive"), "{reason}");
+        assert!(reason.contains("needs 257 MB free there and 100 MB is free"), "{reason}");
+        assert!(reason.contains("Free up 157 MB on the data drive"), "{reason}");
+        assert!(results[0].log.is_empty());
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        let log = packages.log();
+        assert!(!log.iter().any(|l| l == "install demo-2.0_1" || l.starts_with("reinstall")), "{log:?}");
+        assert!(!h.sys.calls().iter().any(|c| c.starts_with("sv force-stop demo")), "never stopped");
+
+        let s = status(&h);
+        assert!(!s.candidates[0].info.held, "a refusal holds nothing: {s:?}");
+        assert!(s.attention.is_empty(), "the owner saw it happen: {s:?}");
+        assert!(
+            matches!(&s.history.last().unwrap().kind, nodo_api::UpdateEventKind::NotUpdated { reason } if reason.contains("data drive")),
+            "{s:?}"
+        );
+
+        // With room made, the same version goes ahead.
+        packages.0.lock().unwrap().free = None;
+        assert_eq!(apply(&h)[0].outcome, UpdateOutcome::Updated);
+        let s = status(&h);
+        assert!(
+            !s.history.iter().any(|e| matches!(e.kind, nodo_api::UpdateEventKind::NotUpdated { .. })),
+            "the refusal is no longer news: {s:?}"
+        );
+    }
+
+    #[test]
+    fn an_unattended_refusal_waits_on_home_until_dismissed() {
+        let (h, packages) = updating(&layout(2));
+        auto_on(&h);
+        packages.0.lock().unwrap().minute = 4 * 60;
+        packages.0.lock().unwrap().free = Some(100 << 20);
+        let results = run_auto(&h);
+        assert!(matches!(&results[0].outcome, UpdateOutcome::Refused(_)), "{results:?}");
+        let s = status(&h);
+        assert!(!s.candidates[0].info.held);
+        assert!(matches!(&s.attention[..], [e] if matches!(e.kind, nodo_api::UpdateEventKind::NotUpdated { .. })), "{s:?}");
+        call(&h, Request::DismissUpdate { package: "demo".into() }).unwrap();
+        assert!(status(&h).attention.is_empty());
+    }
+
+    #[test]
+    fn an_unmounted_data_drive_refuses_the_update() {
+        let (h, packages) = updating(&manifest(""));
+        h.sys.set_unmounted("/media/monero");
+        let results = apply(&h);
+        assert!(
+            matches!(&results[0].outcome, UpdateOutcome::Refused(r) if r.contains("data drive is not mounted")),
+            "{results:?}"
+        );
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+    }
+
+    #[test]
+    fn an_older_layout_than_the_data_is_refused() {
+        let (h, packages) = updating(&manifest(""));
+        h.sys.put(LAYOUT_RECORD, b"3\n");
+        let results = apply(&h);
+        assert!(
+            matches!(&results[0].outcome, UpdateOutcome::Refused(r) if r.contains("older than the layout 3")),
+            "{results:?}"
+        );
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+    }
+
+    /// The feed could swap the package between the check and the install. A version that would
+    /// convert data planned to stay in place never starts.
+    #[test]
+    fn a_layout_raised_after_the_check_is_rolled_back_before_it_starts() {
+        let (h, packages) = updating(&manifest(""));
+        h.sys.put("/opt/nodo/apps/demo/manifest.toml", layout(2).as_bytes());
+        let results = apply(&h);
+        assert!(
+            matches!(&results[0].outcome, UpdateOutcome::RolledBack { reason, .. } if reason.contains("no copy to roll back to")),
+            "{results:?}"
+        );
+        assert_eq!(packages.installed().as_deref(), Some("1.0_1"));
+        assert_eq!(h.sys.get(LAYOUT_RECORD), None);
+    }
+
+    /// Before refusals were their own outcome, the owner's device recorded this refusal as a
+    /// rollback and held the version. Nothing was put back then, so the hold goes.
+    #[test]
+    fn a_legacy_refusal_recorded_as_a_rollback_is_mended_and_released() {
+        let (h, _packages) = updating(&manifest(""));
+        let state = r#"
+[holds.versions]
+demo = ["2.0_1"]
+
+[[history]]
+at = 5
+
+[history.outcome.RolledBack]
+package = "demo"
+from = "1.0_1"
+to = "2.0_1"
+reason = "demo keeps its data on the data drive, which an update cannot copy for a rollback yet"
+
+[[attention]]
+at = 5
+
+[attention.outcome.RolledBack]
+package = "demo"
+from = "1.0_1"
+to = "2.0_1"
+reason = "demo keeps its data on the data drive, which an update cannot copy for a rollback yet"
+"#;
+        h.sys.put("/s/updates/state.toml", state.as_bytes());
+        let s = status(&h);
+        assert!(!s.candidates[0].info.held, "{s:?}");
+        assert!(s.attention.is_empty(), "{s:?}");
+        assert!(matches!(&s.history[..], [e] if matches!(e.kind, nodo_api::UpdateEventKind::NotUpdated { .. })), "{s:?}");
+        let saved = String::from_utf8(h.sys.get("/s/updates/state.toml").unwrap()).unwrap();
+        assert!(!saved.contains("RolledBack"), "{saved}");
+        assert_eq!(apply(&h)[0].outcome, UpdateOutcome::Updated);
+    }
 }
 
 mod backups {

@@ -40,6 +40,7 @@ fn the_mock_checks_a_sites_other_names_as_the_helper_does() {
     // The sample shop answers at the bare domain, which the scenario gives monokulo-pay.
     mock.web.sites.iter_mut().for_each(|site| site.public_aliases.clear());
     contract::site_aliases(&mut mock, "monokulo-pay", "example.com", "moneropay.example.com");
+    contract::public_site_gains_confirmed_names(&mut mock, "monokulo-pay", "example.com");
 }
 
 #[test]
@@ -47,6 +48,13 @@ fn the_mock_refuses_what_the_helper_refuses() {
     let mut mock = MockBackend::new();
     contract::missing_sources_fail(&mut mock);
     contract::features_match_capabilities(&mut mock, "shop");
+}
+
+#[test]
+fn the_mock_refuses_an_update_as_the_helper_does() {
+    let mut mock = MockBackend::new();
+    mock.knobs.update_refusals = vec![("moneropay".to_owned(), "not enough room on the data drive".to_owned())];
+    contract::refused_update_changes_nothing(&mut mock, "moneropay");
 }
 
 #[test]

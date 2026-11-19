@@ -233,8 +233,8 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
             let result = plain_result(backend.call(request));
             vec![Outcome::ExposureSet { site, after, result }, refresh(backend)]
         }
-        Effect::SetPublicHost { site, host, aliases, then } => {
-            let result = backend.set_public_host(&site, &host, &aliases);
+        Effect::SetPublicHost { site, host, aliases, confirm_added, then } => {
+            let result = backend.set_public_host(&site, &host, &aliases, &confirm_added);
             vec![Outcome::PublicHostSet { site, result, then }, refresh(backend)]
         }
         Effect::SetPublicAccess { site, access } => match backend.set_public_access(&site, &access) {

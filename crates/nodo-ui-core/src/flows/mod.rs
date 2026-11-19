@@ -312,6 +312,9 @@ pub enum Confirm {
     RemoveBluetooth(String),
     /// Turns the web GUI on, so the device passphrase can be tried from the home network.
     WebGuiOn,
+    /// Saves a Hosting draft whose new names go on the internet at once, since its site is public.
+    /// `names` are the ones the question listed; a draft that adds others is asked about again.
+    AddPublicNames { hosting: Box<web::hosting::Hosting>, names: Vec<String> },
 }
 
 impl Confirm {
@@ -358,6 +361,7 @@ impl Confirm {
             Confirm::RemoveBluetooth(address) => Step::Run(vec![Effect::RemoveBluetooth(address.clone())]),
             Confirm::RemoveProvider(id) => Step::Run(vec![Effect::RemoveProvider(id.clone())]),
             Confirm::WebGuiOn => Step::Run(vec![Effect::SetWebGui(true)]),
+            Confirm::AddPublicNames { hosting, names } => hosting.save_confirmed(snapshot, names),
         }
     }
 }
@@ -397,7 +401,7 @@ mod tests {
         assert!(Effect::CheckReachability { site: "shop".into(), going_public: true }.is_long());
         assert!(!Effect::Refresh.is_long() && !Effect::Restart("tor".into()).is_long());
         // Saving names is quick by itself, and long when a check waits behind it.
-        let names = |then: Vec<Effect>| Effect::SetPublicHost { site: "shop".into(), host: "shop.example.com".into(), aliases: Vec::new(), then };
+        let names = |then: Vec<Effect>| Effect::SetPublicHost { site: "shop".into(), host: "shop.example.com".into(), aliases: Vec::new(), confirm_added: Vec::new(), then };
         assert!(!names(Vec::new()).is_long());
         assert!(names(vec![Effect::CheckReachability { site: "shop".into(), going_public: true }]).is_long());
         let stay = Effect::SetExposure { site: "shop".into(), exposure: Exposure::default(), after: ExposureAfter::Stay, confirmation: None };

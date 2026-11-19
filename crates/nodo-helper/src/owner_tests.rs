@@ -83,6 +83,8 @@ impl ExposureApplier for Web {
             checked_at: None,
             problem: None,
             dns01: Dns01Support::Bundled,
+            key: None,
+            blocked: vec![],
         }])
     }
 

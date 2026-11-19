@@ -24,6 +24,8 @@ pub fn link(hint: Hint) -> Option<(&'static str, &'static str)> {
         Hint::Unlock => Some(("Unlock the Nodo", dest::UNLOCK)),
         Hint::TurnOn | Hint::ScanWifi | Hint::ScanBluetooth => Some(("Open Network", dest::NETWORK)),
         Hint::LookForDrives => Some(("Open Backups", dest::BACKUPS)),
+        // Each provider's card on that page says which domains its key cannot change, and why.
+        Hint::ProviderDetails => Some(("See why", dest::PROVIDERS)),
         Hint::Install => None,
     }
 }
@@ -43,7 +45,7 @@ pub fn network_button(hint: Hint, radio: Radio) -> Option<(&'static str, &'stati
         (Hint::TurnOn, Radio::Bluetooth) => Some(("bluetooth", "Turn Bluetooth on")),
         (Hint::ScanWifi, _) => Some(("scan-wifi", "Look for networks")),
         (Hint::ScanBluetooth, _) => Some(("scan-bluetooth", "Look for devices")),
-        (Hint::Unlock | Hint::LookForDrives | Hint::Install, _) => None,
+        (Hint::Unlock | Hint::LookForDrives | Hint::Install | Hint::ProviderDetails, _) => None,
     }
 }
 
@@ -56,6 +58,7 @@ mod tests {
         assert_eq!(linked(Some(Hint::Unlock)).into_string(), r#" <a href="/unlock">Unlock the Nodo</a>"#);
         assert_eq!(linked(None).into_string(), "");
         assert_eq!(linked(Some(Hint::Install)).into_string(), "");
+        assert_eq!(linked(Some(Hint::ProviderDetails)).into_string(), r#" <a href="/web/providers">See why</a>"#);
         assert_eq!(network_button(Hint::TurnOn, Radio::Bluetooth), Some(("bluetooth", "Turn Bluetooth on")));
         assert_eq!(network_button(Hint::ScanWifi, Radio::Bluetooth), Some(("scan-wifi", "Look for networks")));
     }

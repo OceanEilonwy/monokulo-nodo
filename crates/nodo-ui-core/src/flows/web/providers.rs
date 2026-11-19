@@ -5,8 +5,14 @@
 //! that cannot list them), and see which domains the key controls. A key is only ever sent to
 //! the provider it was typed for, is stored sealed with the device passphrase, and is never shown
 //! again.
+//!
+//! A provider lists only the domains its key may change. So that a domain the owner just allowed
+//! in the provider's account shows up without knowing to ask, opening the list asks every
+//! provider again ([`open_list`]); and each connection has a page of its details: which key it
+//! holds (a masked hint), when its domains were last read, and the domains in the account the key
+//! may not change yet, with what to switch on.
 
-use super::super::{Confirm, Dest, Notice, Question, Step};
+use super::super::{Confirm, Dest, Hint, Notice, Question, Step};
 use crate::model::{ConnectedProvider, DocKind, Provider, Snapshot};
 use crate::secret::Input;
 use crate::{Effect, Outcome};
@@ -20,9 +26,14 @@ pub enum ProviderStage {
     Pick,
     /// The domain and key for the chosen company.
     Key,
-    /// Connected. Holds the provider's name, the domains its key controls that sites can use, and
-    /// the providers already holding the rest (the same account connected twice, most often).
-    Done { provider: String, domains: Vec<String>, held_by: Vec<String> },
+    /// Connected. Holds the provider's name, the domains its key controls that sites can use, the
+    /// providers already holding the rest (the same account connected twice, most often), and the
+    /// account's domains the key may not change yet with what to switch on.
+    Done { provider: String, domains: Vec<String>, held_by: Vec<String>, blocked: Vec<(String, String)> },
+    /// One connected provider: which key it holds, when its domains were last looked up, each
+    /// domain and who uses it, and the domains it cannot change with the reason. Which provider
+    /// is the frontend's to know (its chosen row in the list, its URL).
+    Details,
 }
 
 /// A box of the key step.
@@ -56,6 +67,35 @@ pub fn load() -> Vec<Effect> {
 /// Asks a connected provider again which domains its key controls.
 pub fn refresh(id: &str) -> Vec<Effect> {
     vec![Effect::RefreshProvider(id.to_owned())]
+}
+
+/// What opening the list of connected providers does: each one that can list its domains is asked
+/// again, so a domain the owner just allowed in the provider's account shows up without knowing
+/// to ask. A locked device cannot open the keys, so there the list shows what was last known and
+/// nothing is asked.
+pub fn open_list(snapshot: &Snapshot) -> Vec<Effect> {
+    if snapshot.is_locked() {
+        return Vec::new();
+    }
+    snapshot.connected.iter().filter(|p| p.lists_domains).flat_map(|p| refresh(&p.id)).collect()
+}
+
+/// What looking at a provider's domains again found, in a sentence. A problem is an error. Domains
+/// the key cannot change yet are not, but the owner looking for one needs to know it was found,
+/// so they are named and the notice points at the provider's details.
+pub fn refreshed_notice(provider: &ConnectedProvider) -> Notice {
+    match &provider.problem {
+        Some(problem) => Notice::error(problem.clone()),
+        None if provider.blocked.is_empty() => Notice::ok(format!("{} lists {} domains.", provider.name, provider.domains.len())),
+        None => Notice::info(format!(
+            "{} lists {} domains, and {} more its key can't change yet: {}.",
+            provider.name,
+            provider.domains.len(),
+            provider.blocked.len(),
+            provider.blocked.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+        ))
+        .hinting(Hint::ProviderDetails),
+    }
 }
 
 /// How to make a key at that company, as a document.
@@ -96,10 +136,8 @@ pub fn apply(outcome: &Outcome) -> Step {
         Outcome::ProviderRemoved(Ok(())) => Step::All(vec![Step::Done(Notice::ok("The provider was removed.")), again()]),
         Outcome::ProviderRemoved(Err(text)) => Step::Failed(Notice::error(text.clone())),
         Outcome::ProviderRefreshed(Ok(provider)) => {
-            let said = match &provider.problem {
-                Some(problem) => Step::Failed(Notice::error(problem.clone())),
-                None => Step::Done(Notice::ok(format!("{} lists {} domains.", provider.name, provider.domains.len()))),
-            };
+            let notice = refreshed_notice(provider);
+            let said = if provider.problem.is_some() { Step::Failed(notice) } else { Step::Done(notice) };
             Step::All(vec![said, again()])
         }
         Outcome::ProviderRefreshed(Err(text)) => Step::Failed(Notice::error(text.clone())),
@@ -134,6 +172,13 @@ impl Providers {
         self.stage = ProviderStage::Pick;
         self.test = None;
         load()
+    }
+
+    /// From the list: opens the details of one connected provider. Which one is the frontend's to
+    /// know.
+    pub fn open_details(&mut self) {
+        self.stage = ProviderStage::Details;
+        self.test = None;
     }
 
     /// Another company is looked at, so what was said about the last one no longer stands.
@@ -198,8 +243,8 @@ impl Providers {
     }
 
     /// One step back: from the key to the companies, from the companies to the list (or, when a
-    /// Hosting page opened this, back to it), and from the list to the page that opened it. A
-    /// frontend empties its key boxes when the key step is left.
+    /// Hosting page opened this, back to it), from a provider's details to the list, and from the
+    /// list to the page that opened it. A frontend empties its key boxes when the key step is left.
     pub fn back(&mut self) -> Step {
         match self.stage {
             ProviderStage::List => Step::Go(Dest::Back),
@@ -212,6 +257,10 @@ impl Providers {
             ProviderStage::Key => {
                 self.stage = ProviderStage::Pick;
                 self.test = None;
+                Step::Stay
+            }
+            ProviderStage::Details => {
+                self.stage = ProviderStage::List;
                 Step::Stay
             }
             ProviderStage::Done { .. } => self.finish(),
@@ -235,8 +284,10 @@ impl Providers {
     }
 
     /// What the helper said about the key. Connected: the last step, with the domains the key
-    /// controls. Refused: its words in `test`, on the key step, whose boxes a frontend has
-    /// emptied either way, since nothing typed is kept.
+    /// controls and the ones it cannot change yet. Refused: its words in `test`, on the key step,
+    /// whose boxes a frontend has emptied either way, since nothing typed is kept. A provider
+    /// removed while its details are shown leaves them for the list: they have nothing left to
+    /// show (the notice about the removal is the module's [`apply`]).
     pub fn apply(&mut self, outcome: &Outcome) -> Step {
         match outcome {
             Outcome::ProviderAdded(Ok(provider)) => {
@@ -244,8 +295,13 @@ impl Providers {
                 let mut held_by: Vec<String> = provider.domains.iter().filter_map(|d| d.held_by.clone()).collect();
                 held_by.sort();
                 held_by.dedup();
-                self.stage = ProviderStage::Done { provider: provider.name.clone(), domains, held_by };
+                self.stage =
+                    ProviderStage::Done { provider: provider.name.clone(), domains, held_by, blocked: provider.blocked.clone() };
                 Step::Run(vec![Effect::Refresh])
+            }
+            Outcome::ProviderRemoved(Ok(())) if self.stage == ProviderStage::Details => {
+                self.stage = ProviderStage::List;
+                Step::Stay
             }
             Outcome::ProviderAdded(Err(text)) => {
                 self.test = Some(Err(text.clone()));
@@ -341,10 +397,10 @@ mod tests {
 
         let steps = run(&mut mock, &mut flow, step);
         assert_eq!(steps[0], Step::Run(vec![Effect::Refresh]));
-        let ProviderStage::Done { provider, domains, held_by } = &flow.stage else { panic!("{:?}", flow.stage) };
+        let ProviderStage::Done { provider, domains, held_by, blocked } = &flow.stage else { panic!("{:?}", flow.stage) };
         assert_eq!(provider, "Gandi");
         assert_eq!(domains, &["example.org".to_owned(), "myshop.net".to_owned()]);
-        assert!(held_by.is_empty());
+        assert!(held_by.is_empty() && blocked.is_empty());
         assert_eq!(load_snapshot(&mut mock).expect("the mock answers").connected.len(), before + 1);
 
         // Leaving the last step goes to the list and reads the state again.
@@ -454,7 +510,7 @@ mod tests {
         assert_eq!(from_hosting.back(), Step::Go(Dest::Back));
         assert_eq!(from_hosting.finish(), Step::Stay, "nothing is connected yet");
         from_hosting.stage =
-            ProviderStage::Done { provider: "Gandi".into(), domains: vec!["myshop.net".into()], held_by: Vec::new() };
+            ProviderStage::Done { provider: "Gandi".into(), domains: vec!["myshop.net".into()], held_by: Vec::new(), blocked: Vec::new() };
         let expected = Step::All(vec![
             Step::Go(Dest::HostingWithProvider { domains: vec!["myshop.net".into()] }),
             Step::Run(vec![Effect::Refresh]),
@@ -505,6 +561,85 @@ mod tests {
         assert_eq!(steps[0], Step::Failed(Notice::error("The key no longer works.")));
         assert_eq!(steps[1], Step::Run(vec![Effect::Refresh]), "the state is read again either way");
         assert!(matches!(apply(&Outcome::ProviderRefreshed(Err("No answer.".into()))), Step::Failed(_)));
+    }
+
+    const API_ACCESS_OFF: &str = "API Access is off for this domain. In your Porkbun account, open the domain's details and switch API Access on";
+
+    #[test]
+    fn opening_the_list_asks_every_provider_that_can_list_its_domains_again() {
+        let (mut mock, snapshot) = start();
+        let key = Secret::new("k");
+        mock.add_provider("GoDaddy", Some("mine.example"), &key, &key).expect("one that cannot list its domains");
+        let snapshot_now = load_snapshot(&mut mock).expect("the mock answers");
+        let listing: Vec<Effect> =
+            snapshot_now.connected.iter().filter(|p| p.lists_domains).map(|p| Effect::RefreshProvider(p.id.clone())).collect();
+        assert!(!listing.is_empty() && listing.len() < snapshot_now.connected.len(), "the mock has both kinds");
+        assert_eq!(open_list(&snapshot_now), listing);
+        drop(snapshot);
+
+        // A locked device cannot open the keys: nothing is asked, and asking by hand says why.
+        let mut locked = MockBackend::new();
+        let snapshot = load_snapshot(&mut locked).expect("the mock answers");
+        assert!(snapshot.is_locked() && !snapshot.connected.is_empty());
+        assert_eq!(open_list(&snapshot), Vec::new());
+        locked.key_locked = true;
+        let outcomes = execute_effect(&mut locked, refresh(&snapshot.connected[0].id).remove(0));
+        assert!(matches!(apply(&outcomes[0]), Step::Failed(notice) if notice.text.contains("unlock the device")), "{outcomes:?}");
+    }
+
+    #[test]
+    fn looking_again_names_the_domains_the_key_cannot_change_and_points_at_the_details() {
+        let (mut mock, snapshot) = start();
+        mock.connected[0].blocked = vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())];
+        let id = snapshot.connected[0].id.clone();
+        let outcomes = execute_effect(&mut mock, refresh(&id).remove(0));
+        let Step::All(steps) = apply(&outcomes[0]) else { panic!("{outcomes:?}") };
+        let Step::Done(notice) = &steps[0] else { panic!("{steps:?}") };
+        assert_eq!(notice.kind, crate::flows::NoticeKind::Info, "not an error, but worth saying");
+        assert_eq!(notice.text, "Porkbun lists 1 domains, and 1 more its key can't change yet: example.net.");
+        assert_eq!(notice.hint, Some(Hint::ProviderDetails), "the words name no key");
+        assert_eq!(steps[1], Step::Run(vec![Effect::Refresh]));
+        // With a problem as well, the problem is what is said.
+        let mut troubled = mock.connected[0].clone();
+        troubled.problem = Some("The key no longer works.".into());
+        assert_eq!(refreshed_notice(&troubled), Notice::error("The key no longer works."));
+    }
+
+    #[test]
+    fn a_new_connection_keeps_the_domains_its_key_cannot_change() {
+        let mut flow = Providers::adding(None);
+        flow.stage = ProviderStage::Key;
+        let added = ConnectedProvider {
+            id: "porkbun".into(),
+            name: "Porkbun".into(),
+            domains: vec![crate::model::ConnectedDomain { name: "example.com".into(), used_by: Vec::new(), held_by: None }],
+            lists_domains: true,
+            blocked: vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())],
+            ..ConnectedProvider::default()
+        };
+        assert_eq!(flow.apply(&Outcome::ProviderAdded(Ok(added))), Step::Run(vec![Effect::Refresh]));
+        let ProviderStage::Done { domains, blocked, .. } = &flow.stage else { panic!("{:?}", flow.stage) };
+        assert_eq!(domains, &["example.com".to_owned()]);
+        assert_eq!(blocked, &[("example.net".to_owned(), API_ACCESS_OFF.to_owned())]);
+    }
+
+    #[test]
+    fn a_providers_details_open_from_the_list_and_close_when_it_is_removed() {
+        let mut flow = Providers::list();
+        flow.open_details();
+        assert_eq!(flow.stage, ProviderStage::Details);
+        assert_eq!(flow.finish(), Step::Stay, "nothing was just connected");
+        assert_eq!(flow.back(), Step::Stay);
+        assert_eq!(flow.stage, ProviderStage::List, "back from the details is the list");
+
+        flow.open_details();
+        assert_eq!(flow.apply(&Outcome::ProviderRemoved(Err("In use.".into()))), Step::Stay);
+        assert_eq!(flow.stage, ProviderStage::Details, "a refused removal leaves the details");
+        assert_eq!(flow.apply(&Outcome::ProviderRemoved(Ok(()))), Step::Stay);
+        assert_eq!(flow.stage, ProviderStage::List, "its details have nothing left to show");
+        // On the list a removal changes nothing here; the notice is the module's.
+        assert_eq!(flow.apply(&Outcome::ProviderRemoved(Ok(()))), Step::Stay);
+        assert_eq!(flow, Providers::list());
     }
 
     #[test]

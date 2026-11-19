@@ -1,0 +1,48 @@
+#!/bin/sh
+# Turns the package's settings (NODO_*) into the Library's own LIBRARY_* variables, keeps its data
+# (database, photos, search model, session key) in the data directory, which the sandbox mounts as
+# $HOME, and becomes the Library. A manifest's arguments cannot name the data directory, and an
+# optional setting with no value is simply absent from the environment.
+#
+# Passwords travel in the environment, never as arguments, so they don't show in the process list.
+# This script keeps the name of the binary it starts, so `pkill -x library` matches whichever of
+# the two is running.
+set -eu
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || {
+	echo "library launcher: HOME is not the data directory" >&2
+	exit 1
+}
+
+pass() { # pass NODO_NAME LIBRARY_NAME: copies a set, non-empty setting across
+	eval "value=\${$1:-}"
+	if [ -n "$value" ]; then
+		export "$2=$value"
+	fi
+}
+
+onoff() { # onoff NODO_NAME LIBRARY_NAME: a bool setting as on/off
+	eval "value=\${$1:-}"
+	case "$value" in
+	true) export "$2=on" ;;
+	false) export "$2=off" ;;
+	esac
+}
+
+# Only the Library's own variables reach it, whatever else is set.
+for name in $(env | sed -n 's/^\(LIBRARY_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+pass NODO_ADMIN_PASSWORD LIBRARY_ADMIN_PASSWORD
+pass NODO_SITE_PASSWORD LIBRARY_SITE_PASSWORD
+pass NODO_TITLE LIBRARY_TITLE
+pass NODO_TMDB_TOKEN LIBRARY_TMDB_TOKEN
+pass NODO_LOOKUP_CONTACT LIBRARY_LOOKUP_CONTACT
+onoff NODO_SEMANTIC_SEARCH LIBRARY_SEMANTIC
+onoff NODO_ONLINE_LOOKUPS LIBRARY_LOOKUPS
+for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+unset value
+
+# There is no config file on the device; settings come from the environment above.
+exec "$(dirname "$0")/../libexec/library" --config "$HOME/library.toml" serve --data-dir "$HOME" "$@"

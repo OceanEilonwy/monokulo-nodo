@@ -730,6 +730,9 @@ pub struct ExposureState {
     pub alias_mode: nodo_api::AliasMode,
     /// The open domain list is for the new name, not the main address.
     pub picking_alias: bool,
+    /// The controls that put a new name together are open. They stay closed until the owner asks
+    /// for another address, so a site with one address shows only that one.
+    pub adding_alias: bool,
 }
 
 /// What can have focus on the Hosting screen.
@@ -742,6 +745,8 @@ pub enum HostingFocus {
     Address,
     /// One of the other names, by index into the draft's `aliases`: x removes it.
     Alias(usize),
+    /// The button that opens the controls for a new name.
+    AliasOpen,
     AliasDomain,
     AliasAddress,
     AliasMode,
@@ -768,6 +773,7 @@ impl ExposureState {
             alias_domain: domains.first().map(|(d, _)| d.clone()).unwrap_or_default(),
             alias_mode: nodo_api::AliasMode::Redirect,
             picking_alias: false,
+            adding_alias: false,
             flow,
         }
     }
@@ -793,9 +799,11 @@ impl ExposureState {
                 hosting::Row::Domain => order.push(HostingFocus::Domain),
                 hosting::Row::Address => order.push(HostingFocus::Address),
                 hosting::Row::Alias(index) => order.push(HostingFocus::Alias(index)),
-                hosting::Row::NewAlias => {
+                // The controls stay behind their button until the owner asks for another address.
+                hosting::Row::NewAlias if self.adding_alias => {
                     order.extend([HostingFocus::AliasDomain, HostingFocus::AliasAddress, HostingFocus::AliasMode, HostingFocus::AliasAdd])
                 }
+                hosting::Row::NewAlias => order.push(HostingFocus::AliasOpen),
                 hosting::Row::AddProvider => order.push(HostingFocus::AddProvider),
                 hosting::Row::Save => save = true,
             }
@@ -820,6 +828,23 @@ impl ExposureState {
     /// The new name the choices make, the same way: an empty part is the domain itself.
     pub fn alias_host(&self) -> String {
         hosting::join_host(self.alias_sub.text(), &self.alias_domain)
+    }
+
+    /// Puts the focus on `focus` when it is in the order.
+    pub fn focus_on(&mut self, focus: HostingFocus) {
+        if let Some(at) = self.order().iter().position(|f| *f == focus) {
+            self.selected = at;
+        }
+    }
+
+    /// Closes the new name's controls and empties them, with the focus on the button that opens
+    /// them again.
+    pub fn close_alias_form(&mut self) {
+        self.adding_alias = false;
+        self.alias_sub.clear();
+        self.alias_mode = nodo_api::AliasMode::Redirect;
+        self.flow.clear_alias_error();
+        self.focus_on(HostingFocus::AliasOpen);
     }
 
     /// The domain list is open, for either address.
@@ -1306,12 +1331,16 @@ pub struct Overlay {
 }
 
 /// A button whose press started work that is still running: it is drawn with the hourglass and
-/// cannot be pressed again until a result arrives, the screen changes or the worker goes idle.
+/// cannot be pressed again until the screen changes or the worker has nothing left to do. A result
+/// alone does not end it, since it may start the next step of the same work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pending {
     /// What the button does, which is how the view finds it.
     pub click: crate::hit::Click,
     pub screen: ScreenId,
+    /// The step the work is on, such as "Checking…", shown in place of the label when the work has
+    /// several slow steps; otherwise the button keeps its label.
+    pub step: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

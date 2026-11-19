@@ -172,6 +172,7 @@ pub fn crowded() -> MockBackend {
             domains: vec![ConnectedDomain { name: format!("crowd{n}.example"), used_by: Vec::new(), held_by: None }],
             lists_domains: true,
             problem: None,
+            ..ConnectedProvider::default()
         });
     }
     mock

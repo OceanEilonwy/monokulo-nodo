@@ -223,6 +223,71 @@ pub fn provider_labels(connected: &[ConnectedProvider]) -> Vec<String> {
         .collect()
 }
 
+/// Who uses one of a provider's domains, in a few words.
+pub fn provider_domain_note(domain: &crate::model::ConnectedDomain) -> String {
+    match (&domain.held_by, domain.used_by.is_empty()) {
+        (Some(other), _) => format!("used through {other}, which was connected first"),
+        (None, false) => format!("used by {}", domain.used_by.join(", ")),
+        (None, true) => "not used by an app yet".to_owned(),
+    }
+}
+
+/// A connection whose key the helper has not read yet has no hint to show.
+pub const PROVIDER_KEY_NOT_READ: &str = "Not read yet. Look again while the Nodo is unlocked to show which key this is.";
+
+/// Said under a key's hint: the hint is all that is ever shown.
+pub const PROVIDER_KEY_STAYS_LOCKED: &str = "The rest of the key stays locked on this Nodo and is never shown.";
+
+/// When a provider's domains were last read, or that they have not been since it was connected.
+pub fn provider_checked(provider: &ConnectedProvider) -> String {
+    provider.checked.clone().unwrap_or_else(|| "Not since it was connected".to_owned())
+}
+
+/// The domains of a provider's account its key cannot change yet, in one line for a list.
+pub fn provider_blocked_line(blocked: &[(String, String)]) -> String {
+    let names: Vec<&str> = blocked.iter().map(|(name, _)| name.as_str()).collect();
+    format!("Can't be used yet: {}", names.join(", "))
+}
+
+/// What to switch on for the domains a key cannot change yet: each different reason once, in the
+/// order met, as a sentence that ends with looking again.
+pub fn provider_blocked_remedies(blocked: &[(String, String)]) -> Vec<String> {
+    let mut reasons: Vec<&str> = Vec::new();
+    for (_, reason) in blocked {
+        if !reasons.contains(&reason.as_str()) {
+            reasons.push(reason);
+        }
+    }
+    reasons.into_iter().map(|reason| format!("{reason}, then look again.")).collect()
+}
+
+/// Said on a provider's details when no domain is known to be blocked: where a missing domain
+/// is, or why this provider's domains are typed.
+pub fn provider_missing_domain(provider: &ConnectedProvider) -> String {
+    if provider.lists_domains {
+        format!("A domain missing here is one this key may not change. Allow it in your {} account, then look again.", provider.name)
+    } else {
+        format!("{} can't list its domains, so each is added by name.", provider.name)
+    }
+}
+
+/// What a busy button's work is doing, in a word, for work with several slow steps: saving a
+/// site's names or who can open it, then checking that the internet reaches it. A frontend that
+/// keeps a button busy until all the work it started is done shows this in place of the label,
+/// so the owner can see it is still going. `None` for any other work, whose button keeps its
+/// label.
+pub fn busy_step(effects: &[crate::Effect]) -> Option<&'static str> {
+    use crate::Effect;
+    // A batch that saves and then checks spends nearly all its time checking.
+    if effects.iter().any(|effect| matches!(effect, Effect::CheckReachability { .. })) {
+        return Some("Checking…");
+    }
+    effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::SetPublicHost { .. } | Effect::SetExposure { .. }))
+        .then_some("Saving…")
+}
+
 /// The name of a field of a provider's key, as that company calls it.
 pub fn provider_field_name(field: &str) -> String {
     match field {
@@ -410,7 +475,99 @@ pub fn rollback_result(result: &nodo_api::UpdateResult) -> (Tone, String) {
         UpdateOutcome::Updated => (Tone::Good, format!("{} is back on {}.", result.package, result.to)),
         UpdateOutcome::RolledBack { reason, recovered: true, .. } => (Tone::Working, format!("{} stayed on {}: {reason}", result.package, result.from)),
         UpdateOutcome::RolledBack { reason, .. } => (Tone::Bad, format!("{} failed and did not come back: {reason}", result.package)),
-        UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => (Tone::Working, format!("{}: {reason}", result.package)),
+        UpdateOutcome::Refused(reason) | UpdateOutcome::Postponed(reason) => {
+            (Tone::Working, format!("{} was not rolled back, nothing changed: {reason}", result.package))
+        }
+    }
+}
+
+/// What an update that was rolled back said, in a line: the app's own last words when it wrote
+/// any, else why the device rolled it back. The reason is the device's and is never quoted as the
+/// app's. `None` when neither is known.
+pub fn update_failure_said(failure: &crate::model::UpdateFailure) -> Option<String> {
+    if !failure.log_line.is_empty() {
+        Some(format!("{} said: \"{}\"", failure.name, failure.log_line))
+    } else if !failure.reason.is_empty() {
+        Some(format!("Why: {}", failure.reason))
+    } else {
+        None
+    }
+}
+
+/// One update of a batch, as its results list it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateResultRow {
+    pub applied: bool,
+    /// The name and the version it is on now.
+    pub text: String,
+    /// What was said about it. For one that was not applied, why, after "Not updated:".
+    pub note: String,
+}
+
+/// What a batch of updates that rolled nothing back came to (`UpdateReport::failure` is `None`).
+///
+/// Without a rollback, an update that did not apply was refused before anything changed: nothing
+/// was put back, nothing is held, and the reason is the device's. So a refusal is its own
+/// outcome: it is never said as a failure of the app, with no restore, no words of the app and no
+/// report for a publisher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateResults {
+    /// `Working` when nothing was installed and something was refused, which is not an error but
+    /// needs the owner; `Good` otherwise.
+    pub tone: Tone,
+    pub headline: String,
+    /// Each update of the batch. Empty when the one update asked for was refused: the headline
+    /// and `unchanged` say all of it.
+    pub rows: Vec<UpdateResultRow>,
+    /// That nothing was changed for what was refused. `None` when nothing was refused.
+    pub unchanged: Option<String>,
+    /// What to do about a refusal. `None` when nothing was refused.
+    pub advice: Option<&'static str>,
+}
+
+/// See [`UpdateResults`].
+pub fn update_results(report: &crate::model::UpdateReport) -> UpdateResults {
+    use crate::model::SYSTEM_BASE;
+    let applied = report.results.iter().filter(|r| r.applied).count();
+    let refused: Vec<_> = report.results.iter().filter(|r| !r.applied).collect();
+    let advice = (!refused.is_empty()).then_some("Once what it says is sorted out, select the update again in Updates.");
+    if let ([only], 0) = (refused.as_slice(), applied) {
+        let name = if only.name == SYSTEM_BASE { "The Nodo" } else { only.name.as_str() };
+        let stays = if only.version.is_empty() { format!("{name} stays as it was.") } else { format!("{name} is {}.", only.version) };
+        return UpdateResults {
+            tone: Tone::Working,
+            headline: format!("Not updated: {}", only.note),
+            rows: Vec::new(),
+            unchanged: Some(format!("{stays} Nothing was changed.")),
+            advice,
+        };
+    }
+    let headline = if applied == 0 && !refused.is_empty() {
+        "Nothing was updated".to_owned()
+    } else if applied == 1 {
+        "1 update is installed".to_owned()
+    } else {
+        format!("{applied} updates are installed")
+    };
+    let rows = report
+        .results
+        .iter()
+        .map(|result| UpdateResultRow {
+            applied: result.applied,
+            text: format!("{} {}", result.name, result.version),
+            note: match (result.applied, result.note.is_empty()) {
+                (_, true) => String::new(),
+                (true, false) => result.note.clone(),
+                (false, false) => format!("Not updated: {}", result.note),
+            },
+        })
+        .collect();
+    UpdateResults {
+        tone: if refused.is_empty() || applied > 0 { Tone::Good } else { Tone::Working },
+        headline,
+        rows,
+        unchanged: (!refused.is_empty()).then(|| "Nothing was changed for those not updated.".to_owned()),
+        advice,
     }
 }
 
@@ -496,7 +653,7 @@ mod tests {
             nodo_api::UpdateResult { package: "tor".into(), from: "2".into(), to: "1".into(), outcome: nodo_api::UpdateOutcome::Updated, log: Vec::new() };
         assert_eq!(rollback_result(&result), (Tone::Good, "tor is back on 1.".to_owned()));
         result.outcome = nodo_api::UpdateOutcome::Refused("it is in use".into());
-        assert_eq!(rollback_result(&result), (Tone::Working, "tor: it is in use".to_owned()));
+        assert_eq!(rollback_result(&result), (Tone::Working, "tor was not rolled back, nothing changed: it is in use".to_owned()));
 
         assert_eq!(status_word(PackageStatus::UpdateReady), "Update ready");
         assert_eq!(chip_label("cuprated", "rpc_port"), "cuprated·rpc_port");
@@ -505,6 +662,119 @@ mod tests {
         assert_eq!(web_gui_summary(&on), "On · https://nodo.local");
         assert_eq!(web_gui_summary(&nodo_api::WebGuiStatus { url: None, waiting: true, ..on.clone() }), "On · waiting for the local address");
         assert_eq!(web_gui_summary(&nodo_api::WebGuiStatus { enabled: false, url: None, ..on }), "Off");
+    }
+
+    fn result(name: &str, applied: bool, version: &str, note: &str) -> crate::model::UpdateResult {
+        crate::model::UpdateResult { name: name.into(), applied, version: version.into(), note: note.into() }
+    }
+
+    #[test]
+    fn an_update_refused_before_anything_changed_is_its_own_outcome() {
+        use crate::model::UpdateReport;
+        // The one update asked for was refused: the reason is the headline, and nothing is listed.
+        let alone = UpdateReport { results: vec![result("moneropay", false, "still on 2.7.0", "Free up 2.3 GB on the data drive, then try again.")], failure: None };
+        let came_to = update_results(&alone);
+        assert_eq!(came_to.tone, Tone::Working, "a refusal is not an error");
+        assert_eq!(came_to.headline, "Not updated: Free up 2.3 GB on the data drive, then try again.");
+        assert!(came_to.rows.is_empty());
+        assert_eq!(came_to.unchanged.as_deref(), Some("moneropay is still on 2.7.0. Nothing was changed."));
+        assert_eq!(came_to.advice, Some("Once what it says is sorted out, select the update again in Updates."));
+        let said = format!("{came_to:?}");
+        for wrong in ["restored", "said", "publisher", "put back", "on hold"] {
+            assert!(!said.contains(wrong), "a refusal changed nothing, so no {wrong:?}: {said}");
+        }
+        // The device's own snapshot has a name of its own, and a refusal may come without a version.
+        let system = UpdateReport { results: vec![result(crate::model::SYSTEM_BASE, false, "", "No room.")], failure: None };
+        assert_eq!(update_results(&system).unchanged.as_deref(), Some("The Nodo stays as it was. Nothing was changed."));
+
+        // Among others: each is listed, the refused ones with why, and the rest counted.
+        let mixed = UpdateReport {
+            results: vec![result("tor", true, "0.4.9", ""), result("bell", true, "1.2", "restarted"), result("moneropay", false, "still on 2.7.0", "No room.")],
+            failure: None,
+        };
+        let came_to = update_results(&mixed);
+        assert_eq!((came_to.tone, came_to.headline.as_str()), (Tone::Good, "2 updates are installed"));
+        let rows: Vec<(bool, &str, &str)> = came_to.rows.iter().map(|row| (row.applied, row.text.as_str(), row.note.as_str())).collect();
+        assert_eq!(rows, [(true, "tor 0.4.9", ""), (true, "bell 1.2", "restarted"), (false, "moneropay still on 2.7.0", "Not updated: No room.")]);
+        assert_eq!(came_to.unchanged.as_deref(), Some("Nothing was changed for those not updated."));
+        assert!(came_to.advice.is_some());
+
+        // Several, all refused.
+        let none = UpdateReport { results: vec![result("tor", false, "still on 1", "No room."), result("bell", false, "still on 2", "No room.")], failure: None };
+        let came_to = update_results(&none);
+        assert_eq!((came_to.tone, came_to.headline.as_str()), (Tone::Working, "Nothing was updated"));
+        assert_eq!(came_to.rows.len(), 2);
+
+        // Nothing refused: the count alone, and nothing to do.
+        let fine = UpdateReport { results: vec![result("tor", true, "0.4.9", "")], failure: None };
+        let came_to = update_results(&fine);
+        assert_eq!((came_to.tone, came_to.headline.as_str()), (Tone::Good, "1 update is installed"));
+        assert_eq!((came_to.unchanged, came_to.advice), (None, None));
+    }
+
+    #[test]
+    fn a_rolled_back_update_quotes_the_app_or_gives_the_devices_reason_never_one_as_the_other() {
+        let mut failure = crate::model::UpdateFailure {
+            name: "moneropay".into(),
+            headline: String::new(),
+            kept_version: "2.7.0".into(),
+            restored: String::new(),
+            running: true,
+            log_line: "database migration 14 failed".into(),
+            reason: "moneropay did not pass its health check".into(),
+            verdict: String::new(),
+        };
+        assert_eq!(update_failure_said(&failure).as_deref(), Some("moneropay said: \"database migration 14 failed\""));
+        failure.log_line.clear();
+        assert_eq!(update_failure_said(&failure).as_deref(), Some("Why: moneropay did not pass its health check"));
+        failure.reason.clear();
+        assert_eq!(update_failure_said(&failure), None);
+    }
+
+    #[test]
+    fn a_providers_details_are_worded_once_for_every_interface() {
+        use crate::model::ConnectedDomain;
+        let domain = |used_by: &[&str], held_by: Option<&str>| ConnectedDomain {
+            name: "example.com".into(),
+            used_by: used_by.iter().map(|s| (*s).to_owned()).collect(),
+            held_by: held_by.map(str::to_owned),
+        };
+        assert_eq!(provider_domain_note(&domain(&[], None)), "not used by an app yet");
+        assert_eq!(provider_domain_note(&domain(&["shop", "pay"], None)), "used by shop, pay");
+        assert_eq!(provider_domain_note(&domain(&["shop"], Some("Porkbun"))), "used through Porkbun, which was connected first");
+
+        let off = "API Access is off for this domain. Switch it on";
+        let blocked = vec![("example.net".to_owned(), off.to_owned()), ("example.org".to_owned(), off.to_owned()), ("b.example".to_owned(), "Unlock the domain".to_owned())];
+        assert_eq!(provider_blocked_line(&blocked), "Can't be used yet: example.net, example.org, b.example");
+        assert_eq!(
+            provider_blocked_remedies(&blocked),
+            [format!("{off}, then look again."), "Unlock the domain, then look again.".to_owned()],
+            "each reason once, in the order met"
+        );
+
+        let mut provider = ConnectedProvider { name: "Porkbun".into(), lists_domains: true, ..ConnectedProvider::default() };
+        assert_eq!(provider_checked(&provider), "Not since it was connected");
+        assert!(provider_missing_domain(&provider).contains("Allow it in your Porkbun account"));
+        provider.checked = Some("5 minutes ago".into());
+        provider.lists_domains = false;
+        assert_eq!(provider_checked(&provider), "5 minutes ago");
+        assert_eq!(provider_missing_domain(&provider), "Porkbun can't list its domains, so each is added by name.");
+    }
+
+    #[test]
+    fn a_busy_button_names_the_slow_step_its_work_is_on() {
+        use crate::effect::ExposureAfter;
+        use crate::Effect;
+        let check = Effect::CheckReachability { site: "shop".into(), going_public: true };
+        let exposure = Effect::SetExposure { site: "shop".into(), exposure: nodo_api::Exposure::default(), after: ExposureAfter::Stay, confirmation: None };
+        let names = Effect::SetPublicHost { site: "shop".into(), host: "shop.example.com".into(), aliases: Vec::new(), confirm_added: Vec::new(), then: vec![check.clone()] };
+        // Saving the names is its own step even with the checks waiting behind it.
+        assert_eq!(busy_step(&[names]), Some("Saving…"));
+        assert_eq!(busy_step(std::slice::from_ref(&exposure)), Some("Saving…"));
+        // A batch that saves and then checks spends nearly all its time checking.
+        assert_eq!(busy_step(&[exposure, check]), Some("Checking…"));
+        assert_eq!(busy_step(&[Effect::Refresh, Effect::CheckUpdates]), None, "any other button keeps its label");
+        assert_eq!(busy_step(&[]), None);
     }
 
     #[test]

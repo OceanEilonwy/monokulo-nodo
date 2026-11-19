@@ -718,6 +718,136 @@ fn the_confirm_buttons_and_breadcrumbs_take_clicks() {
     assert_eq!(app.screen.id(), ScreenId::Apps, "the first crumb opens its tab");
 }
 
+/// The mouse event for a click on `needle` where it is drawn now.
+fn click_at(app: &App, needle: &str) -> Event {
+    let (column, row) = find(app, needle);
+    Event::Mouse { kind: MouseKind::Down, column, row }
+}
+
+/// The step the pending button on this screen says it is on, if any.
+fn pending_step(app: &App) -> Option<&'static str> {
+    app.pending.as_ref().filter(|p| p.screen == app.screen.id()).and_then(|p| p.step)
+}
+
+/// Hosting for shop, off the internet, with the internet ticked under a new address, so Check and
+/// save first saves the names and only then checks.
+fn hosting_with_new_address() -> (App, MockBackend) {
+    let (mut app, mut mock) = exposure_with_public_off();
+    keys(&mut app, &mut mock, &[DOWN, DOWN, SPACE]);
+    let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
+    state.sub = nodo_ui_core::secret::Input::plain("store");
+    (app, mock)
+}
+
+/// Check and save saves the names, then runs the checks. The button used to look idle again as
+/// soon as the names were saved, while the checks still ran and the header still said Working, so
+/// the owner could not tell anything was happening. It now stays busy, says which step it is on
+/// and takes no second click until the checks' result is on screen. This runs on the real worker,
+/// as the terminal does.
+#[test]
+fn check_and_save_stays_busy_until_the_checks_are_done() {
+    use nodo_tui::runtime::dispatch_async;
+    use nodo_ui_core::exec::EffectWorker;
+    use std::time::Duration;
+
+    let (mut app, mock) = hosting_with_new_address();
+    let click = click_at(&app, "Check and save");
+    let mut worker = EffectWorker::spawn(Box::new(mock));
+    dispatch_async(&mut app, &mut worker, click.clone());
+    assert!(app.working && app.pending.is_some(), "the click marks the button");
+    assert_eq!(pending_step(&app), Some("Saving…"));
+    assert!(screen_text(&app).contains("⧗ Saving…"), "{}", screen_text(&app));
+
+    // The names are saved: the checks are the next step of the same work.
+    let events = worker.wait_idle(Duration::from_secs(5));
+    assert!(matches!(events.first(), Some(Outcome::PublicHostSet { result: Ok(()), then, .. }) if !then.is_empty()), "{events:?}");
+    for event in events {
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
+        assert_eq!(app.screen.id(), ScreenId::WebExposure);
+        assert!(worker.busy() && app.working, "the checks are running");
+        assert_eq!(pending_step(&app), Some("Checking…"), "the button stays busy while the checks run");
+    }
+    let screen = screen_text(&app);
+    assert!(screen.contains("⧗ Checking…") && screen.contains("Working…"), "{screen}");
+    assert!(!screen.contains("Check and save"), "the button does not look idle:\n{screen}");
+    assert!(update(&mut app, click.clone()).is_empty(), "a second click waits for the first");
+    assert!(update(&mut app, press(ENTER)).is_empty(), "so does Enter");
+    assert_eq!(pending_step(&app), Some("Checking…"));
+
+    // The checks' result ends it.
+    let events = worker.wait_idle(Duration::from_secs(5));
+    assert!(matches!(events.as_slice(), [Outcome::Reachability { going_public: true, .. }]), "{events:?}");
+    for event in events {
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
+    }
+    assert!(!worker.busy() && !app.working);
+    assert_eq!(app.screen.id(), ScreenId::WebCheck, "the checks are on screen");
+    assert_eq!(app.pending, None);
+}
+
+/// A refused name ends Check and save at once, and the button can be pressed again.
+#[test]
+fn a_refused_address_ends_check_and_save() {
+    use nodo_tui::runtime::dispatch_async;
+    use nodo_ui_core::exec::EffectWorker;
+    use std::time::Duration;
+
+    let (mut app, mock) = hosting_with_new_address();
+    let Screen::WebExposure(state) = &mut app.screen else { panic!("expected hosting") };
+    state.sub = nodo_ui_core::secret::Input::plain("Not_A_Name");
+    let click = click_at(&app, "Check and save");
+    let mut worker = EffectWorker::spawn(Box::new(mock));
+    dispatch_async(&mut app, &mut worker, click);
+    assert_eq!(pending_step(&app), Some("Saving…"));
+    for event in worker.wait_idle(Duration::from_secs(5)) {
+        dispatch_async(&mut app, &mut worker, Event::Done(event));
+    }
+    assert!(!worker.busy());
+    assert_eq!(app.pending, None, "the refusal ends it");
+    assert_eq!(app.screen.id(), ScreenId::WebExposure);
+    let notice = app.notice.clone().expect("told");
+    assert!(notice.text.starts_with("Not saved:"), "{}", notice.text);
+    assert!(screen_text(&app).contains("Check and save"), "{}", screen_text(&app));
+}
+
+/// Saving Home network or Tor while turning the internet on is one batch: the change, then the
+/// checks. Its first result used to end the button's busy mark, with the checks still to come.
+#[test]
+fn saving_and_checking_in_one_batch_stays_busy_until_the_checks_are_done() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    // With no other names and the address as saved, there are no names to save first.
+    mock.web.sites[0].exposure = Exposure { local: true, onion: true, public: false };
+    mock.web.sites[0].public_aliases.clear();
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, ENTER);
+    mock.calls.clear();
+    keys(&mut app, &mut mock, &[SPACE, DOWN, DOWN, SPACE]);
+    let click = click_at(&app, "Check and save");
+    let effects = update(&mut app, click.clone());
+    assert!(
+        matches!(effects.as_slice(), [Effect::SetExposure { .. }, Effect::CheckReachability { going_public: true, .. }]),
+        "{effects:?}"
+    );
+    assert_eq!(pending_step(&app), Some("Checking…"));
+    // The batch runs one effect at a time, as the worker does, and hands over each one's events.
+    let mut effects = std::collections::VecDeque::from(effects);
+    let first = effects.pop_front().expect("the change");
+    for event in execute_effect(&mut mock, first) {
+        assert!(update(&mut app, Event::Done(event)).is_empty());
+    }
+    assert_eq!(exposure_calls(&mock), [Exposure { local: false, onion: true, public: false }]);
+    assert_eq!(pending_step(&app), Some("Checking…"), "the checks are still to come");
+    assert!(screen_text(&app).contains("⧗ Checking…"), "{}", screen_text(&app));
+    assert!(update(&mut app, click).is_empty(), "a second click waits for the first");
+
+    let checks = effects.pop_front().expect("the checks");
+    for event in execute_effect(&mut mock, checks) {
+        dispatch(&mut app, &mut mock, Event::Done(event));
+    }
+    assert_eq!(app.screen.id(), ScreenId::WebCheck);
+    assert_eq!(app.pending, None);
+}
+
 #[test]
 fn the_wheel_scrolls_like_the_arrow_keys() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
@@ -1699,9 +1829,35 @@ fn an_update_rollback_defaults_to_keeping_and_holding() {
     assert!(screen_text(&app).contains("update didn't start, so"));
     let screen = screen_text(&app);
     assert!(screen.contains("▸ OK"), "{screen}");
+    // A real rollback still says what was put back, what the app said, and offers the report.
+    assert!(screen.contains("and its data were restored"), "{screen}");
+    assert!(screen.contains("moneropay said: \"database migration 14"), "{screen}");
+    assert!(screen.contains("Copy a report for the publisher"), "{screen}");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(app.screen.id(), ScreenId::Updates);
     assert!(mock.updates.iter().find(|item| item.name == "moneropay").unwrap().held);
+}
+
+#[test]
+fn a_refused_update_says_not_updated_and_holds_nothing() {
+    let (mut app, mut mock) = fixture(ScreenId::Updates);
+    let reason = "moneropay 2.8.0 moves its data to a newer layout, which 2.7.0 cannot read, so a copy of the data \
+                  is kept on the data drive to roll back to. That needs 3.3 GB free there and 1.0 GB is free. \
+                  Free up 2.3 GB on the data drive, then try again.";
+    mock.knobs.update_refusals.push(("moneropay".to_owned(), reason.to_owned()));
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::UpdateFailed);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Not updated: moneropay 2.8.0 moves its data"), "{screen}");
+    assert!(screen.contains("Nothing was changed."), "{screen}");
+    assert!(screen.contains("select the update again"), "{screen}");
+    for wrong in ["restored", "said", "publisher", "put back", "didn't start", "Try again", "on hold"] {
+        assert!(!screen.contains(wrong), "a refusal changed nothing, so no {wrong:?}: {screen}");
+    }
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(app.screen.id(), ScreenId::Updates);
+    assert!(!mock.updates.iter().find(|item| item.name == "moneropay").unwrap().held, "a refusal holds nothing");
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetHold { .. })), "{:?}", mock.calls);
 }
 
 #[test]
@@ -2748,6 +2904,7 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         }],
         lists_domains: true,
         problem: None,
+        ..ConnectedProvider::default()
     };
     update(&mut app, Event::Done(Outcome::ProviderAdded(Ok(again))));
     let screen = screen_text(&app);
@@ -2760,6 +2917,107 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         "{screen}"
     );
     assert!(screen.contains("Missing a domain?"), "{screen}");
+}
+
+const API_ACCESS_OFF: &str = "API Access is off for this domain. In your Porkbun account, open the domain's details and switch API Access on";
+
+/// The owner allowed more domains at Porkbun and came back: nothing had told the Nodo to ask again,
+/// and nothing said which domains the key still could not change.
+#[test]
+fn opening_the_providers_looks_again_and_says_which_domains_cannot_be_used() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    // The keys can only be opened on an unlocked Nodo.
+    assert_eq!(mock.call(Request::Unlock { passphrase: nodo_api::Secret::new(MOCK_PASSPHRASE) }), Ok(nodo_api::Response::Ok));
+    app.data = load_snapshot(&mut mock).unwrap();
+    assert!(!app.is_locked());
+    // Since the Nodo last asked: one more domain is usable, and one still has API Access off.
+    mock.connected[0].domains.push(ConnectedDomain { name: "example.org".to_owned(), used_by: Vec::new(), held_by: None });
+    mock.connected[0].blocked = vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())];
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.org"), "the new domain shows without asking: {screen}");
+    assert!(screen.contains("Can't be used yet: example.net"), "{screen}");
+    assert!(screen.contains("1 more its key can't change yet: example.net"), "{screen}");
+
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("API Access is off for this domain"), "the details say what to switch on: {screen}");
+    assert!(screen.contains("then look again"), "{screen}");
+}
+
+#[test]
+fn a_providers_details_show_which_key_it_holds_and_who_uses_each_domain() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    key(&mut app, &mut mock, ENTER);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::Details);
+    let screen = screen_text(&app);
+    for wanted in ["Connection", "porkbun", "API key", "pk1_3f9a…c2d1", "Domains read", "Just now", "example.com"] {
+        assert!(screen.contains(wanted), "{wanted} is missing: {screen}");
+    }
+    assert!(screen.contains("never shown"), "{screen}");
+
+    // Looking again from the details asks the helper; Esc goes back to the list.
+    let before = mock.calls.len();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(mock.calls.len() >= before, "the refresh went through the backend");
+    assert!(screen_text(&app).contains("Porkbun lists 1 domains."), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ESC);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::List);
+}
+
+/// A locked Nodo cannot open the keys: opening the list asks nothing, and asking by hand says why.
+#[test]
+fn a_locked_nodo_shows_what_it_last_knew_and_says_why_it_cannot_look_again() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.key_locked = true;
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.com") && !screen.contains("unlock"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(screen_text(&app).contains("unlock the device"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_connection_whose_key_was_never_read_says_how_to_show_it() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.connected[0].key = None;
+    mock.connected[0].checked = None;
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Look again while the Nodo is unlocked"), "{screen}");
+}
+
+#[test]
+fn removing_a_provider_from_its_details_returns_to_the_list() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    keys(&mut app, &mut mock, &[KeyCode::Char('p'), ENTER, KeyCode::Char('x')]);
+    assert!(app.modal.as_ref().is_some_and(|m| m.title == "Remove Porkbun?"), "{:?}", app.modal);
+    update(&mut app, Event::Done(Outcome::ProviderRemoved(Ok(()))));
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::List);
+}
+
+#[test]
+fn a_new_connection_names_the_domains_its_key_cannot_change() {
+    let (mut app, _mock) = fixture(ScreenId::WebProviders);
+    let added = ConnectedProvider {
+        id: "porkbun".to_owned(),
+        name: "Porkbun".to_owned(),
+        domains: vec![ConnectedDomain { name: "example.com".to_owned(), used_by: Vec::new(), held_by: None }],
+        lists_domains: true,
+        blocked: vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())],
+        ..ConnectedProvider::default()
+    };
+    update(&mut app, Event::Done(Outcome::ProviderAdded(Ok(added))));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.com") && screen.contains("example.net"), "{screen}");
+    assert!(screen.contains("this key can't change them yet") && screen.contains("API Access is off"), "{screen}");
 }
 
 // A site's other names, on its Hosting screen
@@ -2791,6 +3049,13 @@ fn focus_on(app: &mut App, mock: &mut MockBackend, target: HostingFocus) {
         key(app, mock, DOWN);
     }
     panic!("{target:?} is not reachable with the keyboard: {:?}", hosting(app).order());
+}
+
+/// Presses "Add another address", which opens the controls for a new name.
+fn open_new_name(app: &mut App, mock: &mut MockBackend) {
+    focus_on(app, mock, HostingFocus::AliasOpen);
+    key(app, mock, ENTER);
+    assert!(hosting(app).adding_alias);
 }
 
 /// A site's Hosting with the internet ticked, before it has gone public. The site is the `row`th
@@ -2832,12 +3097,21 @@ fn without_shop_aliases(mock: &mut MockBackend) {
 fn an_apex_redirect_is_added_saved_and_listed_on_the_going_public_confirmation() {
     // moneropay, whose checks pass in the mock (monokulo-pay's find a shared address).
     let (mut app, mut mock) = hosting_of(2, "moneropay", without_shop_aliases);
-    assert!(hosting_text(&app).contains("Also answers at"), "{}", hosting_text(&app));
+    // One address is all a site shows until the owner asks for another.
+    let screen = hosting_text(&app);
+    assert!(screen.contains("Add another address"), "{screen}");
+    assert!(!screen.contains("Also answers at") && !screen.contains("New name"), "{screen}");
+    assert!(!hosting(&app).order().contains(&HostingFocus::AliasAddress), "{:?}", hosting(&app).order());
+    open_new_name(&mut app, &mut mock);
+    assert_eq!(hosting(&app).focus(), HostingFocus::AliasDomain, "the focus goes into the controls");
+    let screen = hosting_text(&app);
+    assert!(screen.contains("Also answers at") && screen.contains("New name"), "{screen}");
     // The box left empty is the domain itself, and a new name redirects unless told otherwise.
     focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).aliases, [redirect("example.com")]);
-    assert_eq!(hosting(&app).focus(), HostingFocus::AliasAddress, "the focus stays on the box for the next name");
+    assert_eq!(hosting(&app).focus(), HostingFocus::AliasOpen, "the controls close, with the focus on the button for the next name");
+    assert!(!hosting_text(&app).contains("New name"), "{}", hosting_text(&app));
     assert!(hosting_text(&app).contains("example.com  → moneropay.example.com"), "{}", hosting_text(&app));
     assert!(site_of(&mock, "moneropay").public_aliases.is_empty(), "nothing is saved before Save");
 
@@ -2857,6 +3131,7 @@ fn a_name_under_a_second_providers_domain_can_serve_the_same_site() {
     let (mut app, mut mock) = pay_hosting(|mock| {
         mock.add_provider("Gandi", None, &nodo_ui_core::secret::Secret::new("k"), &nodo_ui_core::secret::Secret::new("s")).unwrap();
     });
+    open_new_name(&mut app, &mut mock);
     focus_on(&mut app, &mut mock, HostingFocus::AliasDomain);
     key(&mut app, &mut mock, ENTER);
     assert!(hosting(&app).picking_alias, "the same domain list as the main address");
@@ -2879,23 +3154,93 @@ fn a_name_under_a_second_providers_domain_can_serve_the_same_site() {
 }
 
 #[test]
-fn a_public_site_can_lose_a_name_but_not_gain_one() {
+fn esc_in_the_new_names_controls_closes_them_and_keeps_the_screen() {
+    let (mut app, mut mock) = pay_hosting(|_| {});
+    open_new_name(&mut app, &mut mock);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    type_text(&mut app, &mut mock, "www");
+    key(&mut app, &mut mock, KeyCode::Esc);
+    assert_eq!(app.screen.id(), ScreenId::WebExposure, "Esc gave up the new name, not the screen");
+    assert!(!hosting(&app).adding_alias && hosting(&app).aliases.is_empty());
+    assert_eq!(hosting(&app).focus(), HostingFocus::AliasOpen);
+    assert!(!hosting_text(&app).contains("Also answers at"), "{}", hosting_text(&app));
+    open_new_name(&mut app, &mut mock);
+    assert_eq!(hosting(&app).alias_sub.text(), "", "the controls open empty again");
+    keys(&mut app, &mut mock, &[KeyCode::Esc, KeyCode::Esc]);
+    assert_ne!(app.screen.id(), ScreenId::WebExposure, "Esc on the button goes back");
+}
+
+#[test]
+fn a_public_site_loses_a_name_without_being_asked() {
     let (mut app, mut mock) = fixture(ScreenId::WebSites);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).site, "shop");
     assert_eq!(hosting(&app).aliases, [redirect("example.com")]);
-    let order = hosting(&app).order();
-    assert!(!order.contains(&HostingFocus::AliasAdd) && !order.contains(&HostingFocus::AliasAddress), "{order:?}");
     focus_on(&mut app, &mut mock, HostingFocus::Alias(0));
-    assert!(hosting_text(&app).contains("take the site off the internet first"), "{}", hosting_text(&app));
     key(&mut app, &mut mock, KeyCode::Char('x'));
     assert!(hosting(&app).aliases.is_empty());
     focus_on(&mut app, &mut mock, HostingFocus::Save);
     key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none(), "taking a name away publishes nothing, so nothing is asked");
     let shop = mock.web.sites.iter().find(|s| s.package == "shop").unwrap();
     assert!(shop.public_aliases.is_empty() && shop.exposure.public, "removed while it stays public");
     assert_eq!(app.notice.as_ref().map(|n| n.text.as_str()), Some("Saved."));
     assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+#[test]
+fn a_public_site_gains_a_name_once_the_owner_confirms_it() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, ENTER);
+    assert_eq!(hosting(&app).site, "shop");
+    assert!(site_of(&mock, "shop").exposure.public);
+    assert!(hosting_text(&app).contains("Add another address"), "{}", hosting_text(&app));
+    assert!(!hosting_text(&app).contains("take the site off the internet"), "{}", hosting_text(&app));
+    open_new_name(&mut app, &mut mock);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
+    type_text(&mut app, &mut mock, "www");
+    focus_on(&mut app, &mut mock, HostingFocus::AliasMode);
+    key(&mut app, &mut mock, SPACE);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAdd);
+    key(&mut app, &mut mock, ENTER);
+    let both = [redirect("example.com"), serve("www.example.com")];
+    assert_eq!(hosting(&app).aliases, both);
+
+    // Saving asks first, about the new name only, and starts on Cancel.
+    focus_on(&mut app, &mut mock, HostingFocus::Save);
+    key(&mut app, &mut mock, ENTER);
+    let modal = app.modal.clone().expect("a new name on a public site is confirmed");
+    assert_eq!(modal.title, "Add www.example.com to the internet?");
+    assert!(!modal.confirm_focused, "Cancel has the focus");
+    assert!(modal.body.iter().any(|l| l == "https://www.example.com  shows the same site"), "{:?}", modal.body);
+    assert!(modal.body.iter().any(|l| l == "Public certificate logs list www.example.com permanently."), "{:?}", modal.body);
+    assert!(!modal.body.iter().any(|l| l.contains("https://example.com")), "the name it had is not asked about: {:?}", modal.body);
+    assert!(!mock.calls.iter().any(|c| matches!(c, Request::SetPublicHost { .. })), "nothing is sent before the answer");
+
+    // Cancel keeps the screen and the draft, and saves nothing.
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_none());
+    assert_eq!(app.screen.id(), ScreenId::WebExposure);
+    assert_eq!(hosting(&app).aliases, both);
+    assert_eq!(site_of(&mock, "shop").public_aliases, [redirect("example.com")]);
+
+    key(&mut app, &mut mock, ENTER);
+    assert!(app.modal.is_some(), "saving again asks again");
+    keys(&mut app, &mut mock, &[KeyCode::Right, ENTER]);
+    assert_eq!(site_of(&mock, "shop").public_aliases, both, "confirmed, the name is saved while the site stays public");
+    assert!(site_of(&mock, "shop").exposure.public);
+    assert_eq!(app.notice.as_ref().map(|n| n.text.as_str()), Some("Saved."));
+    assert_eq!(app.screen.id(), ScreenId::WebSites);
+}
+
+#[test]
+fn the_device_refuses_a_public_sites_new_name_that_was_not_confirmed() {
+    use nodo_ui_core::model::ScreenData;
+    let mut mock = MockBackend::new();
+    let both = [redirect("example.com"), serve("www.example.com")];
+    let refused = mock.set_public_host("shop", "shop.example.com", &both, &[]);
+    assert_eq!(refused, Err("the site is public, so www.example.com would go on the internet at once: confirm adding it".to_owned()));
+    assert_eq!(mock.set_public_host("shop", "shop.example.com", &both, &["www.example.com".to_owned()]), Ok(()));
 }
 
 #[test]
@@ -2906,6 +3251,7 @@ fn a_saved_name_outside_the_connected_domains_is_refused_and_nothing_goes_on() {
         mock.web.sites[1].public_aliases = vec![redirect("old.myshop.net")];
     });
     assert_eq!(hosting(&app).aliases, [redirect("old.myshop.net")]);
+    open_new_name(&mut app, &mut mock);
     focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
     type_text(&mut app, &mut mock, "www");
     key(&mut app, &mut mock, ENTER);
@@ -2927,6 +3273,7 @@ fn a_saved_name_outside_the_connected_domains_is_refused_and_nothing_goes_on() {
 fn a_name_twice_or_another_sites_name_is_refused_on_the_spot() {
     let (mut app, mut mock) = pay_hosting(|_| {});
     // The shop already answers at example.com.
+    open_new_name(&mut app, &mut mock);
     focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).alias_error.as_deref(), Some("example.com is already an address of shop."));
@@ -2936,6 +3283,8 @@ fn a_name_twice_or_another_sites_name_is_refused_on_the_spot() {
     assert_eq!(hosting(&app).alias_error, None, "typing clears the refusal");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).aliases, [redirect("www.example.com")]);
+    open_new_name(&mut app, &mut mock);
+    focus_on(&mut app, &mut mock, HostingFocus::AliasAddress);
     type_text(&mut app, &mut mock, "www");
     key(&mut app, &mut mock, ENTER);
     assert_eq!(hosting(&app).alias_error.as_deref(), Some("www.example.com is listed twice."));

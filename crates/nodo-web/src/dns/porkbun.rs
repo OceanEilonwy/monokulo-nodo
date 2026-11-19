@@ -3,9 +3,9 @@
 //! The domain must have API access switched on in the Porkbun account. Keys go in headers rather than
 //! the JSON body, so reads can use GET and bodies never hold a credential.
 
-use super::{tidy_domains, MAX_DOMAIN_PAGES, 
-    clean_warnings, decode, send, status_error, DnsError, ExistingRecord, IdBacked, IdRecords, ProviderMessage,
-    RecordName, RecordType, Zone,
+use super::{
+    clean_warnings, decode, send, status_error, tidy_domains, BlockedDomain, DnsError, DomainListing, ExistingRecord,
+    IdBacked, IdRecords, ProviderMessage, RecordName, RecordType, Zone, MAX_DOMAIN_PAGES,
 };
 use crate::http::{HttpRequest, HttpResponse, Method, SharedHttp};
 use crate::secret::{Scrubber, Secret};
@@ -97,7 +97,30 @@ struct ListAllResponse {
 #[derive(Deserialize)]
 struct ListedDomain {
     domain: String,
+    /// Whether the account lets the API change this domain. Documented as an integer; it used to
+    /// come back as the string `"1"`, so every spelling of on and off is read.
+    #[serde(default, rename = "apiAccess")]
+    api_access: Option<serde_json::Value>,
 }
+
+impl ListedDomain {
+    /// A domain without the flag counts as usable: a write then fails with Porkbun's own reason,
+    /// which is better than hiding a domain that would have worked.
+    fn api_access_on(&self) -> bool {
+        use serde_json::Value;
+        match &self.api_access {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(on)) => *on,
+            Some(Value::Number(n)) => n.as_i64() != Some(0),
+            Some(Value::String(text)) => !matches!(text.trim().to_ascii_lowercase().as_str(), "0" | "no" | "false" | ""),
+            Some(_) => false,
+        }
+    }
+}
+
+/// Shown beside a domain Porkbun holds but will not let the API change.
+const API_ACCESS_OFF: &str =
+    "API Access is off for this domain. In your Porkbun account, open the domain's details and switch API Access on";
 
 #[derive(Deserialize)]
 struct WriteResponse {
@@ -147,20 +170,39 @@ impl IdRecords for Porkbun {
         self.call(Method::Post, &path, None).map(|_| ())
     }
 
-    /// `domain/listAll`, filtered to the domains this key may use through the API (`apiAccess`).
     fn list_domains(&self) -> Result<Option<Vec<String>>, DnsError> {
-        let mut names = Vec::new();
+        Ok(self.domain_listing()?.map(|listing| listing.usable))
+    }
+
+    /// `domain/listAll`, every domain of the account. Each carries `apiAccess`, the account's
+    /// per-domain switch: a domain with it off is reported as blocked with the reason, not left out,
+    /// because an owner who cannot see why a domain is missing has nothing to act on.
+    fn domain_listing(&self) -> Result<Option<DomainListing>, DnsError> {
+        let mut usable = Vec::new();
+        let mut blocked = Vec::new();
         for page in 0..MAX_DOMAIN_PAGES {
-            let body = json!({ "start": (page * DOMAIN_PAGE).to_string(), "apiAccess": "yes" });
+            let body = json!({ "start": (page * DOMAIN_PAGE).to_string() });
             let response = self.call(Method::Post, "/domain/listAll", Some(body))?;
             let parsed: ListAllResponse = decode(&response, "Porkbun domain list")?;
             let count = parsed.domains.len();
-            names.extend(parsed.domains.into_iter().map(|d| d.domain));
+            for listed in parsed.domains {
+                if listed.api_access_on() {
+                    usable.push(listed.domain);
+                } else {
+                    blocked.push(listed.domain);
+                }
+            }
             if count < DOMAIN_PAGE {
                 break;
             }
         }
-        Ok(Some(tidy_domains(names)))
+        let usable = tidy_domains(usable);
+        let blocked = tidy_domains(blocked)
+            .into_iter()
+            .filter(|name| !usable.contains(name))
+            .map(|name| BlockedDomain { name, reason: API_ACCESS_OFF.to_owned() })
+            .collect();
+        Ok(Some(DomainListing { usable, blocked }))
     }
 }
 
@@ -182,8 +224,30 @@ mod tests {
         assert_eq!(provider.list_domains().unwrap(), Some(vec!["example.com".to_owned(), "shop.example.org".to_owned()]));
         let request = http.request(0);
         assert_eq!(request.url, "https://api.porkbun.com/api/json/v3/domain/listAll");
-        assert_eq!(body_json(&request)["apiAccess"], "yes");
         assert_eq!(body_json(&request)["start"], "0");
+    }
+
+    /// The owner's case: several domains in the account, API Access on for one. Porkbun used to be
+    /// asked to leave the others out, so nothing said they existed or why they could not be used.
+    #[test]
+    fn domains_without_api_access_are_reported_with_the_reason() {
+        let http = FakeHttp::new();
+        http.respond(
+            200,
+            r#"{"status":"SUCCESS","domains":[
+                {"domain":"on.example.com","apiAccess":1},
+                {"domain":"off.example.com","apiAccess":0},
+                {"domain":"Old-Off.example.com","apiAccess":"0"},
+                {"domain":"old-on.example.com","apiAccess":"1"}]}"#,
+        );
+        let provider = Porkbun::new(http.clone(), Zone::new("example.com").unwrap(), Secret::new("pk1"), Secret::new("sk1"));
+        let listing = provider.domain_listing().unwrap().unwrap();
+        assert_eq!(listing.usable, ["old-on.example.com", "on.example.com"]);
+        let blocked: Vec<&str> = listing.blocked.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(blocked, ["off.example.com", "old-off.example.com"]);
+        assert!(listing.blocked[0].reason.contains("API Access is off"), "{}", listing.blocked[0].reason);
+        // The whole account is asked for: a filter would hide exactly the domains to explain.
+        assert!(body_json(&http.request(0)).get("apiAccess").is_none());
     }
 
     #[test]

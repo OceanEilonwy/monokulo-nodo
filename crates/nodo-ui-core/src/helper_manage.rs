@@ -721,7 +721,9 @@ fn apply_packages(
                     )
                 },
                 running: *recovered,
-                log_line: r.log.last().cloned().unwrap_or_else(|| reason.clone()),
+                // Only the app's own words are shown as what it said; the reason is the device's.
+                log_line: r.log.last().cloned().unwrap_or_default(),
+                reason: reason.clone(),
                 verdict: "This looks like a package problem. Your settings were not the cause.".to_owned(),
             });
         }
@@ -809,6 +811,9 @@ pub fn document(b: &HelperBackend, kind: &DocKind) -> Option<Document> {
                             format!("{} failed ({reason}) and {} did not come back: {rollback_error}", e.to, e.from)
                         }
                         UpdateEventKind::Postponed { wait } => format!("postponed, {wait}"),
+                        UpdateEventKind::NotUpdated { reason } => {
+                            format!("{} not updated, nothing changed: {reason}", e.to)
+                        }
                     };
                     format!("{}  {}  {what}", ago(e.at), e.package)
                 })
@@ -866,6 +871,17 @@ pub fn attention(health: Option<&HealthSummary>, status: Option<&UpdateStatus>) 
             UpdateEventKind::RollbackFailed { .. } => (
                 AttentionLevel::Critical,
                 format!("{} {} failed and {} did not come back. Its log says why.", e.package, e.to, e.from),
+            ),
+            // Refused by an automatic run, which nobody watched. Nothing changed and nothing is held.
+            UpdateEventKind::NotUpdated { reason } => (
+                AttentionLevel::Warning,
+                format!(
+                    "{} was not updated to {}: {}. It is still on {}. See Updates.",
+                    e.package,
+                    e.to,
+                    reason.trim_end_matches('.'),
+                    e.from
+                ),
             ),
             _ => continue,
         };
@@ -1189,5 +1205,27 @@ mod tests {
         assert_eq!(lines[1].level, AttentionLevel::Critical);
         assert!(lines[2].text.contains("on hold"));
         assert_eq!(health_rows(Some(&health))[0].1, "51 °C");
+    }
+
+    #[test]
+    fn home_hears_an_unattended_refusal_as_a_refusal() {
+        let status = UpdateStatus {
+            candidates: Vec::new(),
+            last_check: None,
+            attention: vec![nodo_api::UpdateEvent {
+                at: 0,
+                package: "demo".into(),
+                from: "1.0_1".into(),
+                to: "1.1_1".into(),
+                kind: UpdateEventKind::NotUpdated { reason: "Free up 2.0 GB on the data drive, then try again.".into() },
+            }],
+            history: Vec::new(),
+            next_window: None,
+        };
+        let lines = attention(None, Some(&status));
+        assert_eq!(lines.len(), 1);
+        let text = &lines[0].text;
+        assert_eq!(text, "demo was not updated to 1.1_1: Free up 2.0 GB on the data drive, then try again. It is still on 1.0_1. See Updates.");
+        assert!(!text.contains("on hold") && !text.contains("back"), "{text}");
     }
 }

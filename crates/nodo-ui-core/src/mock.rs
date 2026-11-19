@@ -82,6 +82,9 @@ pub struct TestKnobs {
     pub system_check_failure: Option<String>,
     /// Makes reading the Wi-Fi and Bluetooth state fail with this reason.
     pub radios_failure: Option<String>,
+    /// Updates the helper refuses before changing anything, by name, with its reason, as it
+    /// refuses one whose data drive has no room for a copy.
+    pub update_refusals: Vec<(String, String)>,
     /// Plays the touchscreen's socket, with this as the screen PIN: the screen requests are
     /// answered, and every change is refused with `ApiError::Locked` until the PIN unlocked it.
     pub screen_pin: Option<String>,
@@ -126,6 +129,7 @@ impl Default for TestKnobs {
             web_socket: false,
             web_login_keeps_locked: false,
             web_gui_waiting: false,
+            update_refusals: Vec::new(),
         }
     }
 }
@@ -243,6 +247,9 @@ impl MockBackend {
                 domains: vec![ConnectedDomain { name: s("example.com"), used_by: Vec::new(), held_by: None }],
                 lists_domains: true,
                 problem: None,
+                key: Some((s("api_key"), s("pk1_3f9a…c2d1"))),
+                checked: Some(s("Just now")),
+                blocked: Vec::new(),
             }],
             auto_update: sample_auto_update(),
             knobs: TestKnobs::default(),
@@ -1395,7 +1402,17 @@ impl ScreenData for MockBackend {
                 continue;
             };
             let approved = approvals.iter().any(|(n, _)| n == name);
-            if matches!(item.note, UpdateNote::NewPermission(_)) && !approved {
+            let refusal = self.knobs.update_refusals.iter().find(|(n, _)| n == name).map(|(_, r)| r.clone());
+            if let Some(reason) = refusal {
+                // Refused before anything changed, as nodo-helper's prepare step does: no
+                // rollback to report, and nothing held.
+                results.push(UpdateResult {
+                    name: name.clone(),
+                    applied: false,
+                    version: format!("still on {}", item.from),
+                    note: reason,
+                });
+            } else if matches!(item.note, UpdateNote::NewPermission(_)) && !approved {
                 // The helper's refusal, from nodo-helper's updates.rs.
                 results.push(UpdateResult {
                     name: name.clone(),
@@ -1417,6 +1434,7 @@ impl ScreenData for MockBackend {
                     restored: format!("Version {} and its data were restored.", item.from),
                     running: true,
                     log_line: s("database migration 14: table \"invoices\" already exists"),
+                    reason: s("moneropay did not pass its health check: connection refused"),
                     verdict: s("This looks like a package problem. Your settings were not the cause."),
                 });
             } else {
@@ -1644,7 +1662,26 @@ impl ScreenData for MockBackend {
         let domains = names.iter().map(|name| ConnectedDomain { name: name.clone(), used_by: Vec::new(), held_by: held(name) }).collect();
         let kind = provider.to_lowercase().replace([' ', '.'], "");
         let id = (1..).map(|n| if n == 1 { kind.clone() } else { format!("{kind}-{n}") }).find(|id| !self.connected.iter().any(|p| &p.id == id)).unwrap_or(kind);
-        let added = ConnectedProvider { id, name: s(provider), domains, lists_domains: entry.lists_domains, problem: None };
+        // The hint as the helper makes it: the ends of an identifier, the last four of a lone token.
+        let shown: Vec<char> = api_key.expose().trim().chars().collect();
+        let tail: String = shown[shown.len().saturating_sub(4)..].iter().collect();
+        let hint = if entry.fields.len() > 1 && shown.len() >= 24 {
+            format!("{}…{tail}", shown[..8].iter().collect::<String>())
+        } else if shown.len() >= 16 {
+            format!("…{tail}")
+        } else {
+            s("…")
+        };
+        let added = ConnectedProvider {
+            id,
+            name: s(provider),
+            domains,
+            lists_domains: entry.lists_domains,
+            problem: None,
+            key: entry.fields.first().map(|field| (field.clone(), hint)),
+            checked: Some(s("Just now")),
+            blocked: Vec::new(),
+        };
         self.connected.push(added.clone());
         self.sync_web_domain();
         Ok(added)
@@ -1663,6 +1700,10 @@ impl ScreenData for MockBackend {
     }
 
     fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String> {
+        // The helper cannot open a sealed key while the device is locked.
+        if self.key_locked {
+            return Err(ApiError::Locked("unlock the device to use the DNS provider".to_owned()).to_string());
+        }
         self.connected_providers().into_iter().find(|p| p.id == id).ok_or_else(|| format!("no connected provider is called {id}"))
     }
 
@@ -1743,7 +1784,7 @@ impl ScreenData for MockBackend {
         reachability_checks(&host, ports_open)
     }
 
-    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias]) -> Result<(), String> {
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[PublicAlias], confirm_added: &[String]) -> Result<(), String> {
         self.screen_gate().map_err(|refusal| refusal.to_string())?;
         if !self.under_a_domain(host) {
             return Err(s("The address must be under one of your domains."));
@@ -1756,8 +1797,19 @@ impl ScreenData for MockBackend {
         if entry.exposure.public && entry.public_host.as_deref() != Some(host) {
             return Err(s("take the site off its public address before changing the host"));
         }
-        if entry.exposure.public && !aliases.iter().all(|alias| entry.public_aliases.contains(alias)) {
-            return Err(s("take the site off its public address before adding another name; removing one works while it is public"));
+        if entry.exposure.public {
+            let unconfirmed: Vec<&str> = aliases
+                .iter()
+                .map(|alias| alias.host.as_str())
+                .filter(|name| !entry.public_aliases.iter().any(|old| old.host == *name))
+                .filter(|name| !confirm_added.iter().any(|confirmed| confirmed == name))
+                .collect();
+            if !unconfirmed.is_empty() {
+                return Err(format!(
+                    "the site is public, so {} would go on the internet at once: confirm adding it",
+                    unconfirmed.join(", ")
+                ));
+            }
         }
         let owned = self.owned_domains();
         let taken: Vec<(String, String)> = self

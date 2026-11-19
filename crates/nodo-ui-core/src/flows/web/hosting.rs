@@ -4,10 +4,14 @@
 //! The three choices are independent flags. Turning anything off never asks. The internet is
 //! never turned on by Save itself: Save applies the other two, saves the names, and starts the
 //! reachability check, whose result leads to the confirmation (`super::public`).
+//!
+//! A site that is public already has no such confirmation ahead of it, so a name it gains would
+//! go on the internet at once. Save asks about those names first, starting on Cancel, and the
+//! helper refuses them unless they come confirmed (`Effect::SetPublicHost::confirm_added`).
 
 use nodo_api::{AliasMode, Exposure, PublicAlias};
 
-use super::super::{Dest, Notice, Step};
+use super::super::{Confirm, Dest, Notice, Question, Step};
 use crate::effect::ExposureAfter;
 use crate::model::{Site, Snapshot};
 use crate::Effect;
@@ -69,7 +73,8 @@ pub enum Row {
     Address,
     /// One of the other names, by index into `Hosting::aliases`. It can be removed.
     Alias(usize),
-    /// The controls that add another name. Absent while the site is public.
+    /// The way to add another name. A frontend may keep its controls behind a button until the
+    /// owner asks for another address, so a site with one address shows only that one.
     NewAlias,
     /// The internet is ticked and no provider is connected: the way to add one.
     AddProvider,
@@ -91,9 +96,6 @@ pub struct Hosting {
     pub aliases: Vec<PublicAlias>,
     /// Why the last new name could not be added. It belongs beside the new name.
     pub alias_error: Option<String>,
-    /// The site was public when the page opened. The helper then lets names be removed but not
-    /// added, since going public confirmed the names it had.
-    pub was_public: bool,
 }
 
 /// The Hosting page of an installed app, or the remark that it has none.
@@ -127,7 +129,6 @@ impl Hosting {
             has_provider: !domains.is_empty(),
             aliases: Vec::new(),
             alias_error: None,
-            was_public: draft.public,
         }
     }
 
@@ -185,20 +186,16 @@ impl Hosting {
         join_host(&self.sub, &self.domain)
     }
 
-    /// Other names can be added: only while the site is not public yet.
+    /// Other names can be added: with the internet ticked and a provider to give them a domain.
+    /// A site that is public already can gain one too; saving then asks first (`save`).
     pub fn can_add_alias(&self) -> bool {
-        self.draft.public && self.has_provider && !self.was_public
+        self.draft.public && self.has_provider
     }
 
     /// Puts another name on the list, after the same checks the helper makes on saving, so a name
     /// it would refuse is refused here at once, in its words. False when it was refused;
     /// `alias_error` then says why.
     pub fn add_alias(&mut self, name: &str, mode: AliasMode, snapshot: &Snapshot) -> bool {
-        if self.was_public {
-            self.alias_error =
-                Some("Take the site off the internet before adding another name. Removing one works while it is public.".to_owned());
-            return false;
-        }
         let owned: Vec<String> = snapshot.domain_choices().into_iter().map(|(domain, _)| domain).collect();
         let mut next = self.aliases.clone();
         next.push(PublicAlias { host: name.to_owned(), mode });
@@ -242,9 +239,7 @@ impl Hosting {
             if self.has_provider {
                 rows.extend([Row::Domain, Row::Address]);
                 rows.extend((0..self.aliases.len()).map(Row::Alias));
-                if !self.was_public {
-                    rows.push(Row::NewAlias);
-                }
+                rows.push(Row::NewAlias);
             } else {
                 rows.push(Row::AddProvider);
             }
@@ -269,7 +264,51 @@ impl Hosting {
     ///   comes on after the confirmation.
     /// - Whenever the names change, and always on the way to public, the names are saved first
     ///   and the rest runs only once the helper took them (`Effect::SetPublicHost::then`).
+    /// - A site that is public and stays public would gain its new names at once, with no
+    ///   going-public confirmation to list them: they are asked about first, and nothing is saved
+    ///   until the owner confirms (`Confirm::AddPublicNames`).
     pub fn save(&self, snapshot: &Snapshot) -> Step {
+        self.save_confirmed(snapshot, &[])
+    }
+
+    /// The names this draft adds to a site that is public and stays public: the ones that go on
+    /// the internet as soon as they are saved. Empty for a site that is not public yet, since
+    /// going public confirms every name.
+    pub fn names_added_while_public(&self, snapshot: &Snapshot) -> Vec<PublicAlias> {
+        let Some(site) = snapshot.web.sites.iter().find(|site| site.package == self.site) else {
+            return Vec::new();
+        };
+        if !(self.draft.public && site.exposure.public) {
+            return Vec::new();
+        }
+        self.aliases.iter().filter(|alias| !site.public_aliases.iter().any(|old| old.host == alias.host)).cloned().collect()
+    }
+
+    /// The question before new names go on a site that is public. It starts on Cancel.
+    fn ask_add_public_names(&self, added: &[PublicAlias]) -> Question {
+        let host = self.host();
+        let names: Vec<String> = added.iter().map(|alias| alias.host.clone()).collect();
+        let title = match names.as_slice() {
+            [one] => format!("Add {one} to the internet?"),
+            many => format!("Add {} addresses to the internet?", many.len()),
+        };
+        let mut body: Vec<String> = added
+            .iter()
+            .map(|alias| match alias.mode {
+                AliasMode::Redirect => format!("https://{}  redirects to {host}", alias.host),
+                AliasMode::Serve => format!("https://{}  shows the same site", alias.host),
+            })
+            .collect();
+        body.push(format!("{} is on the internet, so this happens as soon as you add it.", self.site));
+        body.push("It points to your home's internet address, like the main address.".to_owned());
+        body.push(format!("Public certificate logs list {} permanently.", names.join(", ")));
+        Question::careful(title, body, "Add", Confirm::AddPublicNames { hosting: Box::new(self.clone()), names })
+    }
+
+    /// Saves the draft as `save` does. `confirmed` are the new names the owner agreed to put on a
+    /// site that is public; when the draft adds others, the question is asked (again) and nothing
+    /// is saved.
+    pub fn save_confirmed(&self, snapshot: &Snapshot, confirmed: &[String]) -> Step {
         let Some(site) = snapshot.web.sites.iter().find(|site| site.package == self.site) else {
             return Step::Go(Dest::LeaveHosting { site: self.site.clone() });
         };
@@ -279,6 +318,11 @@ impl Hosting {
         let name = self.site.clone();
         if draft.public && !self.has_provider {
             return Step::Done(Notice::info("Add a domain provider first, so the internet can use your web address."));
+        }
+        let added = self.names_added_while_public(snapshot);
+        let added_names: Vec<String> = added.iter().map(|alias| alias.host.clone()).collect();
+        if !added_names.is_empty() && added_names != confirmed {
+            return Step::Ask(self.ask_add_public_names(&added));
         }
         // Going public sends the names even unchanged, so the helper checks them again first: a
         // provider removed since they were saved would leave a name with no record or certificate.
@@ -302,7 +346,7 @@ impl Hosting {
         }
         if names_change {
             // The names go first, and the rest only once the helper took them.
-            return Step::Run(vec![Effect::SetPublicHost { site: name, host, aliases, then: effects }]);
+            return Step::Run(vec![Effect::SetPublicHost { site: name, host, aliases, confirm_added: added_names, then: effects }]);
         }
         Step::Run(effects)
     }
@@ -406,9 +450,9 @@ mod tests {
         hosting.has_provider = false;
         assert_eq!(hosting.rows(), [Row::Home, Row::Tor, Row::Internet, Row::AddProvider], "no Save without a provider");
         assert!(!hosting.can_save());
-        // A site that is public already: its names can go, none can be added.
+        // A site that is public already can gain a name too; saving it is what asks.
         let public = open(&snapshot, "shop").expect("a site");
-        assert!(public.was_public && !public.rows().contains(&Row::NewAlias) && !public.can_add_alias());
+        assert!(public.draft.public && public.rows().contains(&Row::NewAlias) && public.can_add_alias());
     }
 
     #[test]
@@ -437,10 +481,111 @@ mod tests {
         hosting.remove_alias("never.example.com");
         assert!(hosting.aliases.is_empty());
 
-        // While public the helper takes no new name, so none is taken here.
+        // A public site's draft takes a new name the same way; nothing is said until Save.
         let mut public = open(&snapshot, "shop").expect("a site");
-        assert!(!public.add_alias("www.example.com", AliasMode::Redirect, &snapshot));
-        assert!(public.alias_error.as_deref().is_some_and(|e| e.contains("off the internet")));
+        assert!(public.add_alias("www.example.com", AliasMode::Redirect, &snapshot));
+        assert_eq!(public.alias_error, None);
+    }
+
+    fn alias(host: &str, mode: AliasMode) -> PublicAlias {
+        PublicAlias { host: host.into(), mode }
+    }
+
+    #[test]
+    fn a_public_site_gains_a_name_only_once_the_owner_confirms_it() {
+        let (mut mock, snapshot) = start();
+        // The shop is public and answers at example.com already.
+        let mut hosting = open(&snapshot, "shop").expect("a site");
+        assert_eq!(hosting.aliases, [alias("example.com", AliasMode::Redirect)]);
+        assert!(hosting.names_added_while_public(&snapshot).is_empty());
+        assert!(hosting.add_alias("www.example.com", AliasMode::Serve, &snapshot));
+        assert_eq!(hosting.names_added_while_public(&snapshot), [alias("www.example.com", AliasMode::Serve)]);
+
+        // Save asks first, about the new name only, starting on Cancel, and sends nothing.
+        let Step::Ask(question) = hosting.save(&snapshot) else { panic!("a question") };
+        assert!(question.cancel_is_default);
+        assert_eq!(question.title, "Add www.example.com to the internet?");
+        assert_eq!(question.confirm_label, "Add");
+        assert_eq!(
+            question.body,
+            [
+                "https://www.example.com  shows the same site",
+                "shop is on the internet, so this happens as soon as you add it.",
+                "It points to your home's internet address, like the main address.",
+                "Public certificate logs list www.example.com permanently.",
+            ]
+        );
+        assert!(!question.confirm.is_long());
+        assert!(mock.calls.iter().all(|call| !matches!(call, nodo_api::Request::SetPublicHost { .. })));
+
+        // Confirmed, the names go to the helper with the new one named, and the page is left.
+        let step = question.confirm.step(&snapshot);
+        let Step::Run(effects) = &step else { panic!("{step:?}") };
+        let [Effect::SetPublicHost { aliases, confirm_added, then, .. }] = &effects[..] else { panic!("{effects:?}") };
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(confirm_added, &["www.example.com".to_owned()]);
+        assert!(then.is_empty(), "the exposure does not change");
+        assert_eq!(follow(&mut mock, step), [Step::Go(Dest::LeaveHosting { site: "shop".into() }), Step::Done(Notice::ok("Saved."))]);
+        assert_eq!(mock.web.sites[0].public_aliases.len(), 2);
+        assert!(exposure(&mut mock, "shop").public, "it stayed public throughout");
+    }
+
+    #[test]
+    fn a_confirmation_covers_only_the_names_it_listed() {
+        let (_, snapshot) = start();
+        let mut hosting = open(&snapshot, "shop").expect("a site");
+        assert!(hosting.add_alias("www.example.com", AliasMode::Redirect, &snapshot));
+        assert!(hosting.add_alias("store.example.com", AliasMode::Serve, &snapshot));
+        let Step::Ask(question) = hosting.save(&snapshot) else { panic!("a question") };
+        assert_eq!(question.title, "Add 2 addresses to the internet?");
+        assert_eq!(question.body[0], "https://www.example.com  redirects to shop.example.com");
+        assert_eq!(question.body[1], "https://store.example.com  shows the same site");
+        assert_eq!(question.body[4], "Public certificate logs list www.example.com, store.example.com permanently.");
+        // Agreeing to one of two is not agreeing to both: it is asked again.
+        assert!(matches!(hosting.save_confirmed(&snapshot, &["www.example.com".to_owned()]), Step::Ask(_)));
+        let both = ["www.example.com".to_owned(), "store.example.com".to_owned()];
+        assert!(matches!(hosting.save_confirmed(&snapshot, &both), Step::Run(_)));
+    }
+
+    #[test]
+    fn names_that_publish_nothing_new_are_saved_without_a_question() {
+        let (mut mock, snapshot) = start();
+        // Taking a name away, and changing whether a name redirects: the name is public already.
+        let mut hosting = open(&snapshot, "shop").expect("a site");
+        hosting.aliases[0].mode = AliasMode::Serve;
+        let step = hosting.save(&snapshot);
+        assert!(matches!(&step, Step::Run(effects) if matches!(&effects[..], [Effect::SetPublicHost { confirm_added, .. }] if confirm_added.is_empty())), "{step:?}");
+        assert_eq!(follow(&mut mock, step).len(), 2);
+        assert_eq!(mock.web.sites[0].public_aliases, [alias("example.com", AliasMode::Serve)]);
+
+        // On the way to public the going-public confirmation lists every name, so Save asks nothing.
+        let mut going = open(&snapshot, "moneropay").expect("a site");
+        going.set_exposure(true, false, true);
+        assert!(going.add_alias("www.example.com", AliasMode::Redirect, &snapshot));
+        assert!(going.names_added_while_public(&snapshot).is_empty());
+        assert!(matches!(going.save(&snapshot), Step::Run(_)));
+
+        // A public site taken off the internet drops the question with the internet.
+        let mut leaving = open(&snapshot, "shop").expect("a site");
+        assert!(leaving.add_alias("www.example.com", AliasMode::Redirect, &snapshot));
+        leaving.set_exposure(true, false, false);
+        assert!(matches!(leaving.save(&snapshot), Step::Run(_)));
+    }
+
+    #[test]
+    fn the_helper_refuses_a_new_name_of_a_public_site_that_was_not_confirmed() {
+        let (mut mock, _) = start();
+        let names = vec![alias("example.com", AliasMode::Redirect), alias("www.example.com", AliasMode::Serve)];
+        let unconfirmed = Effect::SetPublicHost {
+            site: "shop".into(),
+            host: "shop.example.com".into(),
+            aliases: names,
+            confirm_added: Vec::new(),
+            then: Vec::new(),
+        };
+        let seen = follow(&mut mock, Step::Run(vec![unconfirmed]));
+        assert!(matches!(&seen[..], [Step::Failed(notice)] if notice.text.contains("confirm adding it")), "{seen:?}");
+        assert_eq!(mock.web.sites[0].public_aliases.len(), 1);
     }
 
     #[test]
@@ -515,6 +660,7 @@ mod tests {
                 site: "moneropay".into(),
                 host: "pay2.example.com".into(),
                 aliases: Vec::new(),
+                confirm_added: Vec::new(),
                 then: vec![others, check],
             }])
         );

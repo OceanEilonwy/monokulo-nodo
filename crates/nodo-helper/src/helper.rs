@@ -247,7 +247,9 @@ impl<S: System> Helper<S> {
                 exposure,
                 confirmation,
             } => self.set_exposure(&site, exposure, confirmation.as_ref()),
-            Request::SetPublicHost { site, host, aliases } => self.set_public_host(&site, &host, aliases.as_deref()),
+            Request::SetPublicHost { site, host, aliases, confirm_added } => {
+                self.set_public_host(&site, &host, aliases.as_deref(), &confirm_added)
+            }
             Request::ListSites => self.list_sites(),
             Request::DeviceOverview => self.overview(),
             Request::ListPackages => self.list_packages(),
@@ -399,6 +401,7 @@ mod tests {
                 site,
                 host: "a.example".into(),
                 aliases: None,
+                confirm_added: Vec::new(),
             },
             Request::InstallService {
                 id: "shop".into(),

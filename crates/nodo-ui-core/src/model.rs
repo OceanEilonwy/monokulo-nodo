@@ -78,6 +78,9 @@ pub enum Hint {
     /// Start the install: the package is downloaded and checked, and what it asks for is shown
     /// before anything is installed.
     Install,
+    /// Open the details of the domain provider the message is about, which say why some of its
+    /// domains cannot be used yet.
+    ProviderDetails,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -527,7 +530,10 @@ pub struct UpdateFailure {
     pub kept_version: String,
     pub restored: String,
     pub running: bool,
+    /// The app's own last log line, when it wrote one.
     pub log_line: String,
+    /// Why the device rolled it back, in the device's words, for when the app's log is empty.
+    pub reason: String,
     pub verdict: String,
 }
 
@@ -874,6 +880,13 @@ pub struct ConnectedProvider {
     pub lists_domains: bool,
     /// Why the last look at its domains failed, or a domain a site uses that it no longer lists.
     pub problem: Option<String>,
+    /// Which key the connection holds: the credential's field and a masked hint, such as
+    /// `("api_key", "pk1_3f9a…c2d1")`. `None` until the helper has read it.
+    pub key: Option<(String, String)>,
+    /// When its domains were last looked up, such as "5 minutes ago".
+    pub checked: Option<String>,
+    /// Domains in the provider account the key may not change yet: the name, and what to switch on.
+    pub blocked: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1098,8 +1111,9 @@ pub trait ScreenData {
     fn refresh_provider(&mut self, id: &str) -> Result<ConnectedProvider, String>;
     fn reachability(&mut self, site: &str) -> Reachability;
     /// Saves the site's public host and the other names it answers at, all of them: a name left
-    /// out is removed.
-    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias]) -> Result<(), String>;
+    /// out is removed. While the site is public a new name goes on the internet at once, so
+    /// `confirm_added` lists the new names the owner confirmed; without them it is refused.
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias], confirm_added: &[String]) -> Result<(), String>;
     fn set_public_access(&mut self, site: &str, access: &PublicAccess) -> Result<(), String>;
     fn save_acme(&mut self, _settings: &nodo_api::AcmeSettingsInput) -> Result<(), String> {
         Err("Certificate settings are not available here.".to_owned())

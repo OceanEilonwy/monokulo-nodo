@@ -925,9 +925,13 @@ impl ScreenData for HelperBackend {
         Reachability::Checked { checks, router, plan, manual: detail.manual_check }
     }
 
-    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias]) -> Result<(), String> {
-        let request =
-            Request::SetPublicHost { site: self.site_id(site), host: host.to_owned(), aliases: Some(aliases.to_vec()) };
+    fn set_public_host(&mut self, site: &str, host: &str, aliases: &[nodo_api::PublicAlias], confirm_added: &[String]) -> Result<(), String> {
+        let request = Request::SetPublicHost {
+            site: self.site_id(site),
+            host: host.to_owned(),
+            aliases: Some(aliases.to_vec()),
+            confirm_added: confirm_added.to_vec(),
+        };
         self.ask(request).map(|_| ()).map_err(|e| e.to_string())
     }
 
@@ -958,7 +962,7 @@ impl ScreenData for HelperBackend {
     }
 
     fn set_public_access(&mut self, _site: &str, access: &PublicAccess) -> Result<(), String> {
-        // Admin paths and rate limiting are always on. A password in front of a site is not built.
+        // Rate limiting is always on. A password in front of a site is not built.
         if access.require_password {
             Err("A password in front of a site is not available yet. Turn it off to go public.".to_owned())
         } else {
@@ -1150,6 +1154,9 @@ fn connected(provider: nodo_api::DomainProvider) -> ConnectedProvider {
             .collect(),
         lists_domains: provider.lists_domains,
         problem: provider.problem,
+        key: provider.key.map(|key| (key.field, key.hint)),
+        checked: provider.checked_at.map(ago),
+        blocked: provider.blocked.into_iter().map(|d| (d.name, d.reason)).collect(),
     }
 }
 

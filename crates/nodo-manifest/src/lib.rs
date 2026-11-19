@@ -231,7 +231,8 @@ pub struct Storage {
     /// The version of the package's own data layout, 1 when not given. A new version that raises
     /// it converts the data itself on its first start. The helper records the layout the data is
     /// in, keeps a copy of the data for a rollback, and never starts a version on data in a newer
-    /// layout than it declares.
+    /// layout than it declares. Data on the data drive is only copied when the layout rises: a
+    /// version declaring the same layout shares the data with the old one both ways.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_layout: Option<u32>,
 }
@@ -311,25 +312,53 @@ pub enum Outbound {
     Internet,
 }
 
-/// A site the package serves. The user, never the package, chooses its exposure.
+/// A site the package serves. The user, never the package, chooses its exposure, and the site is
+/// served whole at every address the user gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "WebServiceFields")]
 pub struct WebService {
     pub name: String,
     /// `unix:/run/apps/<id>/<name>.sock` or `127.0.0.1:<port>`.
     pub upstream: String,
-    #[serde(default)]
     pub suggested_subdomain: Option<String>,
-    /// Paths that must never be reachable from the public address.
-    #[serde(default)]
-    pub admin_paths: Vec<String>,
     /// False when the app is tied to a single base URL.
-    #[serde(default)]
     pub multi_address: bool,
     /// How the proxy speaks to the upstream. Most apps speak HTTP/1.1; an app that speaks only
     /// HTTP/2 with prior knowledge (no TLS, no upgrade) declares `h2c`.
-    #[serde(default, skip_serializing_if = "UpstreamProtocol::is_default")]
+    #[serde(skip_serializing_if = "UpstreamProtocol::is_default")]
     pub upstream_protocol: UpstreamProtocol,
+}
+
+/// [`WebService`] as a manifest may write it. Sites used to list `admin_paths`, which the proxy
+/// hid from public and onion addresses. That is gone, but older packages, third-party feeds and the
+/// manifests a device keeps for installed packages still carry the key, and unknown keys are
+/// refused. So it is still read, whatever its value, and then dropped: nothing checks it, nothing
+/// acts on it, and it is never written back.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebServiceFields {
+    name: String,
+    upstream: String,
+    #[serde(default)]
+    suggested_subdomain: Option<String>,
+    #[serde(default, rename = "admin_paths")]
+    _admin_paths: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    multi_address: bool,
+    #[serde(default)]
+    upstream_protocol: UpstreamProtocol,
+}
+
+impl From<WebServiceFields> for WebService {
+    fn from(fields: WebServiceFields) -> Self {
+        WebService {
+            name: fields.name,
+            upstream: fields.upstream,
+            suggested_subdomain: fields.suggested_subdomain,
+            multi_address: fields.multi_address,
+            upstream_protocol: fields.upstream_protocol,
+        }
+    }
 }
 
 /// The HTTP version the proxy uses towards a web upstream.
@@ -537,7 +566,6 @@ mod tests {
             name: name.into(),
             upstream: upstream.into(),
             suggested_subdomain: None,
-            admin_paths: vec![],
             multi_address: false,
             upstream_protocol: UpstreamProtocol::H1,
         }
@@ -568,7 +596,6 @@ mod tests {
             name = "store"
             upstream = "unix:/run/apps/btcpay-lite/store.sock"
             suggested_subdomain = "pay"
-            admin_paths = ["/admin", "/admin/*", "/.well-known/x", "/*"]
             [[web]]
             name = "api"
             upstream = "127.0.0.1:8080"
@@ -757,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_bad_web_names_subdomains_and_admin_paths() {
+    fn rejects_bad_web_names_and_subdomains() {
         for name in ["", "Store", "a b", "../x", "a.b", "a\n", "-a", "a-"] {
             let mut m = base();
             m.web = vec![web(name, "127.0.0.1:8080")];
@@ -772,13 +799,6 @@ mod tests {
         m.web = vec![web("a", "127.0.0.1:8080")];
         m.web[0].suggested_subdomain = Some("evil.example.com".into());
         assert_eq!(fields(&m), ["web[0].suggested_subdomain"]);
-
-        for path in ["admin", "/a/../b", "/a b", "/a\n}", "/a?b", "/a#b", "/%2e%2e", "/a*", "/*/a", "//a", ""] {
-            let mut m = base();
-            m.web = vec![web("a", "127.0.0.1:8080")];
-            m.web[0].admin_paths = vec![path.into()];
-            assert_eq!(fields(&m), ["web[0].admin_paths[0]"], "admin path {path:?} should be rejected");
-        }
     }
 
     #[test]
@@ -799,6 +819,29 @@ mod tests {
         // Stored manifests round-trip, and an h1 site serializes exactly as before this field.
         assert_eq!(Manifest::parse(&toml::to_string(&h2c).unwrap()).unwrap(), h2c);
         assert!(!toml::to_string(&parse("").unwrap()).unwrap().contains("upstream_protocol"));
+    }
+
+    #[test]
+    fn old_manifests_with_admin_paths_still_parse_and_the_key_is_dropped() {
+        // Packages and feeds from before admin paths were removed, and the manifests a device keeps
+        // for its installed packages, may still list them. They must keep parsing.
+        let old = "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n\
+                   [[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8080\"\n";
+        let plain = Manifest::parse(old).unwrap();
+        for paths in ["[\"/admin\", \"/admin/*\"]", "[\"/\"]", "[]", "[\"admin\", \"/a/../b\"]"] {
+            let text = format!("{old}admin_paths = {paths}\n");
+            let m = Manifest::parse(&text).unwrap_or_else(|e| panic!("{paths}: {e}"));
+            // Even values the old validation refused are no problem now: nothing reads them.
+            assert!(m.validate().is_empty(), "{paths}: {:?}", m.validate());
+            assert_eq!(m, plain, "{paths}: the key changes nothing");
+            // A stored manifest round-trips, without the key.
+            let stored = toml::to_string(&m).unwrap();
+            assert!(!stored.contains("admin_paths"), "{stored}");
+            assert_eq!(Manifest::parse(&stored).unwrap(), m);
+        }
+        // Other unknown keys of a site are still refused.
+        assert!(Manifest::parse(&format!("{old}admin_path = [\"/admin\"]\n")).is_err());
+        assert!(Manifest::parse(&format!("{old}hide = true\n")).is_err());
     }
 
     #[test]

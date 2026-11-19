@@ -30,7 +30,7 @@ use nodo_api::{
 use nodo_web::caddy::{self, AddressKind, DomainSettings, Site, WebPlan};
 use nodo_web::dns::catalog::{self, Dns01, ProviderStatus};
 use nodo_web::dns::config::ProviderConfig;
-use nodo_web::dns::{DnsProvider, RecordName, Zone};
+use nodo_web::dns::{DnsProvider, DomainListing, RecordName, Zone};
 use nodo_web::http::SharedHttp;
 use nodo_web::local::{self, LocalAddress};
 use nodo_web::reachability::{self, CheckId, LanInfo, NoExternalVantage, ReachabilityInputs, Verdict};
@@ -130,8 +130,9 @@ pub trait WebIo: Send + Sync {
     /// A GET on Caddy's admin API. `None` when Caddy is not running or answers with an error.
     fn caddy_get(&self, socket: &Path, path: &str) -> Option<Vec<u8>>;
     fn dns_provider(&self, config: ProviderConfig, domain: &str) -> Result<Box<dyn DnsProvider>, String>;
-    /// The domains the credentials control, or `None` when the provider cannot list them.
-    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String>;
+    /// The domains the credentials control and the account's domains they may not change yet, or
+    /// `None` when the provider cannot list them.
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<DomainListing>, String>;
     /// The home's public IPv4 address, as the IP echo services see it.
     fn detect_public_ip(&self) -> Option<IpAddr>;
 }
@@ -1115,8 +1116,8 @@ impl WebIo for RealWebIo {
         config.build(self.http(), domain).map_err(|e| e.to_string())
     }
 
-    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String> {
-        config.list_domains(self.http()).map_err(|e| e.to_string())
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<DomainListing>, String> {
+        config.domain_listing(self.http()).map_err(|e| e.to_string())
     }
 
     fn detect_public_ip(&self) -> Option<IpAddr> {

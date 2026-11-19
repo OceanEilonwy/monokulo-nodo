@@ -489,6 +489,7 @@ fn hosting_with_names(snapshot: &nodo_ui_core::model::Snapshot, focus: usize) ->
         PublicAlias { host: "pay-old.example.com".into(), mode: AliasMode::Redirect },
         PublicAlias { host: "pay.crowd1.example".into(), mode: AliasMode::Serve },
     ];
+    state.adding_alias = true;
     state.selected = focus;
     app.screen = Screen::WebExposure(state);
     app
@@ -526,6 +527,23 @@ fn a_sites_other_names_click_at_every_size() {
             update(&mut app, Event::Mouse { kind: MouseKind::Down, column, row: row as u16 });
             app
         };
+        // The controls are closed until "Add another address" is clicked.
+        let mut closed = hosting_with_names(&snapshot, 0);
+        if let Screen::WebExposure(s) = &mut closed.screen {
+            s.adding_alias = false;
+            s.selected = s.order().iter().position(|f| *f == HostingFocus::AliasOpen).expect("the button is in the order");
+        }
+        closed.size = size;
+        let (buffer, _) = draw(&closed, size.0, size.1);
+        let screen = common::text(&buffer);
+        assert!(!screen.contains("New name"), "{}x{}: the controls are closed:\n{screen}", size.0, size.1);
+        let hits = closed.hits.borrow().clone();
+        let (row, line) = screen.lines().enumerate().find(|(_, line)| line.contains("Add another address")).expect("the button that opens them");
+        let column = line[..line.find("Add another address").unwrap()].chars().count() as u16 + 1;
+        assert!(hit_at(&hits, column, row as u16).is_some(), "{}x{}: the button is a target:\n{screen}", size.0, size.1);
+        update(&mut closed, Event::Mouse { kind: MouseKind::Down, column, row: row as u16 });
+        assert!(state(&closed).adding_alias, "{}x{}: a click opens the controls", size.0, size.1);
+        assert_eq!(state(&closed).focus(), HostingFocus::AliasDomain, "{}x{}", size.0, size.1);
         let removed = click_on(HostingFocus::Alias(1), "Remove");
         assert_eq!(state(&removed).aliases.len(), 1, "{}x{}: a Remove click removes a name", size.0, size.1);
         let toggled = click_on(HostingFocus::AliasMode, "redirects");

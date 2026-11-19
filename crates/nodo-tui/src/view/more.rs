@@ -130,7 +130,7 @@ pub fn onion(t: &Theme, state: &OnionState) -> Page {
     let mut about = vec![
         bullet(t, "An onion address is reached through Tor only. It never shows your IP and needs no open port."),
         bullet(t, "The node's address serves only its restricted RPC, which wallets use. Never the full RPC."),
-        bullet(t, "Admin paths of sites are blocked on onion addresses. Keys are kept in backups."),
+        bullet(t, "Onion address keys are kept in backups."),
     ];
     if !status.tor_installed {
         about.push(Item::Text(Line::from(vec![t.a("▲ "), t.n("Install the tor package to get onion addresses.")])));

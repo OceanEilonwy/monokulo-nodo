@@ -3,11 +3,18 @@
 //! A check refreshes the feeds and inspects each newer version, so an update that asks for more,
 //! comes with a changed key or fails the install checks is known before anyone selects it. The
 //! rules of `nodo_update::auto` decide what runs unattended. Every update keeps the previous
-//! version's verified file and a copy of the package's data, and a failed install or health
-//! check puts both back and holds that version.
+//! version's verified file and, where the old version could not read what the new one leaves, a
+//! copy of the package's data; a failed install or health check puts both back and holds that
+//! version. An update refused before anything changed is reported and recorded as a refusal: the
+//! old version never stopped, so nothing is put back and nothing is held.
+//!
+//! Data on the data drive can be far too large to copy on every update, so it is only copied when
+//! the new version raises its data layout, next to the data on the drive itself. A new version
+//! that declares the layout the data is already in shares it with the old one both ways, and its
+//! rollback only puts the old package back onto the same data.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use nodo_api::{
     ApiError, AutoUpdatePrefs, Secret, InstallReview, PermissionApproval, Response, UpdateApproval,
@@ -25,7 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::apps::block_text;
 use crate::helper::{lock, Helper};
-use crate::system::{SvAction, System};
+use crate::system::{SvAction, System, WriteOptions};
 
 const NODE_ROLE: &str = "monero-daemon";
 const HISTORY_LEN: usize = 50;
@@ -35,6 +42,15 @@ const IN_VOLUME_COPY: &str = ".nodo-rollback";
 const COPY_MARGIN: u64 = 256 * 1024 * 1024;
 /// The same inside an encrypted volume, which is small and holds nothing else.
 const IN_VOLUME_MARGIN: u64 = 8 * 1024 * 1024;
+/// At the top of the data drive, root-only: copies of data-drive apps' data for a rollback, one
+/// directory per app, on the same filesystem as the data so a copy can share its blocks.
+const DRIVE_COPIES: &str = ".nodo-rollback";
+/// At the top of the data drive, root-only: the layout each data-drive app's data is in. Beside
+/// the data, like the record inside an encrypted volume, but out of the service's reach.
+const DRIVE_LAYOUTS: &str = ".nodo-layouts";
+/// Before refusals were an outcome of their own, an update of a data-drive app was refused with
+/// these words but recorded as a rollback, and its version held.
+const LEGACY_DRIVE_REFUSAL: &str = "keeps its data on the data drive, which an update cannot copy for a rollback yet";
 
 /// What the last check found for one package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,7 +69,8 @@ pub(crate) struct CandidateRecord {
     /// The encrypted volume size the new version asks for, in bytes.
     #[serde(default)]
     pub volume_bytes: Option<u64>,
-    /// The data layout the new version declares, for encrypted packages.
+    /// The data layout the new version declares. Checks before this was recorded for every
+    /// package only recorded it for encrypted ones.
     #[serde(default)]
     pub data_layout: Option<u32>,
     /// The volume must grow first, which needs the device passphrase.
@@ -182,6 +199,19 @@ fn event(e: &auto::Event) -> UpdateEvent {
                 wait: wait_text(*wait).to_owned(),
             },
         ),
+        auto::Outcome::NotUpdated {
+            package,
+            from,
+            to,
+            reason,
+        } => (
+            package,
+            from,
+            to,
+            UpdateEventKind::NotUpdated {
+                reason: reason.clone(),
+            },
+        ),
     };
     UpdateEvent {
         at: e.at,
@@ -189,6 +219,18 @@ fn event(e: &auto::Event) -> UpdateEvent {
         from: from.clone(),
         to: to.clone(),
         kind,
+    }
+}
+
+fn refusal_event(r: &auto::Refusal) -> UpdateEvent {
+    UpdateEvent {
+        at: r.at,
+        package: r.package.clone(),
+        from: r.from.clone(),
+        to: r.to.clone(),
+        kind: UpdateEventKind::NotUpdated {
+            reason: r.reason.clone(),
+        },
     }
 }
 
@@ -213,6 +255,7 @@ fn result_of(outcome: &auto::Outcome, log: Vec<String>) -> UpdateResult {
             rollback_error: Some(rollback_error),
         },
         UpdateEventKind::Postponed { wait } => UpdateOutcome::Postponed(wait),
+        UpdateEventKind::NotUpdated { reason } => UpdateOutcome::Refused(reason),
     };
     UpdateResult {
         package: e.package,
@@ -223,8 +266,27 @@ fn result_of(outcome: &auto::Outcome, log: Vec<String>) -> UpdateResult {
     }
 }
 
-/// The same bookkeeping `nodo_update::auto::run` does, for updates the user started.
+/// The same bookkeeping `nodo_update::auto::run` does, for updates the user started. The user
+/// watched a refusal happen, so it is kept for the history but not shown again on Home.
 fn record(state: &mut UpdateState, at: u64, outcome: auto::Outcome) {
+    if let auto::Outcome::NotUpdated {
+        package,
+        from,
+        to,
+        reason,
+    } = outcome
+    {
+        state.record_refusal(auto::Refusal {
+            at,
+            package,
+            from,
+            to,
+            reason,
+            unseen: false,
+        });
+        return;
+    }
+    state.forget_refusal(&outcome);
     let event = auto::Event { at, outcome };
     if matches!(
         event.outcome,
@@ -239,6 +301,67 @@ fn record(state: &mut UpdateState, at: u64, outcome: auto::Outcome) {
     }
 }
 
+/// Helpers before refusals recorded a refused update of a data-drive app as a rollback, kept it
+/// for Home and held its version. It was refused before anything changed, so nothing was rolled
+/// back and the version never failed: each becomes the refusal it was, and its hold is released
+/// unless that version also failed for real.
+fn mend_legacy_refusals(state: &mut UpdateState) {
+    let legacy = |o: &auto::Outcome| {
+        matches!(o, auto::Outcome::RolledBack { reason, .. } if reason.ends_with(LEGACY_DRIVE_REFUSAL))
+    };
+    if !state.history.iter().chain(&state.attention).any(|e| legacy(&e.outcome)) {
+        return;
+    }
+    state.attention.retain(|e| !legacy(&e.outcome));
+    let mut found = Vec::new();
+    state.history.retain(|e| match &e.outcome {
+        auto::Outcome::RolledBack {
+            package,
+            from,
+            to,
+            reason,
+        } if legacy(&e.outcome) => {
+            found.push(auto::Refusal {
+                at: e.at,
+                package: package.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                reason: reason.clone(),
+                unseen: false,
+            });
+            false
+        }
+        _ => true,
+    });
+    for refusal in found {
+        let failed = state.history.iter().any(|e| match &e.outcome {
+            auto::Outcome::RolledBack { package, to, .. } | auto::Outcome::RollbackFailed { package, to, .. } => {
+                *package == refusal.package && *to == refusal.to
+            }
+            _ => false,
+        });
+        if !failed {
+            state.holds.release(&refusal.package, &refusal.to);
+        }
+        // Anything that happened to the package since is newer news than this refusal.
+        let superseded = state.history.iter().any(|e| {
+            e.at >= refusal.at
+                && match &e.outcome {
+                    auto::Outcome::Updated { package, .. }
+                    | auto::Outcome::RolledBack { package, .. }
+                    | auto::Outcome::RollbackFailed { package, .. } => *package == refusal.package,
+                    _ => false,
+                }
+        }) || state
+            .refusals
+            .iter()
+            .any(|r| r.package == refusal.package && r.at >= refusal.at);
+        if !superseded {
+            state.record_refusal(refusal);
+        }
+    }
+}
+
 #[path = "updates_manual.rs"]
 mod manual;
 pub(crate) use manual::PreviousVersion;
@@ -248,25 +371,77 @@ struct Updater<'a, S: System> {
     helper: &'a Helper<S>,
     /// Approvals given in this request for updates that ask for more.
     approvals: BTreeMap<String, Permissions>,
-    /// The previous version's kept file, by package.
+    /// The previous version's kept file, by package. Set once something changes, so a rollback
+    /// of an update refused before that finds nothing to do.
     previous: BTreeMap<String, PathBuf>,
     /// The last log lines of a failed package, for the report.
     logs: BTreeMap<String, Vec<String>>,
     /// The new version's kept file, which a rollback removes again.
     fresh: BTreeMap<String, PathBuf>,
-    /// What each update's new version asks of its encrypted storage, from the last check.
+    /// What each update's new version asks of its storage, from the last check.
     storage: BTreeMap<String, StorageTarget>,
     /// Given with the request, for growing encrypted volumes.
     passphrase: Option<&'a Secret>,
     /// Packages going back by hand to their kept previous version, instead of a feed update.
     downgrade: BTreeMap<String, PreviousVersion>,
+    /// What `prepare` checked and decided, by package, for the steps after it.
+    prepared: BTreeMap<String, Prepared>,
+    /// Data copies made for a rollback, by package. Only a finished copy is listed, so a rollback
+    /// never puts a partial one over the data.
+    copied: BTreeMap<String, DataCopy>,
 }
 
-/// What a new version asks of its encrypted volume.
+/// What a new version asks of its storage.
 #[derive(Debug, Clone, Copy, Default)]
 struct StorageTarget {
     volume_bytes: Option<u64>,
     data_layout: Option<u32>,
+}
+
+/// Where a package keeps its data, which decides how an update protects it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DataHome {
+    /// Inside its encrypted volume, wherever the volume file is.
+    Volume,
+    /// In the clear on the data drive mounted here.
+    Drive(PathBuf),
+    /// In the clear on the system disk.
+    SystemDisk,
+}
+
+/// A copy of a package's data that a rollback puts back.
+#[derive(Debug, Clone)]
+struct DataCopy {
+    data: PathBuf,
+    copy: PathBuf,
+    /// An entry at the top of `data` left out, which is where an in-place copy itself lives.
+    skip: Option<&'static str>,
+}
+
+/// What an update does with a package's data, decided before anything changes.
+#[derive(Debug, Clone)]
+enum DataPlan {
+    /// Copied once the old version has stopped, and put back by a rollback.
+    Copy(DataCopy),
+    /// Left as it is: the new version declares the layout the data is already in, so the old
+    /// version can read whatever the new one leaves, and a rollback only puts the old package
+    /// back onto the same data.
+    InPlace,
+}
+
+/// Everything an update needs that was checked before anything changed.
+#[derive(Debug, Clone)]
+struct Prepared {
+    /// The installed version's kept file, which a rollback reinstalls.
+    current: PathBuf,
+    feed: String,
+    /// For a feed update: the feed's address and the permissions approved for the new version.
+    from_feed: Option<(String, Permissions)>,
+    home: DataHome,
+    data: DataPlan,
+    /// The layout the data is in before the update.
+    layout: u32,
+    stop_timeout: u32,
 }
 
 impl<'a, S: System> Updater<'a, S> {
@@ -289,6 +464,8 @@ impl<'a, S: System> Updater<'a, S> {
                 .collect(),
             passphrase,
             downgrade: BTreeMap::new(),
+            prepared: BTreeMap::new(),
+            copied: BTreeMap::new(),
         }
     }
 }
@@ -297,21 +474,230 @@ fn fail(e: impl std::fmt::Display) -> Failure {
     Failure(e.to_string())
 }
 
+/// Sizes in a refusal, rounded up so following its advice is always enough.
+fn size_words(bytes: u64) -> String {
+    const MB: u64 = 1 << 20;
+    const GB: u64 = 1 << 30;
+    if bytes >= GB {
+        format!("{:.1} GB", (bytes as f64 / GB as f64 * 10.0).ceil() / 10.0)
+    } else {
+        format!("{} MB", bytes.div_ceil(MB))
+    }
+}
+
 impl<S: System> Updater<'_, S> {
-    fn data_copy(&self, id: &str, encrypted: bool) -> Result<(PathBuf, PathBuf, Option<&'static str>), Failure> {
-        let h = self.helper;
+    fn data_home(&self, id: &str, encrypted: bool) -> Result<DataHome, Failure> {
         if encrypted {
-            let mount = PathBuf::from(volume_mount(id).map_err(fail)?);
-            Ok((mount.clone(), mount.join(IN_VOLUME_COPY), Some(IN_VOLUME_COPY)))
-        } else {
-            if h.data_mount_of(id).map_err(fail)?.is_some() {
-                return Err(Failure(format!(
-                    "{id} keeps its data on the data drive, which an update cannot copy for a rollback yet"
-                )));
-            }
-            let layout = Layout::new(id, Profile::App, false).map_err(fail)?;
-            Ok((PathBuf::from(layout.data_dir), h.manage.paths.rollback.join(id), None))
+            return Ok(DataHome::Volume);
         }
+        Ok(match self.helper.data_mount_of(id).map_err(fail)? {
+            Some(mount) => DataHome::Drive(mount.to_path_buf()),
+            None => DataHome::SystemDisk,
+        })
+    }
+
+    /// Checked before anything else: data that is not there can be neither copied nor read.
+    fn data_present(&self, id: &str, home: &DataHome) -> Result<(), Failure> {
+        let h = self.helper;
+        match home {
+            DataHome::Volume => {
+                let mount = PathBuf::from(volume_mount(id).map_err(fail)?);
+                if !h.sys.is_mounted(&mount) {
+                    return Err(Failure(format!("{id}'s encrypted storage is locked")));
+                }
+            }
+            DataHome::Drive(mount) => {
+                if !h.sys.is_mounted(mount) {
+                    return Err(Failure(format!(
+                        "the data drive is not mounted, so {id}'s data is not there. Connect the data drive, then try again."
+                    )));
+                }
+            }
+            DataHome::SystemDisk => {}
+        }
+        Ok(())
+    }
+
+    /// The layout the data is in. Data on the system disk is always copied, so its layout is
+    /// not tracked.
+    fn data_layout(&self, id: &str, home: &DataHome, installed: &nodo_manifest::Manifest) -> u32 {
+        match home {
+            DataHome::Volume => self.helper.data_layout_of(id),
+            DataHome::Drive(mount) => self.helper.drive_layout_of(id, mount, installed),
+            DataHome::SystemDisk => 1,
+        }
+    }
+
+    /// Where the data is copied for a rollback, once the room for it is checked. `purpose` ends
+    /// the general refusal, as in "...a copy of demo's data {purpose}".
+    fn copy_plan(&self, c: &Candidate, home: &DataHome, purpose: &str) -> Result<DataPlan, Failure> {
+        let h = self.helper;
+        let id = c.package.as_str();
+        let (copy, margin) = match home {
+            DataHome::Volume => {
+                let mount = PathBuf::from(volume_mount(id).map_err(fail)?);
+                let copy = DataCopy {
+                    copy: mount.join(IN_VOLUME_COPY),
+                    data: mount,
+                    skip: Some(IN_VOLUME_COPY),
+                };
+                (copy, IN_VOLUME_MARGIN)
+            }
+            DataHome::Drive(mount) => {
+                let copy = DataCopy {
+                    data: mount.join(id),
+                    copy: mount.join(DRIVE_COPIES).join(id),
+                    skip: None,
+                };
+                (copy, COPY_MARGIN)
+            }
+            DataHome::SystemDisk => {
+                let layout = Layout::new(id, Profile::App, false).map_err(fail)?;
+                let copy = DataCopy {
+                    data: PathBuf::from(layout.data_dir),
+                    copy: h.manage.paths.rollback.join(id),
+                    skip: None,
+                };
+                (copy, COPY_MARGIN)
+            }
+        };
+        let size = h.manage.packages.tree_size(&copy.data);
+        let free = h.manage.packages.free_bytes(&copy.data);
+        let need = size.saturating_add(margin);
+        if need > free {
+            return Err(Failure(match home {
+                // Room for a full copy even where the drive can share blocks between the copy and
+                // the data: the new version rewrites the data into its new layout, and each block
+                // it rewrites then takes room of its own.
+                DataHome::Drive(_) => format!(
+                    "{id} {} moves its data to a newer layout, which {} cannot read, so a copy of the \
+                     data is kept on the data drive to roll back to. That needs {} free there and \
+                     {} is free. Free up {} on the data drive, then try again.",
+                    c.to,
+                    c.from,
+                    size_words(need),
+                    size_words(free),
+                    size_words(need - free)
+                ),
+                _ => format!("there is not enough free space to keep a copy of {id}'s data {purpose}"),
+            }));
+        }
+        Ok(DataPlan::Copy(copy))
+    }
+
+    /// The checks of a feed update, in the order the owner would want to hear about them.
+    fn prepare_update(&mut self, c: &Candidate) -> Result<(), Failure> {
+        let h = self.helper;
+        let id = c.package.as_str();
+        let state = h.read_feeds().map_err(fail)?;
+        let record = state
+            .installed
+            .get(id)
+            .ok_or_else(|| Failure(format!("{id} was not installed from a feed")))?;
+        let feed = state.feed(&record.feed).map_err(fail)?;
+        let current = record
+            .kept
+            .clone()
+            .filter(|p| h.manage.packages.kept_exists(p))
+            .ok_or_else(|| Failure(format!("there is no copy of {id} {} to roll back to", c.from)))?;
+        let approved = match self.approvals.get(id) {
+            Some(p) => p.clone(),
+            None => state
+                .approved
+                .get(id)
+                .cloned()
+                .ok_or_else(|| Failure(format!("{id} has no approved permissions")))?,
+        };
+        let package = h.package(id).map_err(fail)?;
+        let home = self.data_home(id, package.manifest.storage.encrypted)?;
+        self.data_present(id, &home)?;
+        let target = self.storage.get(id).copied().unwrap_or_default();
+        let layout = self.data_layout(id, &home, &package.manifest);
+        // A version that declares an older layout than the data is in cannot read it.
+        if let Some(older) = target.data_layout.filter(|l| *l < layout) {
+            return Err(Failure(format!(
+                "{id} {} uses data layout {older}, older than the layout {layout} its data is in, \
+                 so it could not read it",
+                c.to
+            )));
+        }
+        let data = match &home {
+            DataHome::Drive(_) => match target.data_layout {
+                // Checked by a helper that only recorded layouts for encrypted storage.
+                None => {
+                    return Err(Failure(format!(
+                        "the device does not know yet which data layout {id} {} uses. Check for updates again.",
+                        c.to
+                    )))
+                }
+                Some(l) if l == layout => DataPlan::InPlace,
+                Some(_) => self.copy_plan(c, &home, "for a rollback")?,
+            },
+            _ => self.copy_plan(c, &home, "for a rollback")?,
+        };
+        if home == DataHome::Volume {
+            if let Some(want) = target.volume_bytes {
+                let have = h
+                    .sys
+                    .file_size(&h.volume_location(id).map_err(fail)?.file)
+                    .unwrap_or(0);
+                if want > have {
+                    let passphrase = self.passphrase.ok_or_else(|| {
+                        Failure(format!(
+                            "{id} {} asks for {} MB of encrypted storage instead of {} MB. Growing it \
+                             needs the device passphrase.",
+                            c.to,
+                            want >> 20,
+                            have >> 20
+                        ))
+                    })?;
+                    // Last, after every other check. Growing keeps every byte, and the old version
+                    // runs on the larger volume just as well, so a failure here still leaves
+                    // nothing to put back, and a rollback keeps the larger volume.
+                    h.grow_volume(id, passphrase, want).map_err(fail)?;
+                }
+            }
+        }
+        self.prepared.insert(
+            id.to_owned(),
+            Prepared {
+                current,
+                feed: record.feed.clone(),
+                from_feed: Some((feed.address.clone(), approved)),
+                home,
+                data,
+                layout,
+                stop_timeout: package.manifest.stop_timeout_secs,
+            },
+        );
+        Ok(())
+    }
+
+    /// Stops the old version and copies its data, if the plan says to. From here on a failure
+    /// is rolled back, which also starts the service again.
+    fn take_over(&mut self, id: &str, p: &Prepared) -> Result<(), Failure> {
+        let h = self.helper;
+        self.previous.insert(id.to_owned(), p.current.clone());
+        self.stop(id, p.stop_timeout)?;
+        let DataPlan::Copy(plan) = &p.data else {
+            return Ok(());
+        };
+        h.manage.packages.remove_tree(&plan.copy).map_err(Failure)?;
+        if h.sys.exists(&plan.data) || h.manage.packages.tree_size(&plan.data) > 0 {
+            if let Err(e) = h.manage.packages.copy_tree(&plan.data, &plan.copy, plan.skip) {
+                let _ = h.manage.packages.remove_tree(&plan.copy);
+                return Err(Failure(format!("copying {id}'s data for a rollback failed: {e}")));
+            }
+            self.copied.insert(id.to_owned(), plan.clone());
+        }
+        Ok(())
+    }
+
+    fn prepared(&self, id: &str) -> Result<Prepared, Failure> {
+        self.prepared
+            .get(id)
+            .cloned()
+            .ok_or_else(|| Failure(format!("the update of {id} was not checked first")))
     }
 
     fn stop(&self, id: &str, timeout: u32) -> Result<(), Failure> {
@@ -353,95 +739,66 @@ impl<S: System> Updater<'_, S> {
         }
         Ok(manifest)
     }
+
+    /// The version just installed must still fit what was decided before it: the feed could
+    /// have changed between the check and the install. Nothing of it has started yet.
+    fn still_fits(&self, id: &str, pkgver: &str, p: &Prepared, manifest: &nodo_manifest::Manifest) -> Result<(), Failure> {
+        let h = self.helper;
+        let new = manifest.storage.layout();
+        if p.home != DataHome::SystemDisk && new < p.layout {
+            return Err(Failure(format!(
+                "{pkgver} uses data layout {new}, older than its data's layout {}",
+                p.layout
+            )));
+        }
+        if matches!(p.data, DataPlan::InPlace) && new != p.layout {
+            return Err(Failure(format!(
+                "{pkgver} uses data layout {new}, not the layout {} the check found, so it would \
+                 convert its data with no copy to roll back to. Check for updates again.",
+                p.layout
+            )));
+        }
+        if p.home == DataHome::Volume {
+            let have = h
+                .sys
+                .file_size(&h.volume_location(id).map_err(fail)?.file)
+                .unwrap_or(0);
+            if manifest.storage.volume_bytes() > have {
+                return Err(Failure(format!(
+                    "{pkgver} asks for a larger encrypted volume than the check found. Check for updates again."
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<S: System> Installer for Updater<'_, S> {
+    fn prepare(&mut self, c: &Candidate) -> Result<(), Failure> {
+        match self.downgrade.get(&c.package).cloned() {
+            Some(previous) => self.prepare_previous(c, &previous),
+            None => self.prepare_update(c),
+        }
+    }
+
     fn install(&mut self, c: &Candidate) -> Result<(), Failure> {
-        if let Some(previous) = self.downgrade.get(&c.package).cloned() {
-            return self.install_previous(c, &previous);
+        if self.downgrade.contains_key(&c.package) {
+            return self.install_previous(c);
         }
         let h = self.helper;
         let id = c.package.as_str();
-        let state = h.read_feeds().map_err(fail)?;
-        let record = state
-            .installed
-            .get(id)
-            .ok_or_else(|| Failure(format!("{id} was not installed from a feed")))?;
-        let feed = state.feed(&record.feed).map_err(fail)?;
-        let feed_name = record.feed.clone();
-        let previous = record
-            .kept
+        let p = self.prepared(id)?;
+        let (address, approved) = p
+            .from_feed
             .clone()
-            .filter(|p| h.manage.packages.kept_exists(p))
-            .ok_or_else(|| Failure(format!("there is no copy of {id} {} to roll back to", c.from)))?;
-        let approved = match self.approvals.get(id) {
-            Some(p) => p.clone(),
-            None => state
-                .approved
-                .get(id)
-                .cloned()
-                .ok_or_else(|| Failure(format!("{id} has no approved permissions")))?,
-        };
-        let package = h.package(id).map_err(fail)?;
-        let encrypted = package.manifest.storage.encrypted;
-        let (data, copy, skip) = self.data_copy(id, encrypted)?;
-        if encrypted && !h.sys.is_mounted(&data) {
-            return Err(Failure(format!("{id}'s encrypted storage is locked")));
-        }
-        let target = self.storage.get(id).copied().unwrap_or_default();
-        if encrypted {
-            // Checked before anything changes: a version that declares an older layout than
-            // the data is in cannot read it.
-            let current = h.data_layout_of(id);
-            if let Some(layout) = target.data_layout.filter(|l| *l < current) {
-                return Err(Failure(format!(
-                    "{id} {} uses data layout {layout}, older than the layout {current} its data is in, \
-                     so it could not read it",
-                    c.to
-                )));
-            }
-            if let Some(want) = target.volume_bytes {
-                let have = h
-                    .sys
-                    .file_size(&h.volume_location(id).map_err(fail)?.file)
-                    .unwrap_or(0);
-                if want > have {
-                    let passphrase = self.passphrase.ok_or_else(|| {
-                        Failure(format!(
-                            "{id} {} asks for {} MB of encrypted storage instead of {} MB. Growing it \
-                             needs the device passphrase.",
-                            c.to,
-                            want >> 20,
-                            have >> 20
-                        ))
-                    })?;
-                    // Growing keeps every byte, so a rollback keeps the larger volume.
-                    h.grow_volume(id, passphrase, want).map_err(fail)?;
-                }
-            }
-        }
-        let size = h.manage.packages.tree_size(&data);
-        let free = h.manage.packages.free_bytes(&data);
-        let margin = if encrypted { IN_VOLUME_MARGIN } else { COPY_MARGIN };
-        if size.saturating_add(margin) > free {
-            return Err(Failure(format!(
-                "there is not enough free space to keep a copy of {id}'s data for a rollback"
-            )));
-        }
+            .ok_or_else(|| Failure(format!("the update of {id} has no feed")))?;
+        self.take_over(id, &p)?;
 
-        // From here on a failure is rolled back, which also starts the service again.
-        self.previous.insert(id.to_owned(), previous);
-        self.stop(id, package.manifest.stop_timeout_secs)?;
-        h.manage.packages.remove_tree(&copy).map_err(Failure)?;
-        if h.sys.exists(&data) || h.manage.packages.tree_size(&data) > 0 {
-            h.manage.packages.copy_tree(&data, &copy, skip).map_err(Failure)?;
-        }
-
-        let mut pins = state.pins.clone();
+        let mut pins = h.read_feeds().map_err(fail)?.pins;
         let pkgver = format!("{id}-{}", c.to);
         let installed = h.manage.packages.install(
             &mut pins,
-            &feed.address,
+            &address,
             id,
             &approved,
             &pkgver,
@@ -473,51 +830,40 @@ impl<S: System> Installer for Updater<'_, S> {
         })
         .map_err(fail)?;
         let manifest = self.installed_manifest(id)?;
-        if encrypted {
-            // The feed could have changed between the check and this install.
-            let current = h.data_layout_of(id);
-            if manifest.storage.layout() < current {
-                return Err(Failure(format!(
-                    "{pkgver} uses data layout {}, older than its data's layout {current}",
-                    manifest.storage.layout()
-                )));
-            }
-            let have = h
-                .sys
-                .file_size(&h.volume_location(id).map_err(fail)?.file)
-                .unwrap_or(0);
-            if manifest.storage.volume_bytes() > have {
-                return Err(Failure(format!(
-                    "{pkgver} asks for a larger encrypted volume than the check found. Check for updates again."
-                )));
-            }
-        }
+        self.still_fits(id, &pkgver, &p, &manifest)?;
         h.place_manifest(id, &h.app_dir(id).map_err(fail)?, &manifest)
             .map_err(Failure)?;
-        h.install_package(id, None, Some(&feed_name)).map_err(fail)?;
+        h.install_package(id, None, Some(&p.feed)).map_err(fail)?;
         Ok(())
     }
 
     fn health_check(&mut self, c: &Candidate) -> Result<(), Failure> {
-        self.healthy(&c.package)?;
+        let id = c.package.as_str();
+        self.healthy(id)?;
         let h = self.helper;
-        let package = h.package(&c.package).map_err(fail)?;
-        let (_, copy, _) = self.data_copy(&c.package, package.manifest.storage.encrypted)?;
-        let old_layout = if package.manifest.storage.encrypted { h.data_layout_of(&c.package) } else { 1 };
-        if package.manifest.storage.encrypted {
-            // From now on the data is in the new version's layout.
-            h.set_data_layout(&c.package, package.manifest.storage.layout())
-                .map_err(fail)?;
+        let p = self.prepared(id)?;
+        let new_layout = h.package(id).map_err(fail)?.manifest.storage.layout();
+        // From now on the data is in the new version's layout.
+        match &p.home {
+            DataHome::Volume => h.set_data_layout(id, new_layout).map_err(fail)?,
+            // Only written when it changes, so data that never changed layout needs no record.
+            DataHome::Drive(mount) if new_layout != p.layout => {
+                h.set_drive_layout(id, mount, new_layout).map_err(fail)?
+            }
+            _ => {}
         }
-        let _ = h.manage.packages.remove_tree(&copy);
-        if let Some(previous) = self.previous.get(&c.package) {
-            let current = h.read_feeds().ok().and_then(|s| s.installed.get(&c.package).and_then(|r| r.kept.clone()));
+        if let Some(copy) = self.copied.remove(id) {
+            let _ = h.manage.packages.remove_tree(&copy.copy);
+        }
+        self.prepared.remove(id);
+        if let Some(previous) = self.previous.get(id) {
+            let current = h.read_feeds().ok().and_then(|s| s.installed.get(id).and_then(|r| r.kept.clone()));
             if current.as_ref() != Some(previous) {
-                if self.downgrade.contains_key(&c.package) {
+                if self.downgrade.contains_key(id) {
                     h.manage.packages.remove_kept(previous);
                 } else {
                     // Kept one generation deep, so the user can roll back by hand.
-                    self.keep_previous(&c.package, &c.from, previous, old_layout);
+                    self.keep_previous(id, &c.from, previous, p.layout);
                 }
             }
         }
@@ -527,10 +873,11 @@ impl<S: System> Installer for Updater<'_, S> {
     fn rollback(&mut self, c: &Candidate) -> Result<(), Failure> {
         let h = self.helper;
         let id = c.package.as_str();
-        // Refused before anything changed: the old version is still running untouched.
+        // Nothing had changed yet: the old version is still running untouched.
         let Some(previous) = self.previous.get(id).cloned() else {
             return Ok(());
         };
+        self.prepared.remove(id);
         let timeout = h.package(id).map(|p| p.manifest.stop_timeout_secs).unwrap_or(30);
         let _ = self.stop(id, timeout);
         h.manage.packages.reinstall(&previous).map_err(fail)?;
@@ -552,10 +899,11 @@ impl<S: System> Installer for Updater<'_, S> {
             h.manage.packages.remove_kept(&fresh);
         }
         let _ = self.stop(id, manifest.stop_timeout_secs);
-        let (data, copy, skip) = self.data_copy(id, manifest.storage.encrypted)?;
-        if h.sys.exists(&copy) || h.manage.packages.tree_size(&copy) > 0 {
-            h.manage.packages.restore_tree(&copy, &data, skip).map_err(Failure)?;
-            let _ = h.manage.packages.remove_tree(&copy);
+        // Data left in place stays as the new version left it, in the same layout, which the old
+        // version reads.
+        if let Some(copy) = self.copied.remove(id) {
+            h.manage.packages.restore_tree(&copy.copy, &copy.data, copy.skip).map_err(Failure)?;
+            let _ = h.manage.packages.remove_tree(&copy.copy);
         }
         self.healthy(id)
             .map_err(|Failure(reason)| Failure(format!("{} came back but is not healthy: {reason}", c.from)))
@@ -585,7 +933,38 @@ impl<S: System> Helper<S> {
     }
 
     fn update_state(&self) -> Result<UpdateState, ApiError> {
-        self.load_state(&self.updates_path("state.toml"))
+        let mut state = self.load_state(&self.updates_path("state.toml"))?;
+        // Mended on every read, so what is shown is right at once; the next save keeps it.
+        mend_legacy_refusals(&mut state);
+        Ok(state)
+    }
+
+    /// The layout a data-drive app's data is in: as recorded beside it, or, where nothing was
+    /// recorded, the layout the installed version declares, which is the one it has been running
+    /// on. A version only writes a record when it changes the layout.
+    pub(crate) fn drive_layout_of(&self, id: &str, mount: &Path, installed: &nodo_manifest::Manifest) -> u32 {
+        self.sys
+            .read_file(&mount.join(DRIVE_LAYOUTS).join(id))
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| text.trim().parse().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or_else(|| installed.storage.layout())
+    }
+
+    pub(crate) fn set_drive_layout(&self, id: &str, mount: &Path, layout: u32) -> Result<(), ApiError> {
+        let dir = mount.join(DRIVE_LAYOUTS);
+        self.sys.ensure_dir(&dir, 0o700, None)?;
+        self.sys.atomic_write(
+            &dir.join(id),
+            format!("{layout}\n").as_bytes(),
+            WriteOptions {
+                mode: 0o644,
+                group: None,
+            },
+        )?;
+        Ok(())
     }
 
     fn save_update_state(&self, state: &UpdateState) -> Result<(), ApiError> {
@@ -662,6 +1041,8 @@ impl<S: System> Helper<S> {
                 match self.manage.packages.review(&mut pins, &feed.address, id, approved) {
                     Ok(Reviewed::Ready { added, pkgver, manifest, .. }) => {
                         record.added = added.iter().map(ToString::to_string).collect();
+                        // Decides whether an update of data-drive data copies it first.
+                        record.data_layout = Some(manifest.storage.layout());
                         if manifest.storage.encrypted {
                             let want = manifest.storage.volume_bytes();
                             let have = self
@@ -670,7 +1051,6 @@ impl<S: System> Helper<S> {
                                 .and_then(|l| self.sys.file_size(&l.file))
                                 .unwrap_or(0);
                             record.volume_bytes = Some(want);
-                            record.data_layout = Some(manifest.storage.layout());
                             record.grows = have > 0 && want > have;
                         }
                         if pkgver != record.pkgver() {
@@ -740,8 +1120,22 @@ impl<S: System> Helper<S> {
         Ok(Response::UpdateStatus(UpdateStatus {
             candidates,
             last_check: updates.last_check,
-            attention: updates.attention.iter().map(event).collect(),
-            history: updates.history.iter().map(event).collect(),
+            attention: updates
+                .attention
+                .iter()
+                .map(event)
+                .chain(updates.refusals.iter().filter(|r| r.unseen).map(refusal_event))
+                .collect(),
+            history: {
+                let mut all: Vec<UpdateEvent> = updates
+                    .history
+                    .iter()
+                    .map(event)
+                    .chain(updates.refusals.iter().map(refusal_event))
+                    .collect();
+                all.sort_by_key(|e| e.at);
+                all
+            },
             next_window: (!policy.packages.is_empty()).then(|| hhmm(policy.schedule.window.start())),
         }))
     }
@@ -917,7 +1311,7 @@ impl<S: System> Helper<S> {
         for c in &run {
             let candidate = c.candidate();
             let outcome = apply_one(&mut updater, &candidate);
-            if !matches!(outcome, auto::Outcome::Updated { .. }) {
+            if outcome.holds() {
                 updates.holds.hold(&c.package, &c.to);
             }
             record(&mut updates, now, outcome.clone());
@@ -1063,6 +1457,15 @@ impl<S: System> Helper<S> {
 }
 
 fn apply_one<S: System>(updater: &mut Updater<'_, S>, c: &Candidate) -> auto::Outcome {
+    // Refused before anything changed: there is nothing to roll back.
+    if let Err(Failure(reason)) = updater.prepare(c) {
+        return auto::Outcome::NotUpdated {
+            package: c.package.clone(),
+            from: c.from.clone(),
+            to: c.to.clone(),
+            reason,
+        };
+    }
     let failure = match updater.install(c).and_then(|()| updater.health_check(c)) {
         Ok(()) => {
             return auto::Outcome::Updated {

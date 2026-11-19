@@ -459,6 +459,7 @@ pub fn real_screens(out: &std::path::Path) {
             provider: "Porkbun".to_owned(),
             domains: vec!["example.com".to_owned(), "example.org".to_owned()],
             held_by: Vec::new(),
+            blocked: Vec::new(),
         };
         state.return_to = Some("shop".to_owned());
     }

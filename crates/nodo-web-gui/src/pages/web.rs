@@ -178,7 +178,7 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
                 }
             }
         },
-        (ProviderStage::Done { provider, domains, held_by }, _) => html! {
+        (ProviderStage::Done { provider, domains, held_by, blocked: _ }, _) => html! {
             h1 { span.ok aria-hidden="true" { "✓ " } (provider) " is connected" }
             section.card {
                 @if domains.is_empty() {
@@ -657,7 +657,7 @@ fn onion_page(flow: &Onion) -> Markup {
             ul.bullets {
                 li { span.dim aria-hidden="true" { "●" } span { "An onion address is reached through Tor only. It never shows your IP and needs no open port." } }
                 li { span.dim aria-hidden="true" { "●" } span { "The node's address serves only its restricted RPC, which wallets use. Never the full RPC." } }
-                li { span.dim aria-hidden="true" { "●" } span { "Admin paths of sites are blocked on onion addresses. Keys are kept in backups." } }
+                li { span.dim aria-hidden="true" { "●" } span { "Onion address keys are kept in backups." } }
             }
         }
     }

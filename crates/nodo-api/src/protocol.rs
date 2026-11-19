@@ -200,6 +200,7 @@ mod tests {
                 site: site(),
                 host: "h".into(),
                 aliases: None,
+                confirm_added: Vec::new(),
             },
             Request::SetPublicHost {
                 site: site(),
@@ -208,6 +209,7 @@ mod tests {
                     PublicAlias { host: "example.com".into(), mode: AliasMode::Redirect },
                     PublicAlias { host: "pay.example.org".into(), mode: AliasMode::Serve },
                 ]),
+                confirm_added: vec!["pay.example.org".into()],
             },
             Request::CheckReachability { site: site() },
             Request::ListProviders,
@@ -539,6 +541,8 @@ mod tests {
                 checked_at: Some(1),
                 problem: None,
                 dns01: crate::Dns01Support::Bundled,
+                key: Some(crate::ProviderKey { field: "api_token".into(), hint: "abcd1234…wxyz".into() }),
+                blocked: vec![crate::BlockedDomain { name: "example.net".into(), reason: "switch it on".into() }],
             }])),
             Ok(Response::RetiredRecords(vec!["shop/A".into()])),
             Ok(Response::ReachabilityDetail(crate::ReachabilityDetail {
@@ -892,7 +896,8 @@ mod tests {
     }
 
     /// The web GUI requests were appended, so a helper from before them still reads every older
-    /// request at its old position, and the protocol version stays.
+    /// request at its old position, and they raised no protocol version: `OwnerPage` is the last
+    /// request before them, and version 6 is `confirm_added` of `SetPublicHost`, not these.
     #[test]
     fn web_gui_variants_sit_after_every_older_one() {
         let position = |request: &Request| encode_request(request).unwrap()[1];

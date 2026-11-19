@@ -14,7 +14,7 @@ use crate::app::*;
 use nodo_ui_core::flows::web::providers::{KeyField, ProviderStage, Providers};
 use nodo_ui_core::flows::web::public::{CgnatWay, Found};
 use nodo_ui_core::flows::web::{self, hosting, providers};
-use nodo_ui_core::flows::Notice;
+use nodo_ui_core::flows::{Notice, Step};
 use nodo_ui_core::model::*;
 use nodo_ui_core::{Effect, Outcome};
 
@@ -42,7 +42,7 @@ pub(super) fn web_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 let _gone: Result<(), Notice> = open_hosting(app, &site);
             }
         }
-        KeyCode::Char('p') => push(app, Screen::WebProviders(ProvidersState::list(""))),
+        KeyCode::Char('p') => return open_providers(app),
         KeyCode::Char('d') => {
             let state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
             push(app, Screen::WebDomain(state));
@@ -95,7 +95,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     }
     let len = state.order().len();
     let focus = state.focus();
+    let in_alias_form = matches!(focus, HostingFocus::AliasDomain | HostingFocus::AliasAddress | HostingFocus::AliasMode | HostingFocus::AliasAdd);
     match key.code {
+        // Esc in the new name's controls gives up the new name, not the whole screen.
+        KeyCode::Esc if in_alias_form => state.close_alias_form(),
         KeyCode::Esc => pop(app),
         KeyCode::Tab | KeyCode::Down => state.selected = (state.selected.min(len - 1) + 1).min(len - 1),
         KeyCode::BackTab | KeyCode::Up => state.selected = state.selected.min(len - 1).saturating_sub(1),
@@ -106,6 +109,10 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::Domain => {
             state.picking = true;
             state.pick = choices.iter().position(|(d, _)| *d == state.domain).unwrap_or(0);
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasOpen => {
+            state.adding_alias = true;
+            state.focus_on(HostingFocus::AliasDomain);
         }
         KeyCode::Char(' ') | KeyCode::Enter if focus == HostingFocus::AliasDomain => {
             state.picking_alias = true;
@@ -130,6 +137,7 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Enter if focus == HostingFocus::AddProvider => return open_add_provider(app, Some(site)),
         KeyCode::Enter => {
+            // A new name on a site that is public is asked about first; the core says when.
             let step = state.flow.save(&app.data);
             return follow(app, step);
         }
@@ -150,9 +158,8 @@ pub(super) fn hosting_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 fn add_alias(state: &mut ExposureState, data: &Snapshot) {
     let name = state.alias_host();
     if state.flow.add_alias(&name, state.alias_mode, data) {
-        state.alias_sub.clear();
-        // The new row comes before the controls, so the focus moves on one to stay where it was.
-        state.selected = (state.selected + 1).min(state.order().len() - 1);
+        // The name is on the list now; the controls close until another one is wanted.
+        state.close_alias_form();
     }
 }
 
@@ -169,6 +176,11 @@ fn toggle(state: &mut ExposureState, focus: HostingFocus) {
     state.selected = state.selected.min(len - 1);
 }
 
+/// The list of connected providers, and the effects that ask each one again as it opens.
+fn open_providers(app: &mut App) -> Vec<Effect> {
+    push(app, Screen::WebProviders(ProvidersState::list("")));
+    providers::open_list(&app.data)
+}
 fn open_add_provider(app: &mut App, return_to: Option<String>) -> Vec<Effect> {
     push(app, Screen::WebProviders(ProvidersState::of(Providers::adding(return_to), "")));
     providers::load()
@@ -207,6 +219,8 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 return follow(app, step);
             }
             KeyCode::Down | KeyCode::Up => step(&mut state.selected, connected.len(), key.code == KeyCode::Down),
+            // Enter opens the provider under the cursor; with none connected it adds the first.
+            KeyCode::Enter if state.selected < connected.len() => state.flow.open_details(),
             KeyCode::Char('a') | KeyCode::Enter => {
                 state.empty_boxes();
                 state.selected = 0;
@@ -225,6 +239,23 @@ pub(super) fn providers_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             KeyCode::Char('c') => {
                 let domain_state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
                 push(app, Screen::WebDomain(domain_state));
+            }
+            _ => {}
+        },
+        ProviderStage::Details => match key.code {
+            KeyCode::Esc | KeyCode::Backspace => {
+                let step = state.flow.back();
+                return follow(app, step);
+            }
+            KeyCode::Char('r') | KeyCode::Enter => {
+                if let Some(provider) = connected.get(state.selected) {
+                    return providers::refresh(&provider.id);
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete => {
+                if let Some(provider) = connected.get(state.selected) {
+                    app.modal = Some(Modal::ask(providers::ask_remove(provider)));
+                }
             }
             _ => {}
         },
@@ -320,12 +351,16 @@ pub(super) fn on_provider_added(app: &mut App, outcome: &Outcome) -> Vec<Effect>
 }
 
 /// A provider was removed or asked again. The list starts over after a removal, since the row
-/// the cursor was on is gone.
+/// the cursor was on is gone; the flow leaves the details of a provider that is no more.
 pub(super) fn on_provider_changed(app: &mut App, outcome: &Outcome) -> Vec<Effect> {
-    if let (Outcome::ProviderRemoved(Ok(())), Screen::WebProviders(state)) = (outcome, &mut app.screen) {
-        state.selected = 0;
+    let mut step = providers::apply(outcome);
+    if let Screen::WebProviders(state) = &mut app.screen {
+        if matches!(outcome, Outcome::ProviderRemoved(Ok(()))) {
+            state.selected = 0;
+        }
+        step = Step::All(vec![state.flow.apply(outcome), step]);
     }
-    follow(app, providers::apply(outcome))
+    follow(app, step)
 }
 
 pub(super) fn web_check_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {

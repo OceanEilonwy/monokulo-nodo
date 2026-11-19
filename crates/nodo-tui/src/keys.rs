@@ -19,6 +19,7 @@ pub fn with_key(text: &str, hint: Option<Hint>) -> String {
         Some(Hint::ScanWifi) => "Press s to look for networks.".to_owned(),
         Some(Hint::ScanBluetooth) => "Press s to look for devices. Put the device in its pairing mode first.".to_owned(),
         Some(Hint::LookForDrives) => "No USB drive is plugged in. Plug one in and press g.".to_owned(),
+        Some(Hint::ProviderDetails) => format!("{text} Open it (↵) to see why."),
         Some(Hint::Install) => text.replace("Installing downloads and checks it first.", "Press i to download and check it."),
     }
 }
@@ -67,6 +68,11 @@ mod tests {
                 "Offered by the feed extras. Installing downloads and checks it first. You then see everything it asks for before anything installs.",
                 Hint::Install,
                 "Offered by the feed extras. Press i to download and check it. You then see everything it asks for before anything installs.",
+            ),
+            (
+                "Porkbun lists 1 domains, and 1 more its key can't change yet: example.net.",
+                Hint::ProviderDetails,
+                "Porkbun lists 1 domains, and 1 more its key can't change yet: example.net. Open it (↵) to see why.",
             ),
         ];
         for (text, hint, expected) in said {

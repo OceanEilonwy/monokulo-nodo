@@ -12,6 +12,11 @@
 //! The internet is never turned on by Save: Save applies the other choices, saves the names and
 //! runs the check, as a job. A batch that moves towards public stops at its first failure
 //! (`exec::run_batch`, which the step runner uses for every `Step::Run`).
+//!
+//! A site with one address shows only that one and an "Add another address" button; the boxes
+//! for a new name open from it and close again once the name is on the list. A site that is
+//! public can gain a name too: Save then asks about the new names first (`Hosting::save`), on
+//! the page every question has, and the draft waits in the session for the answer.
 
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -64,14 +69,24 @@ fn keep(work: &Work<'_>, flow: &Hosting) {
     work.session.inner().stash.hosting.insert(flow.site.clone(), flow.clone());
 }
 
+/// Whether the site is on the internet now, which is the device's to say.
+fn is_public(snapshot: &Snapshot, site: &str) -> bool {
+    snapshot.web.sites.iter().any(|entry| entry.package == site && entry.exposure.public)
+}
+
 /// The form of the page. With htmx a tick posts the form and this alone is replaced, so the
-/// rows that belong to the internet appear with its tick.
-fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
+/// rows that belong to the internet appear with its tick. `adding` says the boxes for a new name
+/// are open; they stay closed until the owner asks for another address.
+fn form(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Markup {
     let here = dest::hosting(&flow.site);
     let rows = flow.rows();
     let site = snapshot.web.sites.iter().find(|site| site.package == flow.site);
     let local_url = site.map(|site| site.local_url.as_str()).filter(|url| !url.is_empty());
-    let going_public = flow.draft.public && !flow.was_public;
+    let public_now = is_public(snapshot, &flow.site);
+    let going_public = flow.draft.public && !public_now;
+    // A refusal is said beside the boxes, so they are open to show it.
+    let adding = (adding || flow.alias_error.is_some()) && rows.contains(&Row::NewAlias);
+    let added_now = flow.names_added_while_public(snapshot);
     let domains = snapshot.domain_choices();
     let provider = domains.iter().find(|(domain, _)| *domain == flow.domain).map(|(_, provider)| provider.as_str());
     let tick = |name: &str, on: bool, label: &str, about: Markup| {
@@ -108,16 +123,16 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
                         div.field {
                             label for="sub" { "Address" }
                             div.pieces {
-                                input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[flow.was_public]
+                                input type="text" id="sub" name="sub" value=(flow.sub) autocomplete="off" autocapitalize="none" spellcheck="false" disabled[public_now]
                                     hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML";
                                 span.dim { "." }
-                                select name="domain" aria-label="Domain" disabled[flow.was_public] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML" {
+                                select name="domain" aria-label="Domain" disabled[public_now] hx-post=(here) hx-trigger="change" hx-target="#hosting" hx-swap="outerHTML" {
                                     @for (domain, _) in &domains { option value=(domain) selected[*domain == flow.domain] { (domain) } }
                                 }
                             }
                             p.hint {
                                 "https://" (flow.host()) "   Leave the box empty for " (flow.domain) " itself."
-                                @if flow.was_public { " To change the address, take the site off the internet first." }
+                                @if public_now { " To change the address, take the site off the internet first." }
                             }
                         }
                         p.warn { "Visitors will be able to see your home's internet address." }
@@ -125,8 +140,7 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
                         @if site.is_some_and(|site| site.rate_limit_unenforced) { p.dim { "Repeated requests can't be slowed down for this app." } }
                     }
                     div.setting {
-                        h3 { "Also answers at" }
-                        @if flow.aliases.is_empty() { p.dim { "Nothing else yet: only " (flow.host()) "." } }
+                        @if !flow.aliases.is_empty() || adding { h3 { "Also answers at" } }
                         @for row in &rows {
                             @if let Row::Alias(index) = row {
                                 @let alias = &flow.aliases[*index];
@@ -136,9 +150,10 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
                                 }
                             }
                         }
-                        @if rows.contains(&Row::NewAlias) {
+                        @if adding {
+                            (layout::hidden("adding", "1"))
                             div.field {
-                                label for="alias" { "Another name" }
+                                label for="alias" { "New name" }
                                 div.pieces {
                                     input type="text" id="alias" name="alias" value="" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="example.com"
                                         aria-invalid=[flow.alias_error.as_ref().map(|_| "true")] aria-describedby=[flow.alias_error.as_ref().map(|_| "alias-problem")];
@@ -147,13 +162,15 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
                                         option value="serve" { "shows the same site" }
                                     }
                                     button.btn type="submit" name="do" value="add-alias" { "Add this name" }
+                                    button.btn.quiet type="submit" name="do" value="close-alias" { "Cancel the new name" }
                                 }
                                 @if let Some(problem) = &flow.alias_error { p.problem #alias-problem { "✕ " (problem) } }
                             }
-                        } @else {
-                            // A name posted all the same is refused by the flow, in its words.
-                            @if let Some(problem) = &flow.alias_error { p.problem #alias-problem { "✕ " (problem) } }
-                            p.dim.small { "To add a name, take the site off the internet first. Removing one works now." }
+                        } @else if rows.contains(&Row::NewAlias) {
+                            div.actions { button.btn type="submit" name="do" value="open-alias" { "Add another address" } }
+                        }
+                        @if !added_now.is_empty() {
+                            p.dim.small { (flow.site) " is on the internet, so a new name goes on it as soon as it is saved. Save asks first." }
                         }
                     }
                 }
@@ -169,11 +186,11 @@ fn form(snapshot: &Snapshot, flow: &Hosting) -> Markup {
     }
 }
 
-fn page(snapshot: &Snapshot, flow: &Hosting) -> Page {
+fn page(snapshot: &Snapshot, flow: &Hosting, adding: bool) -> Page {
     let body = html! {
         h1 { "Hosting" }
         p.lead { "Choose who can open " (flow.site) ". Any combination works." }
-        (form(snapshot, flow))
+        (form(snapshot, flow, adding))
     };
     Page { trail: trail(&flow.site, None), ..Page::new(Tab::Apps, format!("{} hosting", flow.site), body) }
 }
@@ -183,7 +200,7 @@ pub async fn show(ctx: Ctx, Path(name): Path<String>) -> Response {
     ctx.with(dest::app(&name), move |work| match open_flow(work, &name) {
         Ok(flow) => {
             keep(work, &flow);
-            Out::Page(page(&work.snapshot, &flow))
+            Out::Page(page(&work.snapshot, &flow, false))
         }
         Err(reply) => Out::Reply(reply),
     })
@@ -219,21 +236,38 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form_data): Form<Poste
             flow.set_exposure(on("local"), on("onion"), on("public"));
         }
         // The address is fixed while the site is public, and its boxes are then not posted.
-        if let (Some(sub), Some(domain), false) = (posted(&form_data, "sub"), posted(&form_data, "domain"), flow.was_public) {
+        let public_now = is_public(&work.snapshot, &name);
+        if let (Some(sub), Some(domain), false) = (posted(&form_data, "sub"), posted(&form_data, "domain"), public_now) {
             flow.set_host(sub, domain, &work.snapshot);
         }
+        // Whether the new name's boxes are open is the page's own, so the form carries it.
+        let mut adding = on("adding");
         let action = posted(&form_data, "do").unwrap_or("apply");
         let (verb, argument) = action.split_once(':').unwrap_or((action, ""));
         let mut status = StatusCode::OK;
         match verb {
             "save" => {
+                // New names on a site that is public are asked about first (`Hosting::save`);
+                // the draft waits here for the answer, and for Cancel.
                 keep(work, &flow);
                 let step = flow.save(&work.snapshot);
                 return follow(work, step, here);
             }
+            "open-alias" => {
+                adding = true;
+                flow.clear_alias_error();
+            }
+            "close-alias" => {
+                adding = false;
+                flow.clear_alias_error();
+            }
             "add-alias" => {
                 let mode = if posted(&form_data, "mode") == Some("serve") { AliasMode::Serve } else { AliasMode::Redirect };
-                if !flow.add_alias(posted(&form_data, "alias").unwrap_or_default().trim(), mode, &work.snapshot) {
+                if flow.add_alias(posted(&form_data, "alias").unwrap_or_default().trim(), mode, &work.snapshot) {
+                    // The name is on the list now; the boxes close until another one is wanted.
+                    adding = false;
+                } else {
+                    adding = true;
                     status = StatusCode::UNPROCESSABLE_ENTITY;
                 }
             }
@@ -256,12 +290,12 @@ pub async fn act(ctx: Ctx, Path(name): Path<String>, Form(form_data): Form<Poste
         }
         keep(work, &flow);
         if fragment {
-            Out::Fragment(form(&work.snapshot, &flow))
-        } else if status == StatusCode::OK {
+            Out::Fragment(form(&work.snapshot, &flow, adding))
+        } else if status == StatusCode::OK && !adding {
             Out::Go(here)
         } else {
-            // Refused: the page again, with the reason beside the box. Said once.
-            let shown = page(&work.snapshot, &flow).status(status);
+            // The boxes open, or refused: the page again, with the reason beside the box. Said once.
+            let shown = page(&work.snapshot, &flow, adding).status(status);
             flow.clear_alias_error();
             keep(work, &flow);
             Out::Page(shown)

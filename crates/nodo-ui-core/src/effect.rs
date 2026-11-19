@@ -62,7 +62,8 @@ pub enum Effect {
     SetExposure { site: String, exposure: Exposure, after: ExposureAfter, confirmation: Option<String> },
     /// Saves the host and every other name of a site. `then` runs only once that worked, so a
     /// refused name never goes on to the checks or to going public with the old names.
-    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, then: Vec<Effect> },
+    /// `confirm_added` are the new names the owner confirmed putting on a site that is public.
+    SetPublicHost { site: String, host: String, aliases: Vec<nodo_api::PublicAlias>, confirm_added: Vec<String>, then: Vec<Effect> },
     SetPublicAccess { site: String, access: PublicAccess },
     CheckReachability { site: String, going_public: bool },
     /// `domain` only for a provider that cannot list its domains.

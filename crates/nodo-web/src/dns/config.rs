@@ -1,6 +1,6 @@
 //! Provider selection and credentials as stored in the DDNS config.
 
-use super::{alibaba, cloudflare, gandi, godaddy, hostinger, namecom, porkbun, DnsError, DnsProvider, Zone};
+use super::{alibaba, cloudflare, gandi, godaddy, hostinger, namecom, porkbun, DnsError, DnsProvider, DomainListing, Zone};
 use crate::http::SharedHttp;
 use crate::secret::Secret;
 use serde::Deserialize;
@@ -38,6 +38,12 @@ impl ProviderConfig {
     /// The domains these credentials control, or `None` when the provider cannot list them.
     pub fn list_domains(self, http: SharedHttp) -> Result<Option<Vec<String>>, DnsError> {
         self.build(http, LISTING_ZONE)?.list_domains()
+    }
+
+    /// The domains these credentials control and the ones they may not change yet, see
+    /// [`DnsProvider::domain_listing`].
+    pub fn domain_listing(self, http: SharedHttp) -> Result<Option<DomainListing>, DnsError> {
+        self.build(http, LISTING_ZONE)?.domain_listing()
     }
 
     pub fn build(self, http: SharedHttp, domain: &str) -> Result<Box<dyn DnsProvider>, DnsError> {
