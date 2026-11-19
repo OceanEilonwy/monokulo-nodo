@@ -22,7 +22,7 @@ use serde::Deserialize;
 use super::{document_page, install, PassForm};
 use crate::glue::typed_secret;
 use nodo_ui_core::words::update_note;
-use nodo_ui_core::words::day;
+use nodo_ui_core::words::{self, day, Tone};
 use crate::ctx::{go_to, Ctx, JobSpec, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -312,7 +312,8 @@ fn results_page(report: &UpdateReport) -> Page {
                         (failure.restored) " " (failure.name)
                         @if failure.running { " is running again as before." } @else { " isn't running; its log says why." }
                     }
-                    @if !failure.log_line.is_empty() { p.dim { (failure.name) " said: \"" (failure.log_line) "\"" } }
+                    // The app's own words when it wrote any, else the device's reason, never as the app's.
+                    @if let Some(said) = words::update_failure_said(failure) { p.dim { (said) } }
                     @if !failure.verdict.is_empty() { p.dim { (failure.verdict) } }
                     @for result in &applied {
                         p { span.ok aria-hidden="true" { "✓ " } @if result.name == SYSTEM_BASE { "The Nodo" } @else { (result.name) } " updated to " (result.version) }
@@ -326,20 +327,27 @@ fn results_page(report: &UpdateReport) -> Page {
                     }
                 }
             },
+            // Nothing was rolled back: what did not apply was refused before anything changed.
+            // That is its own outcome, with no restore, no words of the app and no report.
             None => {
-                h1 { @if applied.len() == 1 { "1 update is installed" } @else { (applied.len()) " updates are installed" } }
+                @let came_to = words::update_results(report);
+                h1 { @if came_to.tone != Tone::Good { span.warn aria-hidden="true" { "▲ " } } (came_to.headline) }
                 section.card {
-                    ul.bullets {
-                        @for result in &report.results {
-                            li {
-                                @if result.applied { span.ok aria-hidden="true" { "✓" } } @else { span.err aria-hidden="true" { "✕" } }
-                                span class=[(!result.applied).then_some("err")] {
-                                    (result.name) " " (result.version)
-                                    @if !result.note.is_empty() { span.note { "   " (result.note) } }
+                    @if !came_to.rows.is_empty() {
+                        ul.bullets {
+                            @for row in &came_to.rows {
+                                li {
+                                    @if row.applied { span.ok aria-hidden="true" { "✓" } } @else { span.err aria-hidden="true" { "✕" } }
+                                    span class=[(!row.applied).then_some("err")] {
+                                        (row.text)
+                                        @if !row.note.is_empty() { span.note { "   " (row.note) } }
+                                    }
                                 }
                             }
                         }
                     }
+                    @if let Some(unchanged) = &came_to.unchanged { p { (unchanged) } }
+                    @if let Some(advice) = came_to.advice { p.dim { (advice) } }
                     div.actions.end { (layout::post(&action("leave"), "Done", "btn primary")) }
                 }
             },

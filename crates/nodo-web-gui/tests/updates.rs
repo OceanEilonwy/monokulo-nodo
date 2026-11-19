@@ -134,7 +134,49 @@ async fn a_wrong_passphrase_updates_nothing_and_says_so() {
     assert_eq!(started.location(), "/system/updates/passphrase");
     assert_eq!(browser.post("/system/updates/passphrase", &[("passphrase", "not it")]).await.location(), "/working");
     assert_eq!(browser.wait_for_job().await.location(), "/system/updates/results");
-    browser.get("/system/updates/results").await.assert_has("0 updates are installed").assert_has("that passphrase did not unlock this device").assert_lacks("not it");
+    // Refused before anything changed, which is its own outcome: not a count of nothing.
+    let results = browser.get("/system/updates/results").await;
+    results.assert_has("Not updated:").assert_has("that passphrase did not unlock this device").assert_has("Nothing was changed.").assert_lacks("not it");
+    results.assert_lacks("0 updates are installed");
+}
+
+/// An update the helper refuses before changing anything, as it refuses one whose data drive has
+/// no room for a copy of the app's data. Apps that keep their data there can update like any
+/// other; when one cannot, nothing was rolled back and nothing is held.
+#[tokio::test]
+async fn a_refused_update_says_not_updated_and_holds_nothing() {
+    const REASON: &str = "moneropay 2.8.0 moves its data to a newer layout, which 2.7.0 cannot read, so a copy of the data \
+                          is kept on the data drive to roll back to. That needs 3.3 GB free there and 1.0 GB is free. \
+                          Free up 2.3 GB on the data drive, then try again.";
+    let app = App::new();
+    app.backends.prepare(|mock| mock.knobs.update_refusals.push(("moneropay".to_owned(), REASON.to_owned())));
+    let mut browser = app.login().await;
+    // It is offered and ticked like any other update.
+    assert!(ticked(&browser.get(UPDATES).await.body, "moneropay"));
+    assert_eq!(browser.post(UPDATES, &[("do", "apps"), ("tick", "moneropay")]).await.location(), "/working");
+    assert_eq!(browser.wait_for_job().await.location(), "/system/updates/results");
+    let refused = browser.get("/system/updates/results").await;
+    refused.assert_has("Not updated: moneropay 2.8.0 moves its data").assert_has("Nothing was changed.").assert_has("select the update again in Updates.");
+    for wrong in ["restored", "said", "publisher", "put back", "didn't start", "Try again", "Hold it back", "on hold", "Show log"] {
+        assert!(!refused.body.contains(wrong), "a refusal changed nothing, so no {wrong:?}: {}", refused.body);
+    }
+    // Done leads back to Updates, where the same update is still offered and not held.
+    assert_eq!(browser.post("/system/updates/results/leave", &[]).await.location(), UPDATES);
+    let page = browser.get(UPDATES).await;
+    assert!(ticked(&page.body, "moneropay"), "{}", row(&page.body, "moneropay"));
+    assert!(!row(&page.body, "moneropay").contains("you skipped this version"));
+}
+
+#[tokio::test]
+async fn a_refusal_among_updates_that_went_in_is_listed_with_them() {
+    let app = App::new();
+    app.backends.prepare(|mock| mock.knobs.update_refusals.push(("moneropay".to_owned(), "No room on the data drive.".to_owned())));
+    let mut browser = app.login().await;
+    assert_eq!(browser.post(UPDATES, &[("do", "apps"), ("tick", "moneropay"), ("tick", "cuprated")]).await.location(), "/working");
+    assert_eq!(browser.wait_for_job().await.location(), "/system/updates/results");
+    let results = browser.get("/system/updates/results").await;
+    results.assert_has("1 update is installed").assert_has("Not updated: No room on the data drive.");
+    results.assert_has("Nothing was changed for those not updated.").assert_has("select the update again in Updates.");
 }
 
 #[tokio::test]
