@@ -282,7 +282,7 @@ fn screen(id: ScreenId, app: &App, mock: &MockBackend) -> Screen {
         ScreenId::WebDomain => {
             let mut state = DomainState::new(&app.data.web.acme, &app.data.web.domain);
             state.under_domain = true;
-            state.focus = DomainFocus::UnderDomain;
+            state.focus = nodo_ui_core::flows::web::domain::Field::UnderDomain;
             state.checks = Some(Ok(vec![nodo_api::LocalNameCheck {
                 host: "shop.home.example.com".to_owned(),
                 address: "192.168.1.60".to_owned(),

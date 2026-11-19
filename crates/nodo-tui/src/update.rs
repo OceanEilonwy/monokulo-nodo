@@ -16,6 +16,7 @@ use nodo_ui_core::flows::logs::{self, Logs};
 use nodo_ui_core::flows::settings::{self, PickMode, Picked};
 use nodo_ui_core::flows::updates::{self, AutoUpdate};
 use nodo_ui_core::flows::web::certs;
+use nodo_ui_core::flows::web::domain;
 use nodo_ui_core::flows::{self, documents, drive, services, sources, unlock, Confirm, Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::queries::{HomeItem, APP_SECTIONS};
 use nodo_ui_core::screen::{ScreenId, Tab};
@@ -481,11 +482,11 @@ fn focused_input(screen: &mut Screen) -> Option<&mut Input> {
             ProviderFocus::SecretKey => Some(&mut state.secret_key),
         },
         Screen::WebDomain(state) => match state.focus {
-            DomainFocus::Email => Some(&mut state.email),
-            DomainFocus::UnderDomain => Some(&mut state.local_domain),
-            DomainFocus::Dns01First => Some(&mut state.dns01_first),
-            DomainFocus::Dns01Second => Some(&mut state.dns01_second),
-            DomainFocus::Staging | DomainFocus::DotLocal => None,
+            domain::Field::Email => Some(&mut state.email),
+            domain::Field::UnderDomain => Some(&mut state.local_domain),
+            domain::Field::Dns01First => Some(&mut state.dns01_first),
+            domain::Field::Dns01Second => Some(&mut state.dns01_second),
+            domain::Field::Staging | domain::Field::DotLocal => None,
         },
         Screen::Setup(SetupState { step: SetupStep::Passphrase { first, second, confirming }, .. }) => {
             Some(if *confirming { second } else { first })
@@ -1738,9 +1739,8 @@ fn capability_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let acme = app.data.web.acme.clone();
     let domain = app.data.web.domain.clone();
-    let order = DomainState::order(&acme);
+    let order = domain::fields(&app.data.web.acme);
     let Screen::WebDomain(state) = &mut app.screen else {
         return Vec::new();
     };
@@ -1752,31 +1752,27 @@ fn domain_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Tab | KeyCode::Down => state.focus = order[(at + 1) % order.len()],
         KeyCode::BackTab | KeyCode::Up => state.focus = order[(at + order.len() - 1) % order.len()],
-        KeyCode::Char(' ') if !state.focus.is_text() || state.focus == DomainFocus::UnderDomain => match state.focus {
-            DomainFocus::Staging => state.staging = !state.staging,
-            DomainFocus::DotLocal => state.under_domain = false,
-            _ => state.under_domain = true,
+        KeyCode::Char(' ') if !state.focus.is_text() || state.focus == domain::Field::UnderDomain => match state.focus {
+            domain::Field::Staging => {
+                let on = !state.staging;
+                state.flow.set_staging(on);
+            }
+            domain::Field::DotLocal => state.flow.set_under_domain(false),
+            _ => state.flow.set_under_domain(true),
         },
         KeyCode::Char('p') if !state.focus.is_text() => {
             push(app, Screen::WebProviders(ProvidersState::new(&domain)));
             return flows::web::providers::load();
         }
-        KeyCode::Char('t') if !state.focus.is_text() => return vec![Effect::CheckLocalNames],
+        KeyCode::Char('t') if !state.focus.is_text() => return domain::check_local_names(),
         KeyCode::Char('c') if !state.focus.is_text() => push(app, Screen::WebTrust),
         KeyCode::Enter => {
-            let text = |input: &Input| Some(input.text().trim().to_owned()).filter(|t| !t.is_empty());
-            let settings = nodo_api::AcmeSettingsInput {
-                email: text(&state.email),
-                staging: state.staging,
-                local_domain: if state.under_domain { text(&state.local_domain) } else { None },
-            };
-            let dns01 = (!state.dns01_first.is_empty() && !state.dns01_second.is_empty())
-                .then(|| (state.dns01_first.take_secret(), state.dns01_second.take_secret()));
-            return vec![Effect::SaveAcme { settings, dns01 }];
+            let (email, local_domain) = (state.email.text().to_owned(), state.local_domain.text().to_owned());
+            return state.flow.save(&email, &local_domain, &mut state.dns01_first, &mut state.dns01_second);
         }
         _ => {
-            if state.focus == DomainFocus::UnderDomain {
-                state.under_domain = true;
+            if state.focus == domain::Field::UnderDomain {
+                state.flow.set_under_domain(true);
             }
             if let Some(input) = focused_input(&mut app.screen) {
                 edit_input(input, key);
@@ -1998,27 +1994,19 @@ fn on_result(app: &mut App, event: Outcome) -> Vec<Effect> {
         Outcome::ProviderAdded(_) => return web::on_provider_added(app, &event),
         Outcome::ProvidersLoaded(result) => web::on_providers_loaded(app, result),
         Outcome::ProviderRemoved(_) | Outcome::ProviderRefreshed(_) => return web::on_provider_changed(app, &event),
-        Outcome::AcmeSaved(result) => match result {
-            Ok(()) => {
-                if let Screen::WebDomain(state) = &mut app.screen {
-                    state.error = None;
-                    state.dns01_first.clear();
-                    state.dns01_second.clear();
+        Outcome::AcmeSaved(_) | Outcome::LocalNamesChecked(_) => {
+            let step = match &mut app.screen {
+                Screen::WebDomain(state) => {
+                    // The credentials were stored, so nothing typed is kept.
+                    if matches!(event, Outcome::AcmeSaved(Ok(()))) {
+                        state.dns01_first.clear();
+                        state.dns01_second.clear();
+                    }
+                    state.flow.apply(&event)
                 }
-                notice(app, NoticeKind::Ok, "Certificate settings saved and applied.");
-            }
-            Err(text) => {
-                if let Screen::WebDomain(state) = &mut app.screen {
-                    state.error = Some(text);
-                } else {
-                    fail(app, text);
-                }
-            }
-        },
-        Outcome::LocalNamesChecked(result) => {
-            if let Screen::WebDomain(state) = &mut app.screen {
-                state.checks = Some(result);
-            }
+                _ => domain::apply(&event),
+            };
+            return follow(app, step);
         }
         Outcome::DocumentLoaded(_) => {
             let step = documents::apply(&event);

@@ -17,6 +17,7 @@ use nodo_ui_core::flows::setup::Setup;
 use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::updates::{AutoUpdate, Batch, Rollbacks};
 use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::domain::{self, Domain};
 use nodo_ui_core::flows::web::hosting::{self, Hosting};
 use nodo_ui_core::flows::web::providers::{KeyField, Providers};
 use nodo_ui_core::flows::web::public::{Cgnat, PublicCheck, PublicConfirm};
@@ -942,59 +943,43 @@ impl std::ops::Deref for WebConfirmState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DomainFocus {
-    Email,
-    Staging,
-    DotLocal,
-    UnderDomain,
-    Dns01First,
-    Dns01Second,
-}
-
-impl DomainFocus {
-    /// Fields that take typing rather than a toggle.
-    pub fn is_text(self) -> bool {
-        matches!(self, DomainFocus::Email | DomainFocus::UnderDomain | DomainFocus::Dns01First | DomainFocus::Dns01Second)
-    }
-}
-
-/// Domains and certificates: the ACME email, staging, local names and DNS-01 credentials.
+/// Domains and certificates: the field that has the focus and what is typed. The choices, what
+/// Save sends and what comes back are the core's `Domain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainState {
-    pub focus: DomainFocus,
+    pub flow: Domain,
+    /// One of the core's `domain::fields`.
+    pub focus: domain::Field,
     pub email: Input,
-    pub staging: bool,
-    pub under_domain: bool,
     pub local_domain: Input,
     pub dns01_first: Input,
     pub dns01_second: Input,
-    pub checks: Option<Result<Vec<nodo_api::LocalNameCheck>, String>>,
-    pub error: Option<String>,
 }
 
 impl DomainState {
     pub fn new(acme: &AcmeView, domain: &str) -> Self {
-        let suggested = if domain.contains('.') { format!("home.{domain}") } else { String::new() };
         Self {
-            focus: DomainFocus::Email,
+            flow: Domain::new(acme),
+            focus: domain::Field::Email,
             email: Input::plain(acme.email.clone()),
-            staging: acme.staging,
-            under_domain: acme.local_domain.is_some(),
-            local_domain: Input::plain(acme.local_domain.clone().unwrap_or(suggested)),
+            local_domain: Input::plain(domain::suggested_local_domain(acme, domain)),
             dns01_first: Input::secret(),
             dns01_second: Input::secret(),
-            checks: None,
-            error: None,
         }
     }
+}
 
-    pub fn order(acme: &AcmeView) -> Vec<DomainFocus> {
-        let mut order = vec![DomainFocus::Email, DomainFocus::Staging, DomainFocus::DotLocal, DomainFocus::UnderDomain];
-        if !acme.dns01_fields.is_empty() {
-            order.extend([DomainFocus::Dns01First, DomainFocus::Dns01Second]);
-        }
-        order
+impl std::ops::Deref for DomainState {
+    type Target = Domain;
+
+    fn deref(&self) -> &Domain {
+        &self.flow
+    }
+}
+
+impl std::ops::DerefMut for DomainState {
+    fn deref_mut(&mut self) -> &mut Domain {
+        &mut self.flow
     }
 }
 
