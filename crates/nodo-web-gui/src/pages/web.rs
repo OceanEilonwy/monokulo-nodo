@@ -11,14 +11,14 @@ use nodo_ui_core::flows::web::domain::{self, Domain, Field};
 use nodo_ui_core::flows::web::onion::{Onion, Row as OnionRow};
 use nodo_ui_core::flows::web::providers::{self, KeyField, ProviderStage, Providers};
 use nodo_ui_core::flows::web::{self, hosting};
-use nodo_ui_core::flows::{Dest, Notice, Step};
+use nodo_ui_core::flows::{Dest, Notice, NoticeKind, Step};
 use nodo_ui_core::model::{Provider, Snapshot};
 use nodo_ui_core::screen::Tab;
 use nodo_ui_core::Outcome;
 
 use super::document_page;
 use crate::glue::{tone, typed_secret};
-use nodo_ui_core::words::{cert_status, provider_field_name, reach_words, site_address};
+use nodo_ui_core::words::{self, cert_status, provider_field_name, reach_words, site_address};
 use crate::ctx::{Ctx, Out, Work};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -97,7 +97,15 @@ pub async fn all_offline(ctx: Ctx) -> Response {
 
 // Domain providers
 
-const MISSING_DOMAIN: &str = "Missing a domain? Allow the key to change it in the provider's account (Porkbun: API Access, on each domain), then look again under Domain providers.";
+const MISSING_DOMAIN: &str = "Missing a domain? Allow the key to change it in the provider's account (Porkbun: API Access, on each domain), then look again under Domain providers. Each provider there shows its key and the domains it can't change.";
+
+/// The domains of the account a key cannot change yet, each named, and what to switch on.
+fn blocked_domains(blocked: &[(String, String)]) -> Markup {
+    html! {
+        ul.bullets { @for (name, _) in blocked { li { span.warn aria-hidden="true" { "▲" } span.mono { (name) } } } }
+        @for remedy in words::provider_blocked_remedies(blocked) { p.dim { (remedy) } }
+    }
+}
 
 /// The provider pages' flow and the company chosen, as kept, or the list.
 fn kept_providers(work: &Work<'_>) -> (Providers, Option<String>) {
@@ -178,7 +186,7 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
                 }
             }
         },
-        (ProviderStage::Done { provider, domains, held_by, blocked: _ }, _) => html! {
+        (ProviderStage::Done { provider, domains, held_by, blocked }, _) => html! {
             h1 { span.ok aria-hidden="true" { "✓ " } (provider) " is connected" }
             section.card {
                 @if domains.is_empty() {
@@ -189,6 +197,11 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
                 } @else {
                     p { "Apps can now use these web addresses:" }
                     ul.bullets { @for domain in domains { li { span.ok aria-hidden="true" { "✓" } span.mono { (domain) } } } }
+                }
+                @if !blocked.is_empty() {
+                    // The domains the owner is about to go looking for, with what to switch on.
+                    p { "Also in the account, but this key can't change them yet:" }
+                    (blocked_domains(blocked))
                 }
                 p.dim.small { (MISSING_DOMAIN) }
                 form.actions.end method="post" action=(here) { (button("finish", "Done", "btn primary")) }
@@ -215,17 +228,31 @@ fn providers_page(snapshot: &Snapshot, flow: &Providers, chosen: Option<&str>, m
                         }
                     }
                     @if let Some(problem) = &each.problem { p.err { "✕ " (problem) } }
+                    // Which key this connection holds, so it can be matched to the provider's account.
+                    dl.facts {
+                        dt { "Connection" } dd.mono { (each.id) }
+                        @match &each.key {
+                            Some((field, hint)) => { dt { (provider_field_name(field)) } dd.mono { (hint) } },
+                            None => { dt { "Key" } dd.dim { (words::PROVIDER_KEY_NOT_READ) } },
+                        }
+                        dt { "Domains read" } dd { (words::provider_checked(each)) }
+                    }
+                    p.dim.small { (words::PROVIDER_KEY_STAYS_LOCKED) }
+                    h3 { "Domains apps can use" }
+                    @if each.domains.is_empty() { p.dim { "None." } }
                     ul.bullets {
                         @for domain in &each.domains {
                             li {
                                 span.dim aria-hidden="true" { "·" }
-                                span {
-                                    span.mono { (domain.name) }
-                                    @if let Some(other) = &domain.held_by { span.note { "   is used through " (other) } }
-                                    @if !domain.used_by.is_empty() { span.note { "   used by " (domain.used_by.join(", ")) } }
-                                }
+                                span { span.mono { (domain.name) } span.note { "   " (words::provider_domain_note(domain)) } }
                             }
                         }
+                    }
+                    @if each.blocked.is_empty() {
+                        p.dim.small { (words::provider_missing_domain(each)) }
+                    } @else {
+                        h3 { "In the account, but this key can't change them yet" }
+                        (blocked_domains(&each.blocked))
                     }
                 }
             }
@@ -257,6 +284,22 @@ pub async fn providers_show(ctx: Ctx) -> Response {
         let (mut flow, chosen) = kept_providers(work);
         // A refusal is said once: on the answer to the post that met it.
         flow.clear_test();
+        // A provider's details are the list's own here: every card has them.
+        if flow.stage == ProviderStage::Details {
+            flow = Providers::list();
+        }
+        // Opening the list asks each provider again, so a domain just allowed in its account
+        // shows up without knowing to ask (`providers::open_list`; nothing on a locked Nodo).
+        // What that found is on the cards; only a problem, or domains the key cannot change
+        // yet, is said as well.
+        if flow.stage == ProviderStage::List {
+            let reply = work.run(Step::run(providers::open_list(&work.snapshot)), &mut no_flow);
+            if reply.login_required {
+                return Out::Reply(reply);
+            }
+            let worth_saying = reply.notices.into_iter().filter(|notice| notice.kind != NoticeKind::Ok);
+            work.session.inner().notices.extend(worth_saying);
+        }
         Out::Page(providers_page(&work.snapshot, &flow, chosen.as_deref(), None, ""))
     })
     .await

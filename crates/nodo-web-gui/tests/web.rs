@@ -233,6 +233,66 @@ async fn check_and_save_is_busy_from_saving_the_names_until_the_checks_are_done(
     browser.get("/apps/moneropay/hosting/confirm").await.assert_has("Ready to put moneropay on the internet");
 }
 
+const API_ACCESS_OFF: &str = "API Access is off for this domain. In your Porkbun account, open the domain's details and switch API Access on";
+
+#[tokio::test]
+async fn each_provider_shows_which_key_it_holds_and_the_domains_it_cannot_change() {
+    let app = App::new();
+    let mut browser = app.login().await;
+    let list = browser.get("/web/providers").await;
+    // The connection, the masked key, when its domains were read, and who uses each.
+    for wanted in ["Connection", "porkbun", "API key", "pk1_3f9a…c2d1", "Domains read", "Just now", "example.com", "used by"] {
+        list.assert_has(wanted);
+    }
+    list.assert_has("The rest of the key stays locked on this Nodo and is never shown.");
+    list.assert_has("A domain missing here is one this key may not change. Allow it in your Porkbun account, then look again.");
+    list.assert_lacks("can't change them yet").assert_lacks("class=\"notice");
+
+    // A domain in the account with API Access off: named, with what to switch on. Opening the
+    // list asked the provider again, which is what says so above the cards, with the way there.
+    app.backends.prepare(|mock| mock.connected[0].blocked = vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())]);
+    let mut browser = app.login().await;
+    let list = browser.get("/web/providers").await;
+    list.assert_has("In the account, but this key can't change them yet").assert_has("example.net");
+    list.assert_has(&format!("{API_ACCESS_OFF}, then look again."));
+    list.assert_has("Porkbun lists 1 domains, and 1 more its key can't change yet: example.net.").assert_has(r#"<a href="/web/providers">See why</a>"#);
+    list.assert_lacks("A domain missing here is one this key may not change.");
+    // Looking again by hand says the same.
+    browser.post_then("/web/providers", &[("refresh", "porkbun")]).await.assert_has("1 more its key can't change yet: example.net.");
+
+    // A connection made before hints were kept says how to show its key.
+    app.backends.prepare(|mock| {
+        mock.connected[0].key = None;
+        mock.connected[0].checked = None;
+    });
+    let mut browser = app.login().await;
+    let list = browser.get("/web/providers").await;
+    list.assert_has("Not read yet. Look again while the Nodo is unlocked to show which key this is.").assert_has("Not since it was connected");
+}
+
+#[tokio::test]
+async fn a_locked_nodo_shows_what_it_last_knew_about_its_providers_and_asks_nothing() {
+    let app = App::new();
+    app.backends.stay_locked.store(true, Ordering::SeqCst);
+    app.backends.prepare(|mock| mock.connected[0].blocked = vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())]);
+    let mut browser = app.login().await;
+    let list = browser.get("/web/providers").await;
+    // What was last known is on the card; the keys cannot be opened, so nobody was asked again.
+    list.assert_has("example.com").assert_has("In the account, but this key can't change them yet").assert_has("example.net");
+    list.assert_lacks("1 more its key can't change yet");
+}
+
+#[tokio::test]
+async fn a_new_connection_names_the_domains_its_key_cannot_change() {
+    let app = App::new();
+    let mut browser = app.login().await;
+    browser.post("/web/providers", &[("do", "add")]).await;
+    browser.post("/web/providers", &[("choose", "Gandi")]).await;
+    let done = browser.post("/web/providers", &[("do", "connect"), ("api_key", "key-one"), ("secret_key", "key-two")]).await;
+    done.assert_has("Gandi is connected").assert_lacks("this key can't change them yet");
+    done.assert_has("Each provider there shows its key and the domains it can't change.");
+}
+
 #[tokio::test]
 async fn following_a_certificate_does_not_keep_a_session_alive() {
     let app = App::new();
