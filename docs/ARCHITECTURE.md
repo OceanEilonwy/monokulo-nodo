@@ -39,7 +39,8 @@ codebase, and signed xbps packages from user-added feeds.
   and `mesa-panvk`, a headless panvk-only Mesa); [MAINLINE_KERNEL.md](MAINLINE_KERNEL.md) has the
   details, and `nodo-gpu-check` (nodo-tools) probes it.
 - **Node RPC:** cuprated serves only restricted RPC, on `127.0.0.1:18081`; the unrestricted
-  server is off and nothing puts RPC on the network. Apps reach it through the role
+  server is off, and RPC goes on the network only when the owner publishes the node's site
+  (below). Apps reach it through the role
   (`public_rpc_url` or `rpc-port`), which grants their sandbox that loopback port; the
   helper reads `get_info` from it for Home, since the TUI may not. The firewall opens only P2P
   (18080) inbound. cuprated-service's default `Cuprated.toml` and the helper's template in
@@ -312,7 +313,15 @@ codebase, and signed xbps packages from user-added feeds.
   removing leaves a "↺ …" link that puts the value back while the field still holds it, and Save asks
   first when the changed references open access or add a dependency, listing them in plain words.
   Secret settings do not take references in the TUI.
-- **Node onion address:** The node is not a site, so it has its own switch (`SetNodeOnion`, the TUI's
+- **Node RPC site:** cuprated's system manifest (nodo-tools) declares a `[[web]]` site, `rpc` on
+  `127.0.0.1:18081` with suggested name `node`, so the node's RPC is published from Hosting like
+  any app's site: home network, Tor, the internet, a host and other names, its records,
+  certificates and rate limit, all as for apps. It is the restricted RPC; a full RPC is never
+  published, as a property of the node rather than a policy the owner could choose: the helper
+  serves a site of a package providing `monero-daemon` from a loopback port only when that port is
+  the one the node exports as `restricted-rpc-port`, refuses to publish it otherwise, and takes it
+  off every address if the export goes away.
+- **Node onion address:** Besides its site, the node has its own onion switch (`SetNodeOnion`, the TUI's
   Web › Onion screen). Tor forwards the onion address straight to the node's restricted RPC on
   loopback, never to a full RPC: to the port the node exports as its public `restricted-rpc-port`
   setting, which for cuprated is 127.0.0.1:18081, its only RPC. So the switch needs no setting

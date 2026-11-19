@@ -104,3 +104,25 @@ fn the_manifest_and_firewall_keep_rpc_local() {
     assert_eq!(accepts, ["tcp dport 18080 accept"], "only P2P is opened inbound");
     assert!(!nft.contains("18081") && !nft.contains("18089"), "no RPC port in the firewall rules");
 }
+
+/// The node's site, which the owner may put on the internet, is the restricted RPC: the port the
+/// shipped config and the rendered template serve restricted RPC on, and the port the settings
+/// export as `restricted-rpc-port`, the only port the helper serves a node's site from. The
+/// unrestricted RPC stays off, so there is no full RPC anywhere for a site to reach.
+#[test]
+fn the_nodes_site_is_the_restricted_rpc() {
+    let m = manifest();
+    assert_eq!(m.web.len(), 1);
+    let site = &m.web[0];
+    assert_eq!((site.name.as_str(), site.suggested_subdomain.as_deref()), ("rpc", Some("node")));
+    assert!(site.multi_address);
+    let port: i64 = site.upstream.strip_prefix("127.0.0.1:").unwrap().parse().unwrap();
+    for (config, which) in [(shipped(), "cuprated-service"), (rendered_defaults(), "nodo-tools template")] {
+        assert_restricted_on_loopback(&config, which);
+        assert_eq!(rpc(&config, "restricted")["port"].as_integer(), Some(port), "{which}");
+    }
+    let settings = load_settings(&read("nodo-tools/files/cuprated/settings.lua"), Limits::default()).unwrap();
+    let exported = settings.schema().setting("restricted_rpc_port").unwrap();
+    assert_eq!(exported.public.as_deref(), Some("restricted-rpc-port"));
+    assert_eq!(exported.default, Some(nodo_settings::DefaultValue::Int(port)));
+}

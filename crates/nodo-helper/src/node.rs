@@ -8,7 +8,7 @@ use crate::catalog::Package;
 use crate::helper::Helper;
 use crate::system::System;
 
-const ROLE: &str = "monero-daemon";
+pub(crate) const ROLE: &str = "monero-daemon";
 /// `get_info` is about a kilobyte. Anything far larger is not a node answering.
 const MAX_INFO: usize = 64 * 1024;
 

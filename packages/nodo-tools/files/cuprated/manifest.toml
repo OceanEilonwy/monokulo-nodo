@@ -21,6 +21,18 @@ port = 18081
 protocol = "tcp"
 scope = "local"
 
+# The node's RPC as a site, so the owner can publish it from Hosting like any app's site: on the
+# home network, Tor or the internet, at a host and other names of their choosing. It is the
+# restricted RPC, the only one cuprated serves (Cuprated.toml.in): wallets can sync and send
+# through it, but nothing on it stops the node or changes its settings. The helper only ever
+# serves a node's site from the port the node exports as its restricted RPC. Wallets reach it at
+# any address, so every exposure can be on at once.
+[[web]]
+name = "rpc"
+upstream = "127.0.0.1:18081"
+suggested_subdomain = "node"
+multi_address = true
+
 # The node's sync progress on the device's screen (docs/SCREEN.md), from its own loopback RPC.
 [[panels]]
 id = "sync"
