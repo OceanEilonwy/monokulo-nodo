@@ -855,8 +855,17 @@ impl Manage {
             ),
             Dest::UpdateResults(report) => {
                 let updated: Vec<&str> = report.results.iter().filter(|r| r.applied).map(|r| r.name.as_str()).collect();
+                // What was refused before anything changed is said as that, in the core's words.
+                let came_to = words::update_results(&report);
+                let refused = came_to.unchanged.is_some();
                 match &report.failure {
                     Some(failure) => self.say(&format!("{}: {}", failure.name, failure.headline), true),
+                    None if refused && came_to.rows.is_empty() => self.say(&format!("{}.", came_to.headline.trim_end_matches('.')), false),
+                    None if refused => {
+                        let notes: Vec<&str> = came_to.rows.iter().filter(|row| !row.applied).map(|row| row.note.as_str()).collect();
+                        let said = if updated.is_empty() { "Nothing was updated.".to_owned() } else { format!("Updated {}.", updated.join(", ")) };
+                        self.say(&format!("{said} {}", notes.join(" ")), false);
+                    }
                     None if updated.is_empty() => self.say("Nothing was updated.", false),
                     None => self.say(&format!("Updated {}.", updated.join(", ")), false),
                 }
@@ -2804,11 +2813,22 @@ impl Manage {
     fn providers_page(&self, snap: &Snapshot) -> Page {
         let mut cards = Vec::new();
         for (c, label) in snap.connected.iter().zip(words::provider_labels(&snap.connected)) {
-            let mut rows: Vec<MRow> = c
-                .domains
-                .iter()
-                .map(|d| line(&d.name, if d.used_by.is_empty() { "Not used yet".to_owned() } else { format!("Used by {}", d.used_by.join(", ")) }))
-                .collect();
+            // Which key this connection holds, so it can be matched to the provider's account.
+            let mut rows = vec![match &c.key {
+                Some((field, hint)) => line(words::provider_field_name(field), hint),
+                None => line("Key", words::PROVIDER_KEY_NOT_READ),
+            }];
+            rows.push(line("Domains read", words::provider_checked(c)));
+            rows.extend(
+                c.domains
+                    .iter()
+                    .map(|d| line(&d.name, if d.used_by.is_empty() { "Not used yet".to_owned() } else { format!("Used by {}", d.used_by.join(", ")) })),
+            );
+            // The domains of the account its key cannot change yet, and what to switch on.
+            if !c.blocked.is_empty() {
+                rows.push(text(format!("▲  {}", words::provider_blocked_line(&c.blocked)), 1));
+                rows.extend(words::provider_blocked_remedies(&c.blocked).into_iter().map(|remedy| text(remedy, 0)));
+            }
             if let Some(p) = &c.problem {
                 rows.push(text(format!("✕  {p}"), 3));
             }
@@ -2841,13 +2861,17 @@ impl Manage {
                 rows.push(buttons(vec![button("provider-kind:", "Cancel", 1), self.change_button("provider-connect", "Connect", 0)]));
                 cards.push(card(format!("Connect {}", p.name), "The key is stored as a secret and never shown again.", rows));
             }
-            (ProviderStage::Done { provider, domains, held_by, blocked: _ }, _) => {
+            (ProviderStage::Done { provider, domains, held_by, blocked }, _) => {
                 let mut rows: Vec<MRow> = domains.iter().map(|domain| line(domain, "Its key controls this domain")).collect();
                 if domains.is_empty() {
                     rows.push(text("Its key controls no domain a site can use.", 0));
                 }
                 if !held_by.is_empty() {
                     rows.push(text(format!("Its other domains are used through {}, connected earlier.", held_by.join(", ")), 0));
+                }
+                if !blocked.is_empty() {
+                    rows.push(text(format!("▲  {}", words::provider_blocked_line(blocked)), 1));
+                    rows.extend(words::provider_blocked_remedies(blocked).into_iter().map(|remedy| text(remedy, 0)));
                 }
                 rows.push(buttons(vec![button("provider-done", "Done", 0)]));
                 cards.push(toned(card(format!("✓  {provider} is connected"), "", rows), 2));
@@ -3481,6 +3505,42 @@ mod tests {
         let page = m.page();
         let row = rows(&page).into_iter().find(|r| r.title.as_str() == "Also answers at").expect("the row");
         assert_eq!(row.sub.as_str(), "example.com (redirects here)");
+    }
+
+    #[test]
+    fn a_provider_shows_which_key_it_holds_and_the_domains_it_cannot_change() {
+        let mut mock = MockBackend::new();
+        let off = "API Access is off for this domain. Switch it on";
+        mock.connected[0].blocked = vec![("example.net".to_owned(), off.to_owned())];
+        let mut m = manage_over(mock);
+        m.act("open:providers");
+        m.drain_blocking();
+        let page = m.page();
+        assert_eq!(page.title, "Domain providers");
+        let all = rows(&page);
+        let said = |title: &str| all.iter().find(|r| r.title.as_str() == title).map(|r| r.sub.to_string());
+        assert_eq!(said("API key").as_deref(), Some("pk1_3f9a…c2d1"), "the key is masked, as the helper gave it");
+        assert_eq!(said("Domains read").as_deref(), Some("Just now"));
+        let titles: Vec<String> = all.iter().map(|r| r.title.to_string()).collect();
+        assert!(titles.contains(&"▲  Can't be used yet: example.net".to_owned()), "{titles:?}");
+        assert!(titles.contains(&format!("{off}, then look again.")), "{titles:?}");
+        // Looking is all the page did: nothing was asked of the provider, which needs the PIN here.
+        assert!(m.idle() && m.sent.is_empty());
+    }
+
+    #[test]
+    fn an_update_the_device_refused_is_said_with_its_reason_and_not_as_a_failure() {
+        let mut mock = MockBackend::new();
+        mock.knobs.update_refusals = vec![("moneropay".to_owned(), "Free up 2.3 GB on the data drive, then try again.".to_owned())];
+        let mut m = manage_over(mock);
+        m.tab_clicked(1);
+        m.act("open:app:moneropay");
+        m.act("app-update:moneropay");
+        m.act("apply-updates");
+        m.drain_blocking();
+        assert_eq!(m.toast(), ("Not updated: Free up 2.3 GB on the data drive, then try again.".to_owned(), false));
+        let update = m.snapshot.as_ref().unwrap().updates.iter().find(|u| u.name == "moneropay").cloned().expect("still offered");
+        assert!(!update.held, "a refusal holds nothing");
     }
 
     #[test]
