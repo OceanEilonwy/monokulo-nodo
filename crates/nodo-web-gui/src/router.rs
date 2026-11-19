@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 
 use crate::ctx::Polling;
-use crate::pages::{apps, drive, flow, home, install, keys, login, logs, settings, sources, system, updates};
+use crate::pages::{apps, drive, flow, home, hosting, install, keys, login, logs, settings, sources, system, updates, web};
 use crate::security;
 use crate::state::AppState;
 use crate::{assets, dest};
@@ -23,6 +23,7 @@ pub fn router(state: AppState) -> Router {
     let polling = Router::new()
         .route(dest::WORKING, get(flow::working))
         .route("/system/logs/{source}/lines", get(logs::poll))
+        .route("/apps/{name}/hosting/certificate/status", get(hosting::certificate_status_poll))
         .layer(Extension(Polling));
 
     Router::new()
@@ -47,6 +48,13 @@ pub fn router(state: AppState) -> Router {
         .route("/apps/{name}/settings/reference/decline", post(settings::decline))
         .route("/apps/{name}/settings/failed", get(settings::failed))
         .route("/apps/{name}/settings/failed/keep", post(settings::keep_as_it_is))
+        .route("/apps/{name}/hosting", get(hosting::show).post(hosting::act))
+        .route("/apps/{name}/hosting/check", get(hosting::check))
+        .route("/apps/{name}/hosting/check/{what}", get(hosting::check_act).post(hosting::check_act))
+        .route("/apps/{name}/hosting/cgnat", get(hosting::cgnat))
+        .route("/apps/{name}/hosting/cgnat/{what}", post(hosting::cgnat_act))
+        .route("/apps/{name}/hosting/confirm", get(hosting::confirm).post(hosting::go_public))
+        .route("/apps/{name}/hosting/certificate", get(hosting::certificate))
         // Get apps and install. `get` is taken here, so an app of that name has no page of
         // its own; no source offers one.
         .route(dest::GET_APPS, get(install::search))
@@ -72,7 +80,14 @@ pub fn router(state: AppState) -> Router {
         .route("/sources/of/{name}/key", get(sources::key).post(sources::trust_key))
         .route("/sources/of/{name}/key/remove", post(sources::remove_from_key))
         // Web
-        .route(dest::WEB, get(system::web))
+        .route(dest::WEB, get(web::list))
+        .route("/web/offline", post(web::all_offline))
+        .route(dest::PROVIDERS, get(web::providers_show).post(web::providers_act))
+        .route(dest::DOMAIN, get(web::domain_show).post(web::domain_act))
+        .route(dest::CERTIFICATES, get(web::certificates))
+        .route(dest::TRUST, get(web::trust))
+        .route(dest::ONION, get(web::onion))
+        .route("/system/onion/{what}", post(web::onion_act))
         // System
         .route(dest::SYSTEM, get(system::show))
         .route(dest::ABOUT, get(system::about))

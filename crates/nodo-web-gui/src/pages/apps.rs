@@ -88,15 +88,14 @@ fn app_page(snapshot: &Snapshot, name: &str) -> Page {
                 @for section in &sections {
                     @match section.as_str() {
                         "Logs" => (layout::row(&dest::log(name), section, log_summary(snapshot, name), html! {})),
-                        // TODO(page): Hosting, under /apps/{name}/hosting. An app without a web
-                        // page has nothing there, and the row says so instead.
+                        // An app without a web page has nothing to host, and the row says so.
                         "Hosting" if !page.has_site(snapshot) => div.row.off {
                             span.name { (section) }
                             span.what { "This app has no web page to put online" }
                             span.end {}
                             span.go {}
                         },
-                        "Hosting" => (layout::coming(section, &hosting_summary(snapshot, name))),
+                        "Hosting" => (layout::row(&dest::hosting(name), section, &hosting_summary(snapshot, name), html! {})),
                         "Settings" => (layout::row(&dest::settings(name), section, "Change how it works", html! {})),
                         // TODO(page): the app's setup page for its owner. Its row is named by
                         // the app, so it is whatever is not one of the fixed three.

@@ -343,7 +343,7 @@ async fn system_lists_its_parts_and_shows_the_web_gui_without_a_switch() {
 
     let about = browser.get("/system/about").await;
     about.assert_has("About this Nodo").assert_has("412 GB of 1.9 TB");
-    browser.get("/web").await.assert_has("Web").assert_has("moneropay");
+    system.assert_has(r#"href="/system/onion""#);
 }
 
 #[tokio::test]

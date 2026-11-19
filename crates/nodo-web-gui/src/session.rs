@@ -14,6 +14,10 @@ use axum::http::{header, HeaderMap};
 use nodo_ui_core::exec::Data;
 use nodo_ui_core::flows::unlock::Unlock;
 use nodo_ui_core::flows::settings::{ApplyFailed, Picker, Settings};
+use nodo_ui_core::flows::web::certs::Certificate;
+use nodo_ui_core::flows::web::hosting::Hosting;
+use nodo_ui_core::flows::web::providers::Providers;
+use nodo_ui_core::flows::web::public::{Found, PublicConfirm};
 use nodo_ui_core::flows::{install, updates, Dest, Notice, Question};
 use nodo_ui_core::model::{CapabilityData, Document, FeedProbe, InstallSnapshot, KeyChange, RejectionData, UpdateReport};
 
@@ -150,6 +154,20 @@ pub struct Stash {
     pub results: Option<UpdateReport>,
     /// How the last rollback went, shown once on its page.
     pub rolled_back: Option<nodo_api::UpdateResult>,
+    /// The Hosting drafts being edited, by site. Whether the site was public when the page
+    /// opened and whether a provider is connected are in the draft, from the device, and never
+    /// from a browser.
+    pub hosting: BTreeMap<String, Hosting>,
+    /// What the last reachability check found, when it is not a clear way to the confirmation.
+    pub found: Option<Found>,
+    /// The confirmation before a site goes public: the address and the plan the helper gave.
+    /// Confirming quotes this address, and nothing a browser sends in its place.
+    pub going_public: Option<PublicConfirm>,
+    /// The address whose certificate is followed after going public.
+    pub certificate: Option<Certificate>,
+    /// The provider pages: the list, or a step of adding one, and the company chosen. Keys
+    /// typed are never kept.
+    pub providers: Option<(Providers, Option<String>)>,
 }
 
 impl Stash {
@@ -169,14 +187,25 @@ impl Stash {
                 self.batch = None;
             }
             Dest::ApplyFailed(failed) => self.apply_failed = Some(failed.clone()),
-            // The settings page reads its form again unless a draft is open; the Web tab's
-            // destinations have no page here yet.
-            Dest::Settings(_)
-            | Dest::LeaveHosting
-            | Dest::Reachability(_)
-            | Dest::PublicConfirm(_)
-            | Dest::HostingWithProvider { .. }
-            | Dest::WentPublic => {}
+            Dest::Reachability(Found::Clear(confirm)) | Dest::PublicConfirm(confirm) => {
+                self.going_public = Some(confirm.clone());
+                self.found = None;
+            }
+            Dest::Reachability(found) => {
+                self.found = Some(found.clone());
+                self.going_public = None;
+            }
+            // The site is public: its draft is done with, and its certificate is followed at
+            // the address that was confirmed.
+            Dest::WentPublic => {
+                if let Some(confirm) = self.going_public.take() {
+                    self.hosting.remove(&confirm.site);
+                    self.certificate = Some(confirm.certificate());
+                }
+            }
+            // The settings page reads its form again unless a draft is open. The pages that
+            // send these two see to their drafts themselves, since neither names its site.
+            Dest::Settings(_) | Dest::LeaveHosting | Dest::HostingWithProvider { .. } => {}
             // These carry what their URL carries, or nothing.
             Dest::Back
             | Dest::Apps

@@ -5,6 +5,7 @@ pub mod apps;
 pub mod drive;
 pub mod flow;
 pub mod home;
+pub mod hosting;
 pub mod install;
 pub mod keys;
 pub mod login;
@@ -13,6 +14,7 @@ pub mod settings;
 pub mod sources;
 pub mod system;
 pub mod updates;
+pub mod web;
 
 use axum::http::StatusCode;
 use maud::html;

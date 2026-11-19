@@ -39,6 +39,16 @@
 //!     beside the question (`Pending::subject`).
 //! 20. `Rollbacks::apply` gives no notice for a rollback that the helper refused or took back;
 //!     the result is kept for the page and worded here (`pages::updates::rolled_back_line`).
+//! 21. `reach_words`, `site_address`, `cert_status`, and the sentences of the Web tab's pages
+//!     (Hosting, the check, CGNAT, the confirmation, providers, domain, trust, onion), from
+//!     `view/web.rs`, `view/certs.rs` and `view/more.rs`.
+//! 22. `checks_or_goes_public`: which web steps are long is read off their effects.
+//! 23. `Dest::WentPublic`, `Dest::LeaveHosting` and `Dest::HostingWithProvider` do not name
+//!     their site; `dest::url` leads the first and last where the handler says (`back`).
+//! 24. `Providers::submit` sends a locked device to unlock with a reason (`Dest::Unlock {
+//!     resume }`); there is no unlock page here, so the reason is shown as a notice on Home.
+//! 25. The certificate page after going public has no flow function for its heading (online,
+//!     getting it, not ready); it is worded here from `CertRow`.
 //! 14. `Review::approve` takes the passphrase as `Option<&mut Input>`, and `Unlock::submit` as
 //!     `&mut Input`: a frontend that gets text from a form builds an `Input` only to hand it over.
 
@@ -375,6 +385,61 @@ pub fn applies_updates(step: &nodo_ui_core::flows::Step) -> bool {
     step.effects().iter().any(|effect| {
         matches!(effect, nodo_ui_core::Effect::ApplyUpdates { .. } | nodo_ui_core::Effect::ApplyUpdatesWithPassphrase { .. })
     })
+}
+
+/// Who can open a site, in words, from `view/web.rs`.
+pub fn reach_words(site: &Site) -> &'static str {
+    let e = site.exposure;
+    match (e.local, e.onion, e.public) {
+        (_, _, true) if e.local || e.onion => "Home and internet",
+        (_, _, true) => "Internet",
+        (true, true, false) => "Home network and Tor",
+        (true, false, false) => "Home network",
+        (false, true, false) => "Tor",
+        (false, false, false) => "Not online",
+    }
+}
+
+/// The address a site is best opened at, from `view/web.rs`.
+pub fn site_address(site: &Site) -> String {
+    if site.exposure.public {
+        if let Some(host) = &site.public_host {
+            return format!("https://{host}");
+        }
+    }
+    if site.exposure.local && !site.local_url.is_empty() {
+        return site.local_url.clone();
+    }
+    if site.exposure.onion && !site.onion_url.is_empty() {
+        return site.onion_url.clone();
+    }
+    String::new()
+}
+
+/// One certificate in a few words and the class to show them in, from `view/certs.rs`.
+pub fn cert_status(row: &nodo_ui_core::model::CertRow) -> (String, &'static str) {
+    use nodo_api::CertState;
+    match row.state {
+        CertState::Valid => (row.days_left.map_or_else(|| "✓ Valid".to_owned(), |days| format!("✓ Valid, {days} days left")), "ok"),
+        CertState::Obtaining | CertState::Waiting => ("◆ Getting a certificate".to_owned(), "warn"),
+        CertState::Failed => ("✕ Not issued".to_owned(), "err"),
+        CertState::Expired => ("✕ Expired".to_owned(), "err"),
+    }
+}
+
+/// Whether following a step runs the reachability checks or puts a site on the internet, both
+/// of which take long. A check may wait inside the saving of the names.
+pub fn checks_or_goes_public(step: &nodo_ui_core::flows::Step) -> bool {
+    use nodo_ui_core::effect::ExposureAfter;
+    use nodo_ui_core::Effect;
+    fn long(effect: &Effect) -> bool {
+        match effect {
+            Effect::CheckReachability { .. } | Effect::SetExposure { after: ExposureAfter::WentPublic, .. } => true,
+            Effect::SetPublicHost { then, .. } => then.iter().any(long),
+            _ => false,
+        }
+    }
+    step.effects().iter().any(long)
 }
 
 /// A job that ended without a report, as a notice.

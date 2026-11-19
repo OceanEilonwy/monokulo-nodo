@@ -1,6 +1,5 @@
 //! System: the Nodo itself. One page lists its parts, as the terminal interface does, with the
-//! web GUI's own state shown and not changeable. Also here: About, and the Web tab's stand-in
-//! until its pages are built.
+//! web GUI's own state shown and not changeable. Also here: About.
 
 use axum::response::Response;
 use maud::{html, Markup};
@@ -10,7 +9,7 @@ use nodo_ui_core::model::{Snapshot, UpdateNote};
 use nodo_ui_core::screen::Tab;
 
 use super::document_page;
-use crate::core_wishlist::{hosting_summary, nodo_update, nodo_update_note, open_url, system_row_summary, SYSTEM_ROWS};
+use crate::core_wishlist::{nodo_update, nodo_update_note, system_row_summary, SYSTEM_ROWS};
 use crate::ctx::{Ctx, Out};
 use crate::dest;
 use crate::layout::{self, Page};
@@ -62,6 +61,7 @@ fn page(snapshot: &Snapshot, web_gui: Option<&WebGuiStatus>) -> Page {
                         _ => (layout::coming(name, &summary)),
                     }
                 }
+                (layout::row(dest::ONION, "Onion addresses", "Tor links for the node and the sites", html! {}))
                 (layout::row(dest::KEYS, "SSH keys", "Who may log in over SSH", html! {}))
                 (layout::row(dest::DRIVE, "Data drive", if snapshot.overview.drive.is_some() { "Not connected" } else { "Connected" }, html! {}))
             }
@@ -82,35 +82,6 @@ pub async fn about(ctx: Ctx) -> Response {
         let document = documents::about(&work.snapshot);
         let page = document_page(Some(Tab::System), &document, dest::SYSTEM);
         Out::Page(page.trail(&[("System", dest::SYSTEM), ("About this Nodo", dest::ABOUT)]))
-    })
-    .await
-}
-
-/// `GET /web`. TODO(page): the Web tab (sites, Hosting, providers, domain, certificates). Until
-/// then it lists the sites and where each is reachable, read-only.
-pub async fn web(ctx: Ctx) -> Response {
-    ctx.with(dest::HOME, |work| {
-        let snapshot = &work.snapshot;
-        let body = html! {
-            h1 { "Web" }
-            p.lead { "Where each app's page can be reached. Putting a page online, domains and certificates are done from the terminal interface for now." }
-            section.card.flush {
-                @if snapshot.web.sites.is_empty() { p.pad.dim { "No app here has a web page." } }
-                div.rows {
-                    @for site in &snapshot.web.sites {
-                        div.row.off {
-                            span.name { (site.package) }
-                            span.what { (hosting_summary(snapshot, &site.package)) }
-                            span.end {
-                                @if let Some(url) = open_url(site) { a href=(url) rel="noreferrer" { (url) } }
-                            }
-                            span.go {}
-                        }
-                    }
-                }
-            }
-        };
-        Out::Page(Page::new(Tab::Web, "Web", body))
     })
     .await
 }

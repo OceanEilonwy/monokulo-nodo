@@ -88,6 +88,9 @@ pub fn shared_apply(outcome: &Outcome, snapshot: &Snapshot) -> Step {
         flows::documents::apply(outcome),
         flows::settings::apply(outcome),
         flows::updates::apply(outcome, snapshot),
+        flows::web::apply(outcome),
+        flows::web::providers::apply(outcome),
+        flows::web::domain::apply(outcome),
     ]
     .into_iter()
     .filter(|step| *step != Step::Stay)

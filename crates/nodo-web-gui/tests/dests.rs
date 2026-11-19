@@ -54,19 +54,14 @@ const VARIANTS: usize = 26;
 
 /// Destinations whose own page is not built in this slice. Each is sent to the closest page that
 /// exists, marked `TODO(page)` in `dest::url`; the entry goes when the page comes.
-const NOT_BUILT_YET: [(&str, &str); 6] = [
-    ("Bundle", "/apps/get"),
-    ("LeaveHosting", "/web"),
-    ("Reachability", "/web"),
-    ("PublicConfirm", "/web"),
-    ("HostingWithProvider", "/web"),
-    ("WentPublic", "/web"),
-];
+const NOT_BUILT_YET: [(&str, &str); 1] = [("Bundle", "/apps/get")];
 
 fn every_destination() -> Vec<(&'static str, Dest)> {
     let mut mock = MockBackend::new();
     let snapshot = load_snapshot(&mut mock).expect("the mock answers");
     let reachability = mock.reachability("moneropay");
+    let unreachable = mock.reachability("shop");
+    let shared_address = mock.reachability("monokulo-pay");
     let form = mock.settings_form("moneropay").expect("moneropay has settings");
     let failed = ApplyFailed {
         package: "moneropay".into(),
@@ -111,6 +106,8 @@ fn every_destination() -> Vec<(&'static str, Dest)> {
         ("ApplyFailed", Dest::ApplyFailed(failed)),
         ("LeaveHosting", Dest::LeaveHosting),
         ("Reachability", Dest::Reachability(Found::of("moneropay", true, &reachability))),
+        ("Reachability with problems", Dest::Reachability(Found::of("shop", true, &unreachable))),
+        ("Reachability behind CGNAT", Dest::Reachability(Found::of("monokulo-pay", true, &shared_address))),
         ("PublicConfirm", Dest::PublicConfirm(PublicConfirm::new("moneropay", plan))),
         ("HostingWithProvider", Dest::HostingWithProvider { domains: vec!["example.com".into()] }),
         ("WentPublic", Dest::WentPublic),
@@ -140,8 +137,23 @@ async fn every_destination_leads_to_a_page_that_is_served() {
         match NOT_BUILT_YET.iter().find(|(name, _)| *name == label) {
             Some((_, stand_in)) => assert_eq!(url, *stand_in, "{label} has its own page now: take it off NOT_BUILT_YET"),
             None => match label {
-                // The two that are relative lead to the page that asked.
-                "Back" | "Resume" => assert_eq!(url, back),
+                // Those that are relative lead to the page that asked, or where the page that
+                // can receive them says.
+                "Back" | "Resume" | "HostingWithProvider" | "WentPublic" => assert_eq!(url, back),
+                "LeaveHosting" => {
+                    assert_eq!(url, "/web");
+                    answer.assert_has("<h1>Sites online</h1>");
+                }
+                "Reachability" | "PublicConfirm" => {
+                    assert_eq!(url, "/apps/moneropay/hosting/confirm");
+                    answer.assert_has("Ready to put moneropay on the internet").assert_has("to confirm");
+                }
+                "Reachability with problems" => {
+                    answer.assert_has("The internet can't reach your Nodo yet").assert_has("Port 80 is not reachable from outside");
+                }
+                "Reachability behind CGNAT" => {
+                    answer.assert_has("shares one address between many homes").assert_has("100.64.0.0/10");
+                }
                 // Each of the others shows what it was sent with.
                 "ConfirmSource" => {
                     answer.assert_has("monero-tools");

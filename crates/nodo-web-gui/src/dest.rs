@@ -1,6 +1,7 @@
 //! Where each page lives: the paths, and the one place a `Dest` of the core becomes a URL.
 
 use nodo_ui_core::flows::install::ReviewPurpose;
+use nodo_ui_core::flows::web::public::Found;
 use nodo_ui_core::flows::Dest;
 use nodo_ui_core::model::PackageId;
 
@@ -27,6 +28,11 @@ pub const SOURCES: &str = "/sources";
 pub const ADD_SOURCE: &str = "/sources/add";
 pub const CONFIRM_SOURCE: &str = "/sources/add/confirm";
 pub const WEB: &str = "/web";
+pub const PROVIDERS: &str = "/web/providers";
+pub const DOMAIN: &str = "/web/domain";
+pub const CERTIFICATES: &str = "/web/certificates";
+pub const TRUST: &str = "/web/trust";
+pub const ONION: &str = "/system/onion";
 pub const SYSTEM: &str = "/system";
 pub const LOGS: &str = "/system/logs";
 pub const KEYS: &str = "/system/keys";
@@ -51,6 +57,11 @@ pub fn app(name: &str) -> String {
 /// An installed app's settings.
 pub fn settings(name: &str) -> String {
     format!("{}/settings", app(name))
+}
+
+/// A site's Hosting page. A site is named by its app.
+pub fn hosting(site: &str) -> String {
+    format!("{}/hosting", app(site))
 }
 
 /// The Updates page, with only one app's update ticked when it is named.
@@ -122,13 +133,16 @@ pub fn url(dest: &Dest, back: &str) -> String {
         Dest::UpdateResults(_) => UPDATE_RESULTS.to_owned(),
         Dest::Settings(form) => settings(&form.package),
         Dest::ApplyFailed(failed) => format!("{}/failed", settings(&failed.package)),
-        // TODO(page): the Web tab (Hosting, going public, providers). Until its pages are here
-        // every destination of those flows leads to the Web tab's stand-in.
-        Dest::LeaveHosting
-        | Dest::Reachability(_)
-        | Dest::PublicConfirm(_)
-        | Dest::HostingWithProvider { .. }
-        | Dest::WentPublic => WEB.to_owned(),
+        // Saved: the list of sites shows who can reach it now.
+        Dest::LeaveHosting => WEB.to_owned(),
+        Dest::Reachability(Found::Problems(check)) => format!("{}/check", hosting(&check.site)),
+        Dest::Reachability(Found::Cgnat(cgnat)) => format!("{}/cgnat", hosting(&cgnat.site)),
+        Dest::Reachability(Found::Clear(confirm)) | Dest::PublicConfirm(confirm) => format!("{}/confirm", hosting(&confirm.site)),
+        // Neither names its site, so, like `Back`, each leads where the page that can get it
+        // says: the Hosting page that sent the owner to add a provider, and the certificate of
+        // the site that was just confirmed.
+        Dest::HostingWithProvider { domains: _ } => back.to_owned(),
+        Dest::WentPublic => back.to_owned(),
         Dest::Document(_) => DOCUMENT.to_owned(),
     }
 }
