@@ -519,6 +519,32 @@ pub struct DomainProvider {
     /// Why the last listing failed, already scrubbed of credentials.
     pub problem: Option<String>,
     pub dns01: Dns01Support,
+    /// Which key this connection uses, masked, so the owner can match it to the keys in the
+    /// provider's account. Missing for a connection made before hints were kept, until its domains
+    /// are next looked up while the device is unlocked.
+    #[serde(default)]
+    pub key: Option<ProviderKey>,
+    /// Domains the account holds that this key may not change yet, each with what to switch on at
+    /// the provider. Only some providers can tell.
+    #[serde(default)]
+    pub blocked: Vec<BlockedDomain>,
+}
+
+/// The first credential of a connection, mostly hidden: enough to recognise, not enough to use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderKey {
+    /// The credential's field, such as `api_key`.
+    pub field: String,
+    /// Its first and last characters around an ellipsis, such as `pk1_3f9a…c2d1`.
+    pub hint: String,
+}
+
+/// A domain in the provider account that the connected key cannot change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockedDomain {
+    pub name: String,
+    /// What to change in the provider's account so the domain can be used.
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

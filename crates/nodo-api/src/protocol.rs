@@ -532,6 +532,8 @@ mod tests {
                 checked_at: Some(1),
                 problem: None,
                 dns01: crate::Dns01Support::Bundled,
+                key: Some(crate::ProviderKey { field: "api_token".into(), hint: "abcd1234…wxyz".into() }),
+                blocked: vec![crate::BlockedDomain { name: "example.net".into(), reason: "switch it on".into() }],
             }])),
             Ok(Response::RetiredRecords(vec!["shop/A".into()])),
             Ok(Response::ReachabilityDetail(crate::ReachabilityDetail {

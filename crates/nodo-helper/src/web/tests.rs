@@ -41,6 +41,8 @@ struct Fake {
     records: Records,
     /// What `list_domains` answers per provider kind; a missing kind cannot list.
     listings: Mutex<BTreeMap<String, Result<Vec<String>, String>>>,
+    /// The account's domains a kind's key may not change yet, reported beside its listing.
+    blocked: Mutex<BTreeMap<String, Vec<String>>>,
     /// What this device's resolver answers, by name. Missing names fail to resolve.
     resolved: Mutex<BTreeMap<String, Vec<IpAddr>>>,
     removed_dirs: Mutex<Vec<String>>,
@@ -142,9 +144,17 @@ impl WebIo for Fake {
     fn dns_provider(&self, _: ProviderConfig, _: &str) -> Result<Box<dyn DnsProvider>, String> {
         Ok(Box::new(FakeProvider(self.records.clone())))
     }
-    fn list_domains(&self, config: ProviderConfig) -> Result<Option<Vec<String>>, String> {
+    fn list_domains(&self, config: ProviderConfig) -> Result<Option<nodo_web::dns::DomainListing>, String> {
         self.calls.lock().unwrap().push(format!("list {}", config.kind()));
-        self.listings.lock().unwrap().get(config.kind()).cloned().transpose()
+        let usable = self.listings.lock().unwrap().get(config.kind()).cloned().transpose()?;
+        let blocked = self.blocked.lock().unwrap().get(config.kind()).cloned().unwrap_or_default();
+        Ok(usable.map(|usable| nodo_web::dns::DomainListing {
+            usable,
+            blocked: blocked
+                .into_iter()
+                .map(|name| nodo_web::dns::BlockedDomain { name, reason: "API Access is off for this domain".to_owned() })
+                .collect(),
+        }))
     }
 }
 
@@ -1082,4 +1092,96 @@ fn a_provider_whose_domain_only_an_alias_uses_is_in_use() {
     assert!(refreshed.problem.is_some());
     // Off the internet, it can go.
     web.remove_domain_provider("gandi", &shop_with_aliases(false)).unwrap();
+}
+
+fn porkbun_keys() -> Vec<(String, Secret)> {
+    vec![
+        ("api_key".into(), Secret::new("pk1_3f9a0123456789abcdef0123456789abcdef0123456789abcdef0123456789c2d1")),
+        ("secret_key".into(), Secret::new("sk1_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")),
+    ]
+}
+
+/// The owner's report: several domains at Porkbun, one usable, and no way to see which key the
+/// Nodo holds or why the other domains were missing.
+#[test]
+fn a_connection_says_which_key_it_holds_and_why_a_domain_cannot_be_used() {
+    let web = web(Fake::default());
+    lists(&web, "porkbun", &["example.com"]);
+    web.io.blocked.lock().unwrap().insert("porkbun".into(), vec!["example.net".into(), "Example.ORG".into()]);
+    let added = web.add_domain_provider("porkbun", &porkbun_keys(), None, &input(false, false)).unwrap();
+    assert_eq!(added.domains.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.com"]);
+    assert_eq!(added.blocked.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.net", "example.org"]);
+    assert!(added.blocked[0].reason.contains("API Access"), "{}", added.blocked[0].reason);
+    let key = added.key.clone().expect("the key is identified");
+    assert_eq!((key.field.as_str(), key.hint.as_str()), ("api_key", "pk1_3f9a…c2d1"));
+
+    // The stored file holds the hint and nothing more of either key in the clear.
+    let stored = String::from_utf8(web.io.read(&paths().dns_credentials).unwrap()).unwrap();
+    assert!(stored.contains("pk1_3f9a…c2d1"), "{stored}");
+    assert!(!stored.contains("0123456789abcdef"), "{stored}");
+
+    // The owner switches API Access on for one more domain and looks again.
+    lists(&web, "porkbun", &["example.com", "example.net"]);
+    web.io.blocked.lock().unwrap().insert("porkbun".into(), vec!["example.org".into()]);
+    let refreshed = web.refresh_domain_provider("porkbun", &input(false, false)).unwrap();
+    assert_eq!(refreshed.domains.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.com", "example.net"]);
+    assert_eq!(refreshed.blocked.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["example.org"]);
+    assert_eq!(web.list_domain_providers(&input(false, false))[0], refreshed);
+}
+
+#[test]
+fn a_key_that_may_change_no_domain_yet_names_the_domains_and_the_switch() {
+    let web = web(Fake::default());
+    lists(&web, "porkbun", &[]);
+    web.io.blocked.lock().unwrap().insert("porkbun".into(), vec!["example.net".into()]);
+    let error = web.add_domain_provider("porkbun", &porkbun_keys(), None, &input(false, false)).unwrap_err().to_string();
+    assert!(error.contains("example.net") && error.contains("API Access"), "{error}");
+}
+
+#[test]
+fn a_connection_made_before_hints_were_kept_gets_one_when_looked_up_again() {
+    let web = web(Fake::default());
+    lists(&web, "porkbun", &["example.com"]);
+    web.add_domain_provider("porkbun", &porkbun_keys(), None, &input(false, false)).unwrap();
+    let (mut store, _) = web.provider_store();
+    store.providers[0].key_hint = None;
+    web.save_store(&store).unwrap();
+    assert_eq!(web.list_domain_providers(&input(false, false))[0].key, None);
+    let refreshed = web.refresh_domain_provider("porkbun", &input(false, false)).unwrap();
+    assert_eq!(refreshed.key.map(|k| k.hint).as_deref(), Some("pk1_3f9a…c2d1"));
+}
+
+#[test]
+fn looking_again_applies_the_web_setup_only_when_the_domains_changed() {
+    let web = web(Fake::default());
+    lists(&web, "porkbun", &["example.com"]);
+    web.add_domain_provider("porkbun", &porkbun_keys(), None, &input(false, false)).unwrap();
+    let loads = |web: &NodoWeb<Fake>| web.io.calls.lock().unwrap().iter().filter(|c| *c == "caddy-load").count();
+    let before = loads(&web);
+    web.refresh_domain_provider("porkbun", &input(false, false)).unwrap();
+    assert_eq!(loads(&web), before, "nothing changed, so nothing is applied");
+    lists(&web, "porkbun", &["example.com", "example.net"]);
+    web.refresh_domain_provider("porkbun", &input(false, false)).unwrap();
+    assert!(loads(&web) > before, "a new domain is applied");
+}
+
+#[test]
+fn key_hints_show_little_of_a_long_key_and_nothing_of_a_short_one() {
+    use super::providers::key_hint;
+    assert_eq!(key_hint("pk1_3f9a0123456789abcdef0123456789abcdefc2d1", true), "pk1_3f9a…c2d1");
+    // A token that is the whole secret never shows how it starts.
+    assert_eq!(key_hint("cfut_0123456789abcdefghijABCDEFGHIJ0123456789", false), "…6789");
+    assert_eq!(key_hint("  pat_0123456789abcdef ", false), "…cdef");
+    assert_eq!(key_hint("shortidentifier12", true), "…er12");
+    assert_eq!(key_hint("short", true), "…");
+    assert_eq!(key_hint("", false), "…");
+}
+
+#[test]
+fn a_single_token_provider_is_identified_by_the_end_of_its_token_only() {
+    let web = web(Fake::default());
+    lists(&web, "cloudflare", &["example.com"]);
+    let added = web.add_domain_provider("cloudflare", &cloudflare_token(), None, &input(false, false)).unwrap();
+    let key = added.key.unwrap();
+    assert_eq!((key.field.as_str(), key.hint.as_str()), ("api_token", "…6789"));
 }

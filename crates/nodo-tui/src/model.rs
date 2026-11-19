@@ -847,6 +847,13 @@ pub struct ConnectedProvider {
     pub lists_domains: bool,
     /// Why the last look at its domains failed, or a domain a site uses that it no longer lists.
     pub problem: Option<String>,
+    /// Which key the connection holds: the credential's field and a masked hint, such as
+    /// `("api_key", "pk1_3f9a…c2d1")`. `None` until the helper has read it.
+    pub key: Option<(String, String)>,
+    /// When its domains were last looked up, such as "5 minutes ago".
+    pub checked: Option<String>,
+    /// Domains in the provider account the key may not change yet: the name, and what to switch on.
+    pub blocked: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

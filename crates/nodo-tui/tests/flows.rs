@@ -2742,6 +2742,7 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         }],
         lists_domains: true,
         problem: None,
+        ..ConnectedProvider::default()
     };
     update(&mut app, Event::ProviderAdded(Ok(again)));
     let screen = screen_text(&app);
@@ -2754,6 +2755,107 @@ fn connecting_the_same_account_again_says_so_and_how_to_find_a_missing_domain() 
         "{screen}"
     );
     assert!(screen.contains("Missing a domain?"), "{screen}");
+}
+
+const API_ACCESS_OFF: &str = "API Access is off for this domain. In your Porkbun account, open the domain's details and switch API Access on";
+
+/// The owner allowed more domains at Porkbun and came back: nothing had told the Nodo to ask again,
+/// and nothing said which domains the key still could not change.
+#[test]
+fn opening_the_providers_looks_again_and_says_which_domains_cannot_be_used() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    // The keys can only be opened on an unlocked Nodo.
+    assert_eq!(mock.call(Request::Unlock { passphrase: nodo_api::Secret::new(MOCK_PASSPHRASE) }), Ok(nodo_api::Response::Ok));
+    app.data = load_snapshot(&mut mock).unwrap();
+    assert!(!app.is_locked());
+    // Since the Nodo last asked: one more domain is usable, and one still has API Access off.
+    mock.connected[0].domains.push(ConnectedDomain { name: "example.org".to_owned(), used_by: Vec::new(), held_by: None });
+    mock.connected[0].blocked = vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())];
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.org"), "the new domain shows without asking: {screen}");
+    assert!(screen.contains("Can't be used yet: example.net"), "{screen}");
+    assert!(screen.contains("1 more its key can't change yet: example.net"), "{screen}");
+
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("API Access is off for this domain"), "the details say what to switch on: {screen}");
+    assert!(screen.contains("then look again"), "{screen}");
+}
+
+#[test]
+fn a_providers_details_show_which_key_it_holds_and_who_uses_each_domain() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    key(&mut app, &mut mock, ENTER);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::Details);
+    let screen = screen_text(&app);
+    for wanted in ["Connection", "porkbun", "API key", "pk1_3f9a…c2d1", "Domains read", "Just now", "example.com"] {
+        assert!(screen.contains(wanted), "{wanted} is missing: {screen}");
+    }
+    assert!(screen.contains("never shown"), "{screen}");
+
+    // Looking again from the details asks the helper; Esc goes back to the list.
+    let before = mock.calls.len();
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(mock.calls.len() >= before, "the refresh went through the backend");
+    assert!(screen_text(&app).contains("Porkbun lists 1 domains."), "{}", screen_text(&app));
+    key(&mut app, &mut mock, ESC);
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::List);
+}
+
+/// A locked Nodo cannot open the keys: opening the list asks nothing, and asking by hand says why.
+#[test]
+fn a_locked_nodo_shows_what_it_last_knew_and_says_why_it_cannot_look_again() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.key_locked = true;
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.com") && !screen.contains("unlock"), "{screen}");
+    key(&mut app, &mut mock, KeyCode::Char('r'));
+    assert!(screen_text(&app).contains("unlock the device"), "{}", screen_text(&app));
+}
+
+#[test]
+fn a_connection_whose_key_was_never_read_says_how_to_show_it() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    mock.connected[0].key = None;
+    mock.connected[0].checked = None;
+    app.data = load_snapshot(&mut mock).unwrap();
+    key(&mut app, &mut mock, KeyCode::Char('p'));
+    key(&mut app, &mut mock, ENTER);
+    let screen = screen_text(&app);
+    assert!(screen.contains("Look again while the Nodo is unlocked"), "{screen}");
+}
+
+#[test]
+fn removing_a_provider_from_its_details_returns_to_the_list() {
+    let (mut app, mut mock) = fixture(ScreenId::WebSites);
+    keys(&mut app, &mut mock, &[KeyCode::Char('p'), ENTER, KeyCode::Char('x')]);
+    assert!(app.modal.as_ref().is_some_and(|m| m.title == "Remove Porkbun?"), "{:?}", app.modal);
+    update(&mut app, Event::ProviderRemoved(Ok(())));
+    let Screen::WebProviders(state) = &app.screen else { panic!("expected providers") };
+    assert_eq!(state.stage, ProviderStage::List);
+}
+
+#[test]
+fn a_new_connection_names_the_domains_its_key_cannot_change() {
+    let (mut app, _mock) = fixture(ScreenId::WebProviders);
+    let added = ConnectedProvider {
+        id: "porkbun".to_owned(),
+        name: "Porkbun".to_owned(),
+        domains: vec![ConnectedDomain { name: "example.com".to_owned(), used_by: Vec::new(), held_by: None }],
+        lists_domains: true,
+        blocked: vec![("example.net".to_owned(), API_ACCESS_OFF.to_owned())],
+        ..ConnectedProvider::default()
+    };
+    update(&mut app, Event::ProviderAdded(Ok(added)));
+    let screen = screen_text(&app);
+    assert!(screen.contains("example.com") && screen.contains("example.net"), "{screen}");
+    assert!(screen.contains("this key can't change them yet") && screen.contains("API Access is off"), "{screen}");
 }
 
 // A site's other names, on its Hosting screen
