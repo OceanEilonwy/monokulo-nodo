@@ -1,0 +1,325 @@
+# Builds a feed app's xbps packages from a release tag of its own repository and attaches them to
+# that tag's GitHub release, where the feed (feed.yml) takes them from. The app's repository calls
+# it, so it runs there, with that repository's token and caches:
+#
+#   jobs:
+#     nodo:
+#       permissions:
+#         contents: write
+#       uses: OceanEilonwy/monokulo-nodo/.github/workflows/app-release.yml@main
+#       with:
+#         packages: mk-lws
+#         tag: ${{ github.ref_name }}
+#       secrets: inherit
+#
+# The app keeps each recipe in nodo/<package> (template and files/) and the tests of its files in
+# nodo/tests/<crate>/*.rs, run against this repository's crates of that name. Its releases name its
+# versions: v1.2.0 is package version 1.2.0. docs/FEED.md, "Apps from their own repositories",
+# describes the whole flow; scripts/app-release.sh does the work.
+#
+#   prepare  pin each recipe to the tag (scripts/app-release.sh pin), refuse a version that is not
+#            newer than the live feed's, and run the app's tests
+#   build    the packages for each architecture, exactly as feed.yml builds this repository's own
+#   release  sign the packages into a throwaway feed and run each through the device's own install
+#            review, then attach them to the tag's release (creating it if it does not exist)
+#   notify   start feed.yml here, which publishes them, signed with the feed's key. This needs the
+#            app repository's NODO_DISPATCH_TOKEN secret: a fine-grained token for
+#            OceanEilonwy/monokulo-nodo with Contents read and write. Without it, the feed
+#            publishes them on its next scheduled run, within six hours.
+#
+# Nothing here sees the feed's signing key.
+name: app release
+
+on:
+  workflow_call:
+    inputs:
+      packages:
+        description: The recipes in the app's nodo/ to build, separated by spaces
+        required: true
+        type: string
+      tag:
+        description: The release tag to build, such as v1.2.0
+        required: true
+        type: string
+      nodo-ref:
+        description: The monokulo-nodo ref whose scripts and builder build it
+        required: false
+        type: string
+        default: main
+    secrets:
+      NODO_DISPATCH_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  PACKAGES: ${{ inputs.packages }}
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check the inputs
+        run: |
+          case $PACKAGES in *[!a-z0-9\ ._-]* | '') echo "::error::bad packages: $PACKAGES"; exit 1 ;; esac
+          case $TAG in *[!A-Za-z0-9._-]* | '') echo "::error::bad tag: $TAG"; exit 1 ;; esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          path: app
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: OceanEilonwy/monokulo-nodo
+          ref: ${{ inputs.nodo-ref }}
+          path: nodo
+          persist-credentials: false
+
+      - name: Pin the recipes to the tag
+        working-directory: nodo
+        run: |
+          # shellcheck disable=SC2086 # one word per package
+          scripts/app-release.sh pin "$GITHUB_WORKSPACE/app" "$GITHUB_REPOSITORY" "$TAG" $PACKAGES
+          # shellcheck disable=SC2086
+          scripts/app-release.sh newer $PACKAGES
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nodo/target
+          key: nodo-app-test-${{ hashFiles('nodo/Cargo.lock') }}
+          restore-keys: nodo-app-test-
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Test the app's files against the device's code
+        working-directory: nodo
+        run: scripts/app-release.sh test
+
+      - name: Keep the pinned recipes
+        working-directory: nodo
+        run: |
+          set --
+          for p in $PACKAGES; do set -- "$@" "packages/$p"; done
+          tar -cf "$RUNNER_TEMP/recipes.tar" "$@"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nodo-recipes
+          path: ${{ runner.temp }}/recipes.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  build:
+    name: build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        # The runner is x86_64: x86_64 builds natively, aarch64 cross-compiles.
+        arch: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: OceanEilonwy/monokulo-nodo
+          ref: ${{ inputs.nodo-ref }}
+          path: nodo
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nodo-recipes
+          path: ${{ runner.temp }}
+
+      - name: Place the pinned recipes
+        run: tar -C nodo -xf "$RUNNER_TEMP/recipes.tar"
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      # As feed.yml's: distfiles, cargo and npm downloads and xbps's package cache, then the
+      # compiler caches, then the builder image. They live in the app's repository.
+      - name: Restore the build cache
+        id: hostdir
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            nodo/build/hostdir
+            !nodo/build/hostdir/sccache
+            !nodo/build/hostdir/ccache
+          key: nodo-hostdir-${{ matrix.arch }}-${{ hashFiles('nodo/packages/**', 'nodo/versions.env') }}
+          restore-keys: nodo-hostdir-${{ matrix.arch }}-
+
+      - name: Restore the compiler caches
+        id: compile
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            nodo/build/hostdir/sccache
+            nodo/build/hostdir/ccache
+          key: nodo-compile-${{ matrix.arch }}-${{ hashFiles('nodo/packages/**', 'nodo/versions.env', 'nodo/scripts/_build-packages-inner.sh', 'nodo/scripts/_xbps-src-sccache.sh') }}
+          restore-keys: nodo-compile-${{ matrix.arch }}-
+
+      - name: Restore the builder image
+        id: builder
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: nodo/build/builder-image.tar.zst
+          key: nodo-builder-${{ hashFiles('nodo/docker/builder.Dockerfile', 'nodo/versions.env') }}
+
+      - name: Load the builder image
+        if: steps.builder.outputs.cache-hit == 'true'
+        run: zstd -dc nodo/build/builder-image.tar.zst | docker load
+
+      - name: Build
+        id: build
+        working-directory: nodo
+        env:
+          SCCACHE_CACHE_SIZE: 1536M
+          CCACHE_MAXSIZE: 256M
+        run: |
+          # shellcheck disable=SC2086 # one word per package
+          scripts/build-packages.sh "${{ matrix.arch }}" $PACKAGES
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && steps.build.outcome != 'skipped' && steps.compile.outputs.cache-hit != 'true'
+        with:
+          path: |
+            nodo/build/hostdir/sccache
+            nodo/build/hostdir/ccache
+          key: ${{ steps.compile.outputs.cache-primary-key }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save the builder image
+        if: steps.builder.outputs.cache-hit != 'true'
+        working-directory: nodo
+        # lib.sh finds the repository from $0, so it runs with scripts/lib.sh as $0.
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2016
+          bash -c '. scripts/lib.sh && docker save "$(builder_tag)"' scripts/lib.sh | zstd -T0 -3 -o build/builder-image.tar.zst
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.builder.outputs.cache-hit != 'true'
+        with:
+          path: nodo/build/builder-image.tar.zst
+          key: ${{ steps.builder.outputs.cache-primary-key }}
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.hostdir.outputs.cache-hit != 'true'
+        with:
+          path: |
+            nodo/build/hostdir
+            !nodo/build/hostdir/sccache
+            !nodo/build/hostdir/ccache
+          key: ${{ steps.hostdir.outputs.cache-primary-key }}
+
+      # GitHub Pages, where the feed publishes them, refuses files over 100 MB.
+      - name: Collect the packages
+        run: |
+          mkdir -p "out/${{ matrix.arch }}"
+          for p in $PACKAGES; do
+            cp "nodo/out/feed/${{ matrix.arch }}/$p"-[0-9]*.xbps "out/${{ matrix.arch }}/"
+          done
+          ls -l "out/${{ matrix.arch }}"
+          big=$(find out -type f -size +95M)
+          if [ -n "$big" ]; then echo "::error::over the Pages file limit: $big"; exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nodo-xbps-${{ matrix.arch }}
+          path: out/${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    # Both architectures or nothing: devices of either would otherwise see the app in one and not
+    # the other.
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: OceanEilonwy/monokulo-nodo
+          ref: ${{ inputs.nodo-ref }}
+          path: nodo
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: nodo-xbps-*
+          path: artifacts
+
+      - name: Place the packages
+        run: |
+          for arch in aarch64 x86_64; do
+            mkdir -p "nodo/out/feed/$arch"
+            cp "artifacts/nodo-xbps-$arch"/*.xbps "nodo/out/feed/$arch/"
+          done
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nodo/target
+          key: nodo-app-test-${{ hashFiles('nodo/Cargo.lock') }}
+          restore-keys: nodo-app-test-
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Check as a device would
+        working-directory: nodo
+        run: |
+          # shellcheck disable=SC2086 # one word per package
+          scripts/app-release.sh check $PACKAGES -- aarch64 x86_64
+
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+              --notes "Packages for monokulo-nodo devices, which install them from https://nodo.monokulo.com/feed."
+          fi
+          gh release upload "$TAG" artifacts/nodo-xbps-*/*.xbps --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo "## Packages for monokulo-nodo"
+            echo
+            for f in artifacts/nodo-xbps-*/*.xbps; do echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"; done
+            echo
+            echo "Attached to [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Start the feed's publish
+        env:
+          GH_TOKEN: ${{ secrets.NODO_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::No NODO_DISPATCH_TOKEN secret: the feed publishes $TAG on its next scheduled run, within six hours."
+            exit 0
+          fi
+          gh api repos/OceanEilonwy/monokulo-nodo/dispatches -f event_type=app-released \
+            -f "client_payload[repository]=$GITHUB_REPOSITORY" -f "client_payload[tag]=$TAG"
+          echo "Started the feed's publish for $GITHUB_REPOSITORY $TAG." >> "$GITHUB_STEP_SUMMARY"
