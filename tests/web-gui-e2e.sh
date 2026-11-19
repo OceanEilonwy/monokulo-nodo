@@ -134,8 +134,11 @@ check "while it is off the right passphrase is refused and makes no session" sh 
 	code=$(login 192.168.77.20 "$0"); echo "$code"; cat /tmp/webgui-e2e/body
 	[ "$code" = 503 ] && grep -q "The web GUI is turned off" /tmp/webgui-e2e/body && [ -z "$(header set-cookie)" ]' "$PASS"
 check "while it is off no page is served" sh -c '[ "$(web "$0" /)" = 303 ] && [ "$(header location)" = /login ]' "$OWN"
-check "while it is off the helper's service is down and its socket does not exist" sh -c '
-	! sv status nodo-web-gui 2>/dev/null | grep -q "^run:" && [ ! -S "$0" ]' "$SERVICE"
+# The socket's file may be left from an earlier run of the service (its run script removes it at
+# the next start), so what is checked is that nothing answers on it.
+check "while it is off the helper's service is down and nothing answers on its socket" sh -c '
+	! sv status nodo-web-gui 2>/dev/null | grep -q "^run:" &&
+	case $(web "$0" /login) in ERR*) true ;; *) false ;; esac' "$SERVICE"
 
 # On, over SSH
 
@@ -244,6 +247,17 @@ check "a value out of range is refused, and nothing changes" sh -c '
 # Off again: every session ends, the gate closes, the service and its socket go
 
 check "nodo-tui --ctl web-gui 0 turns it off" sh -c 'ctl web-gui 0 | flat | tee /dev/stderr | grep -q "enabled: false"'
+# The service's stop ends every nodo-web-gui of its account (control/t: pkill -u ... -x), and this
+# test's own one with it. Start it again, so there is a web GUI for the helper to refuse; the
+# cookie from before is then one this process never gave out, which must lead to the login too.
+check "turning it off ended the web GUI started by hand as well" sh -c '
+	for _ in $(seq 1 10); do kill -0 "$0" 2>/dev/null || exit 0; sleep 1; done; false' "$own_pid"
+rm -f "$OWN"
+chpst -u "$ACCOUNT:$ACCOUNT" nodo-web-gui --socket "$HELPER_WEB" --listen-unix "$OWN" > "$work/own.log" 2>&1 &
+own_pid=$!
+check "started again by hand, it answers" sh -c '
+	for _ in $(seq 1 20); do [ -S "$0" ] && break; sleep 1; done
+	[ "$(web "$0" /login)" = 200 ]' "$OWN"
 check "the session is dead: its cookie is sent back to the login" sh -c '
 	[ "$(web "$0" / -H "Cookie: $1")" = 303 ] && [ "$(header location)" = /login ] &&
 	[ "$(web "$0" /apps/cuprated -H "Cookie: $1")" = 303 ] && [ "$(header location)" = /login ]' "$OWN" "$(session 2>/dev/null)"
