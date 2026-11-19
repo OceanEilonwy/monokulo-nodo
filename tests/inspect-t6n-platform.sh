@@ -34,6 +34,7 @@ for p in nodo-tools nodo-caddy nodo-ddns nodo-localnet cuprated-service nodo-bas
 done
 ! grep -q '^mk-pay ' "$tmp/pkgs"
 result "Monokulo (mk-pay) is not preinstalled; it comes through the helper from a feed" "$?"
+repo=$(cd "$(dirname "$0")/.." && pwd)
 # No default feeds: each app publishes its own, which the owner adds by hand. The image's file is
 # the repository's, which nodo-helper's tests require to list none.
 show 'cat /usr/share/nodo/default-feeds.toml' > "$tmp/default-feeds.toml"
