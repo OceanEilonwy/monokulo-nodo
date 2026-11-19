@@ -291,7 +291,7 @@ fn test_paths() -> ManagePaths {
 /// Room on the disk, as a fresh report from the health daemon says.
 fn healthy_report(sys: &FakeSystem, refuse: bool) {
     let report = format!(
-        r#"{{"version":1,"generated_at":{NOW},"disks":[{{"name":"system","path":"/","mounted":true,"total_bytes":8000000000,"free_bytes":300000000,"level":"Low"}}],"stopped":[],"refuse_installs":{refuse},"time":{{"synced":true}},"temperature_c":51.25,"attention":[{{"severity":"Warning","message":"The system disk is low on space (0.3 GB free). Updates wait until there is more."}}]}}"#
+        r#"{{"version":1,"generated_at":{NOW},"disks":[{{"name":"system","path":"/","mounted":true,"total_bytes":8000000000,"free_bytes":300000000,"level":"Low"}}],"stopped":[],"refuse_installs":{refuse},"time":{{"synced":true}},"temperature_c":51.25,"ssd_temperature_c":44.86,"attention":[{{"severity":"Warning","message":"The system disk is low on space (0.3 GB free). Updates wait until there is more."}}]}}"#
     );
     sys.put("/run/nodo/health.json", report.as_bytes());
 }
@@ -1257,6 +1257,7 @@ fn health_comes_from_the_daemons_report_and_the_boot_notice() {
     assert_eq!(health.disks[0].level, "Low");
     assert!(health.notes[0].message.contains("low on space"));
     assert_eq!(health.temperature_decic, Some(513));
+    assert_eq!(health.ssd_temperature_decic, Some(449));
     assert_eq!(health.boot_fallback.as_deref(), Some("trial boots of the new system ran out"));
     h.sys.remove("/run/nodo/health.json");
     let Ok(Response::Health(health)) = call(&h, Request::Health) else { panic!() };

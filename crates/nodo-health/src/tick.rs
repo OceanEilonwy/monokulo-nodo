@@ -151,6 +151,7 @@ pub fn tick(cfg: &Config, state: &mut State, sys: &dyn System) -> Report {
         logs: LogReport { bytes: log_summary.bytes, dirs: log_summary.dirs, pruned_files: log_summary.pruned.len() },
         time,
         temperature_c: report::temperature(sys),
+        ssd_temperature_c: report::ssd_temperature(sys),
         uptime_secs: report::uptime(sys),
         abstract_sockets,
         attention,
