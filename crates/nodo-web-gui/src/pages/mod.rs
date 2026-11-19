@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod backups;
 pub mod bundle;
+pub mod changes;
 pub mod drive;
 pub mod flow;
 pub mod home;

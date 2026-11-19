@@ -51,6 +51,8 @@ pub const DOCUMENT: &str = "/document";
 pub const WORKING: &str = "/working";
 pub const CONFIRM: &str = "/confirm";
 pub const UNLOCK: &str = "/unlock";
+/// The changes kept with Save and not applied yet (`flows::staged`).
+pub const CHANGES: &str = "/changes";
 
 /// An installed app's own page.
 pub fn app(name: &str) -> String {

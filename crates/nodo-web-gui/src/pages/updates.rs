@@ -13,6 +13,7 @@ use axum::Form;
 use maud::{html, Markup};
 use nodo_api::UpdateEventKind;
 use nodo_ui_core::flows::install::ReviewPurpose;
+use nodo_ui_core::flows::staged::{self, Stageable};
 use nodo_ui_core::flows::updates::{self, AutoUpdate, Rollbacks};
 use nodo_ui_core::flows::{Dest, Notice, Step};
 use nodo_ui_core::model::{Snapshot, UpdateNote, UpdateReport, SYSTEM_BASE};
@@ -440,7 +441,7 @@ fn auto_update_draft(snapshot: &Snapshot, form: &Posted) -> (AutoUpdate, bool) {
     (flow, taken)
 }
 
-fn auto_update_page(flow: &AutoUpdate, window: &str) -> Page {
+fn auto_update_page(flow: &AutoUpdate, window: &str, changes: usize) -> Page {
     let draft = &flow.draft;
     let next = if flow.saved.next_run.is_empty() { String::new() } else { format!(" {}.", flow.saved.next_run) };
     let problem = flow.error.as_deref();
@@ -491,40 +492,75 @@ fn auto_update_page(flow: &AutoUpdate, window: &str) -> Page {
                 }
             }
             div.applybar {
-                // With htmx the question about unsaved choices comes over the form, which keeps
-                // them if the answer is to stay; without, staying shows the stored choices.
-                button.btn type="submit" name="do" value="leave" hx-post=(dest::AUTO_UPDATE) hx-target="#dialog" hx-swap="innerHTML" { "Cancel" }
-                button.btn.primary type="submit" name="do" value="save" { "Save" }
+                (layout::stage_buttons("Save & Apply", layout::count_badge(changes), layout::count_badge(changes)))
             }
+            (layout::stage_hint())
         }
     };
     let status = if problem.is_some() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::OK };
     Page { trail: trail(&[("Automatic", dest::AUTO_UPDATE)]), ..Page::new(Tab::System, "Automatic updates", body) }.status(status)
 }
 
-/// `GET /system/auto-update`.
+/// `GET /system/auto-update`: the choices kept with Save, when there are some, or the stored
+/// ones.
 pub async fn auto_update(ctx: Ctx) -> Response {
     ctx.with(dest::UPDATES, |work| {
-        let flow = AutoUpdate::new(work.snapshot.auto_update.clone());
-        Out::Page(auto_update_page(&flow, &flow.window()))
+        let kept = work.session.inner().stash.auto_update.clone();
+        let mut flow = kept.unwrap_or_else(|| AutoUpdate::new(work.snapshot.auto_update.clone()));
+        // What is stored is the device's to say, whenever the draft was made.
+        flow.saved = work.snapshot.auto_update.clone();
+        let changes = flow.changes(&work.snapshot);
+        Out::Page(auto_update_page(&flow, &flow.window(), changes))
     })
     .await
 }
 
-/// `POST /system/auto-update`: Save, or Cancel. The form carries the whole draft, so nothing is
-/// kept between requests. A window that cannot be used is said beside its box.
+/// `POST /system/auto-update`: Reset, Save (kept here), Save & Apply, or Cancel. The form
+/// carries the whole draft, so it is read afresh from what was posted each time; Save keeps it
+/// in the session (`Stash::auto_update`) until it is applied or reset. A window that cannot be
+/// used is said beside its box.
 pub async fn save_auto_update(ctx: Ctx, Form(form): Form<Posted>) -> Response {
     ctx.with(dest::UPDATES, move |work| {
         let (mut flow, taken) = auto_update_draft(&work.snapshot, &form);
-        if posted(&form, "do") == Some("leave") {
-            // Leaving asks when the choices were changed; the question's Cancel returns here.
-            return Out::Reply(follow_plain(flow.leave()).cancel_to(dest::AUTO_UPDATE));
+        let key = flow.stage_key();
+        match posted(&form, "do") {
+            Some("leave") => {
+                // Leaving asks when the choices were changed; the question's Cancel returns here.
+                return Out::Reply(follow_plain(flow.leave()).cancel_to(dest::AUTO_UPDATE));
+            }
+            Some("reset") => {
+                let mut inner = work.session.inner();
+                inner.stash.auto_update = None;
+                inner.notices.push(staged::reset_notice(&key));
+                return Out::Go(dest::AUTO_UPDATE.to_owned());
+            }
+            _ => {}
         }
+        let changes = flow.changes(&work.snapshot);
         if !taken {
-            return Out::Page(auto_update_page(&flow, posted(&form, "window").unwrap_or_default()));
+            return Out::Page(auto_update_page(&flow, posted(&form, "window").unwrap_or_default(), changes));
+        }
+        if posted(&form, "do") == Some("keep") {
+            let mut inner = work.session.inner();
+            if changes == 0 {
+                inner.stash.auto_update = None;
+                inner.notices.push(staged::nothing_to_keep(&key));
+            } else {
+                inner.stash.auto_update = Some(flow);
+                inner.notices.push(staged::saved_notice(&key, changes));
+            }
+            return Out::Go(dest::UPDATES.to_owned());
         }
         let effects = flow.save();
-        Out::Reply(work.run(Step::run(effects), &mut |outcome, _| flow.apply(outcome)))
+        let mut stored = false;
+        let reply = work.run(Step::run(effects), &mut |outcome, _| {
+            stored |= matches!(outcome, nodo_ui_core::Outcome::AutoUpdateSaved(Ok(())));
+            flow.apply(outcome)
+        });
+        if stored {
+            work.session.inner().stash.auto_update = None;
+        }
+        Out::Reply(reply)
     })
     .await
 }

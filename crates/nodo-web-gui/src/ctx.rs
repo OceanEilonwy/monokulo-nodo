@@ -25,6 +25,7 @@ use axum::response::{IntoResponse, Response};
 use maud::{html, Markup};
 use nodo_api::WebGuiStatus;
 use nodo_ui_core::exec::{load_snapshot, Data};
+use nodo_ui_core::flows::staged;
 use nodo_ui_core::flows::{Notice, Step};
 use nodo_ui_core::model::Snapshot;
 use nodo_ui_core::screen::Tab;
@@ -167,7 +168,10 @@ fn open<R>(
     if work_state.login_required {
         return Err(Stop::Login);
     }
-    session.inner().badges = (tab_badge(&work_state.snapshot, Tab::Apps), tab_badge(&work_state.snapshot, Tab::System));
+    let mut inner = session.inner();
+    inner.badges = (tab_badge(&work_state.snapshot, Tab::Apps), tab_badge(&work_state.snapshot, Tab::System));
+    inner.unsaved = staged::total(&inner.stash.staged(&work_state.snapshot));
+    drop(inner);
     Ok(out)
 }
 
@@ -208,7 +212,7 @@ impl Ctx {
 
     fn chrome(&self) -> Chrome {
         let mut inner = self.session.inner();
-        Chrome { signed_in: true, badges: inner.badges, notices: std::mem::take(&mut inner.notices) }
+        Chrome { signed_in: true, badges: inner.badges, unsaved: inner.unsaved, notices: std::mem::take(&mut inner.notices) }
     }
 
     /// Draws a page inside the frame, with the notices waiting for this session.

@@ -180,6 +180,9 @@ a strong { color: inherit; }
 .nav a[aria-current="page"] { color: var(--nav-on-fg); border-bottom-color: var(--nav-on-line); }
 .cnt { background: var(--cnt-bg); color: var(--cnt-fg); border-radius: 9px; font-size: 11px; font-weight: 700; padding: 0 6px; line-height: 16px; }
 .out { margin-left: auto; padding: 8px 0; }
+.unsaved { margin-left: auto; margin-right: 12px; padding: 4px 10px; border: 1px solid var(--warn-line); border-radius: 4px; background: var(--warn-bg); color: var(--warn-fg); font-weight: 500; display: inline-flex; gap: 6px; align-items: center; }
+.unsaved:hover { text-decoration: none; filter: brightness(0.97); }
+.unsaved + .out { margin-left: 0; }
 .out button { font: inherit; font-weight: 500; color: var(--nav-fg); background: none; border: 0; padding: 6px 4px; cursor: pointer; }
 .out button:hover { color: var(--nav-on-fg); text-decoration: underline; }
 
