@@ -460,7 +460,7 @@ fn a_sources_switch_and_link_stay_clickable_when_narrow() {
             let (_, buffer, hits) = drawn(app.clone());
             let screen = common::text(&buffer);
             let lines: Vec<&str> = screen.lines().collect();
-            let head = lines.iter().position(|line| line.trim_start().trim_start_matches("▸ ").starts_with(&format!("{} ", feed.name))).unwrap_or_else(|| panic!("{size:?}: {} is on screen:\n{screen}", feed.name));
+            let head = lines.iter().position(|line| line.trim_start().trim_start_matches("▸ ").starts_with(&feed.shown().chars().take(24).collect::<String>())).unwrap_or_else(|| panic!("{size:?}: {} is on screen:\n{screen}", feed.shown()));
             let switch = if feed.status == nodo_ui_core::model::FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
             let column = lines[head].find(switch).unwrap_or_else(|| panic!("{size:?}: {}'s switch is whole on its row:\n{screen}", feed.name));
             let click = hit_at(&hits, lines[head][..column].chars().count() as u16, head as u16).map(|hit| hit.click);

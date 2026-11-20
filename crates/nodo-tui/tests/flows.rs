@@ -1515,7 +1515,7 @@ fn search_filter_feed_and_clear() {
     let (mut app, mut mock) = loaded();
     search(&mut app, &mut mock, "");
     keys(&mut app, &mut mock, &[DOWN, KeyCode::Char('f')]);
-    assert!(screen_text(&app).contains("12 of 41 apps from official match"), "{}", screen_text(&app));
+    assert!(screen_text(&app).contains("12 of 41 apps from feeds.monokulo.example/official match"), "{}", screen_text(&app));
     key(&mut app, &mut mock, ESC);
     assert!(screen_text(&app).contains("41 of 41 apps match"));
 }
@@ -1684,7 +1684,7 @@ fn a_source_is_renamed_on_the_sources_page_and_named_back() {
     // Letters go into the box, not to the page's shortcuts: q does not quit, x does not remove.
     type_text(&mut app, &mut mock, "Quiet x tools");
     assert!(!app.should_quit);
-    assert!(screen_text(&app).contains("Leave it empty to call it monokulo again."));
+    assert!(screen_text(&app).contains("Leave it empty to call it github.com/example/monokulo-feed again."));
     key(&mut app, &mut mock, ENTER);
     assert_eq!(feed(&mock, "monokulo").label.as_deref(), Some("Quiet x tools"));
     assert!(matches!(app.screen, Screen::Feeds { renaming: None, .. }));
@@ -1864,7 +1864,7 @@ fn adding_a_feed_looks_it_up_then_pins_its_key_only_after_trust() {
     keys(&mut app, &mut mock, &[RIGHT, ENTER]);
     assert_eq!(feed(&mock, "monero-tools").key_state, KeyState::Pinned);
     assert_eq!(app.screen.id(), ScreenId::Feeds);
-    assert!(screen_text(&app).contains("✓ Added monero-tools and pinned its key."));
+    assert!(screen_text(&app).contains("✓ Added github.com/example/monero-tools-feed and pinned its key."));
 }
 
 #[test]
@@ -1875,7 +1875,7 @@ fn feed_rows_route_blocked_feeds_to_the_key_screen_and_others_to_packages() {
 
     let (mut app, mut mock) = fixture(ScreenId::Feeds);
     key(&mut app, &mut mock, ENTER);
-    assert!(screen_text(&app).contains("6 of 41 apps from monokulo match"));
+    assert!(screen_text(&app).contains("6 of 41 apps from github.com/example/monokulo-feed match"));
 }
 
 #[test]
@@ -2044,13 +2044,14 @@ fn check_now_names_a_source_it_could_not_read() {
     for event in events {
         dispatch(&mut app, &mut mock, Event::Done(event));
     }
+    // The notice names its sources by address, so the screen needs more rows to show the source's problem too.
     let notice = app.notice.clone().expect("told");
     assert_eq!(notice.kind, NoticeKind::Error);
     assert!(notice.text.starts_with("No updates in the sources that could be read."), "{}", notice.text);
-    assert!(notice.text.contains("Could not read community: the feed index could not be downloaded."), "{}", notice.text);
+    assert!(notice.text.contains("Could not read github.com/example/community-feed: the feed index could not be downloaded."), "{}", notice.text);
     assert!(!notice.text.contains("Up to date"), "{}", notice.text);
     assert!(mock.updates.is_empty(), "what the unread source published is not seen yet");
-    let screen = screen_text(&app);
+    let screen = text(&draw(&app, 100, 40).0);
     assert!(screen.contains("Couldn't reach it: the feed index could not be downloaded"), "{screen}");
 
     // Once it can be read again, its update is found.

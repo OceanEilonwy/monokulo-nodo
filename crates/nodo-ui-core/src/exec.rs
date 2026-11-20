@@ -145,7 +145,8 @@ pub fn execute_effect<T: Backend + ScreenData + ?Sized>(backend: &mut T, effect:
             failed_then_refresh(backend, result)
         }
         Effect::RenameFeed { name, label } => {
-            let result = backend.rename_feed(&name, label.as_deref()).map(|()| label.unwrap_or(name));
+            let address = backend.feeds().into_iter().find(|feed| feed.name == name).map(|feed| feed.address.trim_start_matches("https://").to_owned());
+            let result = backend.rename_feed(&name, label.as_deref()).map(|()| label.or(address).unwrap_or(name));
             vec![Outcome::FeedRenamed(result), refresh(backend)]
         }
         Effect::LoadKeyChange(name) => vec![Outcome::KeyChangeLoaded(backend.key_change(&name))],

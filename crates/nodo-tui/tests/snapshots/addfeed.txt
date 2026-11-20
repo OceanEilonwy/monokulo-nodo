@@ -5,9 +5,9 @@
     Apps  ›  Get apps  ›  Sources  ›  Add
 
 
-       ✓  monero-tools   https://github.com/example/monero-tools-feed
+       ✓  github.com/example/monero-tools-feed
 
-       Name       monero-tools
+       Name       github.com/example/monero-tools-feed
                  Press n to give it a name of your own.
 
        It offers 9 apps.

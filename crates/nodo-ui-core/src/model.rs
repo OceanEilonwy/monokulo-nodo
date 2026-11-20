@@ -262,17 +262,17 @@ pub struct FeedProbe {
 }
 
 impl Feed {
-    /// The feed's name on screen: the owner's, or else the one the device made.
+    /// The feed's name on screen: the owner's, or else its address.
     pub fn shown(&self) -> &str {
-        self.label.as_deref().unwrap_or(&self.name)
+        self.label.as_deref().unwrap_or_else(|| self.address.trim_start_matches("https://"))
     }
 }
 
 impl FeedProbe {
-    /// The name the feed will be shown by once added.
+    /// The name the feed will be shown by once added: the owner's, or else its address.
     pub fn shown(&self) -> &str {
         let label = self.label.trim();
-        if label.is_empty() { &self.name } else { label }
+        if label.is_empty() { self.address.trim_start_matches("https://") } else { label }
     }
 }
 
@@ -1266,7 +1266,7 @@ mod tests {
             key_state: KeyState::Pinned,
             checked: String::new(),
             status,
-            address: String::new(),
+            address: name.to_owned(),
             fingerprint: String::new(),
             added: String::new(),
         }

@@ -153,7 +153,7 @@ mod tests {
         let (steps, snapshot) = run(&mut mock, trust(probed));
         let Step::All(all) = &steps[0] else { panic!("{steps:?}") };
         assert_eq!(all[0], Step::Go(Dest::Back));
-        assert_eq!(all[1], Step::Done(Notice::ok(format!("Added {} and pinned its key.", probed.name))));
+        assert_eq!(all[1], Step::Done(Notice::ok(format!("Added {} and pinned its key.", probed.shown()))));
         assert_eq!(snapshot.feeds.len(), before + 1);
         assert_eq!(feed(&snapshot, &probed.name).fingerprint, probed.fingerprint);
     }
@@ -178,7 +178,8 @@ mod tests {
         let mut mock = MockBackend::new();
         let snapshot = load_snapshot(&mut mock).expect("the mock answers");
         let name = snapshot.feeds[0].name.clone();
-        assert_eq!(feed(&snapshot, &name).shown(), name);
+        let address = feed(&snapshot, &name).address.clone();
+        assert_eq!(feed(&snapshot, &name).shown(), address.trim_start_matches("https://"));
 
         let effects = rename(&name, " My feed ").expect("a short name");
         assert_eq!(effects, [Effect::RenameFeed { name: name.clone(), label: Some("My feed".into()) }]);
@@ -191,7 +192,8 @@ mod tests {
             assert_eq!(rename(&name, back).unwrap(), [Effect::RenameFeed { name: name.clone(), label: None }]);
         }
         let (steps, after) = run(&mut mock, rename(&name, "").unwrap());
-        assert_eq!(steps[0], Step::Done(Notice::ok(format!("It's called {name} now."))));
+        let shown = feed(&after, &name).shown().to_owned();
+        assert_eq!(steps[0], Step::Done(Notice::ok(format!("It's called {shown} now."))));
         assert_eq!(feed(&after, &name).label, None);
 
         assert!(rename(&name, &"x".repeat(MAX_LABEL + 1)).is_err());

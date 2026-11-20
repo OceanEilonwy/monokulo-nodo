@@ -115,16 +115,19 @@ pub fn catalog(b: &HelperBackend, installed: Vec<nodo_api::PackageInfo>) -> Vec<
             bundle: (!p.bundle.is_empty()).then_some(p.bundle.len() as u32),
         });
     }
+    // A feed is called by the name its owner gave it, or else by its address.
+    let shown: std::collections::HashMap<String, String> = feeds(b).into_iter().map(|f| (f.name.clone(), f.shown().to_owned())).collect();
     for e in entries {
         if out.iter().any(|p| p.id.name == e.name) {
             continue;
         }
+        let from = shown.get(&e.feed).cloned().unwrap_or_else(|| e.feed.clone());
         out.push(PackageSummary {
             id: PackageId::new(&e.feed, &e.name),
             status: PackageStatus::Available,
             version: e.version,
             size: size(e.size_bytes),
-            tagline: format!("From the feed {}", e.feed),
+            tagline: format!("From {from}"),
             description: Vec::new(),
             needs: Vec::new(),
             bundle: e.bundle,

@@ -94,7 +94,7 @@ pub fn unreadable_source_is_named(backend: &mut impl ScreenData, unreadable: &st
     assert!(!problem.trim().is_empty(), "the source carries why it could not be read");
     let summary = report.summary(backend.updates().len(), &feeds);
     assert!(summary.trouble, "{}", summary.text);
-    assert!(summary.text.contains(&format!("Could not read {unreadable}: ")), "{}", summary.text);
+    assert!(summary.text.contains(&format!("Could not read {}: ", feed.shown())), "{}", summary.text);
     if !feed.installed_from.is_empty() {
         assert!(!summary.text.contains("Up to date"), "apps from an unread source are not up to date: {}", summary.text);
     }

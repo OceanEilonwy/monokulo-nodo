@@ -5,7 +5,7 @@
     Apps  ›  Get apps  ›  moneropay
 
 
-       moneropay   Version 2.7.0 · from official · 14 MB
+       moneropay   Version 2.7.0 · from feeds.monokulo.example/official · 14 MB
 
        Payment gateway for Monero. Creates invoices and reports payments through a local API.
 
