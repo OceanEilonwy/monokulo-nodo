@@ -45,9 +45,9 @@ async fn from_adding_a_source_to_removing_an_app_it_offered() {
     confirmation.assert_has("monero-tools").assert_has("It offers 9 apps.").assert_has("<span>c41e8d07</span>").assert_has("Add source");
     browser.get("/sources/add/confirm/packages").await.assert_has("Back");
     let sources = browser.post_then("/sources/add/confirm", &[]).await;
-    sources.assert_has("Added monero-tools and pinned its key.").assert_has(r#"id="source-monero-tools""#);
+    sources.assert_has("Added github.com/example/monero-tools-feed and pinned its key.").assert_has(r#"id="source-monero-tools""#);
     // Said once.
-    browser.get("/sources").await.assert_lacks("Added monero-tools and pinned its key.");
+    browser.get("/sources").await.assert_lacks("Added github.com/example/monero-tools-feed and pinned its key.");
     // The probe is used up: the confirmation has nothing to show any more.
     assert_eq!(browser.get("/sources/add/confirm").await.location(), "/sources/add");
 
@@ -199,7 +199,7 @@ async fn sources_are_switched_removed_and_a_changed_key_is_decided_by_typing_the
 
     // Opening a source: its apps, or the decision about its key, as the flow says.
     assert_eq!(browser.get("/sources/of/monokulo").await.location(), "/apps/get?source=monokulo");
-    browser.get("/apps/get?source=monokulo").await.assert_has("apps from monokulo match");
+    browser.get("/apps/get?source=monokulo").await.assert_has("apps from github.com/example/monokulo-feed match");
     assert_eq!(browser.get("/sources/of/old-tools").await.location(), "/sources/of/old-tools/key");
     assert_eq!(browser.get("/sources/of/monokulo/key").await.location(), "/apps/get?source=monokulo", "no decision is pending there");
 
@@ -234,7 +234,7 @@ async fn a_source_is_named_as_it_is_added_and_renamed_later() {
 
     browser.post("/sources/add", &[("address", "https://github.com/example/monero-tools-feed")]).await;
     let confirmation = browser.get("/sources/add/confirm").await;
-    confirmation.assert_has(r#"<label for="label">Name</label>"#).assert_has(r#"placeholder="monero-tools""#);
+    confirmation.assert_has(r#"<label for="label">Name</label>"#).assert_has(r#"placeholder="github.com/example/monero-tools-feed""#);
     let long = "x".repeat(49);
     let refused = browser.post("/sources/add/confirm", &[("label", &long)]).await;
     assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -245,7 +245,7 @@ async fn a_source_is_named_as_it_is_added_and_renamed_later() {
 
     // Renamed later: the page shows the name it has, and the device's own name as the placeholder.
     let page = browser.get("/sources/of/monero-tools/rename").await;
-    page.assert_has(r#"value="Alice's tools""#).assert_has(r#"placeholder="monero-tools""#);
+    page.assert_has(r#"value="Alice's tools""#).assert_has(r#"placeholder="github.com/example/monero-tools-feed""#);
     let taken = browser.post("/sources/of/monero-tools/rename", &[("label", "Official")]).await;
     assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
     taken.assert_has("already called Official").assert_has(r#"value="Official""#);
@@ -253,7 +253,7 @@ async fn a_source_is_named_as_it_is_added_and_renamed_later() {
     assert_eq!(renamed.location(), "/sources");
     browser.get("/sources").await.assert_has("It's called Monero tools now.").assert_has(">Monero tools<");
     // Empty: back to the name from its address.
-    browser.post_then("/sources/of/monero-tools/rename", &[("label", "")]).await.assert_has("It's called monero-tools now.");
+    browser.post_then("/sources/of/monero-tools/rename", &[("label", "")]).await.assert_has("It's called github.com/example/monero-tools-feed now.");
     assert_eq!(browser.get("/sources/of/nothing-here/rename").await.location(), "/sources");
 }
 

@@ -44,7 +44,6 @@ fn list_page(snapshot: &Snapshot) -> Page {
                 div.head {
                     h2 {
                         a href=(here) { (feed.shown()) }
-                        @if feed.label.is_some() { " " span.dim { (feed.name) } }
                         @if feed.key_state == KeyState::BuiltIn { " " span.tag { "built in" } }
                     }
                     div.actions {
@@ -58,7 +57,10 @@ fn list_page(snapshot: &Snapshot) -> Page {
                         (layout::ask(&format!("{here}/remove"), "Remove", "btn danger"))
                     }
                 }
-                p.dim { (feed.address.trim_start_matches("https://")) "   ·   " (counted(u64::from(feed.packages), "app")) }
+                p.dim {
+                    @if feed.label.is_some() { (feed.address.trim_start_matches("https://")) "   ·   " }
+                    (counted(u64::from(feed.packages), "app"))
+                }
                 @match &feed.status {
                     FeedStatus::Unreachable(problem) => div.head {
                         p.err { "✕ Couldn't reach it: " (problem) }
@@ -137,7 +139,7 @@ fn rename_page(feed: &Feed, typed: &str, problem: Option<&str>) -> Page {
         h1 { "Rename " (feed.shown()) }
         section.card {
             form.stack method="post" action=(here) {
-                (name_field(typed, &feed.name, problem))
+                (name_field(typed, feed.address.trim_start_matches("https://"), problem))
                 p.dim { (feed.address) }
                 div.actions.end {
                     a.btn href=(dest::SOURCES) { "Cancel" }
@@ -243,7 +245,8 @@ fn confirm_page(probe: &FeedProbe, problem: Option<&str>) -> Page {
         section.card.attn {
             p {
                 @if probe.signed { span.ok aria-hidden="true" { "✓ " } } @else { span.err aria-hidden="true" { "✕ " } }
-                strong { (probe.name) } span.dim { "   " (probe.address) }
+                strong { (probe.shown()) }
+                @if !probe.label.trim().is_empty() { span.dim { "   " (probe.address) } }
             }
             p { "It offers " (counted(u64::from(probe.packages), "app")) "." }
             @if !probe.signed { p.err { "Its list of apps isn't signed, so the Nodo won't use it." } }
@@ -261,7 +264,7 @@ fn confirm_page(probe: &FeedProbe, problem: Option<&str>) -> Page {
                 }
             }
             form.stack method="post" action=(dest::CONFIRM_SOURCE) {
-                (name_field(&probe.label, &probe.name, problem))
+                (name_field(&probe.label, probe.address.trim_start_matches("https://"), problem))
                 div.actions.end {
                     a.btn.quiet href=(format!("{}/packages", dest::CONFIRM_SOURCE)) { "Its apps" }
                     a.btn href=(dest::SOURCES) { "Cancel" }

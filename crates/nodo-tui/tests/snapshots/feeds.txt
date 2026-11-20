@@ -10,22 +10,22 @@
 
 
 
-       official   built in                         [x] On                          Remove
-       feeds.monokulo.example/official   ·   12 apps
+       feeds.monokulo.example/offici…   built in   [x] On                          Remove
+       12 apps
 
 
 
-       ▸ monokulo                                  [x] On                          Remove
-       github.com/example/monokulo-feed   ·   6 apps
+       ▸ github.com/example/monokulo-feed          [x] On                          Remove
+       6 apps
 
 
 
-       community                                   [x] On                          Remove
-       github.com/example/community-feed   ·   23 apps
+       github.com/example/community-feed           [x] On                          Remove
+       23 apps
 
 
 
-       old-tools                                   [x] On                          Remove
+       github.com/example/old-tools-feed           [x] On                          Remove
 
     ↓ 1 more — scroll
 

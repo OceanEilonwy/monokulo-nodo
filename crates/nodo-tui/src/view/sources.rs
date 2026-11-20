@@ -13,6 +13,15 @@ use nodo_ui_core::screen::Tab;
 use nodo_ui_core::words::{counted, is_plain_http};
 use crate::theme::Theme;
 
+/// `text` cut to `room` characters, ending in "…" when it was cut.
+fn shorten(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_owned();
+    }
+    let kept: String = text.chars().take(room.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
 fn key(c: char) -> Click {
     Click::Key(KeyCode::Char(c))
 }
@@ -47,26 +56,30 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool, renaming: Opti
         if index == selected {
             card.focus_here();
         }
-        let mut head = vec![if index == selected { t.a("▸ ") } else { t.n("") }, t.b(feed.shown().to_owned())];
-        if feed.label.is_some() {
-            head.push(t.d(format!("  {}", feed.name)));
-        }
-        if feed.key_state == KeyState::BuiltIn {
-            head.push(t.d("   built in"));
-        }
-        let used = super::v3::width_of(&head);
         let switch = toggle(t, feed.status != FeedStatus::Disabled);
         // The switch lines up at column 44, or further left on a narrow card: past the card's
         // edge it wrapped, "[x]" on one row and "On" on the next, and was not clickable.
         let column = 44usize.min(card.width.saturating_sub(4 + super::v3::width_of(&switch)));
-        head.push(t.n(" ".repeat(column.saturating_sub(used))));
+        // An address can be longer than the row: it is cut short with "…" so the switch stays put.
+        let built_in = if feed.key_state == KeyState::BuiltIn { 10 } else { 0 };
+        let room = column.saturating_sub(2 + built_in + 2).max(8);
+        let title = shorten(feed.shown(), room);
+        let mut head = vec![if index == selected { t.a("▸ ") } else { t.n("") }, t.b(title.clone())];
+        if feed.key_state == KeyState::BuiltIn {
+            head.push(t.d("   built in"));
+        }
+        let used = super::v3::width_of(&head);
+        head.push(t.n(" ".repeat(column.saturating_sub(used).max(2))));
         head.extend(switch);
         // Tied to the head row, before its button: found by its name anywhere, a source's target
         // also took the address of the source above it (feeds.monokulo.example/official).
         let toggle_text = if feed.status == FeedStatus::Disabled { "[ ] Off" } else { "[x] On" };
-        card.on_row(card.next_row(), [Target::card_row(feed.shown().to_owned(), pick(index, None)), Target::text(toggle_text, pick(index, Some(KeyCode::Char(' '))))]);
+        card.on_row(card.next_row(), [Target::card_row(title, pick(index, None)), Target::text(toggle_text, pick(index, Some(KeyCode::Char(' '))))]);
         card.row_with_button(t, head, "Remove", false, pick(index, Some(KeyCode::Char('x'))));
-        card.row(t, vec![t.d(format!("{}   ·   {}", feed.address.trim_start_matches("https://"), counted(u64::from(feed.packages), "app")))]);
+        // Without a name of its own the address is already the title, so it is not said twice.
+        let count = counted(u64::from(feed.packages), "app");
+        let details = if feed.label.is_some() { format!("{}   ·   {count}", feed.address.trim_start_matches("https://")) } else { count };
+        card.row(t, vec![t.d(details)]);
         if let Some(rename) = renaming.filter(|_| index == selected) {
             card.blank(t);
             let mut name = vec![t.d(pad("Name", 10))];
@@ -74,7 +87,7 @@ pub fn sources(app: &App, t: &Theme, selected: usize, keys: bool, renaming: Opti
             card.row(t, name);
             match &rename.error {
                 Some(error) => card.row(t, vec![t.n(" ".repeat(10)), t.e(format!("✕ {error}"))]),
-                None => card.row(t, vec![t.n(" ".repeat(10)), t.d(format!("Leave it empty to call it {} again.", feed.name))]),
+                None => card.row(t, vec![t.n(" ".repeat(10)), t.d(format!("Leave it empty to call it {} again.", feed.address.trim_start_matches("https://")))]),
             }
         }
         match &feed.status {
@@ -150,13 +163,17 @@ pub fn add_feed(app: &App, t: &Theme, state: &AddFeedState) -> Page {
         }
         AddFeedState::Confirm { probe, naming, .. } => {
             let mark = if probe.signed { t.o("✓  ") } else { t.e("✕  ") };
-            card.row(t, vec![mark, t.b(probe.shown().to_owned()), t.d(format!("   {}", probe.address))]);
+            let mut line = vec![mark, t.b(probe.shown().to_owned())];
+            if !probe.label.trim().is_empty() {
+                line.push(t.d(format!("   {}", probe.address)));
+            }
+            card.row(t, line);
             card.blank(t);
             let mut name = vec![t.d(pad("Name", 10))];
             let typed = naming.as_ref().map_or(probe.label.as_str(), |input| input.text());
-            name.extend(inset(t, if typed.is_empty() && naming.is_none() { &probe.name } else { typed }, 30, None, naming.is_some()));
+            name.extend(inset(t, if typed.is_empty() && naming.is_none() { probe.address.trim_start_matches("https://") } else { typed }, 30, None, naming.is_some()));
             card.row(t, name);
-            let hint = if naming.is_some() { format!("Leave it empty to call it {}.", probe.name) } else { "Press n to give it a name of your own.".to_owned() };
+            let hint = if naming.is_some() { format!("Leave it empty to call it {}.", probe.address.trim_start_matches("https://")) } else { "Press n to give it a name of your own.".to_owned() };
             card.row(t, vec![t.n(" ".repeat(10)), t.d(hint)]);
             card.blank(t);
             card.row(t, vec![t.n(format!("It offers {}.", counted(u64::from(probe.packages), "app")))]);
