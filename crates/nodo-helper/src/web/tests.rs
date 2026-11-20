@@ -384,6 +384,45 @@ fn retiring_stale_records_pauses_the_running_service() {
 }
 
 #[test]
+fn status_reports_a_domain_whose_updates_keep_failing() {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    web.io.put(
+        "/ddns/example.com.json",
+        r#"{"published":{},"failures":3,"next_attempt_at":900,"failing_since":500,
+            "last_errors":["shop: the provider rejected this request (HTTP 400, RECORD_CONFLICT)"],"observed_v4":"93.184.216.34"}"#,
+    );
+    let status = web.status(&input(false, true)).unwrap();
+    assert_eq!(
+        status.dns_problems,
+        vec![nodo_api::DnsProblem {
+            domain: "example.com".into(),
+            errors: vec!["shop: the provider rejected this request (HTTP 400, RECORD_CONFLICT)".into()],
+            failures: 3,
+            since: Some(500),
+            retry_at: Some(900),
+        }]
+    );
+}
+
+#[test]
+fn status_reports_failures_from_a_ddns_that_keeps_no_errors() {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    web.io.put("/ddns/example.com.json", r#"{"published":{},"failures":1,"next_attempt_at":60}"#);
+    let status = web.status(&input(false, true)).unwrap();
+    assert!(status.dns_problems[0].errors[0].contains("log"));
+}
+
+#[test]
+fn status_reports_no_problem_while_updates_succeed() {
+    let web = web(Fake::default());
+    store_cloudflare(&web);
+    web.io.put("/ddns/example.com.json", r#"{"published":{},"failures":0,"observed_v4":"93.184.216.34"}"#);
+    assert!(web.status(&input(false, true)).unwrap().dns_problems.is_empty());
+}
+
+#[test]
 fn status_reports_stale_records_and_the_last_change() {
     let web = web(Fake::default());
     store_cloudflare(&web);
@@ -622,7 +661,10 @@ fn a_stored_certificate_from_the_configured_issuer_reports_valid() {
 #[test]
 fn a_failed_challenge_with_dns_elsewhere_says_dns_is_not_pointing_here() {
     let web = cert_web(2000);
-    web.io.put("/ddns/state.json", r#"{"published":{},"observed_v4":"203.0.113.2"}"#);
+    store_cloudflare(&web);
+    // Each owned domain has its own state file; the single state.json is from before that.
+    web.io.put("/ddns/state.json", r#"{"published":{},"observed_v4":"203.0.113.77"}"#);
+    web.io.put("/ddns/example.com.json", r#"{"published":{},"observed_v4":"203.0.113.2"}"#);
     web.io.put(
         "/caddy-state/nodo-tls.log",
         &[

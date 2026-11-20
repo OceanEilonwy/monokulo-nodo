@@ -191,6 +191,70 @@ pub fn field(f: SettingField) -> Field {
     Field { key: f.name, label: f.label, help: f.help, requirement, required: f.required, kind, value }
 }
 
+/// A failing domain as the screens word it.
+fn dns_problem(problem: &nodo_api::DnsProblem) -> crate::model::DnsProblemView {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    crate::model::DnsProblemView {
+        domain: problem.domain.clone(),
+        errors: problem.errors.clone(),
+        detail: dns_problem_detail(problem, now),
+    }
+}
+
+fn dns_problem_detail(problem: &nodo_api::DnsProblem, now: u64) -> String {
+    let tries = if problem.failures == 1 { "1 try".to_owned() } else { format!("{} tries", problem.failures) };
+    let mut detail = match problem.since {
+        Some(since) if now.saturating_sub(since) >= 120 => {
+            format!("Failing for {} ({tries}).", span(now.saturating_sub(since)))
+        }
+        _ => format!("Failing ({tries})."),
+    };
+    if let Some(at) = problem.retry_at {
+        if at > now {
+            detail.push_str(&format!(" Next try in {}.", span(at - now)));
+        } else {
+            detail.push_str(" Trying again now.");
+        }
+    }
+    detail
+}
+
+#[cfg(test)]
+mod dns_problem_tests {
+    use super::*;
+    use crate::model::AttentionLevel;
+
+    fn problem(failures: u32, since: Option<u64>, retry_at: Option<u64>) -> nodo_api::DnsProblem {
+        nodo_api::DnsProblem { domain: "example.com".into(), errors: vec!["www: refused".into()], failures, since, retry_at }
+    }
+
+    #[test]
+    fn the_detail_says_how_long_and_when_next() {
+        assert_eq!(dns_problem_detail(&problem(38, Some(0), Some(10_000)), 7_200), "Failing for 2 hours (38 tries). Next try in 46 minutes.");
+        assert_eq!(dns_problem_detail(&problem(1, Some(100), Some(160)), 100), "Failing (1 try). Next try in 1 minute.");
+        assert_eq!(dns_problem_detail(&problem(2, None, Some(5)), 10), "Failing (2 tries). Trying again now.");
+    }
+
+    #[test]
+    fn home_names_the_domain_and_the_first_error() {
+        let mut view = dns_problem(&problem(1, None, None));
+        view.errors.push("shop: refused".into());
+        let attention = view.attention();
+        assert_eq!(attention.level, AttentionLevel::Warning);
+        assert_eq!(attention.text, "The DNS records of example.com are not updating. www: refused (and 1 more). See Web.");
+    }
+}
+
+/// A length of time in its largest whole unit, at least a minute.
+fn span(secs: u64) -> String {
+    let (n, unit) = match secs {
+        0..=7199 => ((secs / 60).max(1), "minute"),
+        7200..=172_799 => (secs / 3600, "hour"),
+        _ => (secs / 86_400, "day"),
+    };
+    if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
+}
+
 /// How long ago a Unix time was, in the largest whole unit.
 fn ago(at: u64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -783,6 +847,7 @@ impl ScreenData for HelperBackend {
             local_remedy: status.local_remedy,
             local_records_note: local.records_note,
             trust_url: local.trust_url,
+            dns_problems: status.dns_problems.iter().map(dns_problem).collect(),
             certs,
             acme,
         }

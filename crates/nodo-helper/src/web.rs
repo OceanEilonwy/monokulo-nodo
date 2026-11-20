@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use nodo_api::{
+use nodo_api::{DnsProblem, 
     AcmeSettingsInfo, AcmeSettingsInput, ApiError, CertificateReport, CheckStatus, Dns01Support,
     DnsProviderDetail, LocalNameCheck, ReachabilityDetail, ReachabilityItem, Secret, ServiceState,
     SiteId, WebSiteStatus, WebStatus,
@@ -166,10 +166,15 @@ struct DdnsZone {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct DdnsState {
-    #[serde(default)]
     published: BTreeMap<String, serde_json::Value>,
     observed_v4: Option<String>,
+    failures: u32,
+    next_attempt_at: u64,
+    /// Written by a nodo-ddns that keeps them; an older one leaves them out.
+    last_errors: Vec<String>,
+    failing_since: Option<u64>,
 }
 
 const CADDY: &str = "nodo-caddy";
@@ -493,6 +498,7 @@ impl<I: WebIo> NodoWeb<I> {
         let mut stale_records = Vec::new();
         let mut changed = None;
         let mut observed_v4 = None;
+        let mut dns_problems = Vec::new();
         for (_, domain) in &owned {
             let state: DdnsState = self
                 .io
@@ -507,6 +513,21 @@ impl<I: WebIo> NodoWeb<I> {
                 }
             }
             changed = changed.max(state.published.values().filter_map(|r| r.get("changed_at")?.as_u64()).max());
+            if state.failures > 0 {
+                let errors = if state.last_errors.is_empty() {
+                    // From a nodo-ddns too old to keep its errors: its log has them.
+                    vec!["updating the records failed; the dynamic DNS log has the reason".to_owned()]
+                } else {
+                    state.last_errors
+                };
+                dns_problems.push(DnsProblem {
+                    domain: domain.to_string(),
+                    errors,
+                    failures: state.failures,
+                    since: state.failing_since,
+                    retry_at: (state.next_attempt_at > 0).then_some(state.next_attempt_at),
+                });
+            }
             observed_v4 = observed_v4.or(state.observed_v4);
         }
         let (local_address, local_unavailable) = match &plan.local.address {
@@ -526,6 +547,7 @@ impl<I: WebIo> NodoWeb<I> {
             public_ip: observed_v4,
             dns_changed_at: changed,
             stale_records,
+            dns_problems,
         }
     }
 

@@ -32,9 +32,10 @@ pub use system::*;
 /// Version 4 added bundles and owner pages: the bundle and owner page facts in [`PackageInfo`],
 /// [`CatalogEntry`] and [`InstallReview`]. Version 5 added the names a site also answers at:
 /// [`SiteInfo::public_aliases`] and the `aliases` of [`Request::SetPublicHost`]. Version 6 added
-/// its `confirm_added`, which lets a public site gain a name. Postcard reads fields by position,
-/// so `#[serde(default)]` alone would not let the old and new forms meet.
-pub const PROTOCOL_VERSION: u8 = 6;
+/// its `confirm_added`, which lets a public site gain a name. Version 7 added
+/// [`WebStatus::dns_problems`]. Postcard reads fields by position, so `#[serde(default)]` alone
+/// would not let the old and new forms meet.
+pub const PROTOCOL_VERSION: u8 = 7;
 
 /// The helper's socket on the device.
 pub const DEFAULT_SOCKET: &str = "/run/nodo/helper.sock";
@@ -521,6 +522,23 @@ pub struct WebStatus {
     pub dns_changed_at: Option<u64>,
     /// Records the dynamic DNS service published for names no longer in use.
     pub stale_records: Vec<String>,
+    /// Domains whose records the dynamic DNS service is failing to publish. Empty while every
+    /// domain's last pass succeeded.
+    pub dns_problems: Vec<DnsProblem>,
+}
+
+/// One owned domain whose dynamic DNS updates keep failing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DnsProblem {
+    pub domain: String,
+    /// The last pass's errors, one per refused record as `shop: ...`, already scrubbed.
+    pub errors: Vec<String>,
+    /// Failed passes in a row.
+    pub failures: u32,
+    /// Unix seconds of the first failed pass in this run.
+    pub since: Option<u64>,
+    /// Unix seconds of the next attempt.
+    pub retry_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

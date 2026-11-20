@@ -272,9 +272,14 @@ impl<I: WebIo> NodoWeb<I> {
         cert::parse_pem(&String::from_utf8(self.io.read(&path)?).ok()?)
     }
 
+    /// The address nodo-ddns last saw, from any owned domain's state file. The single `state.json`
+    /// of before several domains is moved into those files, so it is not read here.
     fn public_ip(&self) -> Option<IpAddr> {
-        let state: DdnsState = serde_json::from_slice(&self.io.read(&self.paths.ddns_state)?).ok()?;
-        state.observed_v4?.parse().ok()
+        let (store, _) = self.provider_store();
+        store.owned().iter().find_map(|(_, domain)| {
+            let state: DdnsState = serde_json::from_slice(&self.io.read(&self.zone_state(domain))?).ok()?;
+            state.observed_v4?.parse().ok()
+        })
     }
 
     pub(super) fn certificate_report(&self, plan: &WebPlan, input: &WebInput) -> CertificateReport {

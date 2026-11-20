@@ -792,6 +792,31 @@ pub struct Site {
     pub local_waiting: bool,
 }
 
+/// One domain whose dynamic DNS updates keep failing, worded for the screens.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DnsProblemView {
+    pub domain: String,
+    /// The provider's answers, one per refused record, as `shop: ...`.
+    pub errors: Vec<String>,
+    /// How long it has failed and when it tries again, as "Failing for 2 hours (38 tries). Next try in 12 minutes."
+    pub detail: String,
+}
+
+impl DnsProblemView {
+    /// Home's "Needs attention" line.
+    pub fn attention(&self) -> Attention {
+        let first = self.errors.first().map_or("", String::as_str);
+        let more = match self.errors.len() {
+            0 | 1 => String::new(),
+            n => format!(" (and {} more)", n - 1),
+        };
+        Attention {
+            level: AttentionLevel::Warning,
+            text: format!("The DNS records of {} are not updating. {first}{more}. See Web.", self.domain),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WebOverview {
     pub sites: Vec<Site>,
@@ -809,6 +834,8 @@ pub struct WebOverview {
     pub local_records_note: Option<String>,
     /// `http://nodo.local`, where LAN devices get the local CA root, while it is served.
     pub trust_url: Option<String>,
+    /// Domains whose records the dynamic DNS service is failing to update.
+    pub dns_problems: Vec<DnsProblemView>,
     /// One row per served host, public and local.
     pub certs: Vec<CertRow>,
     pub acme: AcmeView,
