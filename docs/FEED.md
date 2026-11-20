@@ -191,6 +191,38 @@ whether a domain provider holds the domain, and whether a recent backup holds th
 1024; at most 32 steps of 32 items. No control characters, except line breaks in `text`, `value`,
 `intro` and `detail`.
 
+## Keeping paths of a site off some addresses
+
+A site is served whole at every address the owner gives it, unless its manifest says otherwise.
+Named rules under a `[[web]]` entry keep a path, and everything under it, off some kinds of
+address, which then answer 404 for it:
+
+```toml
+[[web]]
+name = "vault"
+upstream = "127.0.0.1:8080"
+
+# Not from the internet or Tor; still on the home network.
+[web.paths.admin]
+path = "/admin"
+blocked_on = ["public", "onion"]
+
+# Only on the home network.
+[web.paths.metrics]
+path = "/metrics"
+allowed_on = ["local"]
+```
+
+Each rule has a `path` and exactly one of `allowed_on` and `blocked_on`, lists of `public`,
+`onion` and `local`; `allowed_on = []` blocks the path at every address. The name, which follows
+the site-name rules, labels the rule's line in the install review. At most 16 rules a site. The
+path is plain: it starts with `/`, is not `/` itself, has no empty, `.` or `..` segments or
+trailing `/`, and holds only letters, digits and `/ - _ . ~`. Rules add up, so a longer path
+cannot reopen what a shorter one blocks. The path is matched without regard to case and also
+when followed by a character that cannot continue a name, so `/admin` blocks `/Admin/x`,
+`/admin;x` and `/admin.` but also `/admin.json`, and not `/administrator`. An update that loosens
+or removes a rule asks the owner to approve it again; adding or tightening one does not.
+
 ## Feeds of other projects
 
 Any project can build a signed feed with these scripts, through `app-release.yml` as the
