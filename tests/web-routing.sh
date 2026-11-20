@@ -143,6 +143,19 @@ for path in /admin /admin/users /api/v1/admin; do
 	expect "public host serves $path" 200 "$(pub shop.example.com "$path")"
 	body_has "upstream shop $path"; result "public $path reaches the shop upstream" "$?"
 done
+# The shop's own path rules: /lan is served on the local network only, /nopublic everywhere but
+# public addresses. Whatever spelling an upstream might take as the path, nothing leaks.
+for path in /lan /LAN /Lan/users /lan/ /lan/x //lan ///lan /lan//x '/lan;x=1' /lan%2Fx /%6can /%4CAN \
+	/./lan /x/../lan /x/%2e%2e/lan '/lan?x=1' /lan%00 /lan. /lan%20 //LAN. /x/../lan%00 /lan%09 /lan.json \
+	/nopublic /NOPUBLIC/x '/nopublic;a' /nopublic.; do
+	code=$(pub shop.example.com "$path" --path-as-is)
+	if body_has upstream; then leaked=1; else leaked=0; fi
+	case $code in 404|400) ok=$leaked ;; *) ok=1 ;; esac
+	result "public path rule blocks $path ($code)" "$ok"
+done
+for path in /lane /lan-x /lans /nopublics; do
+	expect "neighbouring path is served: $path" 200 "$(pub shop.example.com "$path")"
+done
 # The shop's other names: the bare domain redirects to it, keeping path and query, and a name under
 # a second domain serves it.
 code=$(get webinet -D /tmp/headers --resolve "example.com:443:$wan" "https://example.com/cart?item=2&x=%20")
@@ -154,6 +167,7 @@ result "port 80 sends a redirect alias to https first ($code)" "$?"
 expect "a serving alias reaches the same upstream" 200 "$(pub shop.example.org /a?b=1)"
 body_has "upstream shop /a?b=1"; result "a serving alias is served by the shop upstream" "$?"
 expect "a serving alias serves every path too" 200 "$(pub shop.example.org /admin)"
+expect "a serving alias has the same path rules" 404 "$(pub shop.example.org /lan)"
 code=$(get webinet --resolve "example.com:443:$wan" -H "Host: shop.example.org" https://example.com/)
 ! body_has upstream && [ "$code" != 200 ]
 result "SNI of a redirect alias cannot reach the site by Host header ($code)" "$?"
@@ -210,6 +224,10 @@ result "mDNS does not answer the internet side" "$r"
 expect "local host reaches its upstream" 200 "$(loc shop.local /)"
 expect "local host serves every path to the LAN" 200 "$(loc shop.local /admin)"
 body_has "upstream shop /admin"; result "local /admin reaches the shop upstream" "$?"
+for path in /lan/x /nopublic; do
+	expect "local host serves $path, which its rules allow here" 200 "$(loc shop.local "$path")"
+	body_has "upstream shop $path"; result "local $path reaches the shop upstream" "$?"
+done
 expect "stopped local site shows the unavailable page" 503 "$(loc pay.local /)"
 expect "public host refused on the local address" ERR35 "$(loc shop.example.com /)"
 code=$(get weblan --resolve "shop.local:443:$local" -H "Host: $onion" https://shop.local/)
@@ -244,10 +262,15 @@ expect "masqueraded client gets the public site, as any internet client does" 20
 code=$(get weblan --resolve "shop.example.com:443:$lan" -H "Host: shop.local" https://shop.example.com/admin)
 ! body_has upstream
 result "masqueraded client cannot reach a local host by Host header ($code)" "$?"
+expect "masqueraded client gets the public path rules" 404 \
+	"$(get weblan --resolve "shop.example.com:443:$lan" https://shop.example.com/lan)"
 
 # The onion listener, as Tor reaches it.
 expect "onion host reaches its upstream" 200 "$(get host -H "Host: $onion" http://127.0.0.1:19000/)"
 expect "onion host serves every path" 200 "$(get host -H "Host: $onion" http://127.0.0.1:19000/admin)"
+expect "onion path rule blocks /lan" 404 "$(get host -H "Host: $onion" http://127.0.0.1:19000//LAN)"
+expect "onion host serves /nopublic, which its rules allow there" 200 \
+	"$(get host -H "Host: $onion" http://127.0.0.1:19000/nopublic)"
 expect "onion listener refuses other hosts" ERR52 "$(get host -H 'Host: shop.example.com' http://127.0.0.1:19000/)"
 expect "onion listener refuses local hosts" ERR52 "$(get host -H 'Host: shop.local' http://127.0.0.1:19000/admin)"
 
@@ -268,6 +291,7 @@ sleep 1
 expect "dead upstream shows the unavailable page" 502 "$(pub shop.example.com /)"
 body_has "This site is unavailable"; result "dead upstream page body" "$?"
 expect "dead upstream shows the unavailable page on every path" 502 "$(pub shop.example.com /admin)"
+expect "dead upstream still answers 404 for a blocked path" 404 "$(pub shop.example.com /lan)"
 
 sv -w 30 stop nodo-caddy | grep -q '^ok: down'
 result "nodo-caddy stops cleanly under TERM" "$?"

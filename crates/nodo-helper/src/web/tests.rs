@@ -245,6 +245,20 @@ fn local_and_public_write_every_file_and_start_the_services() {
 }
 
 #[test]
+fn a_sites_path_rules_reach_the_written_proxy_config() {
+    let web = web(Fake::default());
+    web.apply(&input(true, true)).unwrap();
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("path_regexp"), "no rules, no 404 route");
+
+    let mut ruled = input(true, true);
+    let rule: nodo_manifest::PathRule = toml::from_str("path = \"/private\"\nblocked_on = [\"public\"]\n").unwrap();
+    ruled.sites[0].service.paths.insert("private".into(), rule);
+    web.apply(&ruled).unwrap();
+    let json = web.io.get("/web/caddy.json").unwrap();
+    assert!(json.contains("\"/private;*\"") && json.contains("(?i)^(?:/private)"), "{json}");
+}
+
+#[test]
 fn dynamic_dns_runs_only_while_a_site_is_public() {
     let web = web(Fake::default());
     store_cloudflare(&web);

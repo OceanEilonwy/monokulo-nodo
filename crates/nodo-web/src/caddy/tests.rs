@@ -1,4 +1,5 @@
 use super::*;
+use nodo_manifest::{AddressKind as RuleKind, PathRule};
 
 const ONION: &str = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion";
 const ONION_B: &str = "bbcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion";
@@ -63,11 +64,22 @@ fn matches(matcher: &Matcher, host: &str, path: &str, client: &str) -> bool {
             Some(prefix) => path.to_lowercase().starts_with(&prefix.to_lowercase()),
             None => path.eq_ignore_ascii_case(pattern),
         });
+    // Only the form `blocked_matchers` writes: case-insensitive alternatives, each followed by
+    // anything that cannot continue a segment name, or the end.
+    let regexp_ok = matcher.path_regexp.as_ref().is_none_or(|re| {
+        let inner = re.pattern.strip_prefix("(?i)^(?:").and_then(|p| p.strip_suffix(")(?:[^a-z0-9_~-]|$)")).unwrap();
+        let lower = path.to_lowercase();
+        inner.split('|').any(|alt| {
+            lower.strip_prefix(&alt.replace("\\.", ".").to_lowercase()).is_some_and(|rest| {
+                rest.chars().next().is_none_or(|c| !(c.is_ascii_alphanumeric() || "_~-".contains(c)))
+            })
+        })
+    });
     let ip_ok = matcher.remote_ip.as_ref().is_none_or(|remote| {
         // These tests only use the two client addresses above.
         client == LAN_CLIENT && remote.ranges.iter().any(|r| r == "192.168.0.0/16")
     });
-    host_ok && path_ok && ip_ok
+    host_ok && path_ok && regexp_ok && ip_ok
 }
 
 fn walk(routes: &[Route], host: &str, path: &str, client: &str) -> Outcome {
@@ -234,6 +246,166 @@ fn admin_paths_in_an_old_manifest_change_nothing_in_the_proxy_config() {
         let old = plan(&format!("{text}admin_paths = {paths}\n"));
         assert_eq!(old, plain, "{paths}");
         assert_eq!(request(&old, "public", "web.example.com", "/admin", INTERNET_CLIENT), Outcome::Proxy("127.0.0.1:8080".into()));
+    }
+}
+
+fn rule(path: &str, allowed_on: Option<&[RuleKind]>, blocked_on: Option<&[RuleKind]>) -> PathRule {
+    PathRule { path: path.to_owned(), allowed_on: allowed_on.map(<[_]>::to_vec), blocked_on: blocked_on.map(<[_]>::to_vec) }
+}
+
+/// The shop at every kind of address, with these rules.
+fn shop_with_rules(rules: &[(&str, PathRule)]) -> Site {
+    let mut shop = site("shop", "shop", 8080, all_exposures());
+    shop.onion_host = Some(ONION.to_owned());
+    shop.service.paths = rules.iter().map(|(name, rule)| (name.to_string(), rule.clone())).collect();
+    shop
+}
+
+/// What one path gets at the public, onion and local address of [`shop_with_rules`].
+fn at_each_kind(plan: &WebPlan, path: &str) -> [Outcome; 3] {
+    let onion = onion_server_for(plan, ONION);
+    [
+        request(plan, "public", "shop.example.com", path, INTERNET_CLIENT),
+        request(plan, onion, ONION, path, "127.0.0.1"),
+        request(plan, "local", "shop.local", path, LAN_CLIENT),
+    ]
+}
+
+fn served() -> Outcome {
+    Outcome::Proxy("127.0.0.1:8080".into())
+}
+
+fn not_found() -> Outcome {
+    Outcome::Status("404".into())
+}
+
+/// Ways to write a path that an upstream may take as the path itself.
+const SPELLINGS_OF_PRIVATE: &[&str] =
+    &["/private", "/PRIVATE", "/Private/x", "/private/", "/private/a/b", "/private;x=1", "/private.", "/private ", "/private\0", "/private.json"];
+
+#[test]
+fn a_path_blocked_on_public_only_is_still_served_on_local_and_onion() {
+    let plan = generate(&[shop_with_rules(&[("p", rule("/private", None, Some(&[RuleKind::Public])))])], &settings()).unwrap();
+    for path in SPELLINGS_OF_PRIVATE {
+        assert_eq!(at_each_kind(&plan, path), [not_found(), served(), served()], "{path:?}");
+    }
+    // Neighbouring names and the rest of the site stay served everywhere.
+    for path in ["/", "/privateer", "/private-x", "/private_x", "/private~x", "/x/private", "/api"] {
+        assert_eq!(at_each_kind(&plan, path), [served(), served(), served()], "{path:?}");
+    }
+    // A LAN client using the public name gets the public address's rules.
+    assert_eq!(request(&plan, "public", "shop.example.com", "/private", LAN_CLIENT), not_found());
+}
+
+#[test]
+fn a_path_allowed_on_local_only_is_blocked_on_public_and_onion() {
+    let plan = generate(&[shop_with_rules(&[("m", rule("/metrics", Some(&[RuleKind::Local]), None))])], &settings()).unwrap();
+    for path in ["/metrics", "/Metrics/x", "/metrics;a", "/metrics."] {
+        assert_eq!(at_each_kind(&plan, path), [not_found(), not_found(), served()], "{path:?}");
+    }
+    assert_eq!(at_each_kind(&plan, "/metricsx"), [served(), served(), served()]);
+}
+
+#[test]
+fn a_path_allowed_nowhere_is_blocked_at_every_address() {
+    let plan = generate(&[shop_with_rules(&[("x", rule("/export", Some(&[]), None))])], &settings()).unwrap();
+    assert_eq!(at_each_kind(&plan, "/export/all"), [not_found(), not_found(), not_found()]);
+    assert_eq!(at_each_kind(&plan, "/"), [served(), served(), served()]);
+}
+
+#[test]
+fn rules_add_up_and_a_longer_path_cannot_reopen_a_shorter_one() {
+    let plan = generate(
+        &[shop_with_rules(&[
+            ("a", rule("/a", None, Some(&[RuleKind::Public]))),
+            ("b", rule("/a/b", None, Some(&[RuleKind::Onion]))),
+            ("open", rule("/a/open", Some(&[RuleKind::Public, RuleKind::Onion, RuleKind::Local]), None)),
+            ("same", rule("/a", Some(&[RuleKind::Public, RuleKind::Onion]), None)),
+            ("v1", rule("/v1.0/x", None, Some(&[RuleKind::Local]))),
+        ])],
+        &settings(),
+    )
+    .unwrap();
+    assert_eq!(at_each_kind(&plan, "/a/x"), [not_found(), served(), not_found()], "/a and its second rule");
+    assert_eq!(at_each_kind(&plan, "/a/b/c"), [not_found(), not_found(), not_found()]);
+    assert_eq!(at_each_kind(&plan, "/a/open"), [not_found(), served(), not_found()]);
+    assert_eq!(at_each_kind(&plan, "/v1.0/x"), [served(), served(), not_found()]);
+    assert_eq!(at_each_kind(&plan, "/v1a0/x"), [served(), served(), served()], "the dot is not a wildcard");
+
+    let value = json(&plan);
+    let local = &value["apps"]["http"]["servers"]["local"]["routes"][0]["handle"][0]["routes"][0]["match"];
+    assert_eq!(
+        local[0]["path"],
+        serde_json::json!(["/a", "/a/*", "/a;*", "/v1.0/x", "/v1.0/x/*", "/v1.0/x;*"]),
+        "each path once, in order"
+    );
+    assert_eq!(local[1]["path_regexp"]["pattern"], "(?i)^(?:/a|/v1\\.0/x)(?:[^a-z0-9_~-]|$)");
+}
+
+#[test]
+fn a_blocked_path_answers_404_before_the_rate_limit_and_whatever_the_upstream_state() {
+    let mut shop = shop_with_rules(&[("p", rule("/private", None, Some(&[RuleKind::Public, RuleKind::Onion])))]);
+    shop.rate_limit = true;
+    let value = json(&generate(std::slice::from_ref(&shop), &settings()).unwrap());
+    let public = value["apps"]["http"]["servers"]["public"]["routes"][0]["handle"][0]["routes"].as_array().unwrap();
+    assert_eq!(public[0]["match"][0]["path"], serde_json::json!(["/private", "/private/*", "/private;*"]));
+    assert_eq!(public[0]["handle"][0], serde_json::json!({"handler": "static_response", "status_code": "404"}));
+    assert_eq!(public[0]["terminal"], true);
+    assert_eq!(public[1]["handle"][0]["handler"], "rate_limit");
+    assert_eq!(public[2]["handle"][0]["handler"], "reverse_proxy");
+
+    for state in [ServiceState::Stopped, ServiceState::Failed, ServiceState::Locked, ServiceState::Waiting] {
+        shop.state = state;
+        let plan = generate(std::slice::from_ref(&shop), &settings()).unwrap();
+        assert_eq!(at_each_kind(&plan, "/private"), [not_found(), not_found(), Outcome::Status("503".into())]);
+        assert_eq!(at_each_kind(&plan, "/")[0], Outcome::Status("503".into()));
+    }
+}
+
+#[test]
+fn a_serving_alias_has_the_same_rules_and_a_redirect_needs_none() {
+    let mut shop = shop_with_rules(&[("p", rule("/private", None, Some(&[RuleKind::Public])))]);
+    shop.public_aliases = vec![alias("shop.example.org", AliasMode::Serve), alias("example.com", AliasMode::Redirect)];
+    let plan = generate(&[shop], &settings()).unwrap();
+    assert_eq!(request(&plan, "public", "shop.example.org", "/private", INTERNET_CLIENT), not_found());
+    assert_eq!(request(&plan, "public", "shop.example.org", "/", INTERNET_CLIENT), served());
+    assert_eq!(request(&plan, "public", "example.com", "/private", INTERNET_CLIENT), Outcome::Status("308".into()));
+}
+
+#[test]
+fn rules_change_nothing_at_the_kinds_of_address_they_do_not_block() {
+    // A site without rules, and the listeners where a site's rules block nothing, get exactly the
+    // config they had before rules existed (the VM and DNS fixtures pin that config too).
+    let plain = generate(&[shop_with_rules(&[])], &settings()).unwrap();
+    let ruled = generate(&[shop_with_rules(&[("p", rule("/private", None, Some(&[RuleKind::Public])))])], &settings()).unwrap();
+    let servers = |plan: &WebPlan| plan.caddy.apps.http.servers.clone();
+    let (plain_servers, ruled_servers) = (servers(&plain), servers(&ruled));
+    assert_eq!(plain_servers.keys().collect::<Vec<_>>(), ruled_servers.keys().collect::<Vec<_>>());
+    for (name, server) in &plain_servers {
+        let same = serde_json::to_string(server).unwrap() == serde_json::to_string(&ruled_servers[name]).unwrap();
+        assert_eq!(same, name != "public", "{name}");
+    }
+    assert!(!json(&plain).to_string().contains("path_regexp"));
+}
+
+#[test]
+fn rules_from_a_manifest_reach_the_proxy() {
+    let text = "api_version = 1\nid = \"shop\"\nversion = \"1.0\"\nexec = [\"bin/shop\"]\n\
+                [[web]]\nname = \"web\"\nupstream = \"127.0.0.1:8080\"\nmulti_address = true\n\
+                [web.paths.metrics]\npath = \"/metrics\"\nallowed_on = [\"local\"]\n";
+    let manifest = nodo_manifest::Manifest::parse(text).unwrap();
+    let mut published = site("shop", "web", 8080, all_exposures());
+    published.service = manifest.web[0].clone();
+    let plan = generate(&[published], &settings()).unwrap();
+    assert_eq!(request(&plan, "public", "web.example.com", "/metrics", INTERNET_CLIENT), not_found());
+    assert_eq!(request(&plan, "local", "web.local", "/metrics", LAN_CLIENT), served());
+}
+
+#[test]
+fn hostile_rule_paths_are_rejected() {
+    for path in ["", "/", "private", "/a*", "/{x}", "/a b", "/a\n", "//a", "/a/../b", "/%61", "/a/", "/a;b", "/a?b"] {
+        let shop = shop_with_rules(&[("p", rule(path, None, Some(&[RuleKind::Public])))]);
+        assert!(matches!(generate(&[shop], &settings()), Err(WebConfigError::InvalidRulePath { .. })), "{path:?}");
     }
 }
 
@@ -902,6 +1074,12 @@ fn vm_fixture_matches_the_generator() {
     // The bare domain redirects to the shop and a name under a second domain serves it, so the VM
     // checks both kinds of alias against real Caddy.
     shop.public_aliases = vec![alias("example.com", AliasMode::Redirect), alias("shop.example.org", AliasMode::Serve)];
+    // The shop's path rules, so the VM checks the 404s against real Caddy: `/lan` for the local
+    // network only, `/nopublic` everywhere but public addresses. The other sites have no rules.
+    shop.service.paths = BTreeMap::from([
+        ("lan".to_owned(), rule("/lan", Some(&[RuleKind::Local]), None)),
+        ("nopublic".to_owned(), rule("/nopublic", None, Some(&[RuleKind::Public]))),
+    ]);
     let mut pay = site("pay", "pay", 3002, Exposure { local: true, public: true, ..Exposure::default() });
     pay.state = ServiceState::Stopped;
     let mut vault = site("vault", "vault", 3003, Exposure { public: true, ..Exposure::default() });

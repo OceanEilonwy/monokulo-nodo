@@ -34,6 +34,12 @@
 //!
 //! Each HTTPS listener also has TLS connection policies limited to its own host names, so a handshake
 //! for `shop.local` on the public port fails instead of presenting the local certificate.
+//!
+//! # Path rules
+//!
+//! A site is served whole at every address it has, except for the paths its manifest's own rules
+//! (`[web.paths.<name>]`) keep off some kinds of address. Those answer a plain 404 at the start of
+//! the site's routes on the listeners of the blocked kinds, and nowhere else. Nodo adds no rules.
 
 pub mod types;
 
@@ -41,7 +47,7 @@ use crate::local::{LocalAddress, LocalUnavailable};
 use crate::names::{self, quoted};
 use crate::secret::Secret;
 use nodo_api::{AliasMode, Exposure, PublicAlias, ServiceState};
-use nodo_manifest::{UpstreamProtocol, WebService};
+use nodo_manifest::{is_valid_rule_path, UpstreamProtocol, WebService};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::{IpAddr, Ipv4Addr};
@@ -97,6 +103,8 @@ pub enum WebConfigError {
     InvalidName { field: &'static str, value: String },
     #[error("site {site}: upstream is not an allowed address: \"{value}\"")]
     InvalidUpstream { site: String, value: String },
+    #[error("site {site}: a path rule's path is not allowed: \"{value}\"")]
+    InvalidRulePath { site: String, value: String },
     #[error("site {site} is public, but no domain is connected")]
     NoDomain { site: String },
     #[error("site {site} is tied to one address and cannot use several exposures")]
@@ -588,7 +596,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
             let served: Vec<String> = std::iter::once(host.clone()).chain(item.serve_aliases.iter().cloned()).collect();
             public_routes.push(host_route(
                 Matcher { host: served, ..Matcher::default() },
-                site_handlers(item, limit),
+                site_handlers(item, nodo_manifest::AddressKind::Public, limit),
             ));
             if !item.redirect_aliases.is_empty() {
                 public_routes.push(host_route(
@@ -625,7 +633,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
                     remote_ip: Some(RemoteIp { ranges: settings.lan_ranges.clone() }),
                     ..Matcher::default()
                 },
-                site_handlers(item, None),
+                site_handlers(item, nodo_manifest::AddressKind::Local, None),
             ));
             local_subjects.push(host.clone());
             plan_addresses.push(address(
@@ -651,7 +659,7 @@ pub fn generate(sites: &[Site], settings: &DomainSettings) -> Result<WebPlan, We
                 Some(host) => {
                     servers.insert(
                         format!("onion-{}", tor_services.len() - 1),
-                        onion_server(listen.clone(), host, site_handlers(item, None)),
+                        onion_server(listen.clone(), host, site_handlers(item, nodo_manifest::AddressKind::Onion, None)),
                     );
                     plan_addresses.push(address(AddressKind::Onion, host, format!("http://{host}"), &listen));
                 }
@@ -936,6 +944,11 @@ fn resolve<'a>(site: &'a Site, settings: &DomainSettings) -> Result<Resolved<'a>
         value: quoted(&service.upstream),
     })?;
 
+    // The manifest has checked these already. They land in config, so they are checked again here.
+    if let Some(rule) = service.paths.values().find(|rule| !is_valid_rule_path(&rule.path)) {
+        return Err(WebConfigError::InvalidRulePath { site: site_label, value: quoted(&rule.path) });
+    }
+
     let enabled = [site.exposure.local, site.exposure.onion, site.exposure.public];
     if !service.multi_address && enabled.iter().filter(|on| **on).count() > 1 {
         return Err(WebConfigError::SingleAddressOnly { site: site_label });
@@ -1175,9 +1188,55 @@ fn https_server(listen: String, mut routes: Vec<Route>, hosts: &[String], redire
     }
 }
 
-/// The routes inside one host: every path of the site, the same at every kind of address.
-fn site_handlers(item: &Resolved<'_>, limit: Option<RateLimit>) -> Vec<Route> {
+/// The paths of a site that its rules block at one kind of address. Rules add up: a path is blocked
+/// when any rule blocks it, and a longer path cannot reopen what a shorter one blocks.
+fn blocked_paths(service: &WebService, kind: nodo_manifest::AddressKind) -> BTreeSet<&str> {
+    service.paths.values().filter(|rule| rule.blocked().contains(&kind)).map(|rule| rule.path.as_str()).collect()
+}
+
+/// Matchers for blocked paths, each covering itself and everything under it. Caddy's path matcher is
+/// exact unless it has a wildcard, and `/a/*` does not match `/a`, so both forms are needed; the `;`
+/// form covers servers that treat `/a;x=1` as `/a`. Caddy matches paths case-insensitively.
+///
+/// Upstreams also differ in what they treat as the same path. Some drop a trailing dot or space, and
+/// some stop at a NUL, so `/a.`, `/a%20` and `/a%00` can reach `/a`. The regexp blocks the path
+/// followed by anything except a letter, digit, `-`, `_` or `~`, at the cost of also blocking names
+/// like `/a.json`. Call only with paths [`is_valid_rule_path`] accepted, where `.` is the only
+/// character with a meaning in a regexp.
+fn blocked_matchers(paths: &BTreeSet<&str>) -> Vec<Matcher> {
+    let patterns = paths.iter().flat_map(|path| [path.to_string(), format!("{path}/*"), format!("{path};*")]).collect();
+    let alternatives: Vec<String> = paths.iter().map(|path| path.replace('.', "\\.")).collect();
+    vec![
+        Matcher { path: patterns, ..Matcher::default() },
+        Matcher {
+            path_regexp: Some(PathRegexp {
+                name: "path_rule".to_owned(),
+                pattern: format!("(?i)^(?:{})(?:[^a-z0-9_~-]|$)", alternatives.join("|")),
+            }),
+            ..Matcher::default()
+        },
+    ]
+}
+
+/// The routes inside one host: every path of the site, except those its rules block at this kind of
+/// address.
+fn site_handlers(item: &Resolved<'_>, kind: nodo_manifest::AddressKind, limit: Option<RateLimit>) -> Vec<Route> {
     let mut routes = Vec::new();
+    // Must stay first: it answers the same way whether the upstream is running or not, and before
+    // a request counts towards the rate limit.
+    let blocked = blocked_paths(&item.site.service, kind);
+    if !blocked.is_empty() {
+        routes.push(Route {
+            matchers: blocked_matchers(&blocked),
+            handle: vec![Handler::StaticResponse {
+                status_code: Some("404".to_owned()),
+                headers: BTreeMap::new(),
+                body: None,
+                abort: false,
+            }],
+            terminal: true,
+        });
+    }
     if let Some(limit) = limit {
         let zone = RateLimitZone {
             key: "{http.request.remote.host}".to_owned(),

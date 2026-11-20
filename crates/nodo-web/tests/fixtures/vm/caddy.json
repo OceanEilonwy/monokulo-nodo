@@ -377,6 +377,30 @@
                   "handler": "subroute",
                   "routes": [
                     {
+                      "match": [
+                        {
+                          "path": [
+                            "/lan",
+                            "/lan/*",
+                            "/lan;*"
+                          ]
+                        },
+                        {
+                          "path_regexp": {
+                            "name": "path_rule",
+                            "pattern": "(?i)^(?:/lan)(?:[^a-z0-9_~-]|$)"
+                          }
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": "404"
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
                       "handle": [
                         {
                           "handler": "reverse_proxy",
@@ -538,6 +562,33 @@
                 {
                   "handler": "subroute",
                   "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/lan",
+                            "/lan/*",
+                            "/lan;*",
+                            "/nopublic",
+                            "/nopublic/*",
+                            "/nopublic;*"
+                          ]
+                        },
+                        {
+                          "path_regexp": {
+                            "name": "path_rule",
+                            "pattern": "(?i)^(?:/lan|/nopublic)(?:[^a-z0-9_~-]|$)"
+                          }
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": "404"
+                        }
+                      ],
+                      "terminal": true
+                    },
                     {
                       "handle": [
                         {
