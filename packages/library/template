@@ -12,8 +12,8 @@
 # and the build runs with --locked.
 pkgname=library
 version=0.1.0
-revision=1
-_commit=fa8e68746a3f2d6c8bc3cc4be312248bfb78c9ac
+revision=2
+_commit=d75ac40272dc6bf729dd9bb9679149a4d3c3baa7
 _nightly=2026-11-07
 archs="aarch64 x86_64"
 hostmakedepends="gcc make pkg-config clang xz"
@@ -45,7 +45,7 @@ distfiles="https://github.com/OceanEilonwy/library/archive/${_commit}.tar.gz
  ${_dist}/rustc-nightly-${_host}.tar.xz
  ${_dist}/cargo-nightly-${_host}.tar.xz
  ${_dist}/rust-std-nightly-${_host}.tar.xz"
-checksum="812f290176eec4074c1bc6f85a369575214321aaab990d3e010b2dcca01c3817
+checksum="8608027b18e1ba1a33399ffc7e99aee2a5374278e9b842e52e1aa98b2ee4d092
  ${_rustc_sum}
  ${_cargo_sum}
  ${_std_sum}"
@@ -68,10 +68,10 @@ _ripfiles="library-rip-${_ripver}-linux-x86_64.tar.gz
  library-rip-${_ripver}-windows-x86_64.zip
  library-rip-${_ripver}-macos-arm64.dmg
  library-rip-${_ripver}-macos-x86_64.dmg"
-_ripsums="FILL_FROM_SHA256SUMS_linux
- FILL_FROM_SHA256SUMS_windows
- FILL_FROM_SHA256SUMS_macos_arm64
- FILL_FROM_SHA256SUMS_macos_x86_64"
+_ripsums="c778078ae419ece07d1d4960d5c9f4411069fcca640152aa0904d2eb52692e39
+ b97aebf5d89be573b1ac10ca5b8af42c0997cd145ca1350ac2d6cc2d55a57c4e
+ 4b86390b0eb9f7c9495a129de47b4c3cd7de1af1747e43ec1b20b0abc7910b5c
+ f8457a96dec77e82e2570c8bf8e4c6a9957f3a7fe6eec143b7685b580f7e71c0"
 for _f in $_ripfiles; do distfiles+=" ${_ripbase}/${_f}"; done
 checksum+=" ${_ripsums//$'\n'/}"
 skip_extraction="${_ripfiles//$'\n'/}"
