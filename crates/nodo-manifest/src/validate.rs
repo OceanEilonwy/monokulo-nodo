@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{HealthCheck, Manifest, Protocol};
+use crate::{HealthCheck, Manifest, PathRule, Protocol};
 
 /// Leaves room for a prefix within the 32 character limit on Linux usernames, because each package
 /// gets its own service user.
@@ -20,6 +20,7 @@ const MAX_ARG_LEN: usize = 1024;
 const MAX_EXEC_ARGS: usize = 64;
 const MAX_LIST_LEN: usize = 64;
 const MAX_STOP_TIMEOUT_SECS: u32 = 3600;
+const MAX_PATH_RULES: usize = 16;
 
 /// Packages run unprivileged and never receive `CAP_NET_BIND_SERVICE`, so they cannot own these.
 pub const MIN_PACKAGE_PORT: u16 = 1024;
@@ -186,6 +187,32 @@ fn is_valid_url_path(path: &str) -> bool {
             && segment != ".."
             && segment.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'~'))
     })
+}
+
+/// The path of a `[web.paths.<name>]` rule, such as `/metrics`. It lands in generated proxy config,
+/// so it is a plain path as above, and `/` is refused because a rule for the whole site belongs in
+/// the owner's choice of addresses.
+pub fn is_valid_rule_path(path: &str) -> bool {
+    path != "/" && is_valid_url_path(path)
+}
+
+fn check_path_rule(field: &str, rule: &PathRule, c: &mut Checker) {
+    if !is_valid_rule_path(&rule.path) {
+        c.add(format!("{field}.path"), "is not a plain absolute URL path below /");
+    }
+    match (&rule.allowed_on, &rule.blocked_on) {
+        (Some(_), Some(_)) | (None, None) => c.add(field, "needs exactly one of allowed_on and blocked_on"),
+        (_, Some(blocked)) if blocked.is_empty() => {
+            c.add(format!("{field}.blocked_on"), "is empty, so the rule would do nothing")
+        }
+        _ => {}
+    }
+    for (key, kinds) in [("allowed_on", &rule.allowed_on), ("blocked_on", &rule.blocked_on)] {
+        let kinds = kinds.as_deref().unwrap_or_default();
+        if kinds.iter().collect::<BTreeSet<_>>().len() != kinds.len() {
+            c.add(format!("{field}.{key}"), "lists a kind of address twice");
+        }
+    }
 }
 
 fn check_upstream(id: &str, name: &str, upstream: &str) -> Result<(), String> {
@@ -367,6 +394,17 @@ impl Manifest {
                 if !is_valid_name(subdomain) {
                     c.add(format!("web[{index}].suggested_subdomain"), "is not a valid DNS label");
                 }
+            }
+            if web.paths.len() > MAX_PATH_RULES {
+                c.add(format!("web[{index}].paths"), format!("has more than {MAX_PATH_RULES} rules"));
+            }
+            for (name, rule) in &web.paths {
+                // The name is shown in the install review, so a bad one is not repeated here.
+                if !is_valid_name(name) {
+                    c.add(format!("web[{index}].paths"), "has a rule whose name is not a valid name");
+                    continue;
+                }
+                check_path_rule(&format!("web[{index}].paths.{name}"), rule, &mut c);
             }
         }
 

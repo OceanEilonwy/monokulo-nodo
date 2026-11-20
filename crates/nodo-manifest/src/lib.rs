@@ -6,12 +6,14 @@
 pub mod owner_page;
 mod validate;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use validate::{
-    is_valid_config_name, is_valid_domain, is_valid_id, is_valid_name, is_valid_package_path, is_valid_setting_name,
-    is_valid_version, ManifestIssue, MAX_ID_LEN, MIN_PACKAGE_PORT, RESERVED_IDS,
+    is_valid_config_name, is_valid_domain, is_valid_id, is_valid_name, is_valid_package_path, is_valid_rule_path,
+    is_valid_setting_name, is_valid_version, ManifestIssue, MAX_ID_LEN, MIN_PACKAGE_PORT, RESERVED_IDS,
 };
 
 /// The only manifest API version this build understands.
@@ -313,7 +315,8 @@ pub enum Outbound {
 }
 
 /// A site the package serves. The user, never the package, chooses its exposure, and the site is
-/// served whole at every address the user gives it.
+/// served whole at every address the user gives it, except for the paths its own rules keep off some
+/// kinds of address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "WebServiceFields")]
 pub struct WebService {
@@ -327,6 +330,60 @@ pub struct WebService {
     /// HTTP/2 with prior knowledge (no TLS, no upgrade) declares `h2c`.
     #[serde(skip_serializing_if = "UpstreamProtocol::is_default")]
     pub upstream_protocol: UpstreamProtocol,
+    /// Named rules, `[web.paths.<name>]`, each keeping one path off some kinds of address. Nodo adds
+    /// none of its own: without rules every path is served at every address.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub paths: BTreeMap<String, PathRule>,
+}
+
+/// One path of a site that some kinds of address answer with 404. The path covers itself and
+/// everything under it. A manifest writes exactly one of `allowed_on` and `blocked_on`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathRule {
+    pub path: String,
+    /// The only kinds of address that serve the path. Empty blocks it everywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_on: Option<Vec<AddressKind>>,
+    /// The kinds of address that answer 404 for the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_on: Option<Vec<AddressKind>>,
+}
+
+impl PathRule {
+    /// The kinds of address that answer 404 for the path. A rule that wrongly writes both forms
+    /// blocks what either one blocks.
+    pub fn blocked(&self) -> BTreeSet<AddressKind> {
+        let mut blocked: BTreeSet<AddressKind> = self.blocked_on.iter().flatten().copied().collect();
+        if let Some(allowed) = &self.allowed_on {
+            blocked.extend(AddressKind::ALL.into_iter().filter(|kind| !allowed.contains(kind)));
+        }
+        blocked
+    }
+}
+
+/// The kinds of address the owner can give a site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AddressKind {
+    /// Under the owner's domain or another public name, reachable from the internet.
+    Public,
+    /// The site's onion address.
+    Onion,
+    /// The local network address, such as `shop.local`.
+    Local,
+}
+
+impl AddressKind {
+    pub const ALL: [AddressKind; 3] = [AddressKind::Public, AddressKind::Onion, AddressKind::Local];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AddressKind::Public => "public",
+            AddressKind::Onion => "onion",
+            AddressKind::Local => "local",
+        }
+    }
 }
 
 /// [`WebService`] as a manifest may write it. Sites used to list `admin_paths`, which the proxy
@@ -347,6 +404,8 @@ struct WebServiceFields {
     multi_address: bool,
     #[serde(default)]
     upstream_protocol: UpstreamProtocol,
+    #[serde(default)]
+    paths: BTreeMap<String, PathRule>,
 }
 
 impl From<WebServiceFields> for WebService {
@@ -357,6 +416,7 @@ impl From<WebServiceFields> for WebService {
             suggested_subdomain: fields.suggested_subdomain,
             multi_address: fields.multi_address,
             upstream_protocol: fields.upstream_protocol,
+            paths: fields.paths,
         }
     }
 }
@@ -568,6 +628,7 @@ mod tests {
             suggested_subdomain: None,
             multi_address: false,
             upstream_protocol: UpstreamProtocol::H1,
+            paths: BTreeMap::new(),
         }
     }
 
@@ -842,6 +903,102 @@ mod tests {
         // Other unknown keys of a site are still refused.
         assert!(Manifest::parse(&format!("{old}admin_path = [\"/admin\"]\n")).is_err());
         assert!(Manifest::parse(&format!("{old}hide = true\n")).is_err());
+    }
+
+    const VAULT: &str = "api_version = 1\nid = \"vault\"\nversion = \"1.0\"\nexec = [\"bin/vault\"]\n\
+                         [[web]]\nname = \"vault\"\nupstream = \"127.0.0.1:8080\"\n";
+
+    /// Parses without validating, so that a test can look at the issues.
+    fn unchecked(extra: &str) -> Manifest {
+        toml::from_str(&format!("{VAULT}{extra}")).unwrap_or_else(|e| panic!("{extra}: {e}"))
+    }
+
+    #[test]
+    fn sites_can_keep_paths_off_kinds_of_address() {
+        let m = Manifest::parse(&format!(
+            "{VAULT}[web.paths.admin]\npath = \"/admin\"\nblocked_on = [\"public\", \"onion\"]\n\
+             [web.paths.metrics]\npath = \"/metrics\"\nallowed_on = [\"local\"]\n\
+             [web.paths.export]\npath = \"/api/v1/export.csv\"\nallowed_on = []\n"
+        ))
+        .unwrap();
+        let paths = &m.web[0].paths;
+        assert_eq!(paths.keys().collect::<Vec<_>>(), ["admin", "export", "metrics"]);
+        assert_eq!(paths["admin"].path, "/admin");
+        let set = |kinds: &[AddressKind]| kinds.iter().copied().collect::<BTreeSet<_>>();
+        assert_eq!(paths["admin"].blocked(), set(&[AddressKind::Public, AddressKind::Onion]));
+        assert_eq!(paths["metrics"].blocked(), set(&[AddressKind::Public, AddressKind::Onion]));
+        assert_eq!(paths["export"].blocked(), set(&AddressKind::ALL), "allowed nowhere is blocked everywhere");
+        // A stored manifest round-trips with its rules.
+        let stored = toml::to_string(&m).unwrap();
+        assert!(stored.contains("[web.paths.admin]"), "{stored}");
+        assert_eq!(Manifest::parse(&stored).unwrap(), m);
+        // A site without rules has none, and is stored exactly as before rules existed.
+        let plain = Manifest::parse(VAULT).unwrap();
+        assert!(plain.web[0].paths.is_empty());
+        assert!(!toml::to_string(&plain).unwrap().contains("paths"));
+    }
+
+    #[test]
+    fn rejects_bad_path_rules() {
+        let rule = |path: &str, form: &str| format!("[web.paths.r]\npath = {}\n{form}\n", toml::Value::from(path));
+        let long = format!("/{}", "a".repeat(validate::MAX_PATH_LEN));
+        for path in [
+            "", "admin", "/", "//a", "/a//b", "/a/", "/./a", "/a/.", "/a/../b", "/..", "/a?b", "/a#b", "/%2e%2e",
+            "/a%20", "/a*", "/a/*", "/*", "/a;b", "/a b", "/a\tb", "/a\n", "/a\u{0}", "/é", "/a+b", "/a:b", "/a@b", "/a\\b",
+            long.as_str(),
+        ] {
+            let m = unchecked(&rule(path, "blocked_on = [\"public\"]"));
+            assert_eq!(fields(&m), ["web[0].paths.r.path"], "path {path:?} should be rejected");
+        }
+        // The longest path allowed and a few unusual but plain ones are fine.
+        let longest = format!("/{}", "a".repeat(validate::MAX_PATH_LEN - 1));
+        for path in [longest.as_str(), "/a", "/A-b_c.d~e/f", "/.well-known/x", "/a.b/c..d"] {
+            assert!(unchecked(&rule(path, "blocked_on = [\"public\"]")).validate().is_empty(), "{path:?}");
+        }
+
+        for (form, field) in [
+            ("", "web[0].paths.r"),
+            ("allowed_on = [\"local\"]\nblocked_on = [\"public\"]", "web[0].paths.r"),
+            ("allowed_on = []\nblocked_on = []", "web[0].paths.r"),
+            ("blocked_on = []", "web[0].paths.r.blocked_on"),
+            ("blocked_on = [\"public\", \"public\"]", "web[0].paths.r.blocked_on"),
+            ("allowed_on = [\"local\", \"onion\", \"local\"]", "web[0].paths.r.allowed_on"),
+        ] {
+            assert_eq!(fields(&unchecked(&rule("/a", form))), [field], "{form:?}");
+        }
+
+        for name in ["Admin", "a_b", "-a", "a-", "a.b"] {
+            let m = unchecked(&format!("[web.paths.{name:?}]\npath = \"/a\"\nblocked_on = [\"public\"]\n"));
+            assert_eq!(fields(&m), ["web[0].paths"], "rule name {name:?} should be rejected");
+        }
+
+        let rules = |count: usize| -> String {
+            (0..count).map(|i| format!("[web.paths.r{i}]\npath = \"/a{i}\"\nblocked_on = [\"onion\"]\n")).collect()
+        };
+        assert!(unchecked(&rules(16)).validate().is_empty());
+        assert_eq!(fields(&unchecked(&rules(17))), ["web[0].paths"]);
+
+        // Unknown keys and kinds of address do not parse at all.
+        for bad in [
+            rule("/a", "blocked_on = [\"public\"]\nhide = true"),
+            rule("/a", "blocked_on = [\"tor\"]"),
+            rule("/a", "blocked_on = [\"Public\"]"),
+            rule("/a", "blocked_on = \"public\""),
+            "[web.paths.r]\npath = [\"/a\"]\nblocked_on = [\"public\"]\n".to_string(),
+            "[web.paths]\npath = \"/a\"\n".to_string(),
+        ] {
+            assert!(toml::from_str::<Manifest>(&format!("{VAULT}{bad}")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn old_admin_paths_never_become_rules() {
+        let m = Manifest::parse(&format!(
+            "{VAULT}admin_paths = [\"/admin\"]\n[web.paths.metrics]\npath = \"/metrics\"\nallowed_on = [\"local\"]\n"
+        ))
+        .unwrap();
+        assert_eq!(m.web[0].paths.keys().collect::<Vec<_>>(), ["metrics"]);
+        assert!(!toml::to_string(&m).unwrap().contains("admin"));
     }
 
     #[test]

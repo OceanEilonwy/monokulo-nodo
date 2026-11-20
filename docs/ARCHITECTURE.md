@@ -172,7 +172,12 @@ codebase, and signed xbps packages from user-added feeds.
   responder. Forwarded traffic is always addressed to the main address, so even a router that
   masquerades it cannot reach local hosts. Without a second address, local sites stay unavailable
   and are never moved to the main address or a port. A site is served whole at every address the
-  owner gives it; an app that has admin pages guards them with its own sign-in.
+  owner gives it; an app that has admin pages guards them with its own sign-in. A package may keep
+  some paths of a site off some kinds of address with named rules in its manifest
+  (`[web.paths.<name>]`, a path and the kinds it is `allowed_on` or `blocked_on`: public, onion,
+  local), and Caddy answers those with a plain 404 there, before rate limiting and whatever the
+  app's state. Nodo adds no rules of its own. The install review lists each rule, and an update
+  that loosens or drops one asks for approval again.
 - **TUI navigation:** Four tabs, Home, Apps, Web and System (`1`–`4`, Tab, or a click). Home shows
   what needs the owner first, one card and one button each (unlock, an app that keeps stopping, updates
   ready), then the other apps and one line of device health. Apps lists the installed apps; each has

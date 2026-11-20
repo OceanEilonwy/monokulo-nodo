@@ -209,6 +209,7 @@ fn input(local: bool, public: bool) -> WebInput {
                 suggested_subdomain: Some("shop".into()),
                 multi_address: true,
                 upstream_protocol: nodo_manifest::UpstreamProtocol::H1,
+                paths: Default::default(),
             },
             exposure: Exposure { local, onion: false, public },
             public_host: Some("shop.example.com".into()),
@@ -241,6 +242,20 @@ fn local_and_public_write_every_file_and_start_the_services() {
         assert!(web.io.up(service), "{service}");
     }
     assert!(!web.io.up("nodo-ddns"), "no provider, so no dynamic DNS");
+}
+
+#[test]
+fn a_sites_path_rules_reach_the_written_proxy_config() {
+    let web = web(Fake::default());
+    web.apply(&input(true, true)).unwrap();
+    assert!(!web.io.get("/web/caddy.json").unwrap().contains("path_regexp"), "no rules, no 404 route");
+
+    let mut ruled = input(true, true);
+    let rule: nodo_manifest::PathRule = toml::from_str("path = \"/private\"\nblocked_on = [\"public\"]\n").unwrap();
+    ruled.sites[0].service.paths.insert("private".into(), rule);
+    web.apply(&ruled).unwrap();
+    let json = web.io.get("/web/caddy.json").unwrap();
+    assert!(json.contains("\"/private;*\"") && json.contains("(?i)^(?:/private)"), "{json}");
 }
 
 #[test]
