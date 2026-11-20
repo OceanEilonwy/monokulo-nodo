@@ -12,6 +12,7 @@ fn service(name: &str, upstream: &str) -> WebService {
         suggested_subdomain: None,
         multi_address: true,
         upstream_protocol: UpstreamProtocol::H1,
+        paths: BTreeMap::new(),
     }
 }
 

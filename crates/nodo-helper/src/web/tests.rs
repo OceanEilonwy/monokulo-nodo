@@ -209,6 +209,7 @@ fn input(local: bool, public: bool) -> WebInput {
                 suggested_subdomain: Some("shop".into()),
                 multi_address: true,
                 upstream_protocol: nodo_manifest::UpstreamProtocol::H1,
+                paths: Default::default(),
             },
             exposure: Exposure { local, onion: false, public },
             public_host: Some("shop.example.com".into()),
