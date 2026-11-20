@@ -66,6 +66,7 @@ impl ExposureApplier for Web {
             public_ip: Some("203.0.113.5".into()),
             dns_changed_at: None,
             stale_records: vec![],
+            dns_problems: vec![],
         })
     }
 

@@ -520,6 +520,13 @@ mod tests {
                 public_ip: Some("93.184.216.34".into()),
                 dns_changed_at: Some(1),
                 stale_records: vec!["old/A".into()],
+                dns_problems: vec![crate::DnsProblem {
+                    domain: "example.com".into(),
+                    errors: vec!["www: refused".into()],
+                    failures: 2,
+                    since: Some(1),
+                    retry_at: Some(2),
+                }],
             })),
             Ok(Response::DnsProviders(vec![crate::DnsProviderDetail {
                 id: "godaddy".into(),

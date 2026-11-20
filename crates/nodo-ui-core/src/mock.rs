@@ -2501,6 +2501,7 @@ fn sample_web() -> WebOverview {
             local_address: Some(s("192.168.1.60")),
             local_ca: Some(s("3F:9A:21:C4:7E:05:B8:D2:61:4A:93:0C:EE:17:5B:28:A6:D9:40:7F:12:C3:8B:65:E0:94:2D:71:BC:58:0A:F6")),
         },
+        dns_problems: vec![],
     }
 }
 

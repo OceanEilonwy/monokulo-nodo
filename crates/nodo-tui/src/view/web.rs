@@ -119,6 +119,14 @@ pub fn sites(app: &App, t: &Theme, selected: usize) -> Page {
         after.push(Item::Blank);
         after.push(quiet(t, note));
     }
+    for problem in &web.dns_problems {
+        after.push(Item::Blank);
+        after.push(line(vec![margin(t), t.a(format!("The DNS records of {} are not updating", problem.domain))]));
+        for error in &problem.errors {
+            after.push(quiet(t, error));
+        }
+        after.push(quiet(t, &problem.detail));
+    }
     if !web.sites.iter().any(|site| site.exposure.public) {
         after.push(Item::Blank);
         after.push(quiet(t, "Nothing is on the internet, so ports 80 and 443 are closed on this device."));

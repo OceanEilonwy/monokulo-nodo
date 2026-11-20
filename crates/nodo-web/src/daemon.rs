@@ -19,6 +19,8 @@ use thiserror::Error;
 const BACKOFF_BASE_SECS: u64 = 60;
 const BACKOFF_MAX_SECS: u64 = 3600;
 const STATE_FILE_MODE: u32 = 0o600;
+/// Kept in the state when a pass fails without a provider error.
+const NO_CONSENSUS: &str = "the services that report the home's internet address did not agree, so DNS was left alone";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedRecord {
@@ -39,6 +41,12 @@ pub struct DdnsState {
     pub last_check_at: u64,
     pub observed_v4: Option<IpAddr>,
     pub observed_v6: Option<IpAddr>,
+    /// What went wrong in the last pass, while passes keep failing: one line per record the provider
+    /// refused, as `shop: ...`, or why no address could be settled. Scrubbed of credentials, for the
+    /// screens. A pass that succeeds clears it.
+    pub last_errors: Vec<String>,
+    /// Unix seconds of the first pass in the current run of failures.
+    pub failing_since: Option<u64>,
 }
 
 fn state_key(name: &RecordName, record_type: RecordType) -> String {
@@ -210,9 +218,17 @@ impl<'a> Daemon<'a> {
         if matches!(report.outcome, TickOutcome::Failed | TickOutcome::NoConsensus) {
             self.state.failures = self.state.failures.saturating_add(1);
             self.state.next_attempt_at = now + backoff_secs(self.state.failures).max(retry_after);
+            self.state.failing_since.get_or_insert(now);
+            self.state.last_errors = if report.errors.is_empty() {
+                vec![NO_CONSENSUS.to_owned()]
+            } else {
+                report.errors.clone()
+            };
         } else {
             self.state.failures = 0;
             self.state.next_attempt_at = 0;
+            self.state.failing_since = None;
+            self.state.last_errors.clear();
         }
         self.persist(&mut report);
         report
@@ -490,6 +506,39 @@ mod tests {
         assert_eq!(daemon.tick(1180).outcome, TickOutcome::Updated);
         assert_eq!(daemon.state().failures, 0);
         assert_eq!(daemon.state().next_attempt_at, 0);
+    }
+
+    #[test]
+    fn the_last_errors_are_kept_for_the_screens_until_a_pass_succeeds() {
+        let (http, provider, store) = (FakeHttp::new(), FakeProvider::default(), MemoryStore::default());
+        let (mut daemon, _) = Daemon::new(config(&["shop"]), &provider, http.as_ref(), &store, None);
+        *provider.fail_with.lock().unwrap() = Some(DnsError::Server { status: 500 });
+
+        agree(&http, IP_A);
+        let report = daemon.tick(1000);
+        assert_eq!(daemon.state().last_errors, report.errors);
+        assert!(daemon.state().last_errors[0].starts_with("shop:"));
+        assert_eq!(daemon.state().failing_since, Some(1000));
+
+        agree(&http, IP_A);
+        daemon.tick(1060);
+        assert_eq!(daemon.state().failing_since, Some(1000), "the run of failures started at the first");
+        assert_eq!(store.load().unwrap().last_errors, daemon.state().last_errors, "saved for the helper");
+
+        *provider.fail_with.lock().unwrap() = None;
+        agree(&http, IP_A);
+        daemon.tick(1180);
+        assert!(daemon.state().last_errors.is_empty());
+        assert_eq!(daemon.state().failing_since, None);
+    }
+
+    #[test]
+    fn a_pass_without_an_agreed_address_says_so() {
+        let (http, provider, store) = (FakeHttp::new(), FakeProvider::default(), MemoryStore::default());
+        let (mut daemon, _) = Daemon::new(config(&["shop"]), &provider, http.as_ref(), &store, None);
+        http.respond(200, IP_A).respond(200, IP_B).fail(HttpError::Timeout);
+        daemon.tick(1000);
+        assert_eq!(daemon.state().last_errors, vec![NO_CONSENSUS]);
     }
 
     #[test]

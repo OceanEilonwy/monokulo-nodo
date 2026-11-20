@@ -25,14 +25,19 @@ pub fn load_snapshot<T: Backend + ScreenData + ?Sized>(backend: &mut T) -> Resul
         other => return Err(ApiError::Failed(format!("unexpected reply: {other:?}"))),
     };
     let (providers, providers_error) = split(backend.providers());
+    let web = backend.web();
+    let mut overview = backend.overview();
+    // DNS that stopped updating takes public sites offline at the next change of home address, and
+    // nobody opens Web to find out, so Home says so.
+    overview.attention.extend(web.dns_problems.iter().map(|p| p.attention()));
     Ok(Snapshot {
         capabilities: backend.capabilities(),
         services,
-        overview: backend.overview(),
+        overview,
         catalog: backend.catalog(),
         feeds: backend.feeds(),
         updates: backend.updates(),
-        web: backend.web(),
+        web,
         providers,
         providers_error,
         connected: backend.connected_providers(),

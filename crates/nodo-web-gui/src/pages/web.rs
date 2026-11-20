@@ -44,6 +44,16 @@ pub async fn list(ctx: Ctx) -> Response {
         let any_public = sites.iter().any(|site| site.exposure.public);
         let certificates = if snapshot.web.certificates.is_empty() { "Certificates and home names".to_owned() } else { snapshot.web.certificates.clone() };
         let body = html! {
+            @for problem in &snapshot.web.dns_problems {
+                div.alert.warn {
+                    (layout::label("warn", "DNS"))
+                    div.grow {
+                        p { "The DNS records of " span.mono { (problem.domain) } " are not updating." }
+                        @for error in &problem.errors { p.sub { (error) } }
+                        p.sub { (problem.detail) }
+                    }
+                }
+            }
             @if let Some(problem) = &snapshot.web.local_problem {
                 div.alert.warn {
                     (layout::label("warn", "Home names"))

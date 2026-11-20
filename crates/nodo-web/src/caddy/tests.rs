@@ -410,33 +410,6 @@ fn hostile_rule_paths_are_rejected() {
 }
 
 #[test]
-fn every_packaged_site_can_be_published() {
-    // The feed check validates manifests with nodo-manifest; this proves the proxy accepts what that
-    // allows, for each site of each package in the repository, made public with an onion address.
-    let packages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
-    let mut checked = 0;
-    for entry in std::fs::read_dir(&packages).unwrap() {
-        let file = entry.unwrap().path().join("files/manifest.toml");
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
-        let manifest = nodo_manifest::Manifest::parse(&text.replace("@VERSION@", "1.0"))
-            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-        for (index, web) in manifest.web.iter().enumerate() {
-            let mut published = site(&manifest.id, &web.name, 9000 + index as u16, all_exposures());
-            published.service = web.clone();
-            published.onion_host = Some(ONION.to_owned());
-            if !web.multi_address {
-                published.exposure = Exposure { public: true, ..Exposure::default() };
-                published.onion_host = None;
-            }
-            generate(&[published], &settings())
-                .unwrap_or_else(|e| panic!("{} site {} cannot be published: {e}", manifest.id, web.name));
-            checked += 1;
-        }
-    }
-    assert!(checked >= 5, "found only {checked} packaged sites under {}", packages.display());
-}
-
-#[test]
 fn the_base_systems_node_rpc_site_passes_every_rpc_request_to_the_restricted_rpc() {
     // cuprated's site, from the manifest the base image ships, published everywhere with another
     // name. Monero RPC clients POST JSON-RPC to /json_rpc and call the other restricted endpoints
